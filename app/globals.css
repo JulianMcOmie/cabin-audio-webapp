@@ -2,20 +2,287 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
+@layer base {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+
+    --primary: 175 80% 40%;
+    --primary-foreground: 0 0% 98%;
+
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 175 80% 40%;
+
+    /* Custom theme colors */
+    --electric-blue: 175 80% 40%;
+    --electric-blue-light: 175 80% 90%;
+    --purple: 175 80% 40%;
+    --purple-light: 175 80% 90%;
+    --red: 175 80% 40%;
+    --red-light: 175 80% 90%;
+
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 175 70% 50%;
+    --primary-foreground: 0 0% 98%;
+
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 175 70% 50%;
+
+    /* Custom theme colors - dark mode */
+    --electric-blue: 175 70% 50%;
+    --electric-blue-light: 175 70% 20%;
+    --purple: 175 70% 50%;
+    --purple-light: 175 70% 20%;
+    --red: 175 70% 50%;
+    --red-light: 175 70% 20%;
   }
 }
 
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
 }
+
+/* Glassy player bar styles */
+.player-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  border-top: 1px solid hsl(var(--border));
+  background-color: hsl(var(--background));
+  z-index: 50;
+}
+
+/* Theme utility classes */
+.text-electric-blue {
+  color: hsl(var(--electric-blue));
+}
+
+.text-purple {
+  color: hsl(var(--purple));
+}
+
+.text-red {
+  color: hsl(var(--red));
+}
+
+.bg-electric-blue {
+  background-color: hsl(var(--electric-blue));
+}
+
+.bg-electric-blue-light {
+  background-color: hsl(var(--electric-blue-light));
+}
+
+.bg-purple {
+  background-color: hsl(var(--purple));
+}
+
+.bg-purple-light {
+  background-color: hsl(var(--purple-light));
+}
+
+.bg-red {
+  background-color: hsl(var(--red));
+}
+
+.bg-red-light {
+  background-color: hsl(var(--red-light));
+}
+
+.hover-electric-blue:hover {
+  color: hsl(var(--electric-blue));
+}
+
+.hover-purple:hover {
+  color: hsl(var(--purple));
+}
+
+.hover-red:hover {
+  color: hsl(var(--red));
+}
+
+.ring-electric-blue {
+  --tw-ring-color: hsl(var(--electric-blue));
+}
+
+.ring-purple {
+  --tw-ring-color: hsl(var(--purple));
+}
+
+.ring-red {
+  --tw-ring-color: hsl(var(--red));
+}
+
+/* Custom slider styles */
+.player-slider {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background-color: hsl(var(--secondary));
+  cursor: pointer;
+  transition: height 0.2s;
+}
+
+.player-slider:hover,
+.player-slider:focus-within {
+  height: 6px;
+}
+
+.player-slider-track {
+  position: absolute;
+  height: 100%;
+  border-radius: 2px;
+  background-color: hsl(var(--muted-foreground));
+}
+
+.player-slider-thumb {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background-color: hsl(var(--foreground));
+  border: 1px solid hsl(var(--muted-foreground));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  top: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.player-slider:hover .player-slider-thumb,
+.player-slider:focus-within .player-slider-thumb {
+  opacity: 1;
+}
+
+.volume-slider {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background-color: hsl(var(--secondary));
+  cursor: pointer;
+  transition: height 0.2s;
+}
+
+.volume-slider:hover,
+.volume-slider:focus-within {
+  height: 6px;
+}
+
+.volume-slider-track {
+  position: absolute;
+  height: 100%;
+  border-radius: 2px;
+  background-color: hsl(var(--muted-foreground));
+}
+
+.volume-slider-thumb {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background-color: hsl(var(--foreground));
+  border: 1px solid hsl(var(--muted-foreground));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  top: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.volume-slider:hover .volume-slider-thumb,
+.volume-slider:focus-within .volume-slider-thumb {
+  opacity: 1;
+}
+
+/* EQ enabled toggle */
+.eq-toggle-container {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  z-index: 10;
+  background-color: hsl(var(--background) / 0.9);
+  padding: 8px;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dark .eq-toggle-container {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+
+/* Player slider hover effects with gradients */
+.player-slider:hover .player-slider-track,
+.player-slider:focus-within .player-slider-track {
+  background: linear-gradient(to right, #0ea5e9, #38bdf8, #7dd3fc);
+  background-size: 100% 100%;
+}
+
+.volume-slider:hover .volume-slider-track,
+.volume-slider:focus-within .volume-slider-track {
+  background: linear-gradient(to right, #0ea5e9, #38bdf8, #7dd3fc);
+  background-size: 100% 100%;
+}
+
+/* Dark mode adjustments for frequency graph */
+.dark .frequency-graph {
+  background-color: hsl(var(--card));
+  border-color: hsl(var(--border));
+}
+
+.dark .frequency-graph canvas {
+  filter: invert(0.1);
+}
+
