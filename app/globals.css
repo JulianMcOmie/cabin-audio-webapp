@@ -44,32 +44,32 @@
   }
 
   .dark {
-    --background: 240 10% 3.9%;
+    --background: 240 10% 8%;
     --foreground: 0 0% 98%;
 
-    --card: 240 10% 3.9%;
+    --card: 240 10% 10%;
     --card-foreground: 0 0% 98%;
 
-    --popover: 240 10% 3.9%;
+    --popover: 240 10% 10%;
     --popover-foreground: 0 0% 98%;
 
     --primary: 175 70% 50%;
     --primary-foreground: 0 0% 98%;
 
-    --secondary: 240 3.7% 15.9%;
+    --secondary: 240 3.7% 22%;
     --secondary-foreground: 0 0% 98%;
 
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
+    --muted: 240 3.7% 22%;
+    --muted-foreground: 240 5% 70%;
 
-    --accent: 240 3.7% 15.9%;
+    --accent: 240 3.7% 22%;
     --accent-foreground: 0 0% 98%;
 
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
 
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
+    --border: 240 3.7% 20%;
+    --input: 240 3.7% 20%;
     --ring: 175 70% 50%;
 
     /* Custom theme colors - dark mode */
@@ -93,7 +93,11 @@
 
 /* Glassy player bar styles */
 .player-bar {
-  position: relative;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  border-top: 1px solid hsl(var(--border));
   background-color: hsl(var(--background));
   z-index: 50;
 }
@@ -280,15 +284,5 @@
 
 .dark .frequency-graph canvas {
   filter: invert(0.1);
-}
-
-@layer components {
-  .bg-main-section {
-    @apply bg-gray-100 dark:bg-gray-800;
-  }
-
-  .rounded-lg {
-    border-radius: 0.5rem;
-  }
 }
 

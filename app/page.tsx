@@ -32,8 +32,8 @@ export default function Home() {
         <div className="flex flex-col flex-1 overflow-hidden">
           <TopBar />
 
-          <div className="flex-1 overflow-auto pr-4">
-            <main className="h-full bg-main-section rounded-lg rounded-b-none p-6 pb-0">
+          <div className="flex-1 pr-4 bg-main-section rounded-lg overflow-auto mr-2 mb-2">
+            <main className="h-full p-6 pb-0">
               {activeTab === "eq" ? (
                 <EQView isPlaying={isPlaying} setIsPlaying={setIsPlaying} />
               ) : activeTab === "library" ? (

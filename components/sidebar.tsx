@@ -13,12 +13,12 @@ interface SidebarProps {
 
 export function Sidebar({ activeTab, setActiveTab, onUpgradeClick }: SidebarProps) {
   return (
-    <div className="w-64 bg-background flex flex-col">
+    <div className="w-64 bg-background flex flex-col border-r border-border h-full">
       <div className="p-6">
         <h1 className="font-semibold text-xl">Cabin Audio</h1>
       </div>
 
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 overflow-auto">
         <div className="p-4 pt-2">
           <div className="space-y-1">
             <Button
