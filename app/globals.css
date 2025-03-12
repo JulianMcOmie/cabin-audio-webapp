@@ -190,7 +190,7 @@
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background-color: hsl(var(--foreground));
+  background-color: white;
   border: 1px solid hsl(var(--muted-foreground));
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   top: 50%;
@@ -230,7 +230,7 @@
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background-color: hsl(var(--foreground));
+  background-color: white;
   border: 1px solid hsl(var(--muted-foreground));
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   top: 50%;
@@ -266,13 +266,13 @@
 /* Player slider hover effects with gradients */
 .player-slider:hover .player-slider-track,
 .player-slider:focus-within .player-slider-track {
-  background: linear-gradient(to right, #0ea5e9, #38bdf8, #7dd3fc);
+  background: hsl(var(--electric-blue));
   background-size: 100% 100%;
 }
 
 .volume-slider:hover .volume-slider-track,
 .volume-slider:focus-within .volume-slider-track {
-  background: linear-gradient(to right, #0ea5e9, #38bdf8, #7dd3fc);
+  background: hsl(var(--electric-blue));
   background-size: 100% 100%;
 }
 

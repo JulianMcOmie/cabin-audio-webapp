@@ -13,7 +13,7 @@ interface SidebarProps {
 
 export function Sidebar({ activeTab, setActiveTab, onUpgradeClick }: SidebarProps) {
   return (
-    <div className="w-64 bg-background flex flex-col border-r border-border h-full">
+    <div className="w-64 bg-background flex flex-col border-r border-border h-full pb-16">
       <div className="p-6">
         <h1 className="font-semibold text-xl">Cabin Audio</h1>
       </div>
