@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Pause, Upload, Play } from "lucide-react"
+import { Pause, Upload, Play, PlusCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
@@ -187,6 +187,20 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying }: MusicLibraryProp
               {index < tracks.length - 1 && <Separator />}
             </div>
           ))}
+          
+          <div className="mt-4 pt-4 border-t">
+            <Button 
+              variant="outline" 
+              className="w-full flex items-center justify-center gap-2 text-purple hover:text-purple/80"
+              onClick={() => {
+                console.log("Add track clicked");
+                // Add your track adding logic here
+              }}
+            >
+              <PlusCircle className="h-4 w-4" />
+              <span>Add Track</span>
+            </Button>
+          </div>
         </div>
       </div>
 

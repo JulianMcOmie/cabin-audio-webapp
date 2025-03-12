@@ -51,25 +51,25 @@ export function Sidebar({ activeTab, setActiveTab, onUpgradeClick }: SidebarProp
               Export EQ Settings
             </Button>
 
-            <Button
+            {/* <Button
               variant="ghost"
               className={`w-full justify-start ${activeTab === "desktop" ? "bg-red-light text-red hover:bg-red-light hover:text-red" : ""}`}
               onClick={() => setActiveTab("desktop")}
             >
               <Monitor className={`mr-2 h-4 w-4 ${activeTab === "desktop" ? "text-red" : ""}`} />
               Desktop App
-            </Button>
+            </Button> */}
 
-            <Button
+            {/* <Button
               variant="ghost"
               className={`w-full justify-start ${activeTab === "mobile" ? "bg-red-light text-red hover:bg-red-light hover:text-red" : ""}`}
               onClick={() => setActiveTab("mobile")}
             >
               <Smartphone className={`mr-2 h-4 w-4 ${activeTab === "mobile" ? "text-red" : ""}`} />
               Mobile App
-            </Button>
+            </Button> */}
 
-            <div className="p-4 mt-4 mb-2 bg-muted/50 rounded-lg">
+            {/* <div className="p-4 mt-4 mb-2 bg-muted/50 rounded-lg">
               <div className="flex items-center gap-2 mb-2">
                 <Sparkles className="h-4 w-4 text-red" />
                 <h3 className="font-medium">Upgrade to Pro</h3>
@@ -80,7 +80,7 @@ export function Sidebar({ activeTab, setActiveTab, onUpgradeClick }: SidebarProp
               <Button size="sm" className="w-full bg-red hover:bg-red/90 text-white" onClick={onUpgradeClick}>
                 Upgrade Now
               </Button>
-            </div>
+            </div> */}
           </div>
         </div>
       </ScrollArea>
