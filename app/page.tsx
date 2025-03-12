@@ -32,19 +32,21 @@ export default function Home() {
         <div className="flex flex-col flex-1 overflow-hidden">
           <TopBar />
 
-          <main className="flex-1 overflow-auto p-6 pb-20">
-            {activeTab === "eq" ? (
-              <EQView isPlaying={isPlaying} setIsPlaying={setIsPlaying} />
-            ) : activeTab === "library" ? (
-              <MusicLibrary setCurrentTrack={setCurrentTrack} setIsPlaying={setIsPlaying} />
-            ) : activeTab === "export" ? (
-              <ExportView />
-            ) : activeTab === "desktop" ? (
-              <InstallView />
-            ) : (
-              <MobileView />
-            )}
-          </main>
+          <div className="flex-1 overflow-auto pr-4">
+            <main className="h-full bg-main-section rounded-lg rounded-b-none p-6 pb-0">
+              {activeTab === "eq" ? (
+                <EQView isPlaying={isPlaying} setIsPlaying={setIsPlaying} />
+              ) : activeTab === "library" ? (
+                <MusicLibrary setCurrentTrack={setCurrentTrack} setIsPlaying={setIsPlaying} />
+              ) : activeTab === "export" ? (
+                <ExportView />
+              ) : activeTab === "desktop" ? (
+                <InstallView />
+              ) : (
+                <MobileView />
+              )}
+            </main>
+          </div>
         </div>
       </div>
 

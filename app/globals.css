@@ -93,11 +93,7 @@
 
 /* Glassy player bar styles */
 .player-bar {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  border-top: 1px solid hsl(var(--border));
+  position: relative;
   background-color: hsl(var(--background));
   z-index: 50;
 }
@@ -284,5 +280,15 @@
 
 .dark .frequency-graph canvas {
   filter: invert(0.1);
+}
+
+@layer components {
+  .bg-main-section {
+    @apply bg-gray-100 dark:bg-gray-800;
+  }
+
+  .rounded-lg {
+    border-radius: 0.5rem;
+  }
 }
 

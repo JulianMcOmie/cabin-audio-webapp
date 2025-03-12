@@ -41,7 +41,7 @@ export function TopBar() {
 
   return (
     <>
-      <div className="h-16 flex items-center px-6 bg-background">
+      <div className="h-16 flex items-center px-0 bg-background">
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="icon" className="h-8 w-8">
             <ArrowLeft className="h-4 w-4" />
