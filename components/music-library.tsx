@@ -3,7 +3,6 @@
 import { useState } from "react"
 import { Pause, Upload, Play, PlusCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 
 interface Track {
@@ -18,9 +17,10 @@ interface Track {
 interface MusicLibraryProps {
   setCurrentTrack: (track: any) => void
   setIsPlaying: (isPlaying: boolean) => void
+  eqEnabled: boolean // Add this prop
 }
 
-export function MusicLibrary({ setCurrentTrack, setIsPlaying }: MusicLibraryProps) {
+export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled }: MusicLibraryProps) {
   // Sample tracks data
   const [tracks] = useState<Track[]>([
     {
@@ -109,6 +109,76 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying }: MusicLibraryProp
 
   return (
     <div className="mx-auto space-y-8">
+      {/* EQ Status Alert */}
+      <div
+        className={`rounded-lg p-4 mb-4 flex items-center justify-between ${
+          eqEnabled
+            ? "bg-green-50 border border-green-200 dark:bg-green-900/20 dark:border-green-800"
+            : "bg-blue-50 border border-blue-200 dark:bg-blue-900/20 dark:border-blue-800"
+        }`}
+      >
+        <div className="flex items-center">
+          {eqEnabled ? (
+            <>
+              <div className="h-8 w-8 rounded-full bg-green-100 dark:bg-green-800 flex items-center justify-center mr-3">
+                <svg
+                  className="h-4 w-4 text-green-600 dark:text-green-300"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-sm font-medium text-green-800 dark:text-green-300">EQ is enabled</p>
+                <p className="text-xs text-muted-foreground">
+                  Your music is being enhanced with your custom EQ settings
+                </p>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="h-8 w-8 rounded-full bg-blue-100 dark:bg-blue-800 flex items-center justify-center mr-3">
+                <svg
+                  className="h-4 w-4 text-blue-600 dark:text-blue-300"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-sm font-medium text-blue-800 dark:text-blue-300">
+                  Enhance your listening experience
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Personalized EQ can dramatically improve sound quality and spatial separation
+                </p>
+              </div>
+            </>
+          )}
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className={
+            eqEnabled
+              ? "text-green-600 hover:text-green-700 hover:bg-green-100 dark:text-green-400 dark:hover:bg-green-900/30"
+              : "text-blue-600 hover:text-blue-700 hover:bg-blue-100 dark:text-blue-400 dark:hover:bg-blue-900/30"
+          }
+          onClick={() => {
+            const eqTab = document.querySelector('[data-tab="eq"]')
+            if (eqTab) {
+              ;(eqTab as HTMLElement).click()
+            }
+          }}
+        >
+          {eqEnabled ? "Adjust EQ" : "Try EQ"}
+        </Button>
+      </div>
+
       <div className="flex justify-between items-center mb-2">
         <div>
           <h2 className="text-2xl font-semibold">Music Library</h2>
@@ -157,11 +227,7 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying }: MusicLibraryProp
                         )}
                       </div>
                       <div className="hidden group-hover:block">
-                        {isPlaying ? (
-                          <Pause className="h-6 w-6 text-white" />
-                        ) : (
-                          <Play className="h-6 w-6 text-white" />
-                        )}
+                        {isPlaying ? <Pause className="h-6 w-6 text-white" /> : <Play className="h-6 w-6 text-white" />}
                       </div>
                     </div>
                   ) : (
@@ -187,18 +253,18 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying }: MusicLibraryProp
               {index < tracks.length - 1 && <Separator />}
             </div>
           ))}
-          
+
           <div className="mt-4 pt-4 border-t">
-            <Button 
-              variant="outline" 
-              className="w-full flex items-center justify-center gap-2 text-purple hover:text-purple/80"
+            <Button
+              variant="outline"
+              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-purple-light/30 to-electric-blue-light/30 border-purple/20 hover:border-purple/40 hover:bg-gradient-to-r hover:from-purple-light/40 hover:to-electric-blue-light/40 transition-all"
               onClick={() => {
-                console.log("Add track clicked");
+                console.log("Add track clicked")
                 // Add your track adding logic here
               }}
             >
-              <PlusCircle className="h-4 w-4" />
-              <span>Add Track</span>
+              <PlusCircle className="h-4 w-4 text-purple" />
+              <span className="font-medium text-purple">Add Track</span>
             </Button>
           </div>
         </div>

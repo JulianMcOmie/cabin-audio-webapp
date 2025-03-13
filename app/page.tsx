@@ -15,6 +15,7 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<"eq" | "library" | "export" | "desktop" | "mobile">("library")
   const [isPlaying, setIsPlaying] = useState(false)
   const [showPricingModal, setShowPricingModal] = useState(false)
+  const [eqEnabled, setEqEnabled] = useState(false) // Add this state
   const [currentTrack, setCurrentTrack] = useState({
     title: "Ambient Forest",
     artist: "Nature Sounds",
@@ -35,9 +36,14 @@ export default function Home() {
           <div className="flex-1 pr-4 bg-main-section rounded-lg overflow-auto mb-2">
             <main className="h-full p-6 pb-0">
               {activeTab === "eq" ? (
-                <EQView isPlaying={isPlaying} setIsPlaying={setIsPlaying} />
+                <EQView
+                  isPlaying={isPlaying}
+                  setIsPlaying={setIsPlaying}
+                  eqEnabled={eqEnabled}
+                  setEqEnabled={setEqEnabled}
+                />
               ) : activeTab === "library" ? (
-                <MusicLibrary setCurrentTrack={setCurrentTrack} setIsPlaying={setIsPlaying} />
+                <MusicLibrary setCurrentTrack={setCurrentTrack} setIsPlaying={setIsPlaying} eqEnabled={eqEnabled} />
               ) : activeTab === "export" ? (
                 <ExportView />
               ) : activeTab === "desktop" ? (
