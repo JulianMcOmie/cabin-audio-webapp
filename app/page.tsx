@@ -10,9 +10,10 @@ import { InstallView } from "@/components/install-view"
 import ExportView from "@/components/export-view-component"
 import { PricingModal } from "@/components/pricing-modal"
 import { MobileView } from "@/components/mobile-view"
+import { ProfilePage } from "@/components/profile-page"
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<"eq" | "library" | "export" | "desktop" | "mobile">("library")
+  const [activeTab, setActiveTab] = useState<"eq" | "library" | "export" | "desktop" | "mobile" | "profile">("library")
   const [isPlaying, setIsPlaying] = useState(false)
   const [showPricingModal, setShowPricingModal] = useState(false)
   const [eqEnabled, setEqEnabled] = useState(false) // Add this state
@@ -31,7 +32,7 @@ export default function Home() {
         <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} onUpgradeClick={() => setShowPricingModal(true)} />
 
         <div className="flex flex-col flex-1 overflow-hidden">
-          <TopBar />
+          <TopBar setActiveTab={setActiveTab} />
 
           <div className="flex-1 pr-4 bg-main-section rounded-lg overflow-auto mb-2">
             <main className="h-full p-6 pb-0">
@@ -48,6 +49,8 @@ export default function Home() {
                 <ExportView />
               ) : activeTab === "desktop" ? (
                 <InstallView />
+              ) : activeTab === "profile" ? (
+                <ProfilePage />
               ) : (
                 <MobileView />
               )}

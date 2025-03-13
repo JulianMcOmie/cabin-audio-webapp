@@ -130,10 +130,11 @@ export default function ExportView() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto py-8">
+    <div className="max-w-4xl mx-auto py-8 pb-24">
+      {" "}
+      {/* Added pb-24 for bottom padding */}
       <h1 className="text-3xl font-bold mb-2">Export EQ Settings</h1>
       <p className="text-muted-foreground mb-8">Download EQ settings for other apps.</p>
-
       <div className="mb-8">
         <div className="mb-2">
           <label className="block text-sm font-medium mb-2">Select EQ Profile</label>
@@ -151,7 +152,6 @@ export default function ExportView() {
           </Select>
         </div>
       </div>
-
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
         <Card>
           <CardContent className="p-6">
@@ -209,7 +209,6 @@ export default function ExportView() {
           </CardContent>
         </Card>
       </div>
-
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         <Button
           variant="outline"
@@ -247,7 +246,6 @@ export default function ExportView() {
           <span>48kHz Conv</span>
         </Button>
       </div>
-
       <div className="space-y-6">
         <h2 className="text-xl font-medium mb-4">Instructions</h2>
 

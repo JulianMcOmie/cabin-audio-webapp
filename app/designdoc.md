@@ -150,6 +150,7 @@ interface EQProfile {
   id: string;
   name: string;
   bands: EQBand[];
+  volume: number;       // Volume offset to apply when profile is enabled (in dB)
   lastModified: number;
   syncStatus: 'synced' | 'modified' | 'pending' | 'conflict';
 }
@@ -203,6 +204,7 @@ Responsibilities:
 - Creates filter nodes for EQ bands
 - Applies EQ profiles to filter settings
 - Provides input/output nodes for the audio chain
+- Applies volume offset from profile to maintain consistent perceived loudness
 - On initialization, loads last used profile or applies default profile
 - Default "Flat" profile is included for first-time users
 
@@ -332,17 +334,19 @@ These hooks connect UI components to the state and services:
 1. **Application Startup**: EQ profile initialization
    - App loads the previously selected currentProfileId from persistent storage
    - If no previous selection exists (first-time user), a default "Profile 1" profile is created and selected
-   - eqProcessor initializes audio nodes with the selected profile settings
+   - eqProcessor initializes audio nodes with the selected profile settings including volume offset
 
 2. **Profile Selection**: User selects an EQ profile
    - eqStore updates currentProfileId (becomes the new default/last used profile)
    - eqProcessor applies profile settings to audio chain
+   - Volume offset is applied to maintain consistent perceived loudness
    - Profile selection is persisted for next app launch
 
 3. **EQ Adjustment**: User adjusts EQ parameters
    - eqStore updates the current profile's band settings
    - eqProcessor subscribes to state change
    - Audio processing updated in real-time
+   - Volume offset can be adjusted to compensate for EQ changes
    - Changes to current profile are saved automatically
 
 4. **Profile Management**: User explicitly manages profiles
@@ -473,6 +477,7 @@ This section outlines the specific integrations between UI components and backen
 - **Responsibilities**:
   - Display frequency bands from current profile
   - Provide sliders for adjusting gain values
+  - Provide control for profile volume offset adjustment
   - Update profile in real-time as adjustments are made
   - Render visualization of EQ curve
 

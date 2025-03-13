@@ -1,6 +1,7 @@
 "use client"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 interface EQCalibrationModalProps {
   open: boolean
@@ -10,118 +11,74 @@ interface EQCalibrationModalProps {
 export function EQCalibrationModal({ open, onClose }: EQCalibrationModalProps) {
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-md h-[80vh] flex flex-col">
         <DialogHeader>
-          <DialogTitle className="text-2xl">How to Use the EQ and Calibration System</DialogTitle>
-          <DialogDescription>Learn how to get the most out of Cabin Audio's EQ technology</DialogDescription>
+          <DialogTitle className="text-xl">How to Use Cabin Audio</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-8 py-4">
-          <section>
-            <h3 className="text-lg font-medium mb-2">Understanding the EQ Grid</h3>
-            <div className="grid md:grid-cols-2 gap-6">
-              <div>
-                <p className="mb-4">
-                  The EQ grid is a visual representation of your audio's frequency response. Each point on the grid
-                  affects different aspects of your sound:
-                </p>
-                <ul className="list-disc pl-5 space-y-2">
-                  <li>
-                    <strong>Horizontal axis:</strong> Represents frequency (bass to treble)
-                  </li>
-                  <li>
-                    <strong>Vertical axis:</strong> Represents amplitude (volume)
-                  </li>
-                  <li>
-                    <strong>Left side:</strong> Lower frequencies (bass)
-                  </li>
-                  <li>
-                    <strong>Right side:</strong> Higher frequencies (treble)
-                  </li>
-                  <li>
-                    <strong>Top:</strong> Increased volume
-                  </li>
-                  <li>
-                    <strong>Bottom:</strong> Decreased volume
-                  </li>
-                </ul>
-              </div>
-              <div className="bg-muted rounded-lg p-4 flex items-center justify-center">
-                <img src="/placeholder.svg?height=200&width=300" alt="EQ Grid Explanation" className="rounded-md" />
-              </div>
-            </div>
-          </section>
+        <Tabs defaultValue="eq" className="w-full">
+          <TabsList className="grid grid-cols-2 w-full">
+            <TabsTrigger value="eq">EQ Controls</TabsTrigger>
+            <TabsTrigger value="calibration">Calibration</TabsTrigger>
+          </TabsList>
 
-          <section>
-            <h3 className="text-lg font-medium mb-2">Calibration Process</h3>
-            <div className="grid md:grid-cols-2 gap-6">
-              <div className="bg-muted rounded-lg p-4 flex items-center justify-center">
-                <img src="/placeholder.svg?height=200&width=300" alt="Calibration Process" className="rounded-md" />
-              </div>
-              <div>
-                <p className="mb-4">The calibration process helps you fine-tune your EQ settings for optimal sound:</p>
-                <ol className="list-decimal pl-5 space-y-2">
-                  <li>Click "Play Calibration" to start the test sound</li>
-                  <li>Select points on the grid to adjust specific frequencies</li>
-                  <li>Listen for changes in the audio as you adjust</li>
-                  <li>Use the grid resolution controls to make finer adjustments</li>
-                  <li>Save your profile when you're satisfied with the sound</li>
-                </ol>
-              </div>
-            </div>
-          </section>
-
-          <section>
-            <h3 className="text-lg font-medium mb-2">Common EQ Adjustments</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-muted/50 p-4 rounded-lg">
-                <h4 className="font-medium mb-2">Bass Boost</h4>
-                <div className="aspect-video bg-muted rounded-md mb-2 flex items-center justify-center">
-                  <img src="/placeholder.svg?height=100&width=160" alt="Bass Boost EQ" className="rounded-md" />
+          {/* Fixed height scrollable area */}
+          <div className="h-[calc(80vh-210px)] mt-4 overflow-auto">
+            <TabsContent value="eq" className="m-0 p-0">
+              <div className="space-y-4">
+                <div>
+                  <h3 className="font-medium mb-2">Basic Controls</h3>
+                  <ul className="space-y-2 text-sm text-muted-foreground">
+                    <li>• Click center line + drag to add a band</li>
+                    <li>• Drag to move a band</li>
+                    <li>• Shift + drag to adjust band width</li>
+                    <li>• Right-click to remove a band</li>
+                    <li>• Drag the dot on the right up/down to adjust volume</li>
+                  </ul>
                 </div>
-                <p className="text-sm">
-                  Increase the left side of the grid to enhance low frequencies for more powerful bass.
-                </p>
-              </div>
 
-              <div className="bg-muted/50 p-4 rounded-lg">
-                <h4 className="font-medium mb-2">Vocal Clarity</h4>
-                <div className="aspect-video bg-muted rounded-md mb-2 flex items-center justify-center">
-                  <img src="/placeholder.svg?height=100&width=160" alt="Vocal Clarity EQ" className="rounded-md" />
+                <div>
+                  <h3 className="font-medium mb-2">Frequency Guide</h3>
+                  <ul className="space-y-2 text-sm text-muted-foreground">
+                    <li>• Left side: Low frequencies (bass)</li>
+                    <li>• Right side: High frequencies (treble)</li>
+                    <li>• Up: Increased volume</li>
+                    <li>• Down: Decreased volume</li>
+                  </ul>
                 </div>
-                <p className="text-sm">Boost the mid-range frequencies to enhance vocals and spoken word content.</p>
-              </div>
 
-              <div className="bg-muted/50 p-4 rounded-lg">
-                <h4 className="font-medium mb-2">Treble Enhancement</h4>
-                <div className="aspect-video bg-muted rounded-md mb-2 flex items-center justify-center">
-                  <img src="/placeholder.svg?height=100&width=160" alt="Treble Enhancement EQ" className="rounded-md" />
+                <div className="bg-muted/50 p-3 rounded-md text-sm text-muted-foreground">
+                  An equalizer (EQ) lets you adjust the volume of different frequency ranges in your audio, allowing you
+                  to customize the sound to your preferences or listening environment.
                 </div>
-                <p className="text-sm">
-                  Increase the right side of the grid to enhance high frequencies for more detail and brightness.
-                </p>
               </div>
-            </div>
-          </section>
+            </TabsContent>
 
-          <section>
-            <h3 className="text-lg font-medium mb-2">Tips for Better Sound</h3>
-            <div className="space-y-4">
-              <p>Follow these tips to get the most out of your EQ settings:</p>
-              <ul className="list-disc pl-5 space-y-2">
-                <li>Start with small adjustments and listen for changes</li>
-                <li>Use the calibration sound to hear the effect of your adjustments in real-time</li>
-                <li>Create different profiles for different types of music or content</li>
-                <li>Avoid extreme boosts that might cause distortion</li>
-                <li>Use the "Flat" profile as a reference point</li>
-                <li>Save your profiles to use across different devices</li>
-              </ul>
-            </div>
-          </section>
-        </div>
+            <TabsContent value="calibration" className="m-0 p-0">
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Cabin Audio features a patent-pending calibration system that helps you create a personalized EQ
+                  profile tailored to your unique hearing and audio equipment.
+                </p>
 
-        <div className="flex justify-end mt-4">
-          <Button onClick={onClose}>Close</Button>
+                <p className="text-sm text-muted-foreground">
+                  You'll find our calibration tool below the EQ graph. It uses a dot grid system that plays test sounds
+                  to help you fine-tune your EQ settings for optimal spatial separation and clarity.
+                </p>
+
+                <div className="bg-muted/50 p-3 rounded-md text-sm text-muted-foreground">
+                  Try it out! Close this tutorial and scroll down to see the "How to Calibrate Your EQ" section.
+                </div>
+              </div>
+            </TabsContent>
+          </div>
+        </Tabs>
+
+        {/* Fixed position footer with extra padding */}
+        <div className="border-t pt-4 pb-4 mt-auto">
+          <div className="flex justify-end">
+            <Button onClick={onClose}>Close</Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>

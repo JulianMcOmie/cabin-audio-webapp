@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { useAuth } from "@/lib/auth-context"
 
 interface LoginModalProps {
   open: boolean
@@ -15,6 +16,19 @@ interface LoginModalProps {
 
 export function LoginModal({ open, onClose }: LoginModalProps) {
   const [showPassword, setShowPassword] = useState(false)
+  const [email, setEmail] = useState<string>("user@example.com")
+  const { signIn } = useAuth()
+
+  const handleLogin = () => {
+    // Log for debugging
+    console.log("Logging in with email:", email)
+
+    // Call the signIn function with the email
+    signIn(email || "user@example.com")
+
+    // Close the modal
+    onClose()
+  }
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -65,7 +79,13 @@ export function LoginModal({ open, onClose }: LoginModalProps) {
 
           <div className="space-y-2 mt-4">
             <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" placeholder="your@email.com" />
+            <Input
+              id="email"
+              type="email"
+              placeholder="your@email.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
           </div>
 
           <div className="space-y-2">
@@ -101,7 +121,7 @@ export function LoginModal({ open, onClose }: LoginModalProps) {
             </Button>
           </div>
 
-          <Button className="w-full" size="lg">
+          <Button className="w-full" size="lg" onClick={handleLogin}>
             <LogIn className="mr-2 h-4 w-4" />
             Log in
           </Button>

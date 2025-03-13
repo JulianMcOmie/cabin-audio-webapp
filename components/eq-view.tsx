@@ -73,6 +73,11 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled }: EQV
         <div className="relative">
           <FrequencyGraph selectedDot={selectedDot} disabled={!eqEnabled} className="w-full" />
 
+          {/* Contextual Instructions */}
+          <div className="mt-1 mb-3 px-2 py-1.5 bg-muted/40 rounded text-sm text-muted-foreground border-l-2 border-electric-blue">
+            Click + drag on the center line to add a band
+          </div>
+
           {/* EQ Toggle Overlay */}
           <div className="eq-toggle-container">
             <Button
@@ -161,28 +166,45 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled }: EQV
               </div>
 
               <div>
-                <h4 className="font-medium mb-2">Tips</h4>
-                <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-                  <li>
-                    <strong>Use extreme adjustments</strong> - good results often require dramatic bass and treble
-                    boosts
-                  </li>
-                  <li>
-                    <strong>Test all positions</strong> - check multiple points as each responds differently to EQ
-                    changes
-                  </li>
-                  <li>
-                    <strong>Toggle EQ on/off</strong> - compare with and without EQ to verify you're making improvements
-                  </li>
-                  <li>
-                    <strong>Trust your ears</strong> - effective changes may seem unintuitive, but focus on what sounds
-                    right
-                  </li>
-                  <li>
-                    <strong>Use calibration sounds only</strong> - calibrating while listening to music rarely works
-                    well
-                  </li>
-                </ul>
+                <details className="group">
+                  <summary className="font-medium mb-2 cursor-pointer flex items-center">
+                    <h4>Tips</h4>
+                    <svg
+                      className="ml-2 h-4 w-4 transition-transform group-open:rotate-180"
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </summary>
+                  <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground mt-2">
+                    <li>
+                      <strong>Use extreme adjustments</strong> - good results often require dramatic bass and treble
+                      boosts
+                    </li>
+                    <li>
+                      <strong>Test all positions</strong> - check multiple points as each responds differently to EQ
+                      changes
+                    </li>
+                    <li>
+                      <strong>Toggle EQ on/off</strong> - compare with and without EQ to verify you're making
+                      improvements
+                    </li>
+                    <li>
+                      <strong>Trust your ears</strong> - effective changes may seem unintuitive, but focus on what
+                      sounds right
+                    </li>
+                    <li>
+                      <strong>Use calibration sounds only</strong> - calibrating while listening to music rarely works
+                      well
+                    </li>
+                  </ul>
+                </details>
               </div>
 
               <InfoCircle>

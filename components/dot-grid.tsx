@@ -1,8 +1,7 @@
 "use client"
 
 import type React from "react"
-
-import { useRef, useEffect } from "react"
+import { useRef, useEffect, useState } from "react"
 
 interface DotGridProps {
   selectedDot: [number, number] | null
@@ -13,6 +12,29 @@ interface DotGridProps {
 
 export function DotGrid({ selectedDot, setSelectedDot, gridSize, disabled = false }: DotGridProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [isDarkMode, setIsDarkMode] = useState(false)
+
+  // Set up observer to detect theme changes
+  useEffect(() => {
+    // Initial check
+    setIsDarkMode(document.documentElement.classList.contains("dark"))
+
+    // Set up mutation observer to watch for class changes on html element
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.attributeName === "class") {
+          const newIsDarkMode = document.documentElement.classList.contains("dark")
+          setIsDarkMode(newIsDarkMode)
+        }
+      })
+    })
+
+    observer.observe(document.documentElement, { attributes: true })
+
+    return () => {
+      observer.disconnect()
+    }
+  }, [])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -30,9 +52,6 @@ export function DotGrid({ selectedDot, setSelectedDot, gridSize, disabled = fals
 
     // Clear canvas
     ctx.clearRect(0, 0, rect.width, rect.height)
-
-    // Check if we're in dark mode
-    const isDarkMode = document.documentElement.classList.contains("dark")
 
     // Calculate dot size and spacing
     const dotRadius = Math.min(rect.width, rect.height) / (gridSize * 3)
@@ -56,17 +75,17 @@ export function DotGrid({ selectedDot, setSelectedDot, gridSize, disabled = fals
         } else {
           ctx.fillStyle = disabled
             ? isDarkMode
-              ? "#1e293b"
-              : "#e2e8f0" // slate-800 or slate-200
+              ? "#27272a" // zinc-800 - darker for better contrast in dark mode
+              : "#e2e8f0" // slate-200
             : isDarkMode
-              ? "#475569"
-              : "#cbd5e1" // slate-600 or slate-300
+              ? "#52525b" // zinc-600 - brighter for better visibility in dark mode
+              : "#cbd5e1" // slate-300
         }
 
         ctx.fill()
       }
     }
-  }, [selectedDot, gridSize, disabled])
+  }, [selectedDot, gridSize, disabled, isDarkMode]) // Using isDarkMode instead of theme
 
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (disabled) return

@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
+import { useTheme } from "@/components/theme-provider"
 
 interface FrequencyGraphProps {
   selectedDot: [number, number] | null
@@ -10,7 +11,32 @@ interface FrequencyGraphProps {
 
 export function FrequencyGraph({ selectedDot, disabled = false, className }: FrequencyGraphProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const { theme } = useTheme()
+  const [isDarkMode, setIsDarkMode] = useState(false)
 
+  // Set up observer to detect theme changes
+  useEffect(() => {
+    // Initial check
+    setIsDarkMode(document.documentElement.classList.contains("dark"))
+
+    // Set up mutation observer to watch for class changes on html element
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.attributeName === "class") {
+          const newIsDarkMode = document.documentElement.classList.contains("dark")
+          setIsDarkMode(newIsDarkMode)
+        }
+      })
+    })
+
+    observer.observe(document.documentElement, { attributes: true })
+
+    return () => {
+      observer.disconnect()
+    }
+  }, [])
+
+  // Redraw canvas when theme or other dependencies change
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -28,11 +54,8 @@ export function FrequencyGraph({ selectedDot, disabled = false, className }: Fre
     // Clear canvas
     ctx.clearRect(0, 0, rect.width, rect.height)
 
-    // Check if we're in dark mode
-    const isDarkMode = document.documentElement.classList.contains("dark")
-
     // Draw background grid
-    ctx.strokeStyle = isDarkMode ? "#2a2a3c" : "#e2e8f0"
+    ctx.strokeStyle = isDarkMode ? "#3f3f5c" : "#e2e8f0" // Darker grid lines for dark mode
     ctx.lineWidth = 1
 
     // Vertical grid lines (frequency bands)
@@ -56,7 +79,7 @@ export function FrequencyGraph({ selectedDot, disabled = false, className }: Fre
     }
 
     // Draw frequency labels
-    ctx.fillStyle = isDarkMode ? "#94a3b8" : "#64748b"
+    ctx.fillStyle = isDarkMode ? "#a1a1aa" : "#64748b" // Brighter text for dark mode
     ctx.font = "10px sans-serif"
     ctx.textAlign = "center"
 
@@ -76,7 +99,7 @@ export function FrequencyGraph({ selectedDot, disabled = false, className }: Fre
 
     // Draw EQ curve
     if (disabled) {
-      ctx.strokeStyle = isDarkMode ? "#64748b" : "#94a3b8" // slate-400/500 if disabled
+      ctx.strokeStyle = isDarkMode ? "#71717a" : "#94a3b8" // Brighter disabled curve for dark mode
     } else {
       // Create gradient for the EQ curve - using electric blue colors
       const gradient = ctx.createLinearGradient(0, 0, rect.width, 0)
@@ -124,11 +147,11 @@ export function FrequencyGraph({ selectedDot, disabled = false, className }: Fre
       }
     }
     ctx.stroke()
-  }, [selectedDot, disabled])
+  }, [selectedDot, disabled, isDarkMode]) // Using isDarkMode instead of theme
 
   return (
     <div
-      className={`w-full aspect-[2/1] frequency-graph bg-white dark:bg-card rounded-lg border overflow-hidden ${disabled ? "opacity-70" : ""} ${className || ""}`}
+      className={`w-full aspect-[2/1] frequency-graph bg-white dark:bg-card rounded-lg border dark:border-gray-700 overflow-hidden ${disabled ? "opacity-70" : ""} ${className || ""}`}
     >
       <canvas ref={canvasRef} className="w-full h-full" />
     </div>
