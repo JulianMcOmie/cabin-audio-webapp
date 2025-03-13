@@ -1,0 +1,1 @@
+export type SyncStatus = 'synced' | 'modified' | 'pending' | 'conflict'; 
