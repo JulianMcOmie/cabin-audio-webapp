@@ -12,22 +12,13 @@ import { PricingModal } from "@/components/pricing-modal"
 import { MobileView } from "@/components/mobile-view"
 import { ProfilePage } from "@/components/profile-page"
 import { SignupModal } from "@/components/signup-modal"
+import { usePlayerStore } from "@/lib/stores"
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<"eq" | "library" | "export" | "desktop" | "mobile" | "profile">("library")
-  const [isPlaying, setIsPlaying] = useState(false)
   const [showPricingModal, setShowPricingModal] = useState(false)
   const [showSignupModal, setShowSignupModal] = useState(false)
   const [eqEnabled, setEqEnabled] = useState(false) // Add this state
-  const [currentTrack, setCurrentTrack] = useState({
-    id: "default-track", // Add id property to fix linter error
-    title: "Ambient Forest",
-    artist: "Nature Sounds",
-    album: "Relaxation Series",
-    duration: 240, // in seconds
-    currentTime: 45, // in seconds
-    coverUrl: "/placeholder.svg?height=60&width=60",
-  })
 
   // Function to show the upgrade/pricing modal
   const handleShowUpgrade = () => {
@@ -38,6 +29,10 @@ export default function Home() {
   const handleShowSignup = () => {
     setShowSignupModal(true);
   }
+
+  // Get isPlaying and setIsPlaying from playerStore for EQView
+  const isPlaying = usePlayerStore(state => state.isPlaying);
+  const setIsPlaying = usePlayerStore(state => state.setIsPlaying);
 
   return (
     <div className="flex flex-col h-screen bg-background">
@@ -63,8 +58,6 @@ export default function Home() {
                 />
               ) : activeTab === "library" ? (
                 <MusicLibrary 
-                  setCurrentTrack={setCurrentTrack} 
-                  setIsPlaying={setIsPlaying} 
                   eqEnabled={eqEnabled}
                   setActiveTab={setActiveTab}
                   onSignupClick={handleShowSignup}
@@ -83,11 +76,7 @@ export default function Home() {
         </div>
       </div>
 
-      <PlayerBar 
-        track={currentTrack} 
-        playing={isPlaying} 
-        onPlayPause={() => setIsPlaying(!isPlaying)} 
-      />
+      <PlayerBar />
 
       <PricingModal open={showPricingModal} onClose={() => setShowPricingModal(false)} />
       <SignupModal open={showSignupModal} onClose={() => setShowSignupModal(false)} />

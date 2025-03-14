@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/common/ToastManager"
 import { useFileImport } from "@/lib/hooks/useFileImport"
 import { FileImportOverlay } from "@/components/import/FileImportOverlay"
-import { useTrackStore } from "@/lib/stores"
+import { useTrackStore, usePlayerStore } from "@/lib/stores"
 import { Track as TrackModel } from "@/lib/models/Track"
 
 // Import the extracted components
@@ -31,21 +31,20 @@ interface Track {
 }
 
 interface MusicLibraryProps {
-  setCurrentTrack: (track: any) => void
-  setIsPlaying: (isPlaying: boolean) => void
   eqEnabled: boolean
   setActiveTab: (tab: "eq" | "library" | "export" | "desktop" | "mobile" | "profile") => void
   onSignupClick: () => void
 }
 
-export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled, setActiveTab, onSignupClick }: MusicLibraryProps) {
+export function MusicLibrary({ eqEnabled, setActiveTab, onSignupClick }: MusicLibraryProps) {
   const { showToast } = useToast()
   // Connect to trackStore
   const { getTracks, getTrackById, addTrack } = useTrackStore()
+  // Connect to playerStore
+  const { currentTrackId, isPlaying, setCurrentTrack, setIsPlaying } = usePlayerStore()
+  
   const [isLoading, setIsLoading] = useState(true)
   const [tracks, setTracks] = useState<Track[]>([])
-  const [currentlyPlaying, setCurrentlyPlaying] = useState<string | null>(null)
-  const [isPlayingLocal, setIsPlayingLocal] = useState(false)
 
   // Convert store tracks to UI tracks
   const convertStoreTracksToUI = () => {
@@ -234,21 +233,13 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled, setActi
     // Get full track from store
     const storeTrack = getTrackById(track.id);
     
-    if (currentlyPlaying === track.id) {
+    if (currentTrackId === track.id) {
       // If the same track is clicked, toggle play/pause
-      setIsPlayingLocal(!isPlayingLocal)
-      setIsPlaying(!isPlayingLocal)
+      setIsPlaying(!isPlaying);
     } else {
       // If a different track is clicked, select it and start playing
-      setCurrentTrack({
-        ...track,
-        currentTime: 0,
-        // Include store track data for backend operations
-        storeTrack
-      })
-      setCurrentlyPlaying(track.id)
-      setIsPlayingLocal(true)
-      setIsPlaying(true)
+      setCurrentTrack(track.id);
+      setIsPlaying(true);
     }
   }
 
@@ -269,8 +260,7 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled, setActi
   }
 
   const handleTogglePlayback = () => {
-    setIsPlayingLocal(!isPlayingLocal)
-    setIsPlaying(!isPlayingLocal)
+    setIsPlaying(!isPlaying);
   }
 
   // Show loading skeleton while loading
@@ -344,8 +334,8 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled, setActi
             <TrackItem
               key={track.id}
               track={track}
-              isPlaying={isPlayingLocal && currentlyPlaying === track.id}
-              isCurrentTrack={currentlyPlaying === track.id}
+              isPlaying={isPlaying && currentTrackId === track.id}
+              isCurrentTrack={currentTrackId === track.id}
               onPlay={handleTrackSelect}
               onTogglePlayPause={handleTogglePlayback}
               isLastItem={index === tracks.length - 1}

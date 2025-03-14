@@ -44,6 +44,31 @@ export const usePlayerStore = create<PlayerState>((set) => ({
       loadingProgress: 0,
       error: null
     });
+    
+    // Simulate loading process if a track is selected
+    if (trackId) {
+      // Simulate progress updates
+      const progressInterval = setInterval(() => {
+        set((state) => {
+          // Stop updating if we've reached 100% or if state is no longer loading
+          if (state.loadingProgress >= 100 || state.loadingState !== 'loading') {
+            clearInterval(progressInterval);
+            return state;
+          }
+          return { loadingProgress: 0 };
+        });
+      }, 50);
+      
+      // Simulate track loading completion after 0.5 seconds
+      setTimeout(() => {
+        clearInterval(progressInterval);
+        set({ 
+          loadingState: 'ready',
+          loadingProgress: 0,
+          duration: 240 // Set a default duration of 4 minutes
+        });
+      }, 500);
+    }
   },
   
   setIsPlaying: (isPlaying: boolean) => {

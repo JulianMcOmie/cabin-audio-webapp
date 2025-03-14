@@ -5,7 +5,7 @@ import { Pause, Play, SkipBack, SkipForward, Volume2, VolumeX, Loader2 } from "l
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import { useToast } from "@/components/common/ToastManager"
-import { usePlayer } from "@/lib/hooks/usePlayer"
+import { usePlayerStore, useTrackStore } from "@/lib/stores"
 
 // Dummy track interface
 interface Track {
@@ -18,76 +18,55 @@ interface Track {
   currentTime?: number
 }
 
-interface PlayerBarProps {
-  track: {
-    id: string
-    title: string
-    artist: string
-    album: string
-    duration: number
-    currentTime: number
-    coverUrl: string
-  }
-  playing: boolean
-  onPlayPause: () => void
-}
-
-export function PlayerBar({ track, playing, onPlayPause }: PlayerBarProps) {
+export function PlayerBar() {
   const { showToast } = useToast()
+  
+  // Get state directly from playerStore
+  const {
+    currentTrackId,
+    isPlaying,
+    currentTime,
+    duration,
+    volume,
+    isMuted,
+    loadingState,
+    loadingProgress,
+    error,
+    setCurrentTrack,
+    setIsPlaying,
+    setVolume,
+    setIsMuted
+  } = usePlayerStore()
+  
+  // Get track information from the track store
+  const getTrackById = useTrackStore(state => state.getTrackById)
+  const currentTrack = currentTrackId ? getTrackById(currentTrackId) : null
+  
   const [isTrackLoading, setIsTrackLoading] = useState(false)
-  const [currentTrack, setCurrentTrack] = useState<Track | null>(track || null)
-  const [isPlaying, setIsPlaying] = useState(playing)
-  const [currentTime, setCurrentTime] = useState(track.currentTime || 0)
-  const [volume, setVolume] = useState(80)
-  const [isMuted, setIsMuted] = useState(false)
 
-  // Update track when prop changes
+  // Update loading state when loadingState changes
   useEffect(() => {
-    if (track && track.id !== currentTrack?.id) {
-      setIsTrackLoading(true)
+    console.log(`[PlayerBar] loadingState: ${loadingState}`)
+    setIsTrackLoading(loadingState === 'loading' || loadingState === 'decoding')
+  }, [loadingState])
 
-      // Simulate loading the track
-      setTimeout(() => {
-        setCurrentTrack(track)
-        setCurrentTime(track.currentTime || 0)
-        setIsPlaying(true)
-        setIsTrackLoading(false)
-
-        showToast({
-          message: `Now playing: ${track.title}`,
-          variant: "info",
-          duration: 3000,
-        })
-      }, 1000)
-    }
-  }, [track, currentTrack, showToast])
-
-  // Update progress when playing
+  // Display error toast if there's an error
   useEffect(() => {
-    let interval: NodeJS.Timeout
-
-    if (isPlaying && currentTrack && !isTrackLoading) {
-      interval = setInterval(() => {
-        setCurrentTime((prev) => {
-          if (prev >= (currentTrack.duration || 0)) {
-            setIsPlaying(false)
-            return 0
-          }
-          return prev + 1
-        })
-      }, 1000)
+    if (error) {
+      showToast({
+        message: `Playback error: ${error}`,
+        variant: "error",
+      })
     }
-
-    return () => clearInterval(interval)
-  }, [isPlaying, currentTrack, isTrackLoading])
+  }, [error, showToast])
 
   const handlePlay = () => {
-    if (currentTrack) {
-      setIsPlaying(true)
-    }
+    console.log(`[PlayerBar] playingState: ${isPlaying}`)
+    setIsPlaying(true)
   }
 
   const handlePause = () => {
+    console.log(`[PlayerBar] pausing`)
     setIsPlaying(false)
   }
 
@@ -116,13 +95,14 @@ export function PlayerBar({ track, playing, onPlayPause }: PlayerBarProps) {
   }
 
   const handleProgressChange = (value: number[]) => {
-    if (currentTrack) {
-      setCurrentTime(value[0])
+    if (currentTrackId) {
+      // This will need to be updated to use the proper seek functionality
+      // when we implement the audio engine integration
     }
   }
 
   const handleVolumeChange = (value: number[]) => {
-    setVolume(value[0])
+    setVolume(value[0] / 100)
     if (value[0] === 0) {
       setIsMuted(true)
     } else if (isMuted) {
@@ -158,7 +138,12 @@ export function PlayerBar({ track, playing, onPlayPause }: PlayerBarProps) {
 
             <div className="flex items-center gap-2 w-full max-w-md">
               <div className="text-xs w-8 text-right">0:00</div>
-              <div className="h-1 bg-muted rounded-full flex-1"></div>
+              <div className="h-1 bg-muted rounded-full flex-1">
+                <div 
+                  className="h-1 bg-primary rounded-full" 
+                  style={{ width: `${loadingProgress}%` }}
+                ></div>
+              </div>
               <div className="text-xs w-8">0:00</div>
             </div>
           </div>
@@ -185,19 +170,24 @@ export function PlayerBar({ track, playing, onPlayPause }: PlayerBarProps) {
     )
   }
 
+  // Get display values for the track
+  const artistName = currentTrack.artistId || "Unknown Artist"
+  const albumName = currentTrack.albumId || "Unknown Album"
+  const coverUrl = currentTrack.coverStorageKey || "/placeholder.svg?height=48&width=48"
+
   // Render normal state with track
   return (
     <div className="player-bar p-2 w-full border-t bg-background">
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-3 w-[30%] min-w-[180px]">
           <img
-            src={currentTrack.coverUrl || "/placeholder.svg"}
-            alt={`${currentTrack.album} cover`}
+            src={coverUrl}
+            alt={`${albumName} cover`}
             className="h-12 w-12 rounded-md object-cover"
           />
           <div className="flex flex-col min-w-0">
             <div className="text-sm font-medium truncate">{currentTrack.title}</div>
-            <div className="text-xs text-muted-foreground truncate">{currentTrack.artist}</div>
+            <div className="text-xs text-muted-foreground truncate">{artistName}</div>
           </div>
         </div>
 
@@ -218,12 +208,12 @@ export function PlayerBar({ track, playing, onPlayPause }: PlayerBarProps) {
             <div className="text-xs w-8 text-right">{formatTime(currentTime)}</div>
             <Slider
               value={[currentTime]}
-              max={currentTrack.duration}
+              max={duration}
               step={1}
               onValueChange={handleProgressChange}
               className="flex-1"
             />
-            <div className="text-xs w-8">{formatTime(currentTrack.duration)}</div>
+            <div className="text-xs w-8">{formatTime(duration)}</div>
           </div>
         </div>
 
@@ -232,7 +222,7 @@ export function PlayerBar({ track, playing, onPlayPause }: PlayerBarProps) {
             {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
           </Button>
           <Slider
-            value={[isMuted ? 0 : volume]}
+            value={[isMuted ? 0 : volume * 100]}
             max={100}
             step={1}
             onValueChange={handleVolumeChange}
