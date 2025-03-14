@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Pause, Play, SkipBack, SkipForward, Volume2, VolumeX, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
@@ -35,7 +35,8 @@ export function PlayerBar() {
     setCurrentTrack,
     setIsPlaying,
     setVolume,
-    setIsMuted
+    setIsMuted,
+    seekTo
   } = usePlayerStore()
   
   // Get track information from the track store
@@ -43,12 +44,23 @@ export function PlayerBar() {
   const currentTrack = currentTrackId ? getTrackById(currentTrackId) : null
   
   const [isTrackLoading, setIsTrackLoading] = useState(false)
+  // State to track seeking and temporary position during seek
+  const [isSeeking, setIsSeeking] = useState(false)
+  const [seekPosition, setSeekPosition] = useState(0)
+  const wasPlayingRef = useRef(false)
 
   // Update loading state when loadingState changes
   useEffect(() => {
     console.log(`[PlayerBar] loadingState: ${loadingState}`)
     setIsTrackLoading(loadingState === 'loading' || loadingState === 'decoding')
   }, [loadingState])
+
+  // Keep seekPosition in sync with currentTime when not seeking
+  useEffect(() => {
+    if (!isSeeking) {
+      setSeekPosition(currentTime);
+    }
+  }, [currentTime, isSeeking]);
 
   // Display error toast if there's an error
   useEffect(() => {
@@ -94,10 +106,40 @@ export function PlayerBar() {
     return `${mins}:${secs.toString().padStart(2, "0")}`
   }
 
-  const handleProgressChange = (value: number[]) => {
-    if (currentTrackId) {
-      // This will need to be updated to use the proper seek functionality
-      // when we implement the audio engine integration
+  // Called while the user is dragging the slider
+  const handleProgressDrag = (value: number[]) => {
+    if (!isSeeking) {
+      // When user starts seeking, store current playing state
+      setIsSeeking(true);
+      wasPlayingRef.current = isPlaying;
+      
+      // If currently playing, pause during seeking to avoid duplicate nodes
+      if (isPlaying) {
+        setIsPlaying(false);
+      }
+    }
+    
+    // Update the seekPosition state (visual only, no actual seeking yet)
+    setSeekPosition(value[0]);
+  }
+
+  // Called when the user releases the slider
+  const handleProgressCommit = (value: number[]) => {
+    if (currentTrackId && duration > 0) {
+      console.log(`[PlayerBar] Seeking to ${value[0]} seconds`);
+      
+      // Perform the actual seek operation
+      seekTo(value[0]);
+      
+      // Resume playback if it was playing before seeking
+      if (wasPlayingRef.current) {
+        setTimeout(() => {
+          setIsPlaying(true);
+        }, 50); // Small delay to ensure the seek completes before playback resumes
+      }
+      
+      // Reset seeking state
+      setIsSeeking(false);
     }
   }
 
@@ -205,13 +247,16 @@ export function PlayerBar() {
           </div>
 
           <div className="flex items-center gap-2 w-full max-w-md">
-            <div className="text-xs w-8 text-right">{formatTime(currentTime)}</div>
+            <div className="text-xs w-8 text-right">{formatTime(isSeeking ? seekPosition : currentTime)}</div>
             <Slider
-              value={[currentTime]}
+              value={[isSeeking ? seekPosition : currentTime]}
               max={duration}
-              step={1}
-              onValueChange={handleProgressChange}
+              step={0.1}
+              onValueChange={handleProgressDrag}
+              onValueCommit={handleProgressCommit}
               className="flex-1"
+              aria-label="Playback progress"
+              disabled={!currentTrackId || duration === 0}
             />
             <div className="text-xs w-8">{formatTime(duration)}</div>
           </div>
