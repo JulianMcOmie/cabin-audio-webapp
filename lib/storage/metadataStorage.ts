@@ -6,60 +6,69 @@ import { Album } from '../models/Album';
 import { Artist } from '../models/Artist';
 import { useTrackStore, useAlbumStore, useArtistStore } from '../stores';
 
-// Extract metadata from an audio file
-export const extractMetadata = async (file: File): Promise<{
-  title: string;
-  artist: string;
-  album: string;
-  year?: number;
-  trackNumber?: number;
-  genre?: string;
-  coverArt?: Blob;
-}> => {
-  // In a real implementation, we would use a library like music-metadata-browser
-  // to extract metadata from the audio file. For this implementation, we'll
-  // simulate metadata extraction from the filename.
+interface AudioMetadata {
+  title: string
+  artist: string
+  album: string
+  duration: number
+  year?: number
+  trackNumber?: number
+  genre?: string
+  coverArt?: Blob
+}
+
+/**
+ * Extracts metadata from an audio file using Web Audio API for duration
+ * and basic file parsing for ID3/metadata tags
+ */
+export async function extractMetadata(file: File): Promise<AudioMetadata> {
+  // Get duration using Web Audio API
+  const duration = await getAudioDuration(file)
   
-  const filename = file.name.replace(/\.[^/.]+$/, ''); // Remove extension
-  
-  // Try to parse filename in format "Artist - Album - Track# - Title"
-  const parts = filename.split(' - ');
-  
-  let title = filename;
-  let artist = 'Unknown Artist';
-  let album = 'Unknown Album';
-  let trackNumber: number | undefined = undefined;
-  
-  if (parts.length >= 2) {
-    // At minimum, assume "Artist - Title" format
-    artist = parts[0];
-    title = parts[parts.length - 1];
+  // For now return basic metadata with just duration
+  // In a full implementation, we would parse ID3 tags here
+  return {
+    title: file.name.replace(/\.[^/.]+$/, ""),
+    artist: "Unknown Artist",
+    album: "Unknown Album", 
+    duration
+  }
+}
+
+/**
+ * Gets audio duration using Web Audio API
+ */
+async function getAudioDuration(file: File): Promise<number> {
+  return new Promise((resolve, reject) => {
+    // Create temporary audio context
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)()
     
-    if (parts.length >= 3) {
-      // If we have at least 3 parts, assume middle part is album
-      album = parts[1];
-      
-      if (parts.length >= 4) {
-        // If we have 4 parts, try to parse track number
-        const trackStr = parts[2];
-        const trackNum = parseInt(trackStr, 10);
-        if (!isNaN(trackNum)) {
-          trackNumber = trackNum;
+    // Create file reader to get array buffer
+    const reader = new FileReader()
+    
+    reader.onload = async (e) => {
+      try {
+        if (!e.target?.result || typeof e.target.result === 'string') {
+          throw new Error('Failed to read file')
         }
+        
+        // Decode audio data to get duration
+        const audioBuffer = await audioContext.decodeAudioData(e.target.result)
+        resolve(audioBuffer.duration)
+        
+        // Clean up
+        audioContext.close()
+      } catch (error) {
+        reject(error)
       }
     }
-  }
-  
-  // For this implementation, we don't have real cover art extraction
-  // In a real app, we would extract it from the audio file's metadata
-  
-  return {
-    title,
-    artist,
-    album,
-    trackNumber
-  };
-};
+    
+    reader.onerror = (error) => reject(error)
+    
+    // Read file as array buffer
+    reader.readAsArrayBuffer(file)
+  })
+}
 
 // Save track metadata to IndexedDB and update stores
 export const saveTrackMetadata = async (
@@ -135,7 +144,7 @@ export const saveTrackMetadata = async (
     title: metadata.title,
     artistId,
     albumId,
-    duration: 0, // We'll update this after decoding the audio
+    duration: metadata.duration,
     trackNumber: metadata.trackNumber,
     year: metadata.year,
     genre: metadata.genre,

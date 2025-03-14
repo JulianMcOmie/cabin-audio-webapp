@@ -42,9 +42,13 @@ export function TrackItem({
   const [isHovered, setIsHovered] = useState(false);
   
   const formatDuration = (seconds: number) => {
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-    return `${mins}:${secs.toString().padStart(2, "0")}`
+    if (!seconds || isNaN(seconds)) return "0:00";
+    
+    // Round to nearest second to avoid floating point issues
+    const totalSeconds = Math.round(seconds);
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = Math.floor(totalSeconds % 60);
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
   }
 
   const handleMouseEnter = () => setIsHovered(true);

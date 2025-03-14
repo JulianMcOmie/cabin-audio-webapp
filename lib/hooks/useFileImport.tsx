@@ -107,12 +107,19 @@ export function useFileImport({ onComplete, onError }: UseFileImportOptions = {}
         syncStatus: 'pending'
       }
       
-      // Attempt to extract real metadata (in a real app)
-      // Here we simulate with a timeout for demo purposes
-      await new Promise(resolve => setTimeout(resolve, 100))
-      
-      // In a real app, we would set the real duration here
-      track.duration = Math.floor(Math.random() * 300) + 120
+      // Extract real metadata from audio file
+      try {
+        const metadata = await metadataStorage.extractMetadata(file)
+        if (metadata) {
+          track.title = metadata.title || track.title
+          track.artistId = metadata.artist || track.artistId
+          track.albumId = metadata.album || track.albumId
+          track.duration = metadata.duration || track.duration
+        }
+      } catch (error) {
+        console.warn("Failed to extract metadata:", error)
+        // Continue with basic track info if metadata extraction fails
+      }
       
       return track
     } catch (error) {
