@@ -78,36 +78,8 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled, setActi
         message: `Successfully imported ${files.length} files`,
         variant: 'success'
       })
-
-      // Add imported tracks to the store and UI
-      const newTracks = files.map((file, index) => {
-        const id = `imported-${Date.now()}-${index}`;
-        const title = file.name.replace(/\.[^/.]+$/, "");
-        
-        // Add to store first
-        const storeTrack: TrackModel = {
-          id,
-          title,
-          duration: Math.floor(Math.random() * 300) + 120,
-          storageKey: `file-${id}`,
-          lastModified: Date.now(),
-          syncStatus: 'pending'
-        };
-        
-        addTrack(storeTrack);
-        
-        // Return UI track
-        return {
-          id,
-          title,
-          artist: "Imported Artist",
-          album: "Imported Album",
-          duration: storeTrack.duration,
-          coverUrl: "/placeholder.svg?height=48&width=48",
-        };
-      });
-
-      setTracks((prev) => [...newTracks, ...prev])
+      // No need to manually add tracks here anymore
+      // The enhanced useFileImport hook now adds tracks directly to the store
     },
     onError: (error) => {
       showToast({
