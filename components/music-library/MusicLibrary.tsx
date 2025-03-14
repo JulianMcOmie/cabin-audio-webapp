@@ -39,7 +39,7 @@ interface MusicLibraryProps {
 export function MusicLibrary({ eqEnabled, setActiveTab, onSignupClick }: MusicLibraryProps) {
   const { showToast } = useToast()
   // Connect to trackStore
-  const { getTracks, getTrackById, addTrack } = useTrackStore()
+  const { getTracks, getTrackById, addTrack, deleteTrack } = useTrackStore()
   // Connect to playerStore
   const { currentTrackId, isPlaying, setCurrentTrack, setIsPlaying } = usePlayerStore()
   
@@ -243,6 +243,15 @@ export function MusicLibrary({ eqEnabled, setActiveTab, onSignupClick }: MusicLi
     }
   }
 
+  const handleTrackRemove = (trackId: string) => {
+    deleteTrack(trackId);
+    showToast({
+      message: "Track removed",
+      variant: 'success'
+    });
+    setTracks(convertStoreTracksToUI());
+  }
+
   const handleImportButtonClick = () => {
     console.log(`[MusicLibrary] Import button clicked`);
     const fileInput = document.getElementById("file-upload") as HTMLInputElement
@@ -338,6 +347,7 @@ export function MusicLibrary({ eqEnabled, setActiveTab, onSignupClick }: MusicLi
               isCurrentTrack={currentTrackId === track.id}
               onPlay={handleTrackSelect}
               onTogglePlayPause={handleTogglePlayback}
+              onRemove={handleTrackRemove}
               isLastItem={index === tracks.length - 1}
             />
           ))}

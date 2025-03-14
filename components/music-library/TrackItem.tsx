@@ -1,7 +1,15 @@
 "use client"
 
-import { Play, Pause } from "lucide-react"
+import { useState } from "react"
+import { Play, Pause, MoreHorizontal } from "lucide-react"
 import { Separator } from "@/components/ui/separator"
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuItem, 
+  DropdownMenuTrigger 
+} from "@/components/ui/dropdown-menu"
+import { Button } from "@/components/ui/button"
 
 interface Track {
   id: string
@@ -18,6 +26,7 @@ interface TrackItemProps {
   isCurrentTrack: boolean
   onPlay: (track: Track) => void
   onTogglePlayPause: () => void
+  onRemove: (trackId: string) => void
   isLastItem?: boolean
 }
 
@@ -27,13 +36,19 @@ export function TrackItem({
   isCurrentTrack, 
   onPlay, 
   onTogglePlayPause,
+  onRemove,
   isLastItem = false
 }: TrackItemProps) {
+  const [isHovered, setIsHovered] = useState(false);
+  
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
     const secs = seconds % 60
     return `${mins}:${secs.toString().padStart(2, "0")}`
   }
+
+  const handleMouseEnter = () => setIsHovered(true);
+  const handleMouseLeave = () => setIsHovered(false);
 
   return (
     <div>
@@ -42,6 +57,8 @@ export function TrackItem({
           isCurrentTrack ? "bg-muted/30" : ""
         }`}
         onClick={() => onPlay(track)}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
       >
         <div className="flex-shrink-0 mr-4 relative group">
           <img
@@ -94,7 +111,33 @@ export function TrackItem({
             {track.artist} • {track.album}
           </p>
         </div>
-        <div className="flex-shrink-0 text-xs text-muted-foreground">{formatDuration(track.duration)}</div>
+        <div className="flex-shrink-0 text-xs text-muted-foreground mr-2">
+          {formatDuration(track.duration)}
+        </div>
+        
+        {/* Ellipsis menu - now takes up space */}
+        <div 
+          className="flex-shrink-0 w-8"
+          onClick={(e) => e.stopPropagation()} // Prevent row click when clicking on menu
+        >
+          <div className={`transition-opacity ${isHovered ? 'opacity-100' : 'opacity-0'}`}>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => onPlay(track)}>
+                  Play
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onRemove(track.id)}>
+                  Remove
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
       </div>
       {!isLastItem && <Separator />}
     </div>
