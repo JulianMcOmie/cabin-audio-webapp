@@ -7,6 +7,8 @@ import { Separator } from "@/components/ui/separator"
 import { useToast } from "@/components/common/ToastManager"
 import { useFileImport } from "@/lib/hooks/useFileImport"
 import { FileImportOverlay } from "@/components/import/FileImportOverlay"
+import { useTrackStore } from "@/lib/stores"
+import { Track as TrackModel } from "@/lib/models/Track"
 
 interface Track {
   id: string
@@ -25,10 +27,25 @@ interface MusicLibraryProps {
 
 export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled }: MusicLibraryProps) {
   const { showToast } = useToast()
+  // Connect to trackStore
+  const { getTracks, getTrackById, addTrack } = useTrackStore()
   const [isLoading, setIsLoading] = useState(true)
   const [tracks, setTracks] = useState<Track[]>([])
   const [currentlyPlaying, setCurrentlyPlaying] = useState<string | null>(null)
   const [isPlayingLocal, setIsPlayingLocal] = useState(false)
+
+  // Convert store tracks to UI tracks
+  const convertStoreTracksToUI = () => {
+    const storeTracks = getTracks();
+    return storeTracks.map((storeTrack): Track => ({
+      id: storeTrack.id,
+      title: storeTrack.title,
+      artist: storeTrack.artistId || "Unknown Artist",
+      album: storeTrack.albumId || "Unknown Album",
+      duration: storeTrack.duration,
+      coverUrl: storeTrack.coverStorageKey || "/placeholder.svg?height=48&width=48",
+    }));
+  }
 
   // File import state
   const {
@@ -46,90 +63,129 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled }: Music
     onComplete: (files) => {
       showToast({
         message: `Successfully imported ${files.length} files`,
-        type: 'success'
+        variant: 'success'
       })
 
-      // Add imported tracks to the list
-      const newTracks = files.map((file, index) => ({
-        id: `imported-${Date.now()}-${index}`,
-        title: file.name.replace(/\.[^/.]+$/, ""), // Remove file extension
-        artist: "Imported Artist",
-        album: "Imported Album",
-        duration: Math.floor(Math.random() * 300) + 120, // Random duration
-        coverUrl: "/placeholder.svg?height=48&width=48",
-      }))
+      // Add imported tracks to the store and UI
+      const newTracks = files.map((file, index) => {
+        const id = `imported-${Date.now()}-${index}`;
+        const title = file.name.replace(/\.[^/.]+$/, "");
+        
+        // Add to store first
+        const storeTrack: TrackModel = {
+          id,
+          title,
+          duration: Math.floor(Math.random() * 300) + 120,
+          storageKey: `file-${id}`,
+          lastModified: Date.now(),
+          syncStatus: 'pending'
+        };
+        
+        addTrack(storeTrack);
+        
+        // Return UI track
+        return {
+          id,
+          title,
+          artist: "Imported Artist",
+          album: "Imported Album",
+          duration: storeTrack.duration,
+          coverUrl: "/placeholder.svg?height=48&width=48",
+        };
+      });
 
       setTracks((prev) => [...newTracks, ...prev])
     },
     onError: (error) => {
       showToast({
         message: error,
-        type: 'error'
+        variant: 'error'
       })
     },
   })
 
-  // Simulate API call to load tracks
+  // Load tracks from store or add sample data
   useEffect(() => {
     const loadTracks = async () => {
       setIsLoading(true)
       try {
-        // Simulate API call with timeout
+        // Simulate API call with timeout - keeping original behavior
         await new Promise((resolve) => setTimeout(resolve, 1500))
 
-        // Empty state by default - no tracks loaded
-        // To test with data, add ?data=true to the URL
-        const urlParams = new URLSearchParams(window.location.search)
-        const showData = urlParams.get("data") === "true"
+        const storeTracksCount = getTracks().length;
+        
+        // If store is empty, populate with sample data if URL param is present
+        if (storeTracksCount === 0) {
+          const urlParams = new URLSearchParams(window.location.search)
+          const showData = urlParams.get("data") === "true"
 
-        if (showData) {
-          setTracks([
-            {
-              id: "1",
-              title: "Ambient Forest",
-              artist: "Nature Sounds",
-              album: "Relaxation Series",
-              duration: 240,
-              coverUrl: "/placeholder.svg?height=48&width=48",
-            },
-            {
-              id: "2",
-              title: "Ocean Waves",
-              artist: "Nature Sounds",
-              album: "Relaxation Series",
-              duration: 320,
-              coverUrl: "/placeholder.svg?height=48&width=48",
-            },
-            {
-              id: "3",
-              title: "Rainy Day",
-              artist: "Nature Sounds",
-              album: "Relaxation Series",
-              duration: 180,
-              coverUrl: "/placeholder.svg?height=48&width=48",
-            },
-            {
-              id: "4",
-              title: "Mountain Stream",
-              artist: "Nature Sounds",
-              album: "Relaxation Series",
-              duration: 290,
-              coverUrl: "/placeholder.svg?height=48&width=48",
-            },
-            {
-              id: "5",
-              title: "Thunderstorm",
-              artist: "Nature Sounds",
-              album: "Relaxation Series",
-              duration: 350,
-              coverUrl: "/placeholder.svg?height=48&width=48",
-            },
-          ])
+          if (showData) {
+            // Add sample data to the store
+            const sampleTracks: TrackModel[] = [
+              {
+                id: "1",
+                title: "Ambient Forest",
+                artistId: "Nature Sounds", 
+                albumId: "Relaxation Series",
+                duration: 240,
+                storageKey: "ambient-forest.mp3",
+                lastModified: Date.now(),
+                syncStatus: 'pending'
+              },
+              {
+                id: "2",
+                title: "Ocean Waves",
+                artistId: "Nature Sounds",
+                albumId: "Relaxation Series",
+                duration: 320,
+                storageKey: "ocean-waves.mp3",
+                lastModified: Date.now(),
+                syncStatus: 'pending'
+              },
+              {
+                id: "3",
+                title: "Rainy Day",
+                artistId: "Nature Sounds",
+                albumId: "Relaxation Series",
+                duration: 180,
+                storageKey: "rainy-day.mp3",
+                lastModified: Date.now(),
+                syncStatus: 'pending'
+              },
+              {
+                id: "4",
+                title: "Mountain Stream",
+                artistId: "Nature Sounds",
+                albumId: "Relaxation Series",
+                duration: 290,
+                storageKey: "mountain-stream.mp3",
+                lastModified: Date.now(),
+                syncStatus: 'pending'
+              },
+              {
+                id: "5",
+                title: "Thunderstorm",
+                artistId: "Nature Sounds",
+                albumId: "Relaxation Series",
+                duration: 350,
+                storageKey: "thunderstorm.mp3",
+                lastModified: Date.now(),
+                syncStatus: 'pending'
+              },
+            ];
+            
+            // Add each track to the store
+            sampleTracks.forEach(track => addTrack(track));
+          }
         }
+        
+        // Convert store tracks to UI format and update state
+        const uiTracks = convertStoreTracksToUI();
+        setTracks(uiTracks);
       } catch (error) {
         showToast({
           message: "Failed to load tracks",
-          type: 'error'
+          variant: 'error'
         })
       } finally {
         setIsLoading(false)
@@ -137,7 +193,19 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled }: Music
     }
 
     loadTracks()
-  }, [showToast])
+    
+    // Subscribe to track store changes
+    const unsubscribe = useTrackStore.subscribe(
+      () => {
+        // Only update if component is mounted (not loading)
+        if (!isLoading) {
+          setTracks(convertStoreTracksToUI());
+        }
+      }
+    );
+    
+    return () => unsubscribe();
+  }, [showToast, addTrack, getTracks])
 
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
@@ -146,6 +214,9 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled }: Music
   }
 
   const handleTrackSelect = (track: Track) => {
+    // Get full track from store
+    const storeTrack = getTrackById(track.id);
+    
     if (currentlyPlaying === track.id) {
       // If the same track is clicked, toggle play/pause
       setIsPlayingLocal(!isPlayingLocal)
@@ -155,6 +226,8 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled }: Music
       setCurrentTrack({
         ...track,
         currentTime: 0,
+        // Include store track data for backend operations
+        storeTrack
       })
       setCurrentlyPlaying(track.id)
       setIsPlayingLocal(true)
