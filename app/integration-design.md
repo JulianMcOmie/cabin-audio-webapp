@@ -520,29 +520,32 @@ This phase connects stores to existing IndexedDB storage services.
 
 ### Phase 4: Basic Playback Controls
 
-This phase implements basic track playback functionality.
+This phase connects playerStore to the existing audio implementation.
 
-**Integration Tasks**:
+**Files to Modify:**
+1. `/lib/stores/playerStore.ts` - Connect to audioPlayer
 
-1. **Player Hook Enhancements**:
-   - Connect to audio engine components
-   - Implement all playback controls
-   - Handle loading and error states
+**Tasks:**
+1. Modify playerStore's setCurrentTrack to:
+   - Get track from trackStore using its ID
+   - Set loading state
+   - Call audioPlayer.loadTrack with track.storageKey
+   - Update state when loading completes/fails
 
-2. **UI Updates**:
-   - Add progress indicators for track loading
-   - Enhance player controls with all available actions
-   - Implement seek functionality
+2. Connect play/pause controls:
+   - In setIsPlaying: call audioPlayer.play/pause
+   - In seekTo: call audioPlayer.seekTo
 
 3. **Error Handling**:
-   - Add clear error messages for playback issues
-   - Provide retry options for failed playback
-   - Use toast notifications for important issues
+   - Audio-specific errors (codec issues, corrupt files) should simply propagate up through the existing error system
+   - No new error handling UI needed - just use the existing toast system
 
-**Expected Result**:
-- Full playback functionality with the Web Audio API
-- Visual feedback during all playback states
-- Proper error handling and recovery
+**No UI changes needed** - UI already uses playerStore.
+
+**Expected Result:**
+- Full audio playback functionality with existing UI
+- Proper loading/error states
+- Playback of files from IndexedDB
 
 ### Phase 5: Temporary Sync Solution
 
