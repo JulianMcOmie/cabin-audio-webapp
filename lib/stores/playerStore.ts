@@ -71,6 +71,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       try {
         const audioPlayer = getAudioPlayer();
         
+        // Set up time update callback to keep the store in sync with actual playback
+        console.log('🔊 Setting time update callback on audioPlayer');
+        audioPlayer.setTimeUpdateCallback((time) => {
+          console.log('🔊 Time update from audioPlayer:', time);
+          set({ currentTime: time });
+        });
+        
         // Update loading state
         set({ loadingState: 'loading', loadingProgress: 0 });
         
