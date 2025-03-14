@@ -1,0 +1,56 @@
+.drag-active {
+  position: relative;
+}
+
+.playing-animation {
+  display: flex;
+  align-items: flex-end;
+  height: 16px;
+  gap: 2px;
+}
+
+.playing-animation span {
+  display: inline-block;
+  width: 3px;
+  height: 5px;
+  background-color: white;
+  border-radius: 1px;
+  animation: playing-animation 0.8s infinite ease-in-out;
+}
+
+.playing-animation span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.playing-animation span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+.flatline-animation {
+  display: flex;
+  align-items: center;
+  height: 16px;
+  gap: 2px;
+}
+
+.flatline-animation span {
+  display: inline-block;
+  width: 3px;
+  height: 2px;
+  background-color: white;
+  border-radius: 1px;
+}
+
+@keyframes playing-animation {
+  0%, 100% {
+    height: 5px;
+  }
+  50% {
+    height: 12px;
+  }
+}
+
+/* Add smooth transitions for drag overlay */
+.fixed {
+  transition: opacity 150ms ease-in-out;
+} 

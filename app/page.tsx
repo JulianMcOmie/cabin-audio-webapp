@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { TopBar } from "@/components/top-bar"
 import { EQView } from "@/components/eq-view"
-import { MusicLibrary } from "@/components/music-library"
+import { MusicLibrary } from "@/components/music-library/MusicLibrary"
 import { PlayerBar } from "@/components/player-bar"
 import { Sidebar } from "@/components/sidebar"
 import { InstallView } from "@/components/install-view"
