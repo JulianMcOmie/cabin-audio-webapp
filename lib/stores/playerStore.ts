@@ -44,6 +44,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   setCurrentTrack: (trackId: string | null) => {
     console.log('🔊 playerStore.setCurrentTrack called with:', trackId);
     
+    // Store whether we should autoplay this track
+    const shouldAutoPlay = true; // Always autoplay when a track is selected
+    
     // Update state first (immediate UI feedback)
     set({ 
       currentTrackId: trackId,
@@ -100,6 +103,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
               duration: duration,
               error: null
             });
+            
+            // Auto-play once track is loaded and ready
+            if (shouldAutoPlay) {
+              console.log('🔊 Auto-playing track after successful load');
+              set({ isPlaying: true });
+              audioPlayer.play();
+            }
           } else {
             console.log('🔊 Track loading failed:', error);
             set({ 

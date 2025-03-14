@@ -225,20 +225,25 @@ export function MusicLibrary({ eqEnabled, setActiveTab, onSignupClick }: MusicLi
   }, [showToast, addTrack, getTracks, isTrackStoreLoading])
 
   const handleTrackSelect = (track: Track) => {
-    // Get full track from store
-    const storeTrack = getTrackById(track.id);
+    console.log(`[MusicLibrary] Track selected: ${track.id}, currentTrackId: ${currentTrackId}, isPlaying: ${isPlaying}`);
     
     if (currentTrackId === track.id) {
       // If the same track is clicked, explicitly set play/pause state
       if (isPlaying) {
+        console.log(`[MusicLibrary] Pausing current track: ${track.id}`);
         setIsPlaying(false); // Pause if currently playing
       } else {
+        console.log(`[MusicLibrary] Resuming current track: ${track.id}`);
         setIsPlaying(true); // Play if currently paused
       }
     } else {
-      // If a different track is clicked, select it and start playing
+      // If a different track is clicked, select it
+      // The PlayerStore will automatically start playback once the track is loaded
+      console.log(`[MusicLibrary] Setting new track: ${track.id} (will auto-play when ready)`);
       setCurrentTrack(track.id);
-      setIsPlaying(true);
+      
+      // No need to call setIsPlaying here as that will happen automatically
+      // in the PlayerStore once the track is loaded and ready
     }
   }
 
