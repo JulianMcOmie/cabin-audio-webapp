@@ -481,36 +481,42 @@ This phase connects stores to existing IndexedDB storage services.
 
 **Specific Tasks**:
 
-1. **Store Integration**:
-   - Modify `/lib/stores/trackStore.ts` to load tracks from metadataStorage on initialization
-   - Update store CRUD methods to call metadataStorage methods
-   - Add loading states to indicate database operations
+1. **Store Internal Persistence**:
+   - Enhance stores to internally load from and save to IndexedDB without changing their public interfaces
+   - Add internal loading states that UI can optionally respond to
+   - Implement automatic initialization on first access
 
-2. **Audio Loading**:
-   - Update `/lib/stores/playerStore.ts` to load audio via fileStorage
-   - Implement tracking of file loading progress
-   - Add error handling for missing files
+2. **Track Store Enhancement**:
+   - Add internal methods in trackStore to load tracks from IndexedDB on initialization
+   - Implement CRUD methods that internally update IndexedDB
+   - Add an optional isLoading state that won't break existing components
 
-3. **File Import**:
-   - Connect `/lib/hooks/useFileImport.ts` to fileStorage and metadataStorage
-   - Add progress tracking for file storage operations
+3. **Player Store Enhancement**:
+   - Update playerStore to load audio files from IndexedDB when a track is selected
+   - Implement proper file loading progress tracking
+   - Add proper error handling with clear error messages
 
-**Data Flow to Implement**:
-- Store Initialization: trackStore loads data from metadataStorage on creation
-- File Import: useFileImport → fileStorage → metadataStorage → trackStore
-- Playback: playerStore → fileStorage → audioPlayer
+4. **File Import Integration**:
+   - Update useFileImport to store files in IndexedDB during the import process
+   - Connect to metadataStorage for extracting track metadata
+   - Implement progress tracking for both processing and storage operations
+
+**Approach**:
+- All persistence operations happen automatically when store methods are called
+- No interface changes to existing hooks and stores
+- UI components work with the same methods they already use
+- Each store lazy-loads its data from IndexedDB internally
 
 **Deliverables**:
-1. Track persistence between sessions
-2. File import with storage to IndexedDB
-3. Audio loading from IndexedDB for playback
-4. Progress indicators during storage operations
+1. Self-initializing stores that load from IndexedDB on first access
+2. Automatic persistence to IndexedDB when store actions are called
+3. No additional loading hooks or explicit initialization needed
+4. Unmodified public interfaces to maintain compatibility
 
 **Verification**:
-- Data persists after page refresh
-- Audio files can be imported and played back
-- Loading indicators display correctly
-- Error handling works for storage issues
+- Application should work exactly as before but with data persisting across page refreshes
+- No regression in functionality when integrating with IndexedDB
+- Loading states and error messages should be properly displayed in UI
 
 ### Phase 4: Basic Playback Controls
 

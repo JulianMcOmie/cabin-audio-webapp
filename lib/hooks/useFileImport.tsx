@@ -4,6 +4,9 @@ import type React from "react"
 import { useState, useRef, useCallback, useEffect } from "react"
 import { useTrackStore } from "@/lib/stores"
 import { Track } from "@/lib/models/Track"
+import * as fileStorage from "@/lib/storage/fileStorage"
+import * as metadataStorage from "@/lib/storage/metadataStorage"
+import { v4 as uuidv4 } from "uuid"
 
 interface UseFileImportOptions {
   onComplete?: (files: File[]) => void
@@ -28,30 +31,6 @@ export function useFileImport({ onComplete, onError }: UseFileImportOptions = {}
   useEffect(() => {
     return () => {
       importCancelRef.current = true
-    }
-  }, [])
-
-  // Extract metadata from file - enhanced for Phase 2.2
-  const extractMetadata = useCallback((file: File, index: number): Track => {
-    // Extract filename without extension as the title
-    const title = file.name.replace(/\.[^/.]+$/, "")
-    
-    // Generate a unique ID
-    const id = `imported-${Date.now()}-${index}`
-    
-    // Get file extension
-    const extension = file.name.split('.').pop()?.toLowerCase() || ''
-    
-    // Basic metadata (would be enhanced with real extraction in Phase 3)
-    return {
-      id,
-      title,
-      artistId: "Unknown Artist", // Phase 3 would extract this from ID3/metadata
-      albumId: "Unknown Album",   // Phase 3 would extract this from ID3/metadata
-      duration: Math.floor(Math.random() * 300) + 120, // Random duration between 2-6 minutes
-      storageKey: `file-${id}.${extension}`,
-      lastModified: Date.now(),
-      syncStatus: 'pending'
     }
   }, [])
 
@@ -104,6 +83,44 @@ export function useFileImport({ onComplete, onError }: UseFileImportOptions = {}
     }
   }, [isImporting])
 
+  // Process a single file and extract metadata, store in IndexedDB
+  const processFile = useCallback(async (file: File): Promise<Track> => {
+    try {
+      setCurrentFile(file.name)
+      
+      // Store audio file in IndexedDB and get storage key
+      const storageKey = await fileStorage.storeAudioFile(file)
+      
+      // Generate a basic track with metadata from filename
+      const title = file.name.replace(/\.[^/.]+$/, "")
+      const id = uuidv4()
+      
+      // Create track object
+      const track: Track = {
+        id,
+        title,
+        artistId: "Unknown Artist",
+        albumId: "Unknown Album",
+        duration: 0, // Will be updated when audio decodes
+        storageKey,
+        lastModified: Date.now(),
+        syncStatus: 'pending'
+      }
+      
+      // Attempt to extract real metadata (in a real app)
+      // Here we simulate with a timeout for demo purposes
+      await new Promise(resolve => setTimeout(resolve, 100))
+      
+      // In a real app, we would set the real duration here
+      track.duration = Math.floor(Math.random() * 300) + 120
+      
+      return track
+    } catch (error) {
+      console.error("Error processing file:", error)
+      throw new Error(`Failed to process ${file.name}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }, [])
+
   const handleFileSelect = useCallback(
     (fileList: FileList) => {
       const files = Array.from(fileList).filter(
@@ -126,7 +143,7 @@ export function useFileImport({ onComplete, onError }: UseFileImportOptions = {}
       setCurrentFile(null)
       importCancelRef.current = false
 
-      // Simulate file processing and add to track store
+      // Process files and store in IndexedDB
       const processFiles = async () => {
         const totalFiles = files.length
         const importedTracks: Track[] = []
@@ -137,46 +154,39 @@ export function useFileImport({ onComplete, onError }: UseFileImportOptions = {}
           }
 
           const file = files[i]
-          setCurrentFile(file.name)
-
-          // Simulate processing time based on file size
-          const processingTime = Math.min((file.size / 1000000) * 500, 2000) // 500ms per MB, max 2s
-
-          // Simulate progress updates during processing
-          const startProgress = (i / totalFiles) * 100
-          const endProgress = ((i + 1) / totalFiles) * 100
-          const progressStep = (endProgress - startProgress) / 10
-
-          for (let j = 0; j < 10; j++) {
-            if (importCancelRef.current) break
-
-            await new Promise((resolve) => setTimeout(resolve, processingTime / 10))
-            setImportProgress(startProgress + progressStep * j)
-          }
-
+          
           try {
-            // Extract metadata and add to store - NEW for Phase 2.2
-            const trackMetadata = extractMetadata(file, i)
+            // Calculate progress for this file (each file is 1/totalFiles of progress)
+            const startProgress = (i / totalFiles) * 100
+            const endProgress = ((i + 1) / totalFiles) * 100
             
-            // Add to track store
-            addTrack(trackMetadata)
+            // Show starting progress
+            setImportProgress(startProgress)
+            
+            // Process file and store in IndexedDB
+            const track = await processFile(file)
+            
+            // Add to track store (which will internally save to IndexedDB)
+            addTrack(track)
             
             // Track for callback
-            importedTracks.push(trackMetadata)
+            importedTracks.push(track)
             
-            console.log(`Added track to store: ${trackMetadata.title}`)
+            // Update progress
+            setImportProgress(endProgress)
+            
+            console.log(`Added track to store: ${track.title}`)
           } catch (err) {
             console.error(`Error processing ${file.name}:`, err)
           }
-
-          setImportProgress(endProgress)
         }
 
         if (!importCancelRef.current) {
           setImportProgress(100)
           // Small delay before completing to show 100%
-          await new Promise((resolve) => setTimeout(resolve, 500))
+          await new Promise((resolve) => setTimeout(resolve, 300))
           setIsImporting(false)
+          setCurrentFile(null)
           
           // Call onComplete with processed files
           if (importedTracks.length > 0) {
@@ -191,7 +201,7 @@ export function useFileImport({ onComplete, onError }: UseFileImportOptions = {}
         setIsImporting(false)
       })
     },
-    [onComplete, onError, extractMetadata, addTrack],
+    [onComplete, onError, processFile, addTrack],
   )
 
   return {
