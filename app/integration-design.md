@@ -520,32 +520,46 @@ This phase connects stores to existing IndexedDB storage services.
 
 ### Phase 4: Basic Playback Controls
 
-This phase connects playerStore to the existing audio implementation.
+This phase connects the player store to the audio implementation with a direct control pattern.
 
 **Files to Modify:**
-1. `/lib/stores/playerStore.ts` - Connect to audioPlayer
 
-**Tasks:**
-1. Modify playerStore's setCurrentTrack to:
-   - Get track from trackStore using its ID
-   - Set loading state
-   - Call audioPlayer.loadTrack with track.storageKey
-   - Update state when loading completes/fails
+1. `/lib/stores/playerStore.ts` - Add direct audio control
+2. `/lib/audio/initAudio.ts` - Modify for direct control pattern
 
-2. Connect play/pause controls:
-   - In setIsPlaying: call audioPlayer.play/pause
-   - In seekTo: call audioPlayer.seekTo
+**Implementation Tasks:**
 
-3. **Error Handling**:
-   - Audio-specific errors (codec issues, corrupt files) should simply propagate up through the existing error system
-   - No new error handling UI needed - just use the existing toast system
+1. **Revise Audio Initialization Flow**:
+   - Initialize audio system at application startup via AudioProvider
+   - Export initialized instances of audioPlayer, audioContext, etc.
+   - Remove subscription logic from audioPlayer
 
-**No UI changes needed** - UI already uses playerStore.
+2. **Modify playerStore to Control Audio**:
+   - Import audioPlayer in playerStore
+   - Directly call audioPlayer methods in store actions
+   - Set up the following action-to-method mappings:
+     * setCurrentTrack → audioPlayer.loadTrack
+     * setIsPlaying → audioPlayer.play/pause
+     * seekTo → audioPlayer.seek
+     * setVolume → audioPlayer.setVolume
+     * setIsMuted → audioPlayer.setMute
+
+3. **Simplify Data Flow**:
+   - PlayerStore becomes the single point of control for both state and audio
+   - PlayerStore updates its own state, then calls audioPlayer methods
+   - AudioPlayer focuses purely on audio processing without state management
+
+**Direct Control Architecture**:
+- UI → playerStore (changes state and calls audioPlayer) → audio output
+- No subscriptions or circular references between modules
+- Clean, unidirectional data flow with explicit control
 
 **Expected Result:**
-- Full audio playback functionality with existing UI
-- Proper loading/error states
-- Playback of files from IndexedDB
+- Clear ownership: playerStore owns both state and audio control
+- Simpler debugging: each action has a direct, traceable effect
+- Reduced complexity: no subscription patterns to maintain
+- Full audio playback functionality through existing UI
+- Proper loading/error states during playback
 
 ### Phase 5: Temporary Sync Solution
 

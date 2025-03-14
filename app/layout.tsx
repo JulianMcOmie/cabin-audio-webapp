@@ -5,6 +5,7 @@ import "./globals.css"
 import { ToastProvider } from "@/components/common/ToastManager"
 import { ThemeProvider } from "@/components/theme-provider"
 import { AuthProvider } from "@/lib/auth-context"
+import AudioProvider from "./providers/AudioProvider"
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -23,7 +24,9 @@ export default function RootLayout({
       <body className={inter.className}>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           <AuthProvider>
-            <ToastProvider>{children}</ToastProvider>
+            <ToastProvider>
+              <AudioProvider>{children}</AudioProvider>
+            </ToastProvider>
           </AuthProvider>
         </ThemeProvider>
       </body>

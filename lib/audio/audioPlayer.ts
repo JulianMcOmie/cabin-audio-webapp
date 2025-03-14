@@ -3,7 +3,11 @@ import * as eqProcessor from './eqProcessor';
 import * as audioRouting from './audioRouting';
 import * as fileStorage from '../storage/fileStorage';
 import * as metadataStorage from '../storage/metadataStorage';
-import { usePlayerStore, useTrackStore } from '../stores';
+import { useTrackStore } from '../stores';
+
+// Define callback types
+type ProgressCallback = (progress: number) => void;
+type CompletionCallback = (success: boolean, duration?: number, error?: string) => void;
 
 // Class to manage audio playback
 class AudioPlayer {
@@ -13,230 +17,249 @@ class AudioPlayer {
   private startTime: number = 0;
   private pausedTime: number = 0;
   private isPlaying: boolean = false;
-  private currentTrackId: string | null = null;
   private progressInterval: number | null = null;
+  private timeUpdateCallback: ((time: number) => void) | null = null;
   
   constructor() {
+    console.log('🎵 AudioPlayer constructor called');
     this.initialize();
   }
   
   // Initialize the audio player
   private initialize(): void {
-    // Create a gain node for volume control
-    this.gainNode = audioContext.createGain();
+    console.log('🎵 AudioPlayer.initialize called');
     
-    // Connect to the EQ processor
-    this.gainNode.connect(eqProcessor.getEQProcessor().getInputNode());
-    
-    // Set up progress tracking
-    this.setupProgressTracking();
-    
-    // Subscribe to player store changes
-    this.subscribeToStoreChanges();
-  }
-  
-  // Subscribe to store changes to react to UI actions
-  private subscribeToStoreChanges(): void {
-    usePlayerStore.subscribe((state) => {
-      // Handle play/pause state changes
-      if (state.isPlaying !== this.isPlaying) {
-        if (state.isPlaying) {
-          this.play();
-        } else {
-          this.pause();
-        }
-      }
+    try {
+      // Create a gain node for volume control
+      this.gainNode = audioContext.createGain();
+      console.log('🎵 Gain node created:', this.gainNode);
       
-      // Handle track changes
-      if (state.currentTrackId !== this.currentTrackId) {
-        if (state.currentTrackId) {
-          this.loadTrack(state.currentTrackId);
-        } else {
-          this.stop();
-        }
-      }
+      // Connect to the EQ processor
+      const eqInput = eqProcessor.getEQProcessor().getInputNode();
+      console.log('🎵 EQ processor input node:', eqInput);
+      this.gainNode.connect(eqInput);
+      console.log('🎵 Gain node connected to EQ processor');
       
-      // Handle volume changes
-      if (this.gainNode && state.volume !== this.gainNode.gain.value) {
-        this.setVolume(state.volume);
-      }
+      // Set up progress tracking
+      this.setupProgressTracking();
       
-      // Handle mute state
-      if (this.gainNode) {
-        const currentMuted = this.gainNode.gain.value === 0;
-        if (state.isMuted !== currentMuted) {
-          this.setMute(state.isMuted);
-        }
-      }
-    });
+      console.log('🎵 AudioPlayer initialization complete');
+    } catch (error) {
+      console.error('🎵 Error during AudioPlayer initialization:', error);
+    }
   }
   
   // Set up progress tracking interval
   private setupProgressTracking(): void {
+    console.log('🎵 AudioPlayer.setupProgressTracking called');
+    
     // Clear any existing interval
     if (this.progressInterval) {
       window.clearInterval(this.progressInterval);
+      console.log('🎵 Cleared existing progress tracking interval');
     }
     
     // Update current time every 100ms during playback
     this.progressInterval = window.setInterval(() => {
-      if (this.isPlaying) {
+      if (this.isPlaying && this.timeUpdateCallback) {
         const currentTime = this.getCurrentTime();
-        usePlayerStore.getState().setCurrentTime(currentTime);
+        this.timeUpdateCallback(currentTime);
       }
     }, 100);
+    console.log('🎵 Progress tracking interval set up');
   }
   
-  // Load a track by ID
-  public async loadTrack(trackId: string): Promise<void> {
+  // Set a callback for time updates
+  public setTimeUpdateCallback(callback: (time: number) => void): void {
+    this.timeUpdateCallback = callback;
+  }
+  
+  // Load a track by storage key
+  public async loadTrack(
+    storageKey: string, 
+    progressCallback?: ProgressCallback,
+    completionCallback?: CompletionCallback
+  ): Promise<void> {
+    console.log('🎵 AudioPlayer.loadTrack called with storageKey:', storageKey);
+    
     try {
-      // Update state to loading
-      usePlayerStore.getState().setLoadingState('loading');
-      
-      // Get track from store
-      const track = useTrackStore.getState().getTrackById(trackId);
-      if (!track) {
-        throw new Error(`Track with ID ${trackId} not found`);
-      }
-      
-      // Update current track ID
-      this.currentTrackId = trackId;
-      
       // Get audio file from storage
-      const audioFile = await fileStorage.getAudioFile(track.storageKey);
+      console.log('🎵 Getting audio file from storage');
+      if (progressCallback) progressCallback(10);
+      
+      const audioFile = await fileStorage.getAudioFile(storageKey);
+      console.log('🎵 Audio file retrieved:', audioFile ? 'successfully' : 'failed');
+      
       if (!audioFile) {
-        throw new Error(`Audio file for track ${trackId} not found`);
+        console.error('🎵 Audio file not found in storage');
+        if (completionCallback) completionCallback(false, undefined, `Audio file not found: ${storageKey}`);
+        return;
       }
       
       // Update loading progress
-      usePlayerStore.getState().setLoadingProgress(50);
+      console.log('🎵 File retrieved, converting to ArrayBuffer');
+      if (progressCallback) progressCallback(40);
       
       // Convert Blob to ArrayBuffer
       const arrayBuffer = await audioFile.arrayBuffer();
-      
-      // Update loading state to decoding
-      usePlayerStore.getState().setLoadingState('decoding');
+      console.log('🎵 ArrayBuffer created, size:', arrayBuffer.byteLength);
+      if (progressCallback) progressCallback(60);
       
       // Decode audio data
+      console.log('🎵 Decoding audio data');
       this.audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-      
-      // Update track duration if needed
-      if (track.duration === 0 && this.audioBuffer) {
-        await metadataStorage.updateTrackDuration(trackId, this.audioBuffer.duration);
-      }
-      
-      // Update player state
-      usePlayerStore.getState().setDuration(this.audioBuffer.duration);
-      usePlayerStore.getState().setLoadingState('ready');
-      usePlayerStore.getState().setLoadingProgress(100);
+      console.log('🎵 Audio buffer created:', this.audioBuffer);
+      if (progressCallback) progressCallback(90);
       
       // Reset playback position
       this.pausedTime = 0;
-      usePlayerStore.getState().setCurrentTime(0);
+      console.log('🎵 Reset paused time to 0');
       
-      // If player was playing, start the new track
-      if (usePlayerStore.getState().isPlaying) {
-        this.play();
-      }
+      // Complete loading
+      if (progressCallback) progressCallback(100);
+      if (completionCallback) completionCallback(true, this.audioBuffer.duration);
+      
+      console.log('🎵 Track loaded successfully');
     } catch (error) {
-      console.error('Error loading track:', error);
-      usePlayerStore.getState().setError(`Failed to load track: ${error.message}`);
+      console.error('🎵 Error loading track:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      if (completionCallback) completionCallback(false, undefined, errorMessage);
     }
   }
   
   // Play the current track
   public play(): void {
+    console.log('🎵 AudioPlayer.play called');
+    
     if (!this.audioBuffer) {
+      console.log('🎵 Cannot play: No audio buffer available');
       return;
     }
     
     // Resume audio context if suspended
+    console.log('🎵 Resuming audio context');
     audioContext.resumeAudioContext().then(() => {
+      console.log('🎵 Audio context resumed');
+      
       // Stop any existing playback
       if (this.sourceNode) {
+        console.log('🎵 Stopping existing source node');
         this.sourceNode.stop();
         this.sourceNode = null;
       }
       
       // Create a new source node
+      console.log('🎵 Creating new buffer source node');
       this.sourceNode = audioContext.createBufferSource();
       this.sourceNode.buffer = this.audioBuffer;
+      console.log('🎵 Source node created with buffer:', this.sourceNode);
       
       // Connect to gain node
+      console.log('🎵 Connecting source to gain node');
       this.sourceNode.connect(this.gainNode!);
       
       // Set up ended event
+      console.log('🎵 Setting up onended handler');
       this.sourceNode.onended = this.handlePlaybackEnded.bind(this);
       
       // Start playback from paused position
+      console.log('🎵 Starting playback from position:', this.pausedTime);
       this.sourceNode.start(0, this.pausedTime);
       this.startTime = audioContext.getCurrentTime() - this.pausedTime;
+      console.log('🎵 Playback started, start time:', this.startTime);
       this.isPlaying = true;
-      
-      // Update player state
-      usePlayerStore.getState().setIsPlaying(true);
+    }).catch(error => {
+      console.error('🎵 Error resuming audio context:', error);
     });
   }
   
   // Pause the current track
   public pause(): void {
+    console.log('🎵 AudioPlayer.pause called');
+    
     if (!this.isPlaying || !this.sourceNode) {
+      console.log('🎵 Cannot pause: Not playing or no source node');
       return;
     }
     
     // Calculate current position
     this.pausedTime = this.getCurrentTime();
+    console.log('🎵 Current position:', this.pausedTime);
     
     // Stop the source node
+    console.log('🎵 Stopping source node');
     this.sourceNode.stop();
     this.sourceNode = null;
     this.isPlaying = false;
     
-    // Update player state
-    usePlayerStore.getState().setIsPlaying(false);
-    usePlayerStore.getState().setCurrentTime(this.pausedTime);
+    // Update time through callback
+    if (this.timeUpdateCallback) {
+      this.timeUpdateCallback(this.pausedTime);
+    }
+    
+    console.log('🎵 Playback paused');
   }
   
   // Stop playback completely
   public stop(): void {
+    console.log('🎵 AudioPlayer.stop called');
+    
     if (this.sourceNode) {
+      console.log('🎵 Stopping source node');
       this.sourceNode.stop();
       this.sourceNode = null;
     }
     
     this.isPlaying = false;
     this.pausedTime = 0;
-    this.currentTrackId = null;
     this.audioBuffer = null;
+    console.log('🎵 Reset player state');
     
-    // Update player state
-    usePlayerStore.getState().setIsPlaying(false);
-    usePlayerStore.getState().setCurrentTime(0);
+    // Update time through callback
+    if (this.timeUpdateCallback) {
+      this.timeUpdateCallback(0);
+    }
+    
+    console.log('🎵 Playback stopped completely');
   }
   
   // Seek to a specific time
   public seek(time: number): void {
+    console.log('🎵 AudioPlayer.seek called with time:', time);
+    
     if (!this.audioBuffer) {
+      console.log('🎵 Cannot seek: No audio buffer available');
       return;
     }
     
     // Ensure time is within bounds
     const clampedTime = Math.max(0, Math.min(time, this.audioBuffer.duration));
+    console.log('🎵 Clamped time:', clampedTime);
     
     // If playing, stop and restart at new position
     const wasPlaying = this.isPlaying;
+    console.log('🎵 Was playing before seek:', wasPlaying);
     
     if (this.isPlaying) {
+      console.log('🎵 Stopping current playback for seek');
       this.sourceNode?.stop();
       this.sourceNode = null;
       this.isPlaying = false;
     }
     
     this.pausedTime = clampedTime;
-    usePlayerStore.getState().setCurrentTime(clampedTime);
+    console.log('🎵 Updated pausedTime to:', this.pausedTime);
+    
+    // Update time through callback
+    if (this.timeUpdateCallback) {
+      this.timeUpdateCallback(clampedTime);
+    }
     
     if (wasPlaying) {
+      console.log('🎵 Restarting playback at new position');
       this.play();
+    } else {
+      console.log('🎵 Not restarting playback (was paused)');
     }
   }
   
@@ -251,7 +274,10 @@ class AudioPlayer {
   
   // Set volume (0-1)
   public setVolume(volume: number): void {
+    console.log('🎵 AudioPlayer.setVolume called with:', volume);
+    
     if (!this.gainNode) {
+      console.log('🎵 Cannot set volume: No gain node');
       return;
     }
     
@@ -259,46 +285,45 @@ class AudioPlayer {
     const clampedVolume = Math.max(0, Math.min(1, volume));
     
     // Apply volume
+    console.log('🎵 Setting gain node value to:', clampedVolume);
     this.gainNode.gain.value = clampedVolume;
-    
-    // Update store if needed
-    if (usePlayerStore.getState().volume !== clampedVolume) {
-      usePlayerStore.getState().setVolume(clampedVolume);
-    }
   }
   
   // Set mute state
   public setMute(muted: boolean): void {
+    console.log('🎵 AudioPlayer.setMute called with:', muted);
+    
     if (!this.gainNode) {
+      console.log('🎵 Cannot set mute: No gain node');
       return;
     }
     
     if (muted) {
       // Store current volume in a data attribute for unmuting
+      console.log('🎵 Muting: Setting gain to 0');
       this.gainNode.gain.value = 0;
     } else {
-      // Restore volume
-      this.gainNode.gain.value = usePlayerStore.getState().volume;
-    }
-    
-    // Update store if needed
-    if (usePlayerStore.getState().isMuted !== muted) {
-      usePlayerStore.getState().setIsMuted(muted);
+      // Get volume from store or use default
+      const volume = 1; // Default volume if not provided
+      console.log('🎵 Unmuting: Restoring gain to:', volume);
+      this.gainNode.gain.value = volume;
     }
   }
   
   // Handle playback ended event
   private handlePlaybackEnded(): void {
+    console.log('🎵 AudioPlayer.handlePlaybackEnded called (track finished)');
+    
     // Reset state
     this.sourceNode = null;
     this.isPlaying = false;
     this.pausedTime = 0;
+    console.log('🎵 Reset playback state');
     
-    // Update player state
-    usePlayerStore.getState().setIsPlaying(false);
-    usePlayerStore.getState().setCurrentTime(0);
-    
-    // TODO: Implement queue functionality to play next track
+    // Update time through callback
+    if (this.timeUpdateCallback) {
+      this.timeUpdateCallback(0);
+    }
   }
 }
 
@@ -307,7 +332,10 @@ let audioPlayerInstance: AudioPlayer | null = null;
 
 // Get or create the audio player instance
 export const getAudioPlayer = (): AudioPlayer => {
+  console.log('🎵 getAudioPlayer called, instance exists:', !!audioPlayerInstance);
+  
   if (!audioPlayerInstance) {
+    console.log('🎵 Creating new AudioPlayer instance');
     audioPlayerInstance = new AudioPlayer();
   }
   
@@ -316,20 +344,26 @@ export const getAudioPlayer = (): AudioPlayer => {
 
 // Initialize the audio player (call this when the app starts)
 export const initializeAudioPlayer = (): void => {
+  console.log('🎵 initializeAudioPlayer called');
   getAudioPlayer();
 };
 
 // Clean up the audio player (call this when the app is unloaded)
 export const cleanupAudioPlayer = (): void => {
+  console.log('🎵 cleanupAudioPlayer called');
+  
   if (audioPlayerInstance) {
     // Stop playback
+    console.log('🎵 Stopping playback during cleanup');
     audioPlayerInstance.stop();
     
     // Clear any intervals
     if ((audioPlayerInstance as any).progressInterval) {
+      console.log('🎵 Clearing progress interval during cleanup');
       window.clearInterval((audioPlayerInstance as any).progressInterval);
     }
     
     audioPlayerInstance = null;
+    console.log('🎵 AudioPlayer instance destroyed');
   }
 }; 

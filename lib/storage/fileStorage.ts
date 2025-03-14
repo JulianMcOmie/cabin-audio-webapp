@@ -16,10 +16,19 @@ export const storeAudioFile = async (file: File): Promise<string> => {
 
 // Get an audio file from IndexedDB
 export const getAudioFile = async (fileId: string): Promise<Blob | undefined> => {
-  return indexedDBManager.getFile(
-    indexedDBManager.STORES.AUDIO_FILES,
-    fileId
-  );
+  console.log('📁 fileStorage.getAudioFile called with fileId:', fileId);
+  try {
+    const file = await indexedDBManager.getFile(
+      indexedDBManager.STORES.AUDIO_FILES,
+      fileId
+    );
+    console.log('📁 File retrieved from IndexedDB:', file ? 'success' : 'not found', 
+                file ? `size: ${file.size} bytes` : '');
+    return file;
+  } catch (error) {
+    console.error('📁 Error retrieving file from IndexedDB:', error);
+    return undefined;
+  }
 };
 
 // Delete an audio file from IndexedDB
