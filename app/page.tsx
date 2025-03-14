@@ -11,11 +11,13 @@ import ExportView from "@/components/export-view-component"
 import { PricingModal } from "@/components/pricing-modal"
 import { MobileView } from "@/components/mobile-view"
 import { ProfilePage } from "@/components/profile-page"
+import { SignupModal } from "@/components/signup-modal"
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<"eq" | "library" | "export" | "desktop" | "mobile" | "profile">("library")
   const [isPlaying, setIsPlaying] = useState(false)
   const [showPricingModal, setShowPricingModal] = useState(false)
+  const [showSignupModal, setShowSignupModal] = useState(false)
   const [eqEnabled, setEqEnabled] = useState(false) // Add this state
   const [currentTrack, setCurrentTrack] = useState({
     id: "default-track", // Add id property to fix linter error
@@ -27,13 +29,23 @@ export default function Home() {
     coverUrl: "/placeholder.svg?height=60&width=60",
   })
 
+  // Function to show the upgrade/pricing modal
+  const handleShowUpgrade = () => {
+    setShowPricingModal(true);
+  }
+
+  // Function to show the actual signup modal
+  const handleShowSignup = () => {
+    setShowSignupModal(true);
+  }
+
   return (
     <div className="flex flex-col h-screen bg-background">
       <div className="flex flex-1 overflow-hidden">
         <Sidebar 
           activeTab={activeTab as any} // Use type assertion to fix the type issue
           setActiveTab={setActiveTab}
-          onUpgradeClick={() => setShowPricingModal(true)} 
+          onUpgradeClick={handleShowUpgrade} 
         />
 
         <div className="flex flex-col flex-1 overflow-hidden">
@@ -47,9 +59,16 @@ export default function Home() {
                   setIsPlaying={setIsPlaying}
                   eqEnabled={eqEnabled}
                   setEqEnabled={setEqEnabled}
+                  onSignupClick={handleShowSignup}
                 />
               ) : activeTab === "library" ? (
-                <MusicLibrary setCurrentTrack={setCurrentTrack} setIsPlaying={setIsPlaying} eqEnabled={eqEnabled} />
+                <MusicLibrary 
+                  setCurrentTrack={setCurrentTrack} 
+                  setIsPlaying={setIsPlaying} 
+                  eqEnabled={eqEnabled}
+                  setActiveTab={setActiveTab}
+                  onSignupClick={handleShowSignup}
+                />
               ) : activeTab === "export" ? (
                 <ExportView />
               ) : activeTab === "desktop" ? (
@@ -71,6 +90,7 @@ export default function Home() {
       />
 
       <PricingModal open={showPricingModal} onClose={() => setShowPricingModal(false)} />
+      <SignupModal open={showSignupModal} onClose={() => setShowSignupModal(false)} />
     </div>
   )
 }

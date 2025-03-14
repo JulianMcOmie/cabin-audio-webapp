@@ -18,38 +18,48 @@ interface Track {
 }
 
 interface PlayerBarProps {
-  track?: Track | null
+  track: {
+    id: string
+    title: string
+    artist: string
+    album: string
+    duration: number
+    currentTime: number
+    coverUrl: string
+  }
+  playing: boolean
+  onPlayPause: () => void
 }
 
-export function PlayerBar({ track: initialTrack }: PlayerBarProps) {
+export function PlayerBar({ track, playing, onPlayPause }: PlayerBarProps) {
   const { showToast } = useToast()
   const [isTrackLoading, setIsTrackLoading] = useState(false)
-  const [currentTrack, setCurrentTrack] = useState<Track | null>(initialTrack || null)
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [currentTime, setCurrentTime] = useState(0)
+  const [currentTrack, setCurrentTrack] = useState<Track | null>(track || null)
+  const [isPlaying, setIsPlaying] = useState(playing)
+  const [currentTime, setCurrentTime] = useState(track.currentTime || 0)
   const [volume, setVolume] = useState(80)
   const [isMuted, setIsMuted] = useState(false)
 
   // Update track when prop changes
   useEffect(() => {
-    if (initialTrack && initialTrack.id !== currentTrack?.id) {
+    if (track && track.id !== currentTrack?.id) {
       setIsTrackLoading(true)
 
       // Simulate loading the track
       setTimeout(() => {
-        setCurrentTrack(initialTrack)
-        setCurrentTime(initialTrack.currentTime || 0)
+        setCurrentTrack(track)
+        setCurrentTime(track.currentTime || 0)
         setIsPlaying(true)
         setIsTrackLoading(false)
 
         showToast({
-          message: `Now playing: ${initialTrack.title}`,
+          message: `Now playing: ${track.title}`,
           variant: "info",
           duration: 3000,
         })
       }, 1000)
     }
-  }, [initialTrack, currentTrack, showToast])
+  }, [track, currentTrack, showToast])
 
   // Update progress when playing
   useEffect(() => {

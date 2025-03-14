@@ -16,9 +16,10 @@ interface EQViewProps {
   setIsPlaying: (isPlaying: boolean) => void
   eqEnabled: boolean
   setEqEnabled: (enabled: boolean) => void
+  onSignupClick: () => void
 }
 
-export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled }: EQViewProps) {
+export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSignupClick }: EQViewProps) {
   const [selectedDot, setSelectedDot] = useState<[number, number] | null>(null)
   const [gridSize, setGridSize] = useState(8)
   // Remove the local eqEnabled state since it's now passed as a prop
@@ -51,7 +52,7 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled }: EQV
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8">
+    <div className="mx-auto space-y-8 pb-24">
       <div className="flex justify-between items-center mb-2">
         <div className="space-y-2">
           <h2 className="text-2xl font-semibold">EQ</h2>

@@ -21,6 +21,7 @@ interface EmptyLibraryProps {
   onDrop: DragEventHandler
   onFileSelect: (files: FileList) => void
   className?: string
+  onSignupClick: () => void
 }
 
 export function EmptyLibrary({
@@ -37,7 +38,8 @@ export function EmptyLibrary({
   onDragOver,
   onDrop,
   onFileSelect,
-  className = ""
+  className = "",
+  onSignupClick
 }: EmptyLibraryProps) {
   return (
     <div 
@@ -85,7 +87,11 @@ export function EmptyLibrary({
 
       <div className="text-center py-4">
         <p className="text-sm text-muted-foreground">
-          <Button variant="link" className="text-purple hover:text-purple/80 font-medium p-0 h-auto">
+          <Button 
+            variant="link" 
+            className="text-purple hover:text-purple/80 font-medium p-0 h-auto"
+            onClick={onSignupClick}
+          >
             Sign up
           </Button>{" "}
           to save your music (so that it won't disappear when you refresh), create playlists, and listen on any device.

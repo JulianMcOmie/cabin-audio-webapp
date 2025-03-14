@@ -34,9 +34,11 @@ interface MusicLibraryProps {
   setCurrentTrack: (track: any) => void
   setIsPlaying: (isPlaying: boolean) => void
   eqEnabled: boolean
+  setActiveTab: (tab: "eq" | "library" | "export" | "desktop" | "mobile" | "profile") => void
+  onSignupClick: () => void
 }
 
-export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled }: MusicLibraryProps) {
+export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled, setActiveTab, onSignupClick }: MusicLibraryProps) {
   const { showToast } = useToast()
   // Connect to trackStore
   const { getTracks, getTrackById, addTrack } = useTrackStore()
@@ -247,10 +249,8 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled }: Music
   }
 
   const handleEQSettingsClick = () => {
-    const eqTab = document.querySelector('[data-tab="eq"]')
-    if (eqTab) {
-      (eqTab as HTMLElement).click()
-    }
+    // Navigate directly to EQ tab using the setActiveTab prop
+    setActiveTab("eq")
   }
 
   const handleTogglePlayback = () => {
@@ -279,6 +279,9 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled }: Music
         onDragLeave={handleDragLeave}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
+        onFileSelect={handleFileSelect}
+        className="pb-24"
+        onSignupClick={onSignupClick}
       />
     )
   }
@@ -330,20 +333,6 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled }: Music
               isLastItem={index === tracks.length - 1}
             />
           ))}
-
-          <div className="mt-4 pt-4 border-t">
-            <Button
-              variant="outline"
-              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-purple-light/30 to-electric-blue-light/30 border-purple/20 hover:border-purple/40 hover:bg-gradient-to-r hover:from-purple-light/40 hover:to-electric-blue-light/40 transition-all"
-              onClick={() => {
-                console.log("Add track clicked")
-                // Add your track adding logic here
-              }}
-            >
-              <PlusCircle className="h-4 w-4 text-purple" />
-              <span className="font-medium text-purple">Add Track</span>
-            </Button>
-          </div>
         </div>
       </div>
 
@@ -351,7 +340,11 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled }: Music
 
       <div className="text-center py-4">
         <p className="text-sm text-muted-foreground">
-          <Button variant="link" className="text-purple hover:text-purple/80 font-medium p-0 h-auto">
+          <Button 
+            variant="link" 
+            className="text-purple hover:text-purple/80 font-medium p-0 h-auto"
+            onClick={onSignupClick}
+          >
             Sign up
           </Button>{" "}
           to save your music (so that it won't disappear when you refresh), create playlists, and listen on any device.
