@@ -49,8 +49,11 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled, setActi
 
   // Convert store tracks to UI tracks
   const convertStoreTracksToUI = () => {
+    console.log(`[convertStoreTracksToUI] Getting tracks from store`);
     const storeTracks = getTracks();
-    return storeTracks.map((storeTrack): Track => ({
+    console.log(`[convertStoreTracksToUI] Retrieved ${storeTracks.length} tracks from store`);
+    
+    const uiTracks = storeTracks.map((storeTrack): Track => ({
       id: storeTrack.id,
       title: storeTrack.title,
       artist: storeTrack.artistId || "Unknown Artist",
@@ -58,6 +61,9 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled, setActi
       duration: storeTrack.duration,
       coverUrl: storeTrack.coverStorageKey || "/placeholder.svg?height=48&width=48",
     }));
+    
+    console.log(`[convertStoreTracksToUI] Converted ${uiTracks.length} tracks to UI format`);
+    return uiTracks;
   }
 
   // File import state
@@ -74,14 +80,22 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled, setActi
     cancelImport,
   } = useFileImport({
     onComplete: (files) => {
+      console.log(`[MusicLibrary] Import complete callback with ${files.length} files`);
       showToast({
         message: `Successfully imported ${files.length} files`,
         variant: 'success'
       })
-      // No need to manually add tracks here anymore
-      // The enhanced useFileImport hook now adds tracks directly to the store
+      
+      // Explicitly update tracks state after import completes
+      // This ensures we don't rely solely on the subscription
+      const updatedTracks = convertStoreTracksToUI();
+      console.log(`[MusicLibrary] Explicitly updating tracks after import: ${updatedTracks.length} tracks`);
+      setTracks(updatedTracks);
+      
+      console.log(`[MusicLibrary] Updated tracks state after import: ${updatedTracks.length} tracks`);
     },
     onError: (error) => {
+      console.error(`[MusicLibrary] Import error:`, error);
       showToast({
         message: error,
         variant: 'error'
@@ -91,13 +105,18 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled, setActi
 
   // Load tracks from store or add sample data
   useEffect(() => {
+    console.log(`[MusicLibrary] useEffect for track loading triggered`);
+    
     const loadTracks = async () => {
+      console.log(`[MusicLibrary] Starting to load tracks`);
       setIsLoading(true)
       try {
         // Simulate API call with timeout - keeping original behavior
+        console.log(`[MusicLibrary] Simulating API call with timeout`);
         await new Promise((resolve) => setTimeout(resolve, 1500))
 
         const storeTracksCount = getTracks().length;
+        console.log(`[MusicLibrary] Current track count in store: ${storeTracksCount}`);
         
         // If store is empty, populate with sample data if URL param is present
         if (storeTracksCount === 0) {
@@ -105,6 +124,7 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled, setActi
           const showData = urlParams.get("data") === "true"
 
           if (showData) {
+            console.log(`[MusicLibrary] Adding sample data to empty store`);
             // Add sample data to the store
             const sampleTracks: TrackModel[] = [
               {
@@ -160,36 +180,54 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled, setActi
             ];
             
             // Add each track to the store
-            sampleTracks.forEach(track => addTrack(track));
+            sampleTracks.forEach(track => {
+              console.log(`[MusicLibrary] Adding sample track to store: ${track.title}`);
+              addTrack(track);
+            });
           }
         }
         
         // Convert store tracks to UI format and update state
+        console.log(`[MusicLibrary] Converting store tracks to UI format`);
         const uiTracks = convertStoreTracksToUI();
+        console.log(`[MusicLibrary] Setting tracks state with ${uiTracks.length} tracks`);
         setTracks(uiTracks);
       } catch (error) {
+        console.error(`[MusicLibrary] Error loading tracks:`, error);
         showToast({
           message: "Failed to load tracks",
           variant: 'error'
         })
       } finally {
+        console.log(`[MusicLibrary] Finished loading tracks, setting isLoading to false`);
         setIsLoading(false)
       }
     }
 
     loadTracks()
     
-    // Subscribe to track store changes
-    const unsubscribe = useTrackStore.subscribe(
-      () => {
-        // Only update if component is mounted (not loading)
-        if (!isLoading) {
-          setTracks(convertStoreTracksToUI());
-        }
+    // Subscribe to track store changes to update UI when tracks are added
+    console.log(`[MusicLibrary] Setting up subscription to track store changes`);
+    const unsubscribe = useTrackStore.subscribe(() => {
+      console.log(`[MusicLibrary] Track store changed, subscription triggered`);
+      // Only update tracks if we're not in the loading state
+      if (!isLoading) {
+        console.log(`[MusicLibrary] Not in loading state, updating tracks from store`);
+        const uiTracks = convertStoreTracksToUI();
+        console.log(`[MusicLibrary] Setting tracks state with ${uiTracks.length} tracks from subscription`);
+        setTracks(uiTracks);
+      } else {
+        console.log(`[MusicLibrary] Still loading, skipping track update from subscription`);
       }
-    );
+    });
     
-    return () => unsubscribe();
+    // Clean up subscription on component unmount
+    return () => {
+      console.log(`[MusicLibrary] Cleaning up track store subscription`);
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
   }, [showToast, addTrack, getTracks])
 
   const handleTrackSelect = (track: Track) => {
@@ -215,9 +253,14 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled, setActi
   }
 
   const handleImportButtonClick = () => {
-    console.log("Import button clicked")
+    console.log(`[MusicLibrary] Import button clicked`);
     const fileInput = document.getElementById("file-upload") as HTMLInputElement
-    if (fileInput) fileInput.click()
+    if (fileInput) {
+      console.log(`[MusicLibrary] Triggering file input click`);
+      fileInput.click()
+    } else {
+      console.error(`[MusicLibrary] File input element not found`);
+    }
   }
 
   const handleEQSettingsClick = () => {
@@ -232,11 +275,13 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled, setActi
 
   // Show loading skeleton while loading
   if (isLoading) {
+    console.log(`[MusicLibrary] Rendering loading skeleton`);
     return <LoadingSkeleton itemCount={5} className="pb-24" />
   }
 
   // Show empty state if no tracks
   if (tracks.length === 0) {
+    console.log(`[MusicLibrary] Rendering empty library state (no tracks)`);
     return (
       <EmptyLibrary
         eqEnabled={eqEnabled}
@@ -259,6 +304,7 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled, setActi
   }
 
   // Show track list
+  console.log(`[MusicLibrary] Rendering track list with ${tracks.length} tracks`);
   return (
     <DragDropArea
       dragActive={dragActive}
