@@ -46,15 +46,16 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
     }
     
     // Convert profile bands to EQBandWithUI
-    const uiBands = profile.bands.map(band => ({
+    const uiBands: EQBandWithUI[] = profile.bands.map(band => ({
       ...band,
       id: uuidv4(), // Generate IDs for UI bands
       isHovered: false,
+      type: 'peaking' as BiquadFilterType, // Default type for all bands
       frequencyResponse: calculateBandResponse({
         ...band,
         id: '',
         isHovered: false,
-        type: 'peaking', // Default type
+        type: 'peaking' as BiquadFilterType,
       })
     }))
     
@@ -192,9 +193,9 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
     ctx.lineWidth = 1
 
     // Vertical grid lines (frequency bands)
-    const bands = 10
-    for (let i = 0; i <= bands; i++) {
-      const x = (i / bands) * rect.width
+    const numBands = 10
+    for (let i = 0; i <= numBands; i++) {
+      const x = (i / numBands) * rect.width
       ctx.beginPath()
       ctx.moveTo(x, 0)
       ctx.lineTo(x, rect.height)
@@ -218,7 +219,7 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
 
     const freqLabels = ["20Hz", "50Hz", "100Hz", "200Hz", "500Hz", "1kHz", "2kHz", "5kHz", "10kHz", "20kHz"]
     for (let i = 0; i < freqLabels.length; i++) {
-      const x = ((i + 0.5) / bands) * rect.width
+      const x = ((i + 0.5) / numBands) * rect.width
       ctx.fillText(freqLabels[i], x, rect.height - 5)
     }
 
@@ -233,7 +234,7 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
     // Draw all EQ bands
     if (!disabled) {
       // Draw individual band responses
-      bands.forEach(band => {
+      bands.forEach((band) => {
         EQBandRenderer.drawBand(
           ctx,
           band,

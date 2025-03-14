@@ -4,7 +4,7 @@ import { EQBandWithUI } from './types';
 import { EQCoordinateUtils } from './EQCoordinateUtils';
 
 interface UseEQInteractionProps {
-  canvasRef: RefObject<HTMLCanvasElement>;
+  canvasRef: RefObject<HTMLCanvasElement | null>;
   bands: EQBandWithUI[];
   freqRange: { min: number; max: number };
   onBandAdd: (band: Omit<EQBandWithUI, 'id' | 'isHovered' | 'frequencyResponse'>) => void;
