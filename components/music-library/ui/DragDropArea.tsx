@@ -28,6 +28,7 @@ export function DragDropArea({
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
       onDrop={onDrop}
+      data-drag-container="true"
     >
       {children}
     </div>

@@ -18,6 +18,7 @@ export default function Home() {
   const [showPricingModal, setShowPricingModal] = useState(false)
   const [eqEnabled, setEqEnabled] = useState(false) // Add this state
   const [currentTrack, setCurrentTrack] = useState({
+    id: "default-track", // Add id property to fix linter error
     title: "Ambient Forest",
     artist: "Nature Sounds",
     album: "Relaxation Series",
@@ -29,7 +30,11 @@ export default function Home() {
   return (
     <div className="flex flex-col h-screen bg-background">
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} onUpgradeClick={() => setShowPricingModal(true)} />
+        <Sidebar 
+          activeTab={activeTab as any} // Use type assertion to fix the type issue
+          setActiveTab={setActiveTab}
+          onUpgradeClick={() => setShowPricingModal(true)} 
+        />
 
         <div className="flex flex-col flex-1 overflow-hidden">
           <TopBar setActiveTab={setActiveTab} />
@@ -59,7 +64,11 @@ export default function Home() {
         </div>
       </div>
 
-      <PlayerBar track={currentTrack} isPlaying={isPlaying} setIsPlaying={setIsPlaying} />
+      <PlayerBar 
+        track={currentTrack} 
+        playing={isPlaying} 
+        onPlayPause={() => setIsPlaying(!isPlaying)} 
+      />
 
       <PricingModal open={showPricingModal} onClose={() => setShowPricingModal(false)} />
     </div>

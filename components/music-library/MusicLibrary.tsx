@@ -260,7 +260,7 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled }: Music
 
   // Show loading skeleton while loading
   if (isLoading) {
-    return <LoadingSkeleton itemCount={5} />
+    return <LoadingSkeleton itemCount={5} className="pb-24" />
   }
 
   // Show empty state if no tracks
@@ -291,7 +291,7 @@ export function MusicLibrary({ setCurrentTrack, setIsPlaying, eqEnabled }: Music
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
-      className="mx-auto space-y-8 relative"
+      className="mx-auto space-y-8 relative pb-24"
     >
       <EQStatusAlert isEnabled={eqEnabled} onSettingsClick={handleEQSettingsClick} />
       

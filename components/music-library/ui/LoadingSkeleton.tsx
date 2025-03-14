@@ -4,11 +4,12 @@ import { Separator } from "@/components/ui/separator"
 
 interface LoadingSkeletonProps {
   itemCount?: number
+  className?: string
 }
 
-export function LoadingSkeleton({ itemCount = 5 }: LoadingSkeletonProps) {
+export function LoadingSkeleton({ itemCount = 5, className = "" }: LoadingSkeletonProps) {
   return (
-    <div className="mx-auto space-y-8">
+    <div className={`mx-auto space-y-8 ${className}`}>
       {/* EQ Status Alert - Skeleton */}
       <div className="rounded-lg p-4 mb-4 animate-pulse bg-muted">
         <div className="flex items-center">

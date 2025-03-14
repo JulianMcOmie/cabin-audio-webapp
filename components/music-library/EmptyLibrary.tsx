@@ -19,6 +19,8 @@ interface EmptyLibraryProps {
   onDragLeave: DragEventHandler
   onDragOver: DragEventHandler
   onDrop: DragEventHandler
+  onFileSelect: (files: FileList) => void
+  className?: string
 }
 
 export function EmptyLibrary({
@@ -33,11 +35,13 @@ export function EmptyLibrary({
   onDragEnter,
   onDragLeave,
   onDragOver,
-  onDrop
+  onDrop,
+  onFileSelect,
+  className = ""
 }: EmptyLibraryProps) {
   return (
     <div 
-      className={`mx-auto space-y-8 ${dragActive ? "drag-active" : ""}`}
+      className={`mx-auto space-y-8 pb-24 ${dragActive ? "drag-active" : ""} ${className}`}
       onDragEnter={onDragEnter}
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
@@ -68,6 +72,14 @@ export function EmptyLibrary({
             <Upload className="mr-2 h-4 w-4" />
             Import Music
           </Button>
+          <input
+            type="file"
+            id="file-upload"
+            className="hidden"
+            accept="audio/*,.mp3,.wav,.flac"
+            onChange={(e) => e.target.files && onFileSelect(e.target.files)}
+            multiple
+          />
         </div>
       </div>
 
