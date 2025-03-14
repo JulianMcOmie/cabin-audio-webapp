@@ -31,25 +31,25 @@ class EQProcessor {
     this.outputNode = audioContext.createGain();
     this.volumeNode = audioContext.createGain();
     
-    // Create filter nodes for each frequency band
-    this.filters = DEFAULT_FREQUENCIES.map((frequency, index) => {
-      const filter = audioContext.createBiquadFilter();
-      filter.type = 'peaking'; // EQ filter type
-      filter.frequency.value = frequency;
-      filter.gain.value = 0; // Default to flat EQ
-      filter.Q.value = DEFAULT_Q;
+    // // Create filter nodes for each frequency band
+    // this.filters = DEFAULT_FREQUENCIES.map((frequency, index) => {
+    //   const filter = audioContext.createBiquadFilter();
+    //   filter.type = 'peaking'; // EQ filter type
+    //   filter.frequency.value = frequency;
+    //   filter.gain.value = 0; // Default to flat EQ
+    //   filter.Q.value = DEFAULT_Q;
       
-      // Connect filters in series
-      if (index === 0) {
-        // First filter connects to input
-        this.inputNode!.connect(filter);
-      } else {
-        // Other filters connect to previous filter
-        this.filters[index - 1].connect(filter);
-      }
+    //   // Connect filters in series
+    //   if (index === 0) {
+    //     // First filter connects to input
+    //     this.inputNode!.connect(filter);
+    //   } else {
+    //     // Other filters connect to previous filter
+    //     this.filters[index - 1].connect(filter);
+    //   }
       
-      return filter;
-    });
+    //   return filter;
+    // });
     
     // Connect last filter to volume node, then to output
     if (this.filters.length > 0) {

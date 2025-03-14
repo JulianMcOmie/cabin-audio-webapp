@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { usePlayerStore, useTrackStore } from '../stores';
 import * as audioPlayer from '../audio/audioPlayer';
 import * as fileStorage from '../storage/fileStorage';
@@ -22,7 +22,8 @@ export const usePlayer = () => {
     resetPlayer
   } = usePlayerStore();
   
-  const { getTrackById } = useTrackStore.getState();
+  const getTrackById = useTrackStore(state => state.getTrackById)
+  const getTracks = useTrackStore(state => state.getTracks)
   
   // Initialize player on mount
   useEffect(() => {
@@ -47,20 +48,55 @@ export const usePlayer = () => {
     setIsPlaying(true);
   }, [currentTrackId, isPlaying, setCurrentTrack, setIsPlaying]);
   
-  // Toggle play/pause
-  const togglePlayPause = useCallback(() => {
+  // Set play/pause state
+  const setPlayState = useCallback((playing: boolean) => {
     if (currentTrackId) {
-      setIsPlaying(!isPlaying);
+      setIsPlaying(playing);
     }
-  }, [currentTrackId, isPlaying, setIsPlaying]);
+  }, [currentTrackId, setIsPlaying]);
   
-  // Stop playback
-  const stop = useCallback(() => {
-    resetPlayer();
-  }, [resetPlayer]);
+  // Navigate to next track
+  const next = useCallback(() => {
+    if (!currentTrackId) return;
+    
+    const tracks = getTracks();
+    if (!tracks || tracks.length === 0) return;
+    
+    // Find current track index
+    const currentIndex = tracks.findIndex(track => track.id === currentTrackId);
+    if (currentIndex === -1) return;
+    
+    // Get next track (or loop to first)
+    const nextIndex = (currentIndex + 1) % tracks.length;
+    const nextTrack = tracks[nextIndex];
+    
+    // Play next track
+    setCurrentTrack(nextTrack.id);
+    setIsPlaying(true);
+  }, [currentTrackId, getTracks, setCurrentTrack, setIsPlaying]);
+  
+  // Navigate to previous track
+  const previous = useCallback(() => {
+    if (!currentTrackId) return;
+    
+    const tracks = getTracks();
+    if (!tracks || tracks.length === 0) return;
+    
+    // Find current track index
+    const currentIndex = tracks.findIndex(track => track.id === currentTrackId);
+    if (currentIndex === -1) return;
+    
+    // Get previous track (or loop to last)
+    const prevIndex = (currentIndex - 1 + tracks.length) % tracks.length;
+    const prevTrack = tracks[prevIndex];
+    
+    // Play previous track
+    setCurrentTrack(prevTrack.id);
+    setIsPlaying(true);
+  }, [currentTrackId, getTracks, setCurrentTrack, setIsPlaying]);
   
   // Seek to a specific time
-  const seek = useCallback((time: number) => {
+  const seekTo = useCallback((time: number) => {
     if (currentTrackId) {
       audioPlayer.getAudioPlayer().seek(time);
     }
@@ -71,10 +107,10 @@ export const usePlayer = () => {
     setVolume(newVolume);
   }, [setVolume]);
   
-  // Toggle mute
-  const toggleMute = useCallback(() => {
-    setIsMuted(!isMuted);
-  }, [isMuted, setIsMuted]);
+  // Set mute state
+  const setMuteState = useCallback((muted: boolean) => {
+    setIsMuted(muted);
+  }, [setIsMuted]);
   
   // Get current track info
   const currentTrack = currentTrackId ? getTrackById(currentTrackId) : null;
@@ -100,6 +136,18 @@ export const usePlayer = () => {
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   }, []);
   
+  // Check if player is in a loading state
+  const isLoading = loadingState === 'loading' || loadingState === 'decoding';
+  
+  // Clear player error
+  const clearError = useCallback(() => {
+    // This assumes playerStore has a clearError method
+    // If not available, this would need to be implemented in the store
+    // if (usePlayerStore.getState().clearError) {
+    //   usePlayerStore.getState().clearError();
+    // }
+  }, []);
+  
   return {
     // State
     currentTrackId,
@@ -112,14 +160,19 @@ export const usePlayer = () => {
     loadingState,
     loadingProgress,
     error,
+    isLoading,
     
     // Actions
     playTrack,
-    togglePlayPause,
-    stop,
-    seek,
+    setPlayState,
+    resetPlayer,
+    seekTo,
+    seek: seekTo, // Alias for backward compatibility
+    next,
+    previous,
     setVolume: setPlayerVolume,
-    toggleMute,
+    setMuteState,
+    clearError,
     
     // Utilities
     getCoverArtUrl,

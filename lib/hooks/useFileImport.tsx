@@ -33,8 +33,6 @@ export function useFileImport({ onComplete, onError }: UseFileImportOptions = {}
 
   // Extract metadata from file - enhanced for Phase 2.2
   const extractMetadata = useCallback((file: File, index: number): Track => {
-    console.log(`[extractMetadata] Starting metadata extraction for file: ${file.name}`);
-    
     // Extract filename without extension as the title
     const title = file.name.replace(/\.[^/.]+$/, "")
     
@@ -45,7 +43,7 @@ export function useFileImport({ onComplete, onError }: UseFileImportOptions = {}
     const extension = file.name.split('.').pop()?.toLowerCase() || ''
     
     // Basic metadata (would be enhanced with real extraction in Phase 3)
-    const trackMetadata = {
+    return {
       id,
       title,
       artistId: "Unknown Artist", // Phase 3 would extract this from ID3/metadata
@@ -53,11 +51,8 @@ export function useFileImport({ onComplete, onError }: UseFileImportOptions = {}
       duration: Math.floor(Math.random() * 300) + 120, // Random duration between 2-6 minutes
       storageKey: `file-${id}.${extension}`,
       lastModified: Date.now(),
-      syncStatus: 'pending' as const
-    };
-    
-    console.log(`[extractMetadata] Completed metadata extraction:`, trackMetadata);
-    return trackMetadata;
+      syncStatus: 'pending'
+    }
   }, [])
 
   const clearError = useCallback(() => {
@@ -111,8 +106,6 @@ export function useFileImport({ onComplete, onError }: UseFileImportOptions = {}
 
   const handleFileSelect = useCallback(
     (fileList: FileList) => {
-      console.log(`[useFileImport] handleFileSelect called with ${fileList.length} files`);
-      
       const files = Array.from(fileList).filter(
         (file) =>
           file.type.startsWith("audio/") ||
@@ -120,8 +113,6 @@ export function useFileImport({ onComplete, onError }: UseFileImportOptions = {}
           file.name.endsWith(".wav") ||
           file.name.endsWith(".flac"),
       )
-
-      console.log(`[useFileImport] ${files.length} valid audio files found`);
 
       if (files.length === 0) {
         setError("No audio files found. Please select MP3, WAV, or FLAC files.")
@@ -137,19 +128,15 @@ export function useFileImport({ onComplete, onError }: UseFileImportOptions = {}
 
       // Simulate file processing and add to track store
       const processFiles = async () => {
-        console.log(`[useFileImport] Starting to process ${files.length} files`);
         const totalFiles = files.length
-        const importedFiles: File[] = []
         const importedTracks: Track[] = []
 
         for (let i = 0; i < totalFiles; i++) {
           if (importCancelRef.current) {
-            console.log(`[useFileImport] Import cancelled`);
             break
           }
 
           const file = files[i]
-          console.log(`[useFileImport] Processing file ${i+1}/${totalFiles}: ${file.name}`);
           setCurrentFile(file.name)
 
           // Simulate processing time based on file size
@@ -169,20 +156,17 @@ export function useFileImport({ onComplete, onError }: UseFileImportOptions = {}
 
           try {
             // Extract metadata and add to store - NEW for Phase 2.2
-            console.log(`[useFileImport] Extracting metadata for ${file.name}`);
             const trackMetadata = extractMetadata(file, i)
             
             // Add to track store
-            console.log(`[useFileImport] Adding track to store:`, trackMetadata);
             addTrack(trackMetadata)
             
             // Track for callback
             importedTracks.push(trackMetadata)
-            importedFiles.push(file)
             
-            console.log(`[useFileImport] Successfully added track to store: ${trackMetadata.title} (ID: ${trackMetadata.id})`);
+            console.log(`Added track to store: ${trackMetadata.title}`)
           } catch (err) {
-            console.error(`[useFileImport] Error processing ${file.name}:`, err)
+            console.error(`Error processing ${file.name}:`, err)
           }
 
           setImportProgress(endProgress)
@@ -195,16 +179,13 @@ export function useFileImport({ onComplete, onError }: UseFileImportOptions = {}
           setIsImporting(false)
           
           // Call onComplete with processed files
-          if (importedFiles.length > 0) {
-            console.log(`[useFileImport] Import complete: ${importedTracks.length} files processed and added to store`);
-            console.log(`[useFileImport] Final track count in store: ${useTrackStore.getState().tracks.length}`);
-            onComplete?.(importedFiles)
+          if (importedTracks.length > 0) {
+            onComplete?.(files)
           }
         }
       }
 
       processFiles().catch((err) => {
-        console.error(`[useFileImport] Fatal error during import:`, err);
         setError("Failed to import files: " + (err.message || "Unknown error"))
         onError?.("Failed to import files: " + (err.message || "Unknown error"))
         setIsImporting(false)

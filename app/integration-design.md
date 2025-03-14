@@ -243,14 +243,14 @@ const {
   loadingState,
   error,
   playTrack,
-  togglePlayPause,
-  stop,
+  setPlayState,
+  resetPlayer,
   next,
   previous,
   volume,
   setVolume,
   isMuted,
-  toggleMute,
+  setMuteState,
   currentTime,
   duration,
   seekTo
@@ -259,8 +259,8 @@ const {
 // Play a specific track
 playTrack('track-id-123');
 
-// Toggle play/pause
-togglePlayPause();
+// Set play/pause state
+setPlayState(true);
 
 // Adjust volume
 setVolume(0.8);
@@ -362,25 +362,17 @@ const {
 **Current Interface**:
 ```typescript
 interface MusicLibraryProps {
-  setCurrentTrack: (track: any) => void;
-  setIsPlaying: (isPlaying: boolean) => void;
   eqEnabled: boolean;
+  setActiveTab: (tab: "eq" | "library" | "export" | "desktop" | "mobile" | "profile") => void;
+  onSignupClick: () => void;
 }
 ```
 
 **Integration Changes**:
-- Remove `setCurrentTrack` and `setIsPlaying` props as these will be handled by the `usePlayer` hook
 - Use `useTrackStore` for track data instead of local state
 - Use `usePlayer` for playback control
 - Update toast calls to use `variant` instead of `type`
 - Add visual indicators for track sync status based on Track model
-
-**Updated Interface**:
-```typescript
-interface MusicLibraryProps {
-  eqEnabled: boolean;
-}
-```
 
 ### PlayerBar Component
 
@@ -425,84 +417,79 @@ This phase connects the UI components to the track management functionality. To 
 
 #### Phase 2.1: Track Store Connection
 
-This subphase connects UI components to the existing track data store functionality.
+✅ **Completed**
 
-**Integration Tasks**:
+This subphase connected UI components to the existing track data store functionality.
 
-1. **Verify useTrackStore Hook**:
-   - Confirm the existing hook connects properly to libraryStore for track data
-   - Test core functionality: getAllTracks, getTrack, and other track operations
-   - Verify error handling and loading states function as expected
-
-2. **Connect MusicLibrary Component**:
-   - Replace local track state with useTrackStore
-   - Update track rendering to use store data
-   - Implement loading states based on store loading status
-   - Ensure empty states display correctly
-
-**Verification Steps**:
-- Verify tracks are loaded from the store
-- Confirm loading states display correctly
-- Test basic error handling with console logging
-- Check empty state rendering when no tracks exist
-
-**Note on Implementation**:
-For initial testing, the track store should be pre-populated with sample track data. 
-This allows testing the UI-store connection without requiring file upload functionality. 
-The sample data should conform to the Track interface from the models layer to ensure 
-compatibility with future real data from uploads.
+**Implementation Notes**:
+- Verified useTrackStore hook connects properly to libraryStore for track data
+- Implemented core functionality: getAllTracks, getTrack, and other track operations
+- Added error handling and loading states
+- Connected MusicLibrary component to use the track store for data
 
 #### Phase 2.2: File Import Enhancement
 
-This subphase improves the file import process to work with the track store, allowing us to test the track state functionality with real imports.
+✅ **Completed**
 
-**Integration Tasks**:
+This subphase improved the file import process to work with the track store, allowing us to test the track state functionality with real imports.
 
-1. **Enhance useFileImport Hook**:
-   - Add basic metadata extraction functionality
-   - Connect import completion to track store updates
-   - Implement basic error handling with console logging
-
-2. Connect import start and cancellation with drag-and-drop process
-
-3. **Integrate with Track Storage**:
-   - Store imported track data in the track store
-   - Update library UI after successful imports
-
-**Verification Steps**:
-- Test file drag-and-drop functionality
-- Verify progress indicators during import
-- Confirm imported tracks appear in the library
-- Test cancellation during import process
-- Check basic error handling for invalid files
+**Implementation Notes**:
+- Enhanced useFileImport hook with metadata extraction functionality
+- Connected import completion to track store updates
+- Implemented drag-and-drop process with progress indicators
+- Added error handling with toast notifications
+- Integrated with track storage to update library UI after successful imports
 
 #### Phase 2.3: Player Integration
 
-This subphase connects the existing player functionality to UI components.
+🔄 **In Progress**
 
-**Integration Tasks**:
+This subphase directly connects UI components to the playerStore for consistent playback state management.
 
-1. **Verify usePlayer Hook**:
-   - Confirm the hook connects correctly to playerStore for playback state
-   - Test basic audio playback functionality
-   - Verify loading and error states function properly
+**Core Integration Concept**:
+The goal is simple: Replace the current prop-based communication between components with direct access to the shared playerStore. Both the MusicLibrary and PlayerBar components should:
+1. Read playback state directly from usePlayerStore
+2. Update playback state directly through usePlayerStore actions
 
-2. **Connect Player Controls**:
-   - Replace direct playback with usePlayer hook
-   - Update play/pause toggle functionality
-   - Add loading indicators during track loading
-   - Implement basic error handling with console logging
+**Specific Integration Tasks**:
 
-3. **Update MusicLibrary Track Selection**:
-   - Replace track selection logic with usePlayer.playTrack
-   - Update UI to reflect current track from playerStore
-   - Show active track indicators based on currentTrackId
+1. **PlayerBar Component**:
+   - Remove props for receiving track and playback state
+   - Use usePlayerStore() directly to access currentTrackId, isPlaying, etc.
+   - Call store actions directly: setCurrentTrack(), setIsPlaying(), etc.
+   - Display loading states from playerStore.loadingState
+   - Show progress based on playerStore.loadingProgress
+
+2. **MusicLibrary Component**:
+   - Remove props for setting track and playback state
+   - Use usePlayerStore() directly to access currentTrackId and isPlaying
+   - Call store actions directly when tracks are selected
+   - Update TrackItem rendering based on playerStore state
+
+3. **Page.tsx Modifications**:
+   - Remove local state for currentTrack and isPlaying
+   - Remove state setter functions passed to MusicLibrary and PlayerBar
+   - Remove any state management logic related to playback
+   - Components will now communicate through the playerStore instead of through page.tsx
+
+4. **Remove Unnecessary Abstraction**:
+   - Do NOT create a redundant usePlayer hook that just wraps usePlayerStore
+   - Access the store directly in components: const { currentTrackId, isPlaying } = usePlayerStore()
+   - Call actions directly: usePlayerStore.getState().setCurrentTrack(trackId)
 
 **Verification Steps**:
-- Verify play/pause functionality works with the player store
-- Confirm track selection updates the current track in the player
-- Test loading indicators during track loading
-- Check that play/pause state is consistent across components
+- Play/pause in PlayerBar updates state in MusicLibrary and vice versa
+- Track selection in MusicLibrary updates the PlayerBar
+- Loading states are properly displayed in both components
+- Volume and other controls work consistently
+- Page.tsx no longer manages any playback state
+
+**Expected Result**:
+- Both components share the same playback state
+- UI is consistent across the application
+- No unnecessary abstraction layers
+- Direct and simple integration with the existing stores
+- Page.tsx is simplified with no playback state management
 
 #### Phase 2.4: Toast Integration
 
@@ -620,8 +607,9 @@ The interface-focused approach ensures compatibility with the existing component
 
 **Update: Implementation should prioritize maintainability and clean separation of concerns.**
 
-**Note on Phase 2.2 Implementation**:
-For initial testing, the track store should be pre-populated with sample track data. 
-This allows testing the UI-store connection without requiring file upload functionality. 
-The sample data should conform to the Track interface from the models layer to ensure 
-compatibility with future real data from uploads.
+**Implementation Progress Update:**
+- Phase 1 (UI Components and Interfaces): ✅ Completed
+- Phase 2.1 (Track Store Connection): ✅ Completed
+- Phase 2.2 (File Import Enhancement): ✅ Completed
+- Phase 2.3 (Player Integration): 🔄 In Progress
+- Remaining phases to be implemented according to the plan

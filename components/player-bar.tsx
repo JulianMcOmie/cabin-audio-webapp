@@ -5,6 +5,7 @@ import { Pause, Play, SkipBack, SkipForward, Volume2, VolumeX, Loader2 } from "l
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import { useToast } from "@/components/common/ToastManager"
+import { usePlayer } from "@/lib/hooks/usePlayer"
 
 // Dummy track interface
 interface Track {
