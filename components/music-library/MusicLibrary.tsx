@@ -39,11 +39,10 @@ interface MusicLibraryProps {
 export function MusicLibrary({ eqEnabled, setActiveTab, onSignupClick }: MusicLibraryProps) {
   const { showToast } = useToast()
   // Connect to trackStore
-  const { getTracks, getTrackById, addTrack, deleteTrack } = useTrackStore()
+  const { getTracks, getTrackById, addTrack, deleteTrack, isLoading: isTrackStoreLoading } = useTrackStore()
   // Connect to playerStore
   const { currentTrackId, isPlaying, setCurrentTrack, setIsPlaying } = usePlayerStore()
   
-  const [isLoading, setIsLoading] = useState(true)
   const [tracks, setTracks] = useState<Track[]>([])
 
   // Convert store tracks to UI tracks
@@ -108,17 +107,14 @@ export function MusicLibrary({ eqEnabled, setActiveTab, onSignupClick }: MusicLi
     
     const loadTracks = async () => {
       console.log(`[MusicLibrary] Starting to load tracks`);
-      setIsLoading(true)
+      
       try {
-        // Simulate API call with timeout - keeping original behavior
-        console.log(`[MusicLibrary] Simulating API call with timeout`);
-        await new Promise((resolve) => setTimeout(resolve, 1500))
-
+        // If store is empty and not loading, populate with sample data if URL param is present
         const storeTracksCount = getTracks().length;
-        console.log(`[MusicLibrary] Current track count in store: ${storeTracksCount}`);
+        const isStoreEmpty = storeTracksCount === 0 && !isTrackStoreLoading;
+        console.log(`[MusicLibrary] Current track count in store: ${storeTracksCount}, isStoreEmpty: ${isStoreEmpty}, isTrackStoreLoading: ${isTrackStoreLoading}`);
         
-        // If store is empty, populate with sample data if URL param is present
-        if (storeTracksCount === 0) {
+        if (isStoreEmpty) {
           const urlParams = new URLSearchParams(window.location.search)
           const showData = urlParams.get("data") === "true"
 
@@ -186,20 +182,19 @@ export function MusicLibrary({ eqEnabled, setActiveTab, onSignupClick }: MusicLi
           }
         }
         
-        // Convert store tracks to UI format and update state
-        console.log(`[MusicLibrary] Converting store tracks to UI format`);
-        const uiTracks = convertStoreTracksToUI();
-        console.log(`[MusicLibrary] Setting tracks state with ${uiTracks.length} tracks`);
-        setTracks(uiTracks);
+        // Convert store tracks to UI format and update state if not loading
+        if (!isTrackStoreLoading) {
+          console.log(`[MusicLibrary] Converting store tracks to UI format`);
+          const uiTracks = convertStoreTracksToUI();
+          console.log(`[MusicLibrary] Setting tracks state with ${uiTracks.length} tracks`);
+          setTracks(uiTracks);
+        }
       } catch (error) {
         console.error(`[MusicLibrary] Error loading tracks:`, error);
         showToast({
           message: "Failed to load tracks",
           variant: 'error'
         })
-      } finally {
-        console.log(`[MusicLibrary] Finished loading tracks, setting isLoading to false`);
-        setIsLoading(false)
       }
     }
 
@@ -207,10 +202,10 @@ export function MusicLibrary({ eqEnabled, setActiveTab, onSignupClick }: MusicLi
     
     // Subscribe to track store changes to update UI when tracks are added
     console.log(`[MusicLibrary] Setting up subscription to track store changes`);
-    const unsubscribe = useTrackStore.subscribe(() => {
-      console.log(`[MusicLibrary] Track store changed, subscription triggered`);
+    const unsubscribe = useTrackStore.subscribe((state) => {
+      console.log(`[MusicLibrary] Track store changed, subscription triggered, isLoading: ${state.isLoading}`);
       // Only update tracks if we're not in the loading state
-      if (!isLoading) {
+      if (!state.isLoading) {
         console.log(`[MusicLibrary] Not in loading state, updating tracks from store`);
         const uiTracks = convertStoreTracksToUI();
         console.log(`[MusicLibrary] Setting tracks state with ${uiTracks.length} tracks from subscription`);
@@ -227,15 +222,19 @@ export function MusicLibrary({ eqEnabled, setActiveTab, onSignupClick }: MusicLi
         unsubscribe();
       }
     };
-  }, [showToast, addTrack, getTracks])
+  }, [showToast, addTrack, getTracks, isTrackStoreLoading])
 
   const handleTrackSelect = (track: Track) => {
     // Get full track from store
     const storeTrack = getTrackById(track.id);
     
     if (currentTrackId === track.id) {
-      // If the same track is clicked, toggle play/pause
-      setIsPlaying(!isPlaying);
+      // If the same track is clicked, explicitly set play/pause state
+      if (isPlaying) {
+        setIsPlaying(false); // Pause if currently playing
+      } else {
+        setIsPlaying(true); // Play if currently paused
+      }
     } else {
       // If a different track is clicked, select it and start playing
       setCurrentTrack(track.id);
@@ -269,16 +268,20 @@ export function MusicLibrary({ eqEnabled, setActiveTab, onSignupClick }: MusicLi
   }
 
   const handleTogglePlayback = () => {
-    setIsPlaying(!isPlaying);
+    if (isPlaying) {
+      setIsPlaying(false); // Pause if currently playing
+    } else {
+      setIsPlaying(true); // Play if currently paused
+    }
   }
 
-  // Show loading skeleton while loading
-  if (isLoading) {
-    console.log(`[MusicLibrary] Rendering loading skeleton`);
+  // Show loading skeleton only when IndexedDB is loading track data
+  if (isTrackStoreLoading) {
+    console.log(`[MusicLibrary] Rendering loading skeleton because isTrackStoreLoading: ${isTrackStoreLoading}`);
     return <LoadingSkeleton itemCount={5} className="pb-24" />
   }
 
-  // Show empty state if no tracks
+  // Show empty state if no tracks (only after loading completes)
   if (tracks.length === 0) {
     console.log(`[MusicLibrary] Rendering empty library state (no tracks)`);
     return (

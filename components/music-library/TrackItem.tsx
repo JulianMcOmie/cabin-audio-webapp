@@ -50,6 +50,12 @@ export function TrackItem({
   const handleMouseEnter = () => setIsHovered(true);
   const handleMouseLeave = () => setIsHovered(false);
 
+  // Handle play or pause based on current state
+  const handlePlayPause = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onTogglePlayPause();
+  };
+
   return (
     <div>
       <div
@@ -69,10 +75,7 @@ export function TrackItem({
           {isCurrentTrack ? (
             <div
               className="absolute inset-0 bg-black/40 rounded-md flex items-center justify-center"
-              onClick={(e) => {
-                e.stopPropagation()
-                onTogglePlayPause()
-              }}
+              onClick={handlePlayPause}
             >
               <div className="group-hover:hidden">
                 {isPlaying ? (
