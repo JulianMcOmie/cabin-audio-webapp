@@ -311,7 +311,6 @@ export function MusicLibrary({ eqEnabled, setActiveTab, onSignupClick }: MusicLi
   }
 
   // Show track list
-  console.log(`[MusicLibrary] Rendering track list with ${tracks.length} tracks`);
   return (
     <DragDropArea
       dragActive={dragActive}

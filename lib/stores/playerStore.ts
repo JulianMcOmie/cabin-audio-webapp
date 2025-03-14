@@ -50,7 +50,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     // Update state first (immediate UI feedback)
     set({ 
       currentTrackId: trackId,
-      currentTime: 0,
+      currentTime: 0, // Reset position when changing tracks
       loadingState: trackId ? 'loading' : 'idle',
       loadingProgress: 0,
       error: null
@@ -77,8 +77,18 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         // Set up time update callback to keep the store in sync with actual playback
         console.log('🔊 Setting time update callback on audioPlayer');
         audioPlayer.setTimeUpdateCallback((time) => {
-          console.log('🔊 Time update from audioPlayer:', time);
           set({ currentTime: time });
+        });
+        
+        // Set up track end callback
+        audioPlayer.setTrackEndCallback(() => {
+          console.log('🔊 Track end callback triggered from audioPlayer');
+          
+          // Track finished playing naturally
+          set({ 
+            isPlaying: false,
+            currentTime: 0 // Reset position on natural track end
+          });
         });
         
         // Update loading state
@@ -108,7 +118,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
             if (shouldAutoPlay) {
               console.log('🔊 Auto-playing track after successful load');
               set({ isPlaying: true });
-              audioPlayer.play();
+              audioPlayer.play(0); // Start from the beginning with new track
             }
           } else {
             console.log('🔊 Track loading failed:', error);
@@ -159,6 +169,36 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       return;
     }
     
+    // Get the current position and duration before making any state changes
+    const currentPosition = get().currentTime;
+    const duration = get().duration;
+    console.log('🔊 Current position before state change:', currentPosition, 'duration:', duration);
+    
+    // Check if track is at the end when trying to play
+    if (isPlaying && duration > 0 && currentPosition >= duration - 0.5) {
+      console.log('🔊 Trying to play a completed track, resetting position to beginning');
+      // If trying to play a completed track, reset to beginning
+      set({ currentTime: 0 });
+      
+      // Update state first - but only the isPlaying flag
+      set({ isPlaying });
+      
+      // Then control audio player
+      try {
+        const audioPlayer = getAudioPlayer();
+        console.log('🔊 Calling audioPlayer.play() from beginning');
+        audioPlayer.play(0); // Play from beginning
+      } catch (error) {
+        console.error('🔊 Error controlling playback:', error);
+        set({ 
+          isPlaying: false,
+          error: 'Playback control failed. Try refreshing the page.'
+        });
+      }
+      
+      return;
+    }
+    
     // Update state first - but only the isPlaying flag, 
     // don't touch the currentTime to preserve position
     set({ isPlaying });
@@ -167,10 +207,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     try {
       const audioPlayer = getAudioPlayer();
       if (isPlaying) {
-        console.log('🔊 Calling audioPlayer.play() to resume from:', get().currentTime);
-        audioPlayer.play();
+        console.log('🔊 Calling audioPlayer.play() to resume from:', currentPosition);
+        
+        // Always explicitly provide the position to play from
+        audioPlayer.play(currentPosition);
       } else {
-        console.log('🔊 Calling audioPlayer.pause() at position:', get().currentTime);
+        console.log('🔊 Calling audioPlayer.pause() at position:', currentPosition);
         audioPlayer.pause();
       }
     } catch (error) {

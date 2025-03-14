@@ -19,6 +19,7 @@ class AudioPlayer {
   private isPlaying: boolean = false;
   private progressInterval: number | null = null;
   private timeUpdateCallback: ((time: number) => void) | null = null;
+  private trackEndCallback: (() => void) | null = null; // New callback for track end events
   
   constructor() {
     console.log('🎵 AudioPlayer constructor called');
@@ -74,6 +75,11 @@ class AudioPlayer {
     this.timeUpdateCallback = callback;
   }
   
+  // Set a callback for when the track naturally ends
+  public setTrackEndCallback(callback: () => void): void {
+    this.trackEndCallback = callback;
+  }
+  
   // Load a track by storage key
   public async loadTrack(
     storageKey: string, 
@@ -121,9 +127,9 @@ class AudioPlayer {
       console.log('🎵 Audio buffer created, duration:', this.audioBuffer.duration);
       if (progressCallback) progressCallback(90);
       
-      // Reset playback position
+      // Position will be controlled by the playerStore
+      // We just use our pausedTime as a temporary variable
       this.pausedTime = 0;
-      console.log('🎵 Reset paused time to 0');
       
       // Complete loading
       if (progressCallback) progressCallback(100);
@@ -137,9 +143,9 @@ class AudioPlayer {
     }
   }
   
-  // Play the current track
-  public play(): void {
-    console.log('🎵 AudioPlayer.play called');
+  // Play the current track from a specified position
+  public play(fromPosition?: number): void {
+    console.log('🎵 AudioPlayer.play called', fromPosition !== undefined ? `from position: ${fromPosition}` : 'from current pausedTime');
     
     if (!this.audioBuffer) {
       console.log('🎵 Cannot play: No audio buffer available');
@@ -151,6 +157,13 @@ class AudioPlayer {
       return;
     }
     
+    // Use provided position if specified, otherwise use saved position
+    if (fromPosition !== undefined) {
+      this.pausedTime = fromPosition;
+    }
+    
+    console.log('🎵 Starting playback from position:', this.pausedTime);
+    
     audioContext.resumeAudioContext().then(() => {
       // Create and connect a new source node
       this.sourceNode = audioContext.createBufferSource();
@@ -158,10 +171,15 @@ class AudioPlayer {
       this.sourceNode.connect(this.gainNode!);
       this.sourceNode.onended = this.handlePlaybackEnded.bind(this);
       
-      // Start from the saved position
+      // Start from the specified position
       this.sourceNode.start(0, this.pausedTime);
       this.startTime = audioContext.getCurrentTime() - this.pausedTime;
       this.isPlaying = true;
+      
+      // Immediately trigger a time update to ensure UI is in sync
+      if (this.timeUpdateCallback) {
+        this.timeUpdateCallback(this.pausedTime);
+      }
     });
   }
   
@@ -175,6 +193,14 @@ class AudioPlayer {
     
     // Save current position
     this.pausedTime = this.getCurrentTime();
+    console.log('🎵 Current position at pause:', this.pausedTime);
+    
+    // CRITICAL: Remove the onended handler before stopping to prevent it from firing
+    // This is the key to preventing position reset during pause
+    if (this.sourceNode) {
+      console.log('🎵 Removing onended handler before pausing');
+      this.sourceNode.onended = null;
+    }
     
     // Stop the source
     this.sourceNode.stop();
@@ -183,6 +209,7 @@ class AudioPlayer {
     
     // Update UI
     if (this.timeUpdateCallback) {
+      console.log('🎵 Calling timeUpdateCallback with saved position:', this.pausedTime);
       this.timeUpdateCallback(this.pausedTime);
     }
   }
@@ -192,7 +219,8 @@ class AudioPlayer {
     console.log('🎵 AudioPlayer.stop called');
     
     if (this.sourceNode) {
-      console.log('🎵 Stopping source node');
+      // For intentional stop, we DO want onended to fire
+      console.log('🎵 Stopping source node (will fire onended)');
       this.sourceNode.stop();
       this.sourceNode = null;
     }
@@ -200,14 +228,12 @@ class AudioPlayer {
     this.isPlaying = false;
     this.pausedTime = 0;
     this.audioBuffer = null;
-    console.log('🎵 Reset player state');
+    console.log('🎵 Playback stopped completely');
     
     // Update time through callback
     if (this.timeUpdateCallback) {
       this.timeUpdateCallback(0);
     }
-    
-    console.log('🎵 Playback stopped completely');
   }
   
   // Seek to a specific time
@@ -301,15 +327,14 @@ class AudioPlayer {
   private handlePlaybackEnded(): void {
     console.log('🎵 AudioPlayer.handlePlaybackEnded called (track finished)');
     
-    // Reset state
+    // We don't reset position here - that's up to the playerStore
     this.sourceNode = null;
     this.isPlaying = false;
-    this.pausedTime = 0;
-    console.log('🎵 Reset playback state');
     
-    // Update time through callback
-    if (this.timeUpdateCallback) {
-      this.timeUpdateCallback(0);
+    // Notify playerStore about track end instead of resetting state
+    if (this.trackEndCallback) {
+      console.log('🎵 Notifying playerStore about track end');
+      this.trackEndCallback();
     }
   }
 }
