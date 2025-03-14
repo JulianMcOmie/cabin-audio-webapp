@@ -442,109 +442,75 @@ This subphase improved the file import process to work with the track store, all
 
 #### Phase 2.3: Player Integration
 
-🔄 **In Progress**
+✅ **Completed**
 
 This subphase directly connects UI components to the playerStore for consistent playback state management.
 
 **Core Integration Concept**:
-The goal is simple: Replace the current prop-based communication between components with direct access to the shared playerStore. Both the MusicLibrary and PlayerBar components should:
+The goal was simple: Replace the prop-based communication between components with direct access to the shared playerStore. Both the MusicLibrary and PlayerBar components now:
 1. Read playback state directly from usePlayerStore
 2. Update playback state directly through usePlayerStore actions
 
-**Specific Integration Tasks**:
-
-1. **PlayerBar Component**:
-   - Remove props for receiving track and playback state
-   - Use usePlayerStore() directly to access currentTrackId, isPlaying, etc.
-   - Call store actions directly: setCurrentTrack(), setIsPlaying(), etc.
-   - Display loading states from playerStore.loadingState
-   - Show progress based on playerStore.loadingProgress
-
-2. **MusicLibrary Component**:
-   - Remove props for setting track and playback state
-   - Use usePlayerStore() directly to access currentTrackId and isPlaying
-   - Call store actions directly when tracks are selected
-   - Update TrackItem rendering based on playerStore state
-
-3. **Page.tsx Modifications**:
-   - Remove local state for currentTrack and isPlaying
-   - Remove state setter functions passed to MusicLibrary and PlayerBar
-   - Remove any state management logic related to playback
-   - Components will now communicate through the playerStore instead of through page.tsx
-
-4. **Remove Unnecessary Abstraction**:
-   - Do NOT create a redundant usePlayer hook that just wraps usePlayerStore
-   - Access the store directly in components: const { currentTrackId, isPlaying } = usePlayerStore()
-   - Call actions directly: usePlayerStore.getState().setCurrentTrack(trackId)
-
-**Verification Steps**:
-- Play/pause in PlayerBar updates state in MusicLibrary and vice versa
-- Track selection in MusicLibrary updates the PlayerBar
-- Loading states are properly displayed in both components
-- Volume and other controls work consistently
-- Page.tsx no longer manages any playback state
-
-**Expected Result**:
-- Both components share the same playback state
-- UI is consistent across the application
-- No unnecessary abstraction layers
-- Direct and simple integration with the existing stores
-- Page.tsx is simplified with no playback state management
+**Implementation Notes**:
+- PlayerBar component now uses usePlayerStore directly instead of props
+- MusicLibrary component uses usePlayerStore for track playback state
+- Page.tsx no longer manages player state or passes it through props
+- The components communicate through the centralized playerStore
+- Play/pause events now properly propagate between components
 
 #### Phase 2.4: Toast Integration
 
-This subphase implements the toast notification system now that we have a better understanding of the error and success scenarios from prior integrations.
+✅ **Completed**
 
-**Integration Tasks**:
+This subphase implemented the toast notification system for providing user feedback.
 
-1. **Fix Toast Interface Usage**:
-   - Update all toast calls to use `variant` instead of `type`
-   - Ensure ToastManager is properly included in the application layout
-
-2. **Enhance Error Handling with Toasts**:
-   - Replace console logging with toast notifications
-   - Add appropriate error messages for track loading failures
-   - Implement success feedback for track operations
-   - Ensure error details are displayed clearly
-
-3. **Test Toast Functionality**:
-   - Verify success, error, and info toasts display correctly
-   - Confirm automatic dismissal works as expected
-   - Test manual dismissal functionality
-
-**Verification Steps**:
-- Trigger various toast types from different components
-- Verify styling is correct for each toast variant
-- Confirm that toasts stack properly when multiple are displayed
-- Check that duration settings are respected
-- Test error scenarios and verify helpful messages are displayed
+**Implementation Notes**:
+- Toast interface now uses `variant` instead of `type` for message styling
+- Error handling throughout the application uses toast notifications
+- Components use proper toast feedback for user actions
+- ToastManager provides a consistent notification system across the app
 
 ### Phase 3: Local Storage Implementation
 
-This phase connects the application to IndexedDB for persistent data storage.
+This phase connects stores to existing IndexedDB storage services.
 
-**Integration Tasks**:
+**Existing Components**:
+- `/lib/storage/indexedDBManager.ts`: Singleton that provides IndexedDB access
+- `/lib/storage/fileStorage.ts`: Handles audio file storage
+- `/lib/storage/metadataStorage.ts`: Manages track metadata
 
-1. **Storage Manager Integration**:
-   - Connect `useFileImport` to `fileStorage.ts`
-   - Integrate `useTrackStore` with `metadataStorage.ts`
-   - Ensure proper initialization of IndexedDB
+**Specific Tasks**:
 
-2. **Data Loading**:
-   - Implement or connect to `useDataLoading` hook
-   - Add loading indicators throughout the application
-   - Handle storage errors appropriately
+1. **Store Integration**:
+   - Modify `/lib/stores/trackStore.ts` to load tracks from metadataStorage on initialization
+   - Update store CRUD methods to call metadataStorage methods
+   - Add loading states to indicate database operations
 
-3. **Import Persistence**:
-   - Update file import to store files in IndexedDB
-   - Extract and store metadata for imported files
-   - Update library display after import
+2. **Audio Loading**:
+   - Update `/lib/stores/playerStore.ts` to load audio via fileStorage
+   - Implement tracking of file loading progress
+   - Add error handling for missing files
 
-**Expected Result**:
-- Data persists between sessions
-- Files are properly stored in IndexedDB
-- Track metadata is extracted and stored
-- UI reflects the persistent state
+3. **File Import**:
+   - Connect `/lib/hooks/useFileImport.ts` to fileStorage and metadataStorage
+   - Add progress tracking for file storage operations
+
+**Data Flow to Implement**:
+- Store Initialization: trackStore loads data from metadataStorage on creation
+- File Import: useFileImport → fileStorage → metadataStorage → trackStore
+- Playback: playerStore → fileStorage → audioPlayer
+
+**Deliverables**:
+1. Track persistence between sessions
+2. File import with storage to IndexedDB
+3. Audio loading from IndexedDB for playback
+4. Progress indicators during storage operations
+
+**Verification**:
+- Data persists after page refresh
+- Audio files can be imported and played back
+- Loading indicators display correctly
+- Error handling works for storage issues
 
 ### Phase 4: Basic Playback Controls
 
@@ -611,5 +577,7 @@ The interface-focused approach ensures compatibility with the existing component
 - Phase 1 (UI Components and Interfaces): ✅ Completed
 - Phase 2.1 (Track Store Connection): ✅ Completed
 - Phase 2.2 (File Import Enhancement): ✅ Completed
-- Phase 2.3 (Player Integration): 🔄 In Progress
+- Phase 2.3 (Player Integration): ✅ Completed
+- Phase 2.4 (Toast Integration): ✅ Completed
+- Phase 3 (Local Storage Implementation): 🔄 In Progress
 - Remaining phases to be implemented according to the plan
