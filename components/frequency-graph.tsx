@@ -1,160 +1,21 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
-import { useTheme } from "@/components/theme-provider"
+import { FrequencyEQ } from "./parametric-eq"
 
 interface FrequencyGraphProps {
-  selectedDot: [number, number] | null
+  selectedDot?: [number, number] | null
   disabled?: boolean
   className?: string
+  profileId?: string
 }
 
-export function FrequencyGraph({ selectedDot, disabled = false, className }: FrequencyGraphProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const { theme } = useTheme()
-  const [isDarkMode, setIsDarkMode] = useState(false)
-
-  // Set up observer to detect theme changes
-  useEffect(() => {
-    // Initial check
-    setIsDarkMode(document.documentElement.classList.contains("dark"))
-
-    // Set up mutation observer to watch for class changes on html element
-    const observer = new MutationObserver((mutations) => {
-      mutations.forEach((mutation) => {
-        if (mutation.attributeName === "class") {
-          const newIsDarkMode = document.documentElement.classList.contains("dark")
-          setIsDarkMode(newIsDarkMode)
-        }
-      })
-    })
-
-    observer.observe(document.documentElement, { attributes: true })
-
-    return () => {
-      observer.disconnect()
-    }
-  }, [])
-
-  // Redraw canvas when theme or other dependencies change
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    const ctx = canvas.getContext("2d")
-    if (!ctx) return
-
-    // Set canvas dimensions
-    const dpr = window.devicePixelRatio || 1
-    const rect = canvas.getBoundingClientRect()
-    canvas.width = rect.width * dpr
-    canvas.height = rect.height * dpr
-    ctx.scale(dpr, dpr)
-
-    // Clear canvas
-    ctx.clearRect(0, 0, rect.width, rect.height)
-
-    // Draw background grid
-    ctx.strokeStyle = isDarkMode ? "#3f3f5c" : "#e2e8f0" // Darker grid lines for dark mode
-    ctx.lineWidth = 1
-
-    // Vertical grid lines (frequency bands)
-    const bands = 10
-    for (let i = 0; i <= bands; i++) {
-      const x = (i / bands) * rect.width
-      ctx.beginPath()
-      ctx.moveTo(x, 0)
-      ctx.lineTo(x, rect.height)
-      ctx.stroke()
-    }
-
-    // Horizontal grid lines (dB levels)
-    const levels = 6
-    for (let i = 0; i <= levels; i++) {
-      const y = (i / levels) * rect.height
-      ctx.beginPath()
-      ctx.moveTo(0, y)
-      ctx.lineTo(rect.width, y)
-      ctx.stroke()
-    }
-
-    // Draw frequency labels
-    ctx.fillStyle = isDarkMode ? "#a1a1aa" : "#64748b" // Brighter text for dark mode
-    ctx.font = "10px sans-serif"
-    ctx.textAlign = "center"
-
-    const freqLabels = ["20Hz", "50Hz", "100Hz", "200Hz", "500Hz", "1kHz", "2kHz", "5kHz", "10kHz", "20kHz"]
-    for (let i = 0; i < freqLabels.length; i++) {
-      const x = ((i + 0.5) / bands) * rect.width
-      ctx.fillText(freqLabels[i], x, rect.height - 5)
-    }
-
-    // Draw dB labels
-    ctx.textAlign = "right"
-    const dbLabels = ["+12dB", "+6dB", "0dB", "-6dB", "-12dB", "-18dB"]
-    for (let i = 0; i < dbLabels.length; i++) {
-      const y = (i / (levels - 1)) * (rect.height - 30) + 15
-      ctx.fillText(dbLabels[i], rect.width - 10, y)
-    }
-
-    // Draw EQ curve
-    if (disabled) {
-      ctx.strokeStyle = isDarkMode ? "#71717a" : "#94a3b8" // Brighter disabled curve for dark mode
-    } else {
-      // Create gradient for the EQ curve - using electric blue colors
-      const gradient = ctx.createLinearGradient(0, 0, rect.width, 0)
-      if (isDarkMode) {
-        gradient.addColorStop(0, "#0ea5e9") // sky-500
-        gradient.addColorStop(0.5, "#38bdf8") // sky-400
-        gradient.addColorStop(1, "#7dd3fc") // sky-300
-      } else {
-        gradient.addColorStop(0, "#0284c7") // sky-600
-        gradient.addColorStop(0.5, "#0ea5e9") // sky-500
-        gradient.addColorStop(1, "#38bdf8") // sky-400
-      }
-      ctx.strokeStyle = gradient
-    }
-
-    ctx.lineWidth = 3
-    ctx.beginPath()
-
-    // Default curve (flat)
-    const curve = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
-
-    // If a dot is selected, modify the curve
-    if (selectedDot && !disabled) {
-      const [x, y] = selectedDot
-      const centerPoint = Math.floor(x * 10)
-      const intensity = 1 - y
-
-      // Create a bell curve around the selected frequency
-      for (let i = 0; i < curve.length; i++) {
-        const distance = Math.abs(i - centerPoint)
-        const influence = Math.max(0, 1 - distance / 3)
-        curve[i] = 0.5 + (intensity - 0.5) * influence
-      }
-    }
-
-    // Draw the curve
-    for (let i = 0; i < curve.length; i++) {
-      const x = ((i + 0.5) / bands) * rect.width
-      const y = (1 - curve[i]) * (rect.height - 30) + 15
-
-      if (i === 0) {
-        ctx.moveTo(x, y)
-      } else {
-        ctx.lineTo(x, y)
-      }
-    }
-    ctx.stroke()
-  }, [selectedDot, disabled, isDarkMode]) // Using isDarkMode instead of theme
-
+export function FrequencyGraph({ selectedDot = null, disabled = false, className, profileId }: FrequencyGraphProps) {
   return (
-    <div
-      className={`w-full aspect-[2/1] frequency-graph bg-white dark:bg-card rounded-lg border dark:border-gray-700 overflow-hidden ${disabled ? "opacity-70" : ""} ${className || ""}`}
-    >
-      <canvas ref={canvasRef} className="w-full h-full" />
-    </div>
+    <FrequencyEQ
+      profileId={profileId}
+      disabled={disabled}
+      className={className}
+    />
   )
 }
 
