@@ -82,6 +82,16 @@ class AudioPlayer {
   ): Promise<void> {
     console.log('🎵 AudioPlayer.loadTrack called with storageKey:', storageKey);
     
+    // Clear existing playback
+    if (this.sourceNode) {
+      if (this.isPlaying) {
+        console.log('🎵 Stopping existing playback before loading new track');
+        this.sourceNode.stop();
+      }
+      this.sourceNode = null;
+      this.isPlaying = false;
+    }
+    
     try {
       // Get audio file from storage
       console.log('🎵 Getting audio file from storage');
@@ -108,7 +118,7 @@ class AudioPlayer {
       // Decode audio data
       console.log('🎵 Decoding audio data');
       this.audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-      console.log('🎵 Audio buffer created:', this.audioBuffer);
+      console.log('🎵 Audio buffer created, duration:', this.audioBuffer.duration);
       if (progressCallback) progressCallback(90);
       
       // Reset playback position
@@ -136,40 +146,22 @@ class AudioPlayer {
       return;
     }
     
-    // Resume audio context if suspended
-    console.log('🎵 Resuming audio context');
+    if (this.isPlaying) {
+      console.log('🎵 Already playing, no action needed');
+      return;
+    }
+    
     audioContext.resumeAudioContext().then(() => {
-      console.log('🎵 Audio context resumed');
-      
-      // Stop any existing playback
-      if (this.sourceNode) {
-        console.log('🎵 Stopping existing source node');
-        this.sourceNode.stop();
-        this.sourceNode = null;
-      }
-      
-      // Create a new source node
-      console.log('🎵 Creating new buffer source node');
+      // Create and connect a new source node
       this.sourceNode = audioContext.createBufferSource();
       this.sourceNode.buffer = this.audioBuffer;
-      console.log('🎵 Source node created with buffer:', this.sourceNode);
-      
-      // Connect to gain node
-      console.log('🎵 Connecting source to gain node');
       this.sourceNode.connect(this.gainNode!);
-      
-      // Set up ended event
-      console.log('🎵 Setting up onended handler');
       this.sourceNode.onended = this.handlePlaybackEnded.bind(this);
       
-      // Start playback from paused position
-      console.log('🎵 Starting playback from position:', this.pausedTime);
+      // Start from the saved position
       this.sourceNode.start(0, this.pausedTime);
       this.startTime = audioContext.getCurrentTime() - this.pausedTime;
-      console.log('🎵 Playback started, start time:', this.startTime);
       this.isPlaying = true;
-    }).catch(error => {
-      console.error('🎵 Error resuming audio context:', error);
     });
   }
   
@@ -178,26 +170,21 @@ class AudioPlayer {
     console.log('🎵 AudioPlayer.pause called');
     
     if (!this.isPlaying || !this.sourceNode) {
-      console.log('🎵 Cannot pause: Not playing or no source node');
       return;
     }
     
-    // Calculate current position
+    // Save current position
     this.pausedTime = this.getCurrentTime();
-    console.log('🎵 Current position:', this.pausedTime);
     
-    // Stop the source node
-    console.log('🎵 Stopping source node');
+    // Stop the source
     this.sourceNode.stop();
     this.sourceNode = null;
     this.isPlaying = false;
     
-    // Update time through callback
+    // Update UI
     if (this.timeUpdateCallback) {
       this.timeUpdateCallback(this.pausedTime);
     }
-    
-    console.log('🎵 Playback paused');
   }
   
   // Stop playback completely
@@ -290,8 +277,8 @@ class AudioPlayer {
   }
   
   // Set mute state
-  public setMute(muted: boolean): void {
-    console.log('🎵 AudioPlayer.setMute called with:', muted);
+  public setMute(muted: boolean, volumeToRestore?: number): void {
+    console.log('🎵 AudioPlayer.setMute called with:', muted, 'volumeToRestore:', volumeToRestore);
     
     if (!this.gainNode) {
       console.log('🎵 Cannot set mute: No gain node');
@@ -303,8 +290,8 @@ class AudioPlayer {
       console.log('🎵 Muting: Setting gain to 0');
       this.gainNode.gain.value = 0;
     } else {
-      // Get volume from store or use default
-      const volume = 1; // Default volume if not provided
+      // Use provided volume or default to 1
+      const volume = volumeToRestore !== undefined ? volumeToRestore : 1;
       console.log('🎵 Unmuting: Restoring gain to:', volume);
       this.gainNode.gain.value = volume;
     }

@@ -143,17 +143,24 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       return;
     }
     
-    // Update state first
+    // If already in the desired state, do nothing
+    if (get().isPlaying === isPlaying) {
+      console.log('🔊 Already in the requested play state:', isPlaying);
+      return;
+    }
+    
+    // Update state first - but only the isPlaying flag, 
+    // don't touch the currentTime to preserve position
     set({ isPlaying });
     
     // Then control audio player
     try {
       const audioPlayer = getAudioPlayer();
       if (isPlaying) {
-        console.log('🔊 Calling audioPlayer.play()');
+        console.log('🔊 Calling audioPlayer.play() to resume from:', get().currentTime);
         audioPlayer.play();
       } else {
-        console.log('🔊 Calling audioPlayer.pause()');
+        console.log('🔊 Calling audioPlayer.pause() at position:', get().currentTime);
         audioPlayer.pause();
       }
     } catch (error) {
@@ -205,8 +212,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     // Then control audio player
     try {
       const audioPlayer = getAudioPlayer();
-      console.log('🔊 Calling audioPlayer.setMute()');
-      audioPlayer.setMute(isMuted);
+      const currentVolume = get().volume;
+      console.log('🔊 Calling audioPlayer.setMute() with current volume:', currentVolume);
+      audioPlayer.setMute(isMuted, currentVolume);
     } catch (error) {
       console.error('🔊 Error setting mute state:', error);
     }
