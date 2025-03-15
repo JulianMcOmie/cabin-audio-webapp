@@ -13,21 +13,21 @@ export class EQBandRenderer {
     height: number,
     freqRange: { min: number; max: number },
     isDarkMode: boolean,
-    isSelected: boolean,
+    isHovered: boolean,
     isEnabled: boolean = true
   ) {
     console.log("drawing band at frequency: ", band.frequency);
     // Skip if band is outside visible range
     if (band.frequency < freqRange.min || band.frequency > freqRange.max) return;
     
-    // Adjust opacity based on isSelected state
-    const baseOpacity = isSelected ? 0.6 : 0.3; // More opaque when highlighted
+    // Adjust opacity based on isHovered state
+    const baseOpacity = isHovered ? 0.6 : 0.4; // More opaque when highlighted, but more vibrant by default
     
     const bandColor = isEnabled 
       ? EQCoordinateUtils.getBandColor(band.frequency, baseOpacity, isDarkMode)
       : `rgba(128, 128, 128, ${baseOpacity})`;
       
-    const strokeOpacity = isSelected ? 0.8 : 0.5; // More opaque when highlighted
+    const strokeOpacity = isHovered ? 0.8 : 0.6; // More opaque when highlighted, more vibrant by default
     const strokeColor = isEnabled 
       ? EQCoordinateUtils.getBandColor(band.frequency, strokeOpacity, isDarkMode)
       : `rgba(128, 128, 128, ${strokeOpacity})`;
@@ -62,12 +62,12 @@ export class EQBandRenderer {
     const y = EQCoordinateUtils.gainToY(band.gain, height);
     
     // Increase handle color opacity when highlighted
-    const handleOpacity = band.isHovered ? 0.9 : (isSelected ? 0.8 : 0.7);
+    const handleOpacity = band.isHovered || isHovered ? 0.9 : 0.8; // More vibrant by default
     const handleColor = isEnabled 
       ? EQCoordinateUtils.getBandColor(band.frequency, handleOpacity, isDarkMode)
       : `rgba(128, 128, 128, ${handleOpacity})`;
     
-    this.drawBandHandle(ctx, x, y, handleColor, band.isHovered || isSelected, isEnabled);
+    this.drawBandHandle(ctx, x, y, handleColor, band.isHovered || isHovered, isEnabled);
   }
   
   /**

@@ -65,7 +65,8 @@ export class EQCoordinateUtils {
     
     // Use HSL color space for a nice gradient
     const hue = 240 - normalizedFreq * 240; // 240 (blue) to 0 (red)
-    const lightness = isDarkMode ? 60 : 50; // Brighter in dark mode
-    return `hsla(${hue}, 80%, ${lightness}%, ${alpha})`;
+    const saturation = 90; // Increased from 80 to make colors more vibrant
+    const lightness = isDarkMode ? 65 : 55; // Brighter in both modes for more vibrancy
+    return `hsla(${hue}, ${saturation}%, ${lightness}%, ${alpha})`;
   }
 } 

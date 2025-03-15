@@ -140,6 +140,7 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
     handleMouseDown, 
     isShiftPressed,
     ghostNode,
+    draggingBand: draggingBandId,
   } = useEQInteraction({
     canvasRef,
     bands: renderableBands,
@@ -238,6 +239,9 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
 
     // Draw individual band responses
     renderableBands.forEach((band) => {
+        // Consider a band "hovered" if it's the selected band or if it's being dragged
+        const isHovered = band.id === selectedBandId || band.id === draggingBandId;
+        
         EQBandRenderer.drawBand(
           ctx,
           band,
@@ -245,7 +249,7 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
           rect.height,
           freqRange,
           isDarkMode,
-          band.id === selectedBandId,
+          isHovered,
           isEnabled
         )
         
@@ -295,7 +299,7 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
       )
     }
 
-  }, [renderableBands, frequencyResponse, disabled, isDarkMode, selectedBandId, isShiftPressed, ghostNode])
+  }, [renderableBands, frequencyResponse, disabled, isDarkMode, selectedBandId, isShiftPressed, ghostNode, draggingBandId])
 
   return (
     <div
