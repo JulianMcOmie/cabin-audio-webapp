@@ -474,7 +474,7 @@ class DotGridAudioPlayer {
     // So going up one octave means 0.707x gain, going down one octave means 1.414x gain
     // We calculate this by using 2^(-octaves * 0.5)
     // The 0.5 gives us the -3dB/octave slope (because 10*log10(2^0.5) ≈ 3dB)
-    const frequencyGainFactor = 1; // Removed frequency-based gain adjustment
+    const frequencyGainFactor = Math.pow(2, -octavesAboveMin * 0.5);
     
     // Apply gain with frequency compensation
     gain.gain.value = MASTER_GAIN * frequencyGainFactor;
