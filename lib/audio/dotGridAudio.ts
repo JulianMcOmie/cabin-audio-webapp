@@ -8,6 +8,13 @@ type DotPosition = {
 // Constants
 const COLUMNS = 5; // Always 5 panning positions - match the value in dot-grid.tsx
 
+// Envelope settings
+const ENVELOPE_PERIOD = 2.0; // Length of one envelope cycle in seconds
+const ENVELOPE_MIN_GAIN = 0.3; // Minimum gain during envelope cycle
+const ENVELOPE_MAX_GAIN = 1.0; // Maximum gain during envelope cycle
+const ENVELOPE_ATTACK = 0.005; // Attack time in seconds - MUCH faster for sharp transients
+const ENVELOPE_RELEASE = 0.005; // Release time in seconds
+
 class DotGridAudioPlayer {
   private static instance: DotGridAudioPlayer;
   private pinkNoiseBuffer: AudioBuffer | null = null;
@@ -15,9 +22,12 @@ class DotGridAudioPlayer {
   private audioNodes: Map<string, {
     source: AudioBufferSourceNode;
     gain: GainNode;
+    envelopeGain: GainNode; // New gain node for envelope
     panner: StereoPannerNode;
     filter: BiquadFilterNode;
+    envelopeOffset: number; // Offset for staggering envelopes
   }> = new Map();
+  private gridSize: number = 3; // Default, will be updated when dots are added
 
   private constructor() {
     // Initialize pink noise buffer
@@ -29,6 +39,14 @@ class DotGridAudioPlayer {
       DotGridAudioPlayer.instance = new DotGridAudioPlayer();
     }
     return DotGridAudioPlayer.instance;
+  }
+
+  /**
+   * Set the current grid size
+   */
+  public setGridSize(size: number): void {
+    this.gridSize = size;
+    console.log(`🔊 Grid size set to ${size} rows`);
   }
 
   /**
@@ -68,8 +86,13 @@ class DotGridAudioPlayer {
   /**
    * Update the set of active dots
    */
-  public updateDots(dots: Set<string>): void {
+  public updateDots(dots: Set<string>, currentGridSize?: number): void {
     console.log(`🔊 Updating dots: ${dots.size}`);
+    
+    // Update grid size if provided
+    if (currentGridSize && currentGridSize !== this.gridSize) {
+      this.setGridSize(currentGridSize);
+    }
     
     // Get current dots
     const currentDots = new Set(this.audioNodes.keys());
@@ -88,11 +111,35 @@ class DotGridAudioPlayer {
       }
     });
     
+    // Calculate staggered envelope offsets based on dot count
+    this.updateEnvelopeOffsets(dots);
+    
     // Restart sound if we're currently playing
     if (this.isPlaying) {
       this.stopAllSources();
       this.startAllSources();
     }
+  }
+
+  /**
+   * Update envelope offsets to stagger them across the dots
+   */
+  private updateEnvelopeOffsets(dots: Set<string>): void {
+    if (dots.size <= 1) return; // No need to stagger for a single dot
+    
+    const dotKeys = Array.from(dots);
+    const totalDots = dotKeys.length;
+    
+    // Distribute offsets evenly across the envelope period
+    dotKeys.forEach((dotKey, index) => {
+      const nodes = this.audioNodes.get(dotKey);
+      if (nodes) {
+        // Calculate offset as a fraction of the envelope period
+        nodes.envelopeOffset = (index / totalDots) * ENVELOPE_PERIOD;
+      }
+    });
+    
+    console.log(`🔊 Updated envelope offsets for ${totalDots} dots`);
   }
 
   /**
@@ -110,6 +157,57 @@ class DotGridAudioPlayer {
     } else {
       this.stopAllSources();
     }
+  }
+
+  /**
+   * Apply a repeating gain envelope to the node
+   */
+  private applyGainEnvelope(envelopeGain: GainNode, offset: number = 0): void {
+    const ctx = audioContext.getAudioContext();
+    const now = ctx.currentTime;
+    
+    // Set initial gain
+    envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, now);
+    
+    // Schedule repeating envelope
+    const scheduleEnvelope = (startTime: number) => {
+      // Set minimum gain as the starting point
+      envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, startTime);
+      
+      // Attack phase - VERY fast exponential rise for sharp transient
+      // Using exponentialRampToValueAtTime for even sharper attack
+      envelopeGain.gain.exponentialRampToValueAtTime(
+        ENVELOPE_MAX_GAIN,
+        startTime + ENVELOPE_ATTACK
+      );
+      
+      // Sustain at max for a while
+      const sustainTime = ENVELOPE_PERIOD - ENVELOPE_ATTACK - ENVELOPE_RELEASE;
+      
+      // Release phase - ramp down from max to min
+      envelopeGain.gain.linearRampToValueAtTime(
+        ENVELOPE_MIN_GAIN,
+        startTime + ENVELOPE_ATTACK + sustainTime + ENVELOPE_RELEASE
+      );
+      
+      // Schedule the next cycle
+      const nextCycleTime = startTime + ENVELOPE_PERIOD;
+      
+      // Only schedule a few cycles ahead to avoid memory issues
+      if (nextCycleTime < now + 10) {
+        scheduleEnvelope(nextCycleTime);
+      } else {
+        // Schedule a callback to continue scheduling
+        setTimeout(() => {
+          if (this.isPlaying) {
+            scheduleEnvelope(nextCycleTime);
+          }
+        }, (nextCycleTime - now - 5) * 1000);
+      }
+    };
+    
+    // Start the envelope with the specified offset
+    scheduleEnvelope(now + offset);
   }
 
   /**
@@ -136,10 +234,15 @@ class DotGridAudioPlayer {
         source.loop = true;
         
         // Connect the audio chain
+        // source -> filter -> panner -> envelopeGain -> gain -> destination
         source.connect(nodes.filter);
         nodes.filter.connect(nodes.panner);
-        nodes.panner.connect(nodes.gain);
+        nodes.panner.connect(nodes.envelopeGain);
+        nodes.envelopeGain.connect(nodes.gain);
         nodes.gain.connect(ctx.destination);
+        
+        // Apply the gain envelope with the dot's offset
+        this.applyGainEnvelope(nodes.envelopeGain, nodes.envelopeOffset);
         
         // Start playback
         source.start();
@@ -185,6 +288,10 @@ class DotGridAudioPlayer {
     const gain = ctx.createGain();
     gain.gain.value = 0.2; // Reduced to prevent distortion with multiple dots
     
+    // Create an envelope gain node for modulation
+    const envelopeGain = ctx.createGain();
+    envelopeGain.gain.value = ENVELOPE_MIN_GAIN; // Start at minimum gain
+    
     // Create a panner node for stereo positioning
     // x value determines pan position (-1 to 1)
     const panner = ctx.createStereoPanner();
@@ -192,13 +299,10 @@ class DotGridAudioPlayer {
     const normalizedX = (x / (COLUMNS - 1)) * 2 - 1; // Convert to range -1 to 1
     panner.pan.value = normalizedX;
     
-    // Get the gridSize from the y value context
-    // We don't know the exact gridSize, but we can infer it's at least y+1
-    // This is an approximation - the exact y range isn't critical for the audio
-    const estimatedGridSize = Math.max(3, y + 1); // Estimate based on y position, minimum 3
-    
+    // Use the actual grid size from the component
     // Normalize y to 0-1 range (0 = bottom, 1 = top)
-    const normalizedY = 1 - (y / (estimatedGridSize - 1)); // Flip so higher y = higher position
+    // gridSize-1 is the last row index, so y/(gridSize-1) gives us the relative position
+    const normalizedY = 1 - (y / (this.gridSize - 1)); // Flip so higher y = higher position
     
     // Create a bandpass filter
     const filter = ctx.createBiquadFilter();
@@ -234,11 +338,14 @@ class DotGridAudioPlayer {
     this.audioNodes.set(dotKey, {
       source: ctx.createBufferSource(), // Dummy source (will be replaced when playing)
       gain,
+      envelopeGain,
       panner,
-      filter
+      filter,
+      envelopeOffset: 0 // Default offset, will be updated when multiple dots are active
     });
     
     console.log(`🔊 Added dot ${dotKey} at position (${x},${y})`);
+    console.log(`   Grid size: ${this.gridSize} rows`);
     console.log(`   Pan: ${normalizedX.toFixed(2)}`);
     console.log(`   Position: ${normalizedY.toFixed(2)}`);
     console.log(`   Center frequency: ${centerFreq.toFixed(0)}Hz`);
@@ -287,4 +394,12 @@ class DotGridAudioPlayer {
  */
 export function getDotGridAudioPlayer(): DotGridAudioPlayer {
   return DotGridAudioPlayer.getInstance();
+}
+
+/**
+ * Clean up the dot grid audio player
+ */
+export function cleanupDotGridAudioPlayer(): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.dispose();
 } 

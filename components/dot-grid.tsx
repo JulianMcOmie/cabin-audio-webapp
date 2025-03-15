@@ -368,8 +368,8 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
   // Update audio player when selected dots change
   useEffect(() => {
     const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
-    audioPlayer.updateDots(selectedDots);
-  }, [selectedDots]);
+    audioPlayer.updateDots(selectedDots, gridSize);
+  }, [selectedDots, gridSize]);
   
   // Update audio player when playing state changes
   useEffect(() => {
