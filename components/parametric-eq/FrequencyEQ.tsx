@@ -87,7 +87,9 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
   
   const handleBandUpdate = useCallback((id: string, updates: Partial<EQBandWithUI>) => {
     if (!profile) return
-    
+
+    console.log("updates", updates)
+
     // Update local state first for responsive UI
     setBands(prev => {
       const newBands = [...prev]
@@ -105,6 +107,7 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
     
     // Sync changes back to the profile
     const bandIndex = bands.findIndex(b => b.id === id)
+    console.log('bandIndex', bandIndex)
     if (bandIndex !== -1 && (updates.frequency !== undefined || updates.gain !== undefined || updates.q !== undefined)) {
       const profileBands = [...profile.bands]
       profileBands[bandIndex] = { 
