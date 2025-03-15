@@ -3,14 +3,6 @@ import { EQProfile } from '../models/EQProfile';
 import { EQBand } from '../models/EQBand';
 import { useEQProfileStore } from '../stores';
 
-// Default frequencies for a 10-band EQ
-export const DEFAULT_FREQUENCIES = [
-  32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000
-];
-
-// Default Q values for each band
-export const DEFAULT_Q = 1.4;
-
 // Class to manage EQ processing
 class EQProcessor {
   private filters: BiquadFilterNode[] = [];
@@ -26,40 +18,21 @@ class EQProcessor {
   
   // Initialize the EQ processor
   private initialize(): void {
+    console.log('🎮 EQProcessor.initialize called');
+    
     // Create input and output nodes
     this.inputNode = audioContext.createGain();
     this.outputNode = audioContext.createGain();
     this.volumeNode = audioContext.createGain();
     
-    // // Create filter nodes for each frequency band
-    // this.filters = DEFAULT_FREQUENCIES.map((frequency, index) => {
-    //   const filter = audioContext.createBiquadFilter();
-    //   filter.type = 'peaking'; // EQ filter type
-    //   filter.frequency.value = frequency;
-    //   filter.gain.value = 0; // Default to flat EQ
-    //   filter.Q.value = DEFAULT_Q;
-      
-    //   // Connect filters in series
-    //   if (index === 0) {
-    //     // First filter connects to input
-    //     this.inputNode!.connect(filter);
-    //   } else {
-    //     // Other filters connect to previous filter
-    //     this.filters[index - 1].connect(filter);
-    //   }
-      
-    //   return filter;
-    // });
+    // Make sure volume node is at unity gain (no volume change)
+    this.volumeNode.gain.value = 1.0;
     
-    // Connect last filter to volume node, then to output
-    if (this.filters.length > 0) {
-      this.filters[this.filters.length - 1].connect(this.volumeNode!);
-      this.volumeNode!.connect(this.outputNode!);
-    } else {
-      // If no filters, connect input directly to output
-      this.inputNode!.connect(this.volumeNode!);
-      this.volumeNode!.connect(this.outputNode!);
-    }
+    // Simple pass-through connection - input to volume to output
+    this.inputNode.connect(this.volumeNode);
+    this.volumeNode.connect(this.outputNode);
+    
+    console.log('🎮 EQProcessor initialized with pass-through connection');
   }
   
   // Get the input node for connecting audio sources
@@ -74,37 +47,25 @@ class EQProcessor {
   
   // Apply an EQ profile to the filters
   public applyProfile(profile: EQProfile): void {
+    console.log('🎮 EQProcessor.applyProfile called:', profile);
     this.currentProfile = profile;
     
-    // Apply each band's settings
-    profile.bands.forEach((band, index) => {
-      if (index < this.filters.length) {
-        const filter = this.filters[index];
-        filter.frequency.value = band.frequency;
-        filter.gain.value = this.isEnabled ? band.gain : 0;
-        filter.Q.value = band.q;
-      }
-    });
+    // For now, we're not applying any actual EQ, just storing the profile
     
-    // Apply volume offset
-    this.volumeNode!.gain.value = 0.0;//this.isEnabled ? 
-     // Math.pow(10, profile.volume / 20) : 1.0; // Convert dB to linear gain
+    // Make sure volume is set to unity gain (no change)
+    // Later we'll implement proper volume handling
+    this.volumeNode!.gain.value = 1.0;
+    
+    console.log('🎮 Profile stored, but no EQ applied yet');
   }
   
   // Enable or disable the EQ
   public setEnabled(enabled: boolean): void {
+    console.log('🎮 EQProcessor.setEnabled called:', enabled);
     this.isEnabled = enabled;
     
-    // If we have a current profile, reapply it with new enabled state
-    if (this.currentProfile) {
-      this.applyProfile(this.currentProfile);
-    } else {
-      // Otherwise, just set all filters to 0 gain
-      this.filters.forEach(filter => {
-        filter.gain.value = 0;
-      });
-      this.volumeNode!.gain.value = 1.0;
-    }
+    // For now, just store the enabled state
+    // Later we'll implement actual EQ bypass logic
   }
   
   // Check if EQ is enabled
@@ -171,16 +132,19 @@ let eqProcessorInstance: EQProcessor | null = null;
 // Get or create the EQ processor instance
 export const getEQProcessor = (): EQProcessor => {
   if (!eqProcessorInstance) {
+    console.log('🎮 Creating new EQProcessor instance');
     eqProcessorInstance = new EQProcessor();
     
-    // Initialize with the active profile or create a default one
+    // Initialize with the active profile from the store
     const eqStore = useEQProfileStore.getState();
     const activeProfile = eqStore.getActiveProfile();
     
     if (activeProfile) {
+      console.log('🎮 Applying active profile from store');
       eqProcessorInstance.applyProfile(activeProfile);
     } else {
       // Create and apply a default profile
+      console.log('🎮 No active profile, using default');
       const defaultProfile = eqProcessorInstance.createDefaultProfile();
       eqProcessorInstance.applyProfile(defaultProfile);
       
@@ -188,6 +152,19 @@ export const getEQProcessor = (): EQProcessor => {
       eqStore.addProfile(defaultProfile);
       eqStore.setActiveProfile(defaultProfile.id);
     }
+    
+    // Set the enabled state based on the store
+    eqProcessorInstance.setEnabled(eqStore.isEQEnabled);
+    
+    // Subscribe to changes in the EQ enabled state
+    useEQProfileStore.subscribe(
+      state => {
+        if (eqProcessorInstance) {
+          console.log('🎮 EQ enabled state changed:', state.isEQEnabled);
+          eqProcessorInstance.setEnabled(state.isEQEnabled);
+        }
+      }
+    );
   }
   
   return eqProcessorInstance;

@@ -34,10 +34,15 @@ class AudioPlayer {
       // Create a gain node for volume control
       this.gainNode = audioContext.createGain();
       console.log('🎵 Gain node created:', this.gainNode);
+
+      // Get the EQ processor and connect through it
+      const eq = eqProcessor.getEQProcessor();
+      this.gainNode.connect(eq.getInputNode());
+      console.log('🎵 Gain node connected to EQ processor input');
       
-      // Connect directly to destination instead of EQ processor
-      this.gainNode.connect(audioContext.getAudioContext().destination);
-      console.log('🎵 Gain node connected to audio destination');
+      // Connect EQ output to destination
+      eq.getOutputNode().connect(audioContext.getAudioContext().destination);
+      console.log('🎵 EQ processor output connected to audio destination');
       
       // Set up progress tracking
       this.setupProgressTracking();

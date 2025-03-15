@@ -184,9 +184,7 @@ export function MusicLibrary({ eqEnabled, setActiveTab, onSignupClick }: MusicLi
         
         // Convert store tracks to UI format and update state if not loading
         if (!isTrackStoreLoading) {
-          console.log(`[MusicLibrary] Converting store tracks to UI format`);
           const uiTracks = convertStoreTracksToUI();
-          console.log(`[MusicLibrary] Setting tracks state with ${uiTracks.length} tracks`);
           setTracks(uiTracks);
         }
       } catch (error) {
