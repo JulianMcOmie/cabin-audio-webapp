@@ -13,9 +13,13 @@ const COLUMNS = 5; // Always 5 panning positions - match the value in dot-grid.t
 const ENVELOPE_MIN_GAIN = 0.0; // Minimum gain during envelope cycle
 const ENVELOPE_MAX_GAIN = 1.0; // Maximum gain during envelope cycle
 const ENVELOPE_ATTACK = 0.002; // Faster attack time in seconds - for very punchy transients
-const ENVELOPE_RELEASE = 0.5; // Shorter release time in seconds
-const DOT_TIMING = 0.1; // Fixed timing for each step in the sequence (seconds)
+const ENVELOPE_RELEASE = 0.3; // Shorter release time in seconds
 const MASTER_GAIN = 3.0; // Much louder master gain for calibration
+
+// Rhythm settings - base rhythm timing in seconds
+const BASE_RHYTHM = 0.4; // Base rhythm in seconds
+const MIN_RHYTHM = 0.2;  // Minimum timing for fastest rhythms
+const MAX_RHYTHM = 0.8;  // Maximum timing for slowest rhythms
 
 class DotGridAudioPlayer {
   private static instance: DotGridAudioPlayer;
@@ -28,12 +32,10 @@ class DotGridAudioPlayer {
     panner: StereoPannerNode;
     filter: BiquadFilterNode;
     position: number; // Position in the sequence (index)
+    rhythmTimer: number | null; // Individual rhythm timer for this dot
+    rhythmInterval: number; // Rhythm interval in milliseconds
   }> = new Map();
   private gridSize: number = 3; // Default, will be updated when dots are added
-  private sequenceIndex: number = 0; // Current position in the sequence
-  private sequenceTimer: number | null = null; // Timer ID for the sequence
-  private allPositions: string[] = []; // All possible dot positions in reading order
-  private lastSequenceTime: number = 0; // Last time the sequence was updated
   
   private constructor() {
     // Initialize pink noise buffer
@@ -53,9 +55,6 @@ class DotGridAudioPlayer {
   public setGridSize(size: number): void {
     this.gridSize = size;
     console.log(`🔊 Grid size set to ${size} rows`);
-    
-    // Update the sequence with the new grid size
-    this.updateSequence();
   }
 
   /**
@@ -67,28 +66,43 @@ class DotGridAudioPlayer {
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
     const data = buffer.getChannelData(0);
 
-    // Generating pink noise using Paul Kellet's method
+    // Improved pink noise generation using Paul Kellet's refined method
+    // This produces a true -3dB/octave spectrum characteristic of pink noise
     let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
     
     for (let i = 0; i < bufferSize; i++) {
+      // Generate white noise sample
       const white = Math.random() * 2 - 1;
       
-      // Pink noise filtering
+      // Pink noise filtering - refined coefficients for accurate spectral slope
       b0 = 0.99886 * b0 + white * 0.0555179;
       b1 = 0.99332 * b1 + white * 0.0750759;
       b2 = 0.96900 * b2 + white * 0.1538520;
       b3 = 0.86650 * b3 + white * 0.3104856;
       b4 = 0.55000 * b4 + white * 0.5329522;
       b5 = -0.7616 * b5 - white * 0.0168980;
+      b6 = white * 0.5362;
       
-      // Combine and scale
-      data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11;
-      
-      // Prevent clipping
-      if (data[i] > 0.95) data[i] = 0.95;
-      if (data[i] < -0.95) data[i] = -0.95;
+      // Combine with proper scaling to maintain pink noise characteristics
+      // The sum is multiplied by 0.11 to normalize the output
+      data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6) * 0.11;
+    }
+    
+    // Apply a second-pass normalization to ensure consistent volume
+    // Find the peak amplitude
+    let peak = 0;
+    for (let i = 0; i < bufferSize; i++) {
+      const abs = Math.abs(data[i]);
+      if (abs > peak) peak = abs;
+    }
+    
+    // Normalize to avoid clipping but maintain energy
+    const normalizationFactor = peak > 0.8 ? 0.8 / peak : 1.0;
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] *= normalizationFactor;
     }
 
+    console.log(`🔊 Generated pink noise buffer: ${bufferSize} samples, normalized by ${normalizationFactor.toFixed(4)}`);
     this.pinkNoiseBuffer = buffer;
   }
 
@@ -120,33 +134,13 @@ class DotGridAudioPlayer {
       }
     });
     
-    // If playing and dots changed, restart the sources to ensure proper audio
-    if (this.isPlaying && 
-       (currentDots.size !== dots.size || 
-        ![...currentDots].every(dot => dots.has(dot)))) {
+    // If playing, restart rhythm timers for all dots
+    if (this.isPlaying) {
+      this.stopAllRhythms();
       this.stopAllSources();
       this.startAllSources();
-      
-      // No need to restart the sequence timer - it continues uninterrupted
+      this.startAllRhythms();
     }
-  }
-
-  /**
-   * Update the sequence with the current grid size
-   */
-  private updateSequence(): void {
-    // Create array of all positions in reading order (left to right, top to bottom)
-    this.allPositions = [];
-    
-    // Generate positions in reading order
-    for (let y = 0; y < this.gridSize; y++) {
-      for (let x = 0; x < COLUMNS; x++) {
-        this.allPositions.push(`${x},${y}`);
-      }
-    }
-    
-    console.log(`🔊 Sequence updated: ${this.allPositions.length} positions, grid size: ${this.gridSize}x${COLUMNS}`);
-    console.log(`🔊 Reading order: left-to-right, top-to-bottom, ${DOT_TIMING.toFixed(2)}s per position`);
   }
 
   /**
@@ -161,90 +155,56 @@ class DotGridAudioPlayer {
     
     if (playing) {
       this.startAllSources();
-      this.startSequenceTimer();
+      this.startAllRhythms();
     } else {
+      this.stopAllRhythms();
       this.stopAllSources();
-      this.stopSequenceTimer();
     }
   }
 
   /**
-   * Start the sequence timer to advance through dot positions
+   * Start rhythm timers for all dots
    */
-  private startSequenceTimer(): void {
+  private startAllRhythms(): void {
+    console.log(`🔊 Starting rhythms for all dots`);
+    
+    this.audioNodes.forEach((nodes, dotKey) => {
+      this.startDotRhythm(dotKey, nodes);
+    });
+  }
+  
+  /**
+   * Stop rhythm timers for all dots
+   */
+  private stopAllRhythms(): void {
+    console.log(`🔊 Stopping rhythms for all dots`);
+    
+    this.audioNodes.forEach((nodes, dotKey) => {
+      if (nodes.rhythmTimer !== null) {
+        window.clearInterval(nodes.rhythmTimer);
+        nodes.rhythmTimer = null;
+      }
+    });
+  }
+  
+  /**
+   * Start a rhythm timer for a specific dot
+   */
+  private startDotRhythm(dotKey: string, nodes: any): void {
     // Clear any existing timer
-    this.stopSequenceTimer();
-    
-    // Reset sequence position
-    this.sequenceIndex = 0;
-    
-    // Use a simple interval timer for predictable timing
-    this.sequenceTimer = window.setInterval(() => {
-      this.advanceSequence();
-    }, DOT_TIMING * 1000);
-    
-    // Immediately trigger the first position
-    this.advanceSequence();
-  }
-  
-  /**
-   * Stop the sequence timer
-   */
-  private stopSequenceTimer(): void {
-    if (this.sequenceTimer !== null) {
-      window.clearInterval(this.sequenceTimer);
-      this.sequenceTimer = null;
-    }
-  }
-  
-  /**
-   * Advance to the next position in the sequence
-   */
-  private advanceSequence(): void {
-    // Get the current position
-    const sequencePosition = this.sequenceIndex % this.allPositions.length;
-    const position = this.allPositions[sequencePosition];
-    
-    // Only trigger envelope if a dot is selected at this position
-    if (this.audioNodes.has(position)) {
-      this.triggerDotEnvelope(position);
+    if (nodes.rhythmTimer !== null) {
+      window.clearInterval(nodes.rhythmTimer);
     }
     
-    // Always advance to the next position in the sequence
-    this.sequenceIndex = (this.sequenceIndex + 1) % this.allPositions.length;
-  }
-  
-  /**
-   * Trigger the envelope for a specific dot
-   */
-  private triggerDotEnvelope(dotKey: string): void {
-    const nodes = this.audioNodes.get(dotKey);
-    if (!nodes) return;
+    // Set up rhythm interval based on dot position
+    nodes.rhythmTimer = window.setInterval(() => {
+      if (this.isPlaying) {
+        this.triggerDotEnvelope(dotKey);
+      }
+    }, nodes.rhythmInterval);
     
-    const ctx = audioContext.getAudioContext();
-    const now = ctx.currentTime;
-    
-    // Reset to minimum gain
-    nodes.envelopeGain.gain.cancelScheduledValues(now);
-    nodes.envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, now);
-    
-    // Attack - extremely fast rise for punchy sound
-    nodes.envelopeGain.gain.linearRampToValueAtTime(
-      ENVELOPE_MAX_GAIN, 
-      now + ENVELOPE_ATTACK
-    );
-    
-    // Release - short tail
-    nodes.envelopeGain.gain.exponentialRampToValueAtTime(
-      0.001, // Can't go to zero with exponentialRamp, use very small value
-      now + ENVELOPE_ATTACK + ENVELOPE_RELEASE
-    );
-    
-    // Finally set to zero after the exponential ramp
-    nodes.envelopeGain.gain.setValueAtTime(0, now + ENVELOPE_ATTACK + ENVELOPE_RELEASE + 0.001);
-    
-    // Visual feedback via console
-    console.log(`🔊 Triggered envelope for dot ${dotKey}`);
+    // Trigger immediately for immediate feedback
+    this.triggerDotEnvelope(dotKey);
   }
 
   /**
@@ -316,6 +276,39 @@ class DotGridAudioPlayer {
   }
 
   /**
+   * Trigger the envelope for a specific dot
+   */
+  private triggerDotEnvelope(dotKey: string): void {
+    const nodes = this.audioNodes.get(dotKey);
+    if (!nodes) return;
+    
+    const ctx = audioContext.getAudioContext();
+    const now = ctx.currentTime;
+    
+    // Reset to minimum gain
+    nodes.envelopeGain.gain.cancelScheduledValues(now);
+    nodes.envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, now);
+    
+    // Attack - extremely fast rise for punchy sound
+    nodes.envelopeGain.gain.linearRampToValueAtTime(
+      ENVELOPE_MAX_GAIN, 
+      now + ENVELOPE_ATTACK
+    );
+    
+    // Release - short tail
+    nodes.envelopeGain.gain.exponentialRampToValueAtTime(
+      0.001, // Can't go to zero with exponentialRamp, use very small value
+      now + ENVELOPE_ATTACK + ENVELOPE_RELEASE
+    );
+    
+    // Finally set to zero after the exponential ramp
+    nodes.envelopeGain.gain.setValueAtTime(0, now + ENVELOPE_ATTACK + ENVELOPE_RELEASE + 0.001);
+    
+    // Visual feedback via console
+    console.log(`🔊 Triggered envelope for dot ${dotKey}`);
+  }
+
+  /**
    * Add a new dot to the audio system
    */
   private addDot(dotKey: string): void {
@@ -323,62 +316,65 @@ class DotGridAudioPlayer {
     
     const [x, y] = dotKey.split(',').map(Number);
     
-    // Find position in sequence
-    const position = this.allPositions.indexOf(dotKey);
-    
     // Create audio nodes for this dot
     const ctx = audioContext.getAudioContext();
     
-    // Create a gain node for volume
-    const gain = ctx.createGain();
-    gain.gain.value = MASTER_GAIN; // Use the much louder master gain
-    
-    // Create an envelope gain node for modulation
-    const envelopeGain = ctx.createGain();
-    envelopeGain.gain.value = ENVELOPE_MIN_GAIN; // Start at minimum gain
-    
-    // Create a panner node for stereo positioning
-    // x value determines pan position (-1 to 1)
-    const panner = ctx.createStereoPanner();
-    // Normalize x position based on fixed 5 columns (0-4)
-    const normalizedX = (x / (COLUMNS - 1)) * 2 - 1; // Convert to range -1 to 1
-    panner.pan.value = normalizedX;
-    
-    // Use the actual grid size from the component
     // Normalize y to 0-1 range (0 = bottom, 1 = top)
-    // gridSize-1 is the last row index, so y/(gridSize-1) gives us the relative position
     const normalizedY = 1 - (y / (this.gridSize - 1)); // Flip so higher y = higher position
     
-    // Create a bandpass filter
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    
-    // Map vertical position to frequency logarithmically (20Hz - 20kHz)
+    // Calculate the frequency for this position
     const minFreq = 40;
     const maxFreq = 12000;
     const logMinFreq = Math.log2(minFreq);
     const logMaxFreq = Math.log2(maxFreq);
     const logFreqRange = logMaxFreq - logMinFreq;
-    
-    // Calculate center frequency
     const centerFreq = Math.pow(2, logMinFreq + normalizedY * logFreqRange);
+    
+    // Create a gain node for volume with -3dB/octave slope compensation
+    const gain = ctx.createGain();
+    
+    // Simple -3dB/octave slope compensation
+    // Calculate how many octaves we are above minFreq
+    const octavesAboveMin = Math.log2(centerFreq / minFreq);
+    
+    // Each octave lower needs +3dB of gain (which is a factor of ~1.414)
+    // So going up one octave means 0.707x gain, going down one octave means 1.414x gain
+    // We calculate this by using 2^(-octaves * 0.5)
+    // The 0.5 gives us the -3dB/octave slope (because 10*log10(2^0.5) ≈ 3dB)
+    const frequencyGainFactor = Math.pow(2, -octavesAboveMin * 0.5);
+    
+    // Apply gain with frequency compensation
+    gain.gain.value = MASTER_GAIN * frequencyGainFactor * 5.0;
+    
+    // Create an envelope gain node for modulation
+    const envelopeGain = ctx.createGain();
+    envelopeGain.gain.value = ENVELOPE_MIN_GAIN;
+    
+    // Create a panner node for stereo positioning
+    const panner = ctx.createStereoPanner();
+    const normalizedX = (x / (COLUMNS - 1)) * 2 - 1; // Convert to range -1 to 1
+    panner.pan.value = normalizedX;
+    
+    // Create a bandpass filter
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
     filter.frequency.value = centerFreq;
     
     // Calculate Q (bandwidth)
-    // Lower Q = wider bandwidth
-    // At middle, more focused (higher Q)
-    // At extremes, wider bandwidth (lower Q)
+    const distFromCenter = Math.abs(normalizedY - 0.5) * 2;
     
-    // Distance from center (0 = middle, 1 = extreme top/bottom)
-    // const distFromCenter = Math.abs(normalizedY - 0.5) * 2;
-    const distFromCenter = 1 - normalizedY;
-    
-    // Q range: wider at extremes (Q=0.5), narrower in middle (Q=1.5)
-    // Still fairly wide throughout as requested
-    const minQ = 0.5 * 3.0;  // Wide bandwidth at extremes
-    const maxQ = 1.5 * 3.0;  // Narrower in the middle, but still reasonably wide
+    // Frequency-dependent Q adjustment - lower Q (wider bandwidth) for low frequencies
+    const baseQ = centerFreq < 300 ? 0.3 : centerFreq < 1000 ? 0.5 : 0.8;
+    const minQ = baseQ * 3.0;  // Wide bandwidth at extremes
+    const maxQ = (baseQ + 0.7) * 3.0;  // Narrower in the middle, but still reasonably wide
     
     filter.Q.value = maxQ - distFromCenter * (maxQ - minQ);
+    
+    // Calculate rhythm interval based on position
+    // Use X and Y to create a unique rhythm for each position
+    const yRhythm = MIN_RHYTHM + (1 - normalizedY) * (MAX_RHYTHM - MIN_RHYTHM);
+    const xOffset = [1.0, 1.11, 1.0, 0.91, 0.83][x]; // Prime-based ratios
+    const rhythmInterval = Math.round(yRhythm * xOffset * 1000);
     
     // Store the nodes
     this.audioNodes.set(dotKey, {
@@ -387,16 +383,24 @@ class DotGridAudioPlayer {
       envelopeGain,
       panner,
       filter,
-      position // Store position in sequence
+      position: -1, // Not used with rhythmic approach
+      rhythmTimer: null,
+      rhythmInterval: rhythmInterval
     });
     
+    // dB representation for logging
+    const gainDB = 20 * Math.log10(frequencyGainFactor);
+    
     console.log(`🔊 Added dot ${dotKey} at position (${x},${y})`);
-    console.log(`   Grid size: ${this.gridSize} rows`);
     console.log(`   Pan: ${normalizedX.toFixed(2)}`);
     console.log(`   Position: ${normalizedY.toFixed(2)}`);
     console.log(`   Center frequency: ${centerFreq.toFixed(0)}Hz`);
+    console.log(`   Octaves above min: ${octavesAboveMin.toFixed(2)}`);
+    console.log(`   Slope compensation: -3dB/octave`);
+    console.log(`   Frequency gain: ${frequencyGainFactor.toFixed(3)}x (${gainDB.toFixed(1)}dB)`);
+    console.log(`   Final gain: ${(MASTER_GAIN * frequencyGainFactor).toFixed(2)}`);
     console.log(`   Bandwidth (Q): ${filter.Q.value.toFixed(2)}`);
-    console.log(`   Sequence position: ${position}`);
+    console.log(`   Rhythm interval: ${rhythmInterval}ms`);
   }
   
   /**
@@ -418,6 +422,11 @@ class DotGridAudioPlayer {
       }
     }
     
+    // Clear the rhythm timer
+    if (nodes.rhythmTimer !== null) {
+      window.clearInterval(nodes.rhythmTimer);
+    }
+    
     // Remove from the map
     this.audioNodes.delete(dotKey);
     
@@ -431,7 +440,8 @@ class DotGridAudioPlayer {
     console.log('🔊 Disposing DotGridAudioPlayer');
     
     this.setPlaying(false);
-    this.stopSequenceTimer();
+    this.stopAllRhythms();
+    this.stopAllSources();
     this.audioNodes.clear();
     this.pinkNoiseBuffer = null;
   }
