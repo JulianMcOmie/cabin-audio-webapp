@@ -78,7 +78,6 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
             disabled={!eqEnabled} 
             className="w-full" 
             onInstructionChange={setInstruction}
-            onRequestEnable={() => setEqEnabled(true)}
           />
 
           {/* Contextual Instructions */}
