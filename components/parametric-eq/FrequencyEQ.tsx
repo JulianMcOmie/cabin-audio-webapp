@@ -233,6 +233,9 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
       ctx.fillText(dbLabels[i], rect.width - 10, y)
     }
 
+    // Set isEnabled based on disabled prop
+    const isEnabled = !disabled;
+
     // Draw individual band responses
     renderableBands.forEach((band) => {
         EQBandRenderer.drawBand(
@@ -242,7 +245,8 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
           rect.height,
           freqRange,
           isDarkMode,
-          band.id === selectedBandId
+          band.id === selectedBandId,
+          isEnabled
         )
         
         // Draw Q indicator if shift is pressed and band is selected or hovered
@@ -253,30 +257,13 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
             rect.width,
             rect.height,
             freqRange,
-            isDarkMode
+            isDarkMode,
+            isEnabled
           )
         }
     })
 
     // Draw the combined EQ curve
-    if (disabled) {
-      ctx.strokeStyle = isDarkMode ? "#71717a" : "#94a3b8" // Brighter disabled curve for dark mode
-    } else {
-      // Create gradient for the EQ curve
-      const gradient = ctx.createLinearGradient(0, 0, rect.width, 0)
-      if (isDarkMode) {
-        gradient.addColorStop(0, "#0ea5e9") // sky-500
-        gradient.addColorStop(0.5, "#38bdf8") // sky-400
-        gradient.addColorStop(1, "#7dd3fc") // sky-300
-      } else {
-        gradient.addColorStop(0, "#0284c7") // sky-600
-        gradient.addColorStop(0.5, "#0ea5e9") // sky-500
-        gradient.addColorStop(1, "#38bdf8") // sky-400
-      }
-      ctx.strokeStyle = gradient
-    }
-
-    // Draw the combined frequency response curve
     if (frequencyResponse.length > 0) {
       EQCurveRenderer.drawFrequencyResponse(
         ctx,
@@ -286,7 +273,8 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
         freqRange,
         isDarkMode,
         3, // lineWidth
-        0.8 // alpha
+        0.8, // alpha
+        isEnabled // Pass isEnabled parameter
       )
     }
     
@@ -302,7 +290,8 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
         ghostNode.x,
         ghostNode.y,
         ghostColor,
-        true
+        true,
+        isEnabled
       )
     }
 

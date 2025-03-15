@@ -16,7 +16,8 @@ export class EQCurveRenderer {
     freqRange: { min: number, max: number },
     isDarkMode: boolean,
     lineWidth: number = 3,
-    alpha: number = 0.8
+    alpha: number = 0.8,
+    isEnabled: boolean = true
   ): void {
     if (frequencyResponse.length === 0) return;
     
@@ -54,11 +55,20 @@ export class EQCurveRenderer {
     const logMax = Math.log10(freqRange.max);
     const logRange = logMax - logMin;
     
-    for (let i = 0; i <= 10; i++) {
-      const position = i / 10;
-      const logFreq = logMin + position * logRange;
-      const freq = Math.pow(10, logFreq);
-      gradient.addColorStop(position, EQCoordinateUtils.getBandColor(freq, alpha, isDarkMode));
+    if (isEnabled) {
+      // Full color when enabled
+      for (let i = 0; i <= 10; i++) {
+        const position = i / 10;
+        const logFreq = logMin + position * logRange;
+        const freq = Math.pow(10, logFreq);
+        gradient.addColorStop(position, EQCoordinateUtils.getBandColor(freq, alpha, isDarkMode));
+      }
+    } else {
+      // Grayscale when disabled
+      for (let i = 0; i <= 10; i++) {
+        const position = i / 10;
+        gradient.addColorStop(position, `rgba(128, 128, 128, ${alpha})`);
+      }
     }
     
     // Draw the stroke with gradient

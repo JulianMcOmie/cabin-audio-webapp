@@ -13,14 +13,24 @@ export class EQBandRenderer {
     height: number,
     freqRange: { min: number; max: number },
     isDarkMode: boolean,
-    isSelected: boolean
+    isSelected: boolean,
+    isEnabled: boolean = true
   ) {
     console.log("drawing band at frequency: ", band.frequency);
     // Skip if band is outside visible range
     if (band.frequency < freqRange.min || band.frequency > freqRange.max) return;
     
-    const bandColor = EQCoordinateUtils.getBandColor(band.frequency, 0.3, isDarkMode);
-    const strokeColor = EQCoordinateUtils.getBandColor(band.frequency, 0.5, isDarkMode);
+    // Adjust opacity based on isSelected state
+    const baseOpacity = isSelected ? 0.6 : 0.3; // More opaque when highlighted
+    
+    const bandColor = isEnabled 
+      ? EQCoordinateUtils.getBandColor(band.frequency, baseOpacity, isDarkMode)
+      : `rgba(128, 128, 128, ${baseOpacity})`;
+      
+    const strokeOpacity = isSelected ? 0.8 : 0.5; // More opaque when highlighted
+    const strokeColor = isEnabled 
+      ? EQCoordinateUtils.getBandColor(band.frequency, strokeOpacity, isDarkMode)
+      : `rgba(128, 128, 128, ${strokeOpacity})`;
     
     // Draw band response curve
     if (band.frequencyResponse && band.frequencyResponse.length > 0) {
@@ -50,9 +60,14 @@ export class EQBandRenderer {
     // Draw the band handle
     const x = EQCoordinateUtils.freqToX(band.frequency, width, freqRange);
     const y = EQCoordinateUtils.gainToY(band.gain, height);
-    const handleColor = EQCoordinateUtils.getBandColor(band.frequency, band.isHovered ? 0.9 : 0.7, isDarkMode);
     
-    this.drawBandHandle(ctx, x, y, handleColor, isSelected || band.isHovered);
+    // Increase handle color opacity when highlighted
+    const handleOpacity = band.isHovered ? 0.9 : (isSelected ? 0.8 : 0.7);
+    const handleColor = isEnabled 
+      ? EQCoordinateUtils.getBandColor(band.frequency, handleOpacity, isDarkMode)
+      : `rgba(128, 128, 128, ${handleOpacity})`;
+    
+    this.drawBandHandle(ctx, x, y, handleColor, band.isHovered || isSelected, isEnabled);
   }
   
   /**
@@ -63,7 +78,8 @@ export class EQBandRenderer {
     x: number,
     y: number,
     color: string,
-    isHighlighted: boolean
+    isHighlighted: boolean,
+    isEnabled: boolean = true
   ) {
     const handleRadius = isHighlighted ? 10 : 8;
     
@@ -74,7 +90,9 @@ export class EQBandRenderer {
     ctx.fill();
     
     // Draw border
-    ctx.strokeStyle = isHighlighted ? '#fff' : '#888';
+    ctx.strokeStyle = isEnabled 
+      ? (isHighlighted ? '#fff' : '#888')
+      : (isHighlighted ? '#ccc' : '#888');
     ctx.lineWidth = isHighlighted ? 2 : 1;
     ctx.stroke();
     
@@ -82,7 +100,7 @@ export class EQBandRenderer {
     if (isHighlighted) {
       ctx.beginPath();
       ctx.arc(x, y, handleRadius - 4, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+      ctx.fillStyle = isEnabled ? 'rgba(255, 255, 255, 0.3)' : 'rgba(200, 200, 200, 0.3)';
       ctx.fill();
     }
   }
@@ -96,7 +114,8 @@ export class EQBandRenderer {
     width: number,
     height: number,
     freqRange: { min: number; max: number },
-    isDarkMode: boolean
+    isDarkMode: boolean,
+    isEnabled: boolean = true
   ): void {
     const x = EQCoordinateUtils.freqToX(band.frequency, width, freqRange);
     const y = EQCoordinateUtils.gainToY(band.gain, height);
@@ -106,12 +125,16 @@ export class EQBandRenderer {
     ctx.beginPath();
     ctx.moveTo(x - qWidth / 2, y);
     ctx.lineTo(x + qWidth / 2, y);
-    ctx.strokeStyle = isDarkMode ? '#fff' : '#000';
+    ctx.strokeStyle = isEnabled 
+      ? (isDarkMode ? '#fff' : '#000')
+      : (isDarkMode ? '#aaa' : '#777');
     ctx.lineWidth = 2;
     ctx.stroke();
     
     // Draw Q value text
-    ctx.fillStyle = isDarkMode ? '#fff' : '#000';
+    ctx.fillStyle = isEnabled 
+      ? (isDarkMode ? '#fff' : '#000')
+      : (isDarkMode ? '#aaa' : '#777');
     ctx.font = '10px Arial';
     ctx.textAlign = 'center';
     ctx.fillText(`Q: ${band.q.toFixed(1)}`, x, y + 20);
