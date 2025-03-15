@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { HelpCircle, Play, Power, Volume2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { FrequencyGraph } from "@/components/frequency-graph"
@@ -57,6 +57,37 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
   
   // State for the spectrum analyzer
   const [preEQAnalyser, setPreEQAnalyser] = useState<AnalyserNode | null>(null)
+  
+  // Ref for measuring the EQ component's width
+  const eqContainerRef = useRef<HTMLDivElement>(null)
+  
+  // State for storing the measured width
+  const [eqWidth, setEqWidth] = useState(800)
+  
+  // Measure the EQ component's width when it changes
+  useEffect(() => {
+    if (!eqContainerRef.current) return
+    
+    const updateWidth = () => {
+      if (eqContainerRef.current) {
+        setEqWidth(eqContainerRef.current.offsetWidth)
+      }
+    }
+    
+    // Initial measurement
+    updateWidth()
+    
+    // Use ResizeObserver for more efficient dimension tracking
+    const resizeObserver = new ResizeObserver(() => {
+      updateWidth()
+    })
+    
+    resizeObserver.observe(eqContainerRef.current)
+    
+    return () => {
+      resizeObserver.disconnect()
+    }
+  }, [])
 
   // Sync local eqEnabled state with the store
   useEffect(() => {
@@ -157,14 +188,14 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
       {/* Main EQ View */}
       <div className="space-y-6">
         {/* Frequency Graph (on top) */}
-        <div className="relative">
+        <div className="relative" ref={eqContainerRef}>
           {/* FFT Visualizer as background layer */}
           {dotGridPlaying && preEQAnalyser && (
             <div className="absolute inset-0 z-0 w-full aspect-[2/1]">
               <FFTVisualizer 
                 analyser={preEQAnalyser} 
-                width={800} 
-                height={400} 
+                width={eqWidth} 
+                height={eqWidth / 2} 
                 className="w-full h-full"
               />
             </div>

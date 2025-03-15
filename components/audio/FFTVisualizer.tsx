@@ -21,6 +21,28 @@ export function FFTVisualizer({
   // Set up frequency markers for the x-axis - matches FrequencyEQ scale
   const frequencyMarkers = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
   
+  // Handle canvas sizing and DPI scaling
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    // Calculate pixel ratio for high-DPI displays
+    const pixelRatio = window.devicePixelRatio || 1;
+    canvas.width = width * pixelRatio;
+    canvas.height = height * pixelRatio;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    
+    // Reset the scale when dimensions change
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(pixelRatio, pixelRatio);
+    
+  }, [width, height]);
+  
+  // Set up analyzer and animation
   useEffect(() => {
     if (!analyser || !canvasRef.current) return;
     
@@ -31,14 +53,6 @@ export function FFTVisualizer({
     // Create data array for frequency analysis
     const bufferLength = analyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
-    
-    // Calculate pixel ratio for high-DPI displays
-    const pixelRatio = window.devicePixelRatio || 1;
-    canvas.width = width * pixelRatio;
-    canvas.height = height * pixelRatio;
-    canvas.style.width = `${width}px`;
-    canvas.style.height = `${height}px`;
-    ctx.scale(pixelRatio, pixelRatio);
     
     const draw = () => {
       // Schedule next frame
