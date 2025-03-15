@@ -180,7 +180,9 @@ class DotGridAudioPlayer {
       nodes.gain.disconnect();
       
       // Connect to the pre-EQ gain node
-      nodes.gain.connect(this.preEQGain);
+      if (this.preEQGain) {
+        nodes.gain.connect(this.preEQGain);
+      }
     });
     
     console.log('🔊 Reconnected all sources to include analyzer');

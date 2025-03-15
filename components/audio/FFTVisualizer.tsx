@@ -18,7 +18,7 @@ export function FFTVisualizer({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [animationId, setAnimationId] = useState<number | null>(null);
   
-  // Set up frequency markers for the x-axis
+  // Set up frequency markers for the x-axis - matches FrequencyEQ scale
   const frequencyMarkers = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
   
   useEffect(() => {
@@ -48,12 +48,10 @@ export function FFTVisualizer({
       // Get frequency data
       analyser.getByteFrequencyData(dataArray);
       
-      // Clear canvas
-      ctx.fillStyle = '#111118';
-      ctx.fillRect(0, 0, width, height);
+      // Clear canvas with transparent background
+      ctx.clearRect(0, 0, width, height);
       
-      // Draw grid
-      drawGrid(ctx, width, height);
+      // Skip grid drawing for overlay mode
       
       // Draw spectrum
       drawSpectrum(ctx, dataArray, width, height);
@@ -72,36 +70,18 @@ export function FFTVisualizer({
   
   // Draw background grid
   const drawGrid = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
-    ctx.strokeStyle = '#333';
-    ctx.lineWidth = 0.5;
-    
-    // Draw horizontal grid lines (amplitude)
-    for (let i = 0; i <= 10; i++) {
-      const y = height - (i / 10) * height;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-      ctx.stroke();
-    }
-    
-    // Draw vertical grid lines (frequency - logarithmic)
-    frequencyMarkers.forEach(freq => {
-      const x = logFreqToX(freq, width);
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, height);
-      ctx.stroke();
-    });
+    // Don't draw a grid when used as a background layer - will be redundant with EQ grid
+    // Keep this function for potential standalone use
   };
   
   // Draw frequency spectrum
   const drawSpectrum = (ctx: CanvasRenderingContext2D, dataArray: Uint8Array, width: number, height: number) => {
-    // Use gradient for visualization
+    // Use a more vibrant gradient for better visibility through the EQ overlay
     const gradient = ctx.createLinearGradient(0, height, 0, 0);
-    gradient.addColorStop(0, '#0a84ff');  // Blue for low amplitude
-    gradient.addColorStop(0.6, '#30d158'); // Green for medium
-    gradient.addColorStop(0.8, '#ffd60a'); // Yellow for high
-    gradient.addColorStop(1, '#ff453a');   // Red for peak
+    gradient.addColorStop(0, 'rgba(10, 132, 255, 0.4)');  // Blue for low amplitude (more visible)
+    gradient.addColorStop(0.5, 'rgba(48, 209, 88, 0.4)');  // Green for medium
+    gradient.addColorStop(0.8, 'rgba(255, 214, 10, 0.4)'); // Yellow for high
+    gradient.addColorStop(1, 'rgba(255, 69, 58, 0.5)');     // Red for peak
     
     ctx.fillStyle = gradient;
     ctx.beginPath();
@@ -139,9 +119,9 @@ export function FFTVisualizer({
     ctx.closePath();
     ctx.fill();
     
-    // Add a line on top for clarity
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
-    ctx.lineWidth = 1.5;
+    // Add a line on top for clarity - more visible for better contrast
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.lineWidth = 2;
     ctx.beginPath();
     
     for (let i = 0; i < barCount; i++) {
@@ -189,35 +169,6 @@ export function FFTVisualizer({
         height={height} 
         className="rounded-md"
       />
-      
-      {/* Frequency markers */}
-      <div className="frequency-markers flex justify-between px-2 text-xs text-muted-foreground mt-1">
-        {frequencyMarkers.map(freq => {
-          // Only show certain markers to avoid cluttering
-          const label = freq >= 1000 ? `${freq/1000}k` : `${freq}`;
-          const showLabel = [20, 100, 1000, 10000].includes(freq);
-          
-          if (!showLabel) return null;
-          
-          const position = (logFreqToX(freq, width) / width) * 100;
-          
-          return (
-            <div 
-              key={freq} 
-              className="absolute" 
-              style={{ left: `${position}%` }}
-            >
-              {label}
-            </div>
-          );
-        })}
-      </div>
-      
-      {/* dB markers on y-axis */}
-      <div className="amplitude-markers absolute top-0 left-0 h-full flex flex-col justify-between text-xs text-muted-foreground py-1">
-        <div>0 dB</div>
-        <div>-80 dB</div>
-      </div>
     </div>
   );
 } 

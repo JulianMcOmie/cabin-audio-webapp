@@ -215,6 +215,10 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     // Clear canvas
     ctx.clearRect(0, 0, rect.width, rect.height)
 
+    // Add semi-transparent background with reduced opacity
+    ctx.fillStyle = isDarkMode ? "rgba(24, 24, 36, 0.4)" : "rgba(255, 255, 255, 0.4)"
+    ctx.fillRect(0, 0, rect.width, rect.height)
+
     // Draw background grid
     ctx.strokeStyle = isDarkMode ? "#3f3f5c" : "#e2e8f0" // Darker grid lines for dark mode
     ctx.lineWidth = 1
@@ -327,7 +331,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
 
   return (
     <div
-      className={`w-full aspect-[2/1] frequency-graph bg-white dark:bg-card rounded-lg border dark:border-gray-700 overflow-hidden ${disabled ? "opacity-70" : ""} ${className || ""}`}
+      className={`w-full aspect-[2/1] frequency-graph rounded-lg border dark:border-gray-700 overflow-hidden opacity-80 ${className || ""}`}
     >
       <canvas 
         ref={canvasRef} 

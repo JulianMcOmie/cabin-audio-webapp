@@ -158,13 +158,28 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
       <div className="space-y-6">
         {/* Frequency Graph (on top) */}
         <div className="relative">
-          <FrequencyGraph 
-            selectedDot={selectedDot} 
-            disabled={!isEQEnabled} 
-            className="w-full" 
-            onInstructionChange={setInstruction}
-            onRequestEnable={() => setEQEnabled(true)}
-          />
+          {/* FFT Visualizer as background layer */}
+          {dotGridPlaying && preEQAnalyser && (
+            <div className="absolute inset-0 z-0 w-full aspect-[2/1]">
+              <FFTVisualizer 
+                analyser={preEQAnalyser} 
+                width={800} 
+                height={400} 
+                className="w-full h-full"
+              />
+            </div>
+          )}
+          
+          {/* FrequencyEQ component overlaid on top */}
+          <div className="relative z-10">
+            <FrequencyGraph 
+              selectedDot={selectedDot} 
+              disabled={!isEQEnabled} 
+              className="w-full" 
+              onInstructionChange={setInstruction}
+              onRequestEnable={() => setEQEnabled(true)}
+            />
+          </div>
 
           {/* Contextual Instructions */}
           <div className="mt-1 mb-3 px-2 py-1.5 bg-muted/40 rounded text-sm text-muted-foreground border-l-2 border-electric-blue">
@@ -244,7 +259,7 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
               <div>
                 <h4 className="font-medium mb-2">Calibration Steps</h4>
                 <ol className="list-decimal pl-5 space-y-2 text-sm text-muted-foreground">
-                  <li>Select dots on the grid by clicking them (select multiple dots if desired)</li>
+                  <li>Select dots on the grid by clicking them (it's easiest to select one dot per row)</li>
                   <li>Press Play to hear pink noise bursts at the selected positions</li>
                   <li>
                     Adjust the EQ settings until:
@@ -346,22 +361,6 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
                 <p className="text-xs text-center text-muted-foreground">
                   Select multiple dots on the grid to test different spatial positions
                 </p>
-                
-                {/* Pre-EQ Frequency Visualizer */}
-                {dotGridPlaying && preEQAnalyser && (
-                  <div className="mt-4">
-                    <h5 className="text-sm font-medium mb-2 text-center">Pre-EQ Frequency Spectrum</h5>
-                    <FFTVisualizer 
-                      analyser={preEQAnalyser} 
-                      width={320} 
-                      height={160} 
-                      className="w-full"
-                    />
-                    <p className="text-xs text-center text-muted-foreground mt-2">
-                      Showing the raw audio spectrum before EQ processing
-                    </p>
-                  </div>
-                )}
               </div>
             </div>
           </div>
