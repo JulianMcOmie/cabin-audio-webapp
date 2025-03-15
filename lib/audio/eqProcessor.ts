@@ -87,8 +87,8 @@ class EQProcessor {
     });
     
     // Apply volume offset
-    this.volumeNode!.gain.value = this.isEnabled ? 
-      Math.pow(10, profile.volume / 20) : 1.0; // Convert dB to linear gain
+    this.volumeNode!.gain.value = 0.0;//this.isEnabled ? 
+     // Math.pow(10, profile.volume / 20) : 1.0; // Convert dB to linear gain
   }
   
   // Enable or disable the EQ
