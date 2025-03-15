@@ -121,12 +121,16 @@ export function LegacyDotGrid({ selectedDot, setSelectedDot, gridSize, disabled 
 
 // New interface for multi-selection DotGrid
 interface MultiSelectionDotGridProps {
-  gridSize: number; // Range: 3-9
+  gridSize: number; // Range: 3-9, now controls only rows
   selectedDots: Set<string>; // Format: "x,y" string for each dot
   onDotToggle: (x: number, y: number) => void;
   disabled?: boolean;
   isPlaying?: boolean;
 }
+
+// Constants for the grid
+const COLUMNS = 5; // Always 5 panning positions
+const BASE_DOT_RADIUS = 6; // Base dot size, will be adjusted as needed
 
 // New DotGrid component with multiple selection support
 export function DotGrid({ 
@@ -139,9 +143,6 @@ export function DotGrid({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 })
-  
-  // Fixed dot size regardless of grid size
-  const DOT_RADIUS = 6;
   
   // Set up observer to detect theme changes
   useEffect(() => {
@@ -181,6 +182,50 @@ export function DotGrid({
     return () => window.removeEventListener('resize', updateCanvasSize)
   }, [])
 
+  // Calculate dot sizing and spacing based on grid dimensions
+  const gridDimensions = useMemo(() => {
+    const rows = gridSize;
+    const cols = COLUMNS;
+    
+    // Determine proper spacing and dot size based on canvas dimensions
+    const size = Math.min(canvasSize.width, canvasSize.height);
+    
+    // We need to account for potentially different horizontal and vertical spacing
+    const aspectRatio = canvasSize.width / canvasSize.height;
+    
+    // Calculate dot radius that works for both dimensions
+    // For square canvas, this will be the same as before
+    // For non-square, we adjust accordingly
+    let dotRadius = BASE_DOT_RADIUS;
+    
+    // Adjust dot radius if canvas is very wide or tall
+    if (aspectRatio > 1.5) {
+      // Wide canvas - make dots slightly smaller
+      dotRadius = BASE_DOT_RADIUS * 0.9;
+    } else if (aspectRatio < 0.75) {
+      // Tall canvas - make dots slightly smaller
+      dotRadius = BASE_DOT_RADIUS * 0.9;
+    }
+    
+    // Calculate spacing
+    const hTotalDotSpace = dotRadius * 2 * cols;
+    const vTotalDotSpace = dotRadius * 2 * rows;
+    
+    const hRemainingSpace = canvasSize.width - hTotalDotSpace;
+    const vRemainingSpace = canvasSize.height - vTotalDotSpace;
+    
+    const hGap = hRemainingSpace / (cols + 1);
+    const vGap = vRemainingSpace / (rows + 1);
+    
+    return {
+      rows,
+      cols,
+      dotRadius,
+      hGap,
+      vGap
+    };
+  }, [gridSize, canvasSize]);
+
   // Draw dots when dependencies change
   useEffect(() => {
     const canvas = canvasRef.current
@@ -201,17 +246,13 @@ export function DotGrid({
     // Skip rendering if size is not set yet
     if (canvasSize.width === 0 || canvasSize.height === 0) return
     
-    // Calculate spacing between dots
-    const size = Math.min(canvasSize.width, canvasSize.height)
-    const totalDotSpace = DOT_RADIUS * 2 * gridSize
-    const remainingSpace = size - totalDotSpace
-    const gap = remainingSpace / (gridSize + 1)
+    const { rows, cols, dotRadius, hGap, vGap } = gridDimensions;
     
     // Draw dots
-    for (let y = 0; y < gridSize; y++) {
-      for (let x = 0; x < gridSize; x++) {
-        const centerX = gap + (x * (DOT_RADIUS * 2 + gap)) + DOT_RADIUS
-        const centerY = gap + (y * (DOT_RADIUS * 2 + gap)) + DOT_RADIUS
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const centerX = hGap + (x * (dotRadius * 2 + hGap)) + dotRadius
+        const centerY = vGap + (y * (dotRadius * 2 + vGap)) + dotRadius
         
         // Check if this dot is selected
         const isSelected = selectedDots.has(`${x},${y}`)
@@ -221,14 +262,14 @@ export function DotGrid({
           // Draw pulse background
           const pulseSize = 2 + Math.sin(Date.now() / 200) * 0.5
           ctx.beginPath()
-          ctx.arc(centerX, centerY, DOT_RADIUS * pulseSize, 0, Math.PI * 2)
+          ctx.arc(centerX, centerY, dotRadius * pulseSize, 0, Math.PI * 2)
           ctx.fillStyle = isDarkMode ? "rgba(56, 189, 248, 0.2)" : "rgba(2, 132, 199, 0.2)"
           ctx.fill()
         }
 
         // Draw dot
         ctx.beginPath()
-        ctx.arc(centerX, centerY, DOT_RADIUS, 0, Math.PI * 2)
+        ctx.arc(centerX, centerY, dotRadius, 0, Math.PI * 2)
 
         if (isSelected && !disabled) {
           ctx.fillStyle = isDarkMode ? "#38bdf8" : "#0284c7" // sky-400 or sky-600
@@ -253,7 +294,7 @@ export function DotGrid({
         setCanvasSize(prev => ({ ...prev }));
       });
     }
-  }, [selectedDots, gridSize, disabled, isDarkMode, canvasSize, isPlaying])
+  }, [selectedDots, gridSize, disabled, isDarkMode, canvasSize, isPlaying, gridDimensions])
 
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (disabled) return
@@ -265,20 +306,16 @@ export function DotGrid({
     const clickX = e.clientX - rect.left
     const clickY = e.clientY - rect.top
     
-    // Calculate spacing between dots
-    const size = Math.min(rect.width, rect.height)
-    const totalDotSpace = DOT_RADIUS * 2 * gridSize
-    const remainingSpace = size - totalDotSpace
-    const gap = remainingSpace / (gridSize + 1)
+    const { rows, cols, dotRadius, hGap, vGap } = gridDimensions;
     
     // Find the closest dot to the click point
     let closestDot = { x: 0, y: 0 };
     let closestDistance = Infinity;
     
-    for (let y = 0; y < gridSize; y++) {
-      for (let x = 0; x < gridSize; x++) {
-        const centerX = gap + (x * (DOT_RADIUS * 2 + gap)) + DOT_RADIUS
-        const centerY = gap + (y * (DOT_RADIUS * 2 + gap)) + DOT_RADIUS
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const centerX = hGap + (x * (dotRadius * 2 + hGap)) + dotRadius
+        const centerY = vGap + (y * (dotRadius * 2 + vGap)) + dotRadius
         
         // Calculate distance to this dot
         const distance = Math.sqrt(
@@ -366,7 +403,7 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
       
       selectedDots.forEach(dot => {
         const [x, y] = dot.split(',').map(Number);
-        if (x < gridSize - 1 && y < gridSize - 1) {
+        if (x < COLUMNS && y < gridSize - 1) {
           newSelectedDots.add(dot);
         }
       });
@@ -394,7 +431,7 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
       
       <div className="flex items-center justify-between mb-3">
         <span className="text-xs text-muted-foreground">
-          Grid Size: {gridSize}×{gridSize}
+          Grid Size: {gridSize}×{COLUMNS}
         </span>
         <div className="flex items-center space-x-2">
           <button
