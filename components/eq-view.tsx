@@ -258,7 +258,6 @@ export function EQView({ isPlaying, setIsPlaying, onSignupClick }: EQViewProps) 
                   <DotCalibration 
                     isPlaying={dotGridPlaying}
                     setIsPlaying={setDotGridPlaying}
-                    disabled={!isEQEnabled}
                   />
                 </div>
 
