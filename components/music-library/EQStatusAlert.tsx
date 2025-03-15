@@ -1,13 +1,20 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
+import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
 
 interface EQStatusAlertProps {
-  isEnabled: boolean
+  isEnabled?: boolean
   onSettingsClick: () => void
 }
 
-export function EQStatusAlert({ isEnabled, onSettingsClick }: EQStatusAlertProps) {
+export function EQStatusAlert({ isEnabled: isEnabledProp, onSettingsClick }: EQStatusAlertProps) {
+  // Connect to the store directly if no prop is provided
+  const { isEQEnabled, setEQEnabled } = useEQProfileStore()
+  
+  // Use the prop if provided, otherwise use the store state
+  const isEnabled = isEnabledProp !== undefined ? isEnabledProp : isEQEnabled
+  
   return (
     <div
       className={`rounded-lg p-4 mb-4 flex items-center justify-between ${

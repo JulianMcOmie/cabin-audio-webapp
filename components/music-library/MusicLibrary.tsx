@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/common/ToastManager"
 import { useFileImport } from "@/lib/hooks/useFileImport"
 import { FileImportOverlay } from "@/components/import/FileImportOverlay"
-import { useTrackStore, usePlayerStore } from "@/lib/stores"
+import { useTrackStore, usePlayerStore, useEQProfileStore } from "@/lib/stores"
 import { Track as TrackModel } from "@/lib/models/Track"
 
 // Import the extracted components
@@ -36,12 +36,17 @@ interface MusicLibraryProps {
   onSignupClick: () => void
 }
 
-export function MusicLibrary({ eqEnabled, setActiveTab, onSignupClick }: MusicLibraryProps) {
+export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupClick }: MusicLibraryProps) {
   const { showToast } = useToast()
   // Connect to trackStore
   const { getTracks, getTrackById, addTrack, deleteTrack, isLoading: isTrackStoreLoading } = useTrackStore()
   // Connect to playerStore
   const { currentTrackId, isPlaying, setCurrentTrack, setIsPlaying } = usePlayerStore()
+  // Connect to eqProfileStore for the actual EQ enabled state
+  const { isEQEnabled } = useEQProfileStore()
+  
+  // Use the state from the store, falling back to the prop for backward compatibility
+  const eqEnabled = isEQEnabled !== undefined ? isEQEnabled : eqEnabledProp
   
   const [tracks, setTracks] = useState<Track[]>([])
 
@@ -222,6 +227,24 @@ export function MusicLibrary({ eqEnabled, setActiveTab, onSignupClick }: MusicLi
     };
   }, [showToast, addTrack, getTracks, isTrackStoreLoading])
 
+  // Add a new effect to listen for EQ status changes
+  useEffect(() => {
+    console.log(`[MusicLibrary] Setting up subscription to EQ status changes`);
+    
+    // Subscribe to EQ profile store to detect when EQ is enabled/disabled
+    const unsubscribeEQ = useEQProfileStore.subscribe((state) => {
+      console.log(`[MusicLibrary] EQ enabled state: ${state.isEQEnabled}`);
+      // The component will re-render automatically when isEQEnabled changes
+    });
+    
+    return () => {
+      console.log(`[MusicLibrary] Cleaning up EQ store subscription`);
+      if (unsubscribeEQ) {
+        unsubscribeEQ();
+      }
+    };
+  }, []);
+
   const handleTrackSelect = (track: Track) => {
     console.log(`[MusicLibrary] Track selected: ${track.id}, currentTrackId: ${currentTrackId}, isPlaying: ${isPlaying}`);
     
@@ -268,6 +291,12 @@ export function MusicLibrary({ eqEnabled, setActiveTab, onSignupClick }: MusicLi
   const handleEQSettingsClick = () => {
     // Navigate directly to EQ tab using the setActiveTab prop
     setActiveTab("eq")
+    
+    // If EQ is currently disabled, we could optionally enable it when user clicks to adjust settings
+    // This makes for a smoother user experience
+    if (!isEQEnabled) {
+      useEQProfileStore.getState().setEQEnabled(true);
+    }
   }
 
   const handleTogglePlayback = () => {
