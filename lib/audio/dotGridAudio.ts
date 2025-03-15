@@ -354,8 +354,8 @@ class DotGridAudioPlayer {
     filter.type = 'bandpass';
     
     // Map vertical position to frequency logarithmically (20Hz - 20kHz)
-    const minFreq = 20;
-    const maxFreq = 20000;
+    const minFreq = 40;
+    const maxFreq = 12000;
     const logMinFreq = Math.log2(minFreq);
     const logMaxFreq = Math.log2(maxFreq);
     const logFreqRange = logMaxFreq - logMinFreq;
@@ -370,12 +370,13 @@ class DotGridAudioPlayer {
     // At extremes, wider bandwidth (lower Q)
     
     // Distance from center (0 = middle, 1 = extreme top/bottom)
-    const distFromCenter = Math.abs(normalizedY - 0.5) * 2;
+    // const distFromCenter = Math.abs(normalizedY - 0.5) * 2;
+    const distFromCenter = 1 - normalizedY;
     
     // Q range: wider at extremes (Q=0.5), narrower in middle (Q=1.5)
     // Still fairly wide throughout as requested
-    const minQ = 0.5;  // Wide bandwidth at extremes
-    const maxQ = 1.5;  // Narrower in the middle, but still reasonably wide
+    const minQ = 0.5 * 3.0;  // Wide bandwidth at extremes
+    const maxQ = 1.5 * 3.0;  // Narrower in the middle, but still reasonably wide
     
     filter.Q.value = maxQ - distFromCenter * (maxQ - minQ);
     
