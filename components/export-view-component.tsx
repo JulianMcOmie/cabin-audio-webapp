@@ -144,15 +144,15 @@ export default function ExportView() {
     if (content) {
       const fileName = `${profile.name.replace(/\s+/g, "-").toLowerCase()}_${format}.txt`
       
-      const blob = new Blob([content], { type: "text/plain" })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = fileName
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
+    const blob = new Blob([content], { type: "text/plain" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = fileName
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
       
       showToast({
         message: `Downloaded ${fileName}`,
@@ -196,12 +196,12 @@ export default function ExportView() {
       
       {selectedProfileId && (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-            <Card>
-              <CardContent className="p-6">
-                <div className="mb-4">
-                  <h2 className="text-lg font-medium">15-Band EQ Settings</h2>
-                </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <Card>
+          <CardContent className="p-6">
+            <div className="mb-4">
+              <h2 className="text-lg font-medium">15-Band EQ Settings</h2>
+            </div>
 
                 {hasTooManyBands["15-band"] && selectedProfileId && profiles.find(p => p.id === selectedProfileId) && (
                   <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3 mb-4 flex items-center text-sm text-yellow-800 dark:bg-yellow-900/20 dark:border-yellow-800 dark:text-yellow-300">
@@ -212,34 +212,34 @@ export default function ExportView() {
                   </div>
                 )}
 
-                <div className="bg-muted p-4 rounded-md font-mono text-sm whitespace-pre-wrap overflow-auto h-40 relative group">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 bg-background/80"
-                    onClick={() => handleCopyToClipboard("15-band")}
-                  >
-                    <Copy className="h-4 w-4" />
-                    <span className="sr-only">Copy to clipboard</span>
-                  </Button>
+            <div className="bg-muted p-4 rounded-md font-mono text-sm whitespace-pre-wrap overflow-auto h-40 relative group">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 bg-background/80"
+                onClick={() => handleCopyToClipboard("15-band")}
+              >
+                <Copy className="h-4 w-4" />
+                <span className="sr-only">Copy to clipboard</span>
+              </Button>
                   {selectedProfileId && profiles.find(p => p.id === selectedProfileId)?.name && 
                     exportFormats["15-band"][profiles.find(p => p.id === selectedProfileId)!.name]}
-                </div>
+            </div>
 
-                <div className="mt-4 text-right">
-                  <Button variant="outline" size="sm" onClick={() => handleDownload("15-band")}>
-                    <Download className="h-4 w-4 mr-2" />
-                    Download
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+            <div className="mt-4 text-right">
+              <Button variant="outline" size="sm" onClick={() => handleDownload("15-band")}>
+                <Download className="h-4 w-4 mr-2" />
+                Download
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
-            <Card>
-              <CardContent className="p-6">
-                <div className="mb-4">
-                  <h2 className="text-lg font-medium">10-Band EQ Settings</h2>
-                </div>
+        <Card>
+          <CardContent className="p-6">
+            <div className="mb-4">
+              <h2 className="text-lg font-medium">10-Band EQ Settings</h2>
+            </div>
 
                 {hasTooManyBands["10-band"] && selectedProfileId && profiles.find(p => p.id === selectedProfileId) && (
                   <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3 mb-4 flex items-center text-sm text-yellow-800 dark:bg-yellow-900/20 dark:border-yellow-800 dark:text-yellow-300">
@@ -250,49 +250,49 @@ export default function ExportView() {
                   </div>
                 )}
 
-                <div className="bg-muted p-4 rounded-md font-mono text-sm whitespace-pre-wrap overflow-auto h-40 relative group">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 bg-background/80"
-                    onClick={() => handleCopyToClipboard("10-band")}
-                  >
-                    <Copy className="h-4 w-4" />
-                    <span className="sr-only">Copy to clipboard</span>
-                  </Button>
+            <div className="bg-muted p-4 rounded-md font-mono text-sm whitespace-pre-wrap overflow-auto h-40 relative group">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 bg-background/80"
+                onClick={() => handleCopyToClipboard("10-band")}
+              >
+                <Copy className="h-4 w-4" />
+                <span className="sr-only">Copy to clipboard</span>
+              </Button>
                   {selectedProfileId && profiles.find(p => p.id === selectedProfileId)?.name && 
                     exportFormats["10-band"][profiles.find(p => p.id === selectedProfileId)!.name]}
-                </div>
+            </div>
 
-                <div className="mt-4 text-right">
-                  <Button variant="outline" size="sm" onClick={() => handleDownload("10-band")}>
-                    <Download className="h-4 w-4 mr-2" />
-                    Download
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+            <div className="mt-4 text-right">
+              <Button variant="outline" size="sm" onClick={() => handleDownload("10-band")}>
+                <Download className="h-4 w-4 mr-2" />
+                Download
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
           
           {/* Additional export formats - commented out for now
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-            <Button
-              variant="outline"
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        <Button
+          variant="outline"
               onClick={() => handleDownload("Wavelet")}
-              className="flex flex-col items-center py-6 h-auto"
-            >
-              <FileDown className="h-6 w-6 mb-2" />
-              <span>Wavelet</span>
-            </Button>
+          className="flex flex-col items-center py-6 h-auto"
+        >
+          <FileDown className="h-6 w-6 mb-2" />
+          <span>Wavelet</span>
+        </Button>
 
-            <Button
-              variant="outline"
+        <Button
+          variant="outline"
               onClick={() => handleDownload("PowerAmp")}
-              className="flex flex-col items-center py-6 h-auto"
-            >
-              <FileDown className="h-6 w-6 mb-2" />
-              <span>PowerAmp</span>
-            </Button>
+          className="flex flex-col items-center py-6 h-auto"
+        >
+          <FileDown className="h-6 w-6 mb-2" />
+          <span>PowerAmp</span>
+        </Button>
           </div>
           */}
         </>
@@ -366,7 +366,7 @@ export default function ExportView() {
             </AccordionContent>
           </AccordionItem>
 
-          <AccordionItem value="android">
+          {/* <AccordionItem value="android">
             <AccordionTrigger>Android</AccordionTrigger>
             <AccordionContent>
               <div className="space-y-4">
@@ -454,7 +454,7 @@ export default function ExportView() {
                 </div>
               </div>
             </AccordionContent>
-          </AccordionItem>
+          </AccordionItem> */}
         </Accordion>
       </div>
     </div>
