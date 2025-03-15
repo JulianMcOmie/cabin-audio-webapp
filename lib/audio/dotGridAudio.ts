@@ -10,7 +10,8 @@ class DotGridAudioPlayer {
     source: AudioBufferSourceNode;
     gain: GainNode;
     panner: StereoPannerNode;
-    filter: BiquadFilterNode;
+    lowpass: BiquadFilterNode;
+    highpass: BiquadFilterNode;
   }> = new Map();
   
   private isPlaying: boolean = false;
@@ -119,9 +120,10 @@ class DotGridAudioPlayer {
       source.buffer = this.pinkNoiseBuffer;
       source.loop = true;
       
-      // Connect source -> filter -> panner -> gain -> destination
-      source.connect(nodes.filter);
-      nodes.filter.connect(nodes.panner);
+      // Connect source -> lowpass -> highpass -> panner -> gain -> destination
+      source.connect(nodes.lowpass);
+      nodes.lowpass.connect(nodes.highpass);
+      nodes.highpass.connect(nodes.panner);
       nodes.panner.connect(nodes.gain);
       nodes.gain.connect(audioContext.getAudioContext().destination);
       
@@ -202,35 +204,78 @@ class DotGridAudioPlayer {
     // Create a panner node for stereo positioning
     // x value determines pan position (-1 to 1)
     const panner = ctx.createStereoPanner();
-    const normalizedX = (x / 8) * 2 - 1; // Convert to range -1 to 1
+    const normalizedX = (x / 2) * 2 - 1; // Convert to range -1 to 1
     panner.pan.value = normalizedX;
     
-    // Create a filter node for frequency shaping
-    // y value determines filter frequency (higher y = higher frequency)
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    const minFreq = 200;   // Lowest frequency (bottom of grid)
-    const maxFreq = 8000;  // Highest frequency (top of grid)
+    // Create lowpass and highpass filters for frequency shaping
+    // y value determines filter frequencies (higher y = higher frequency)
+    const lowpass = ctx.createBiquadFilter();
+    const highpass = ctx.createBiquadFilter();
     
-    // Use an exponential scale for frequency (better for human hearing)
-    const normalizedY = y / 8; // 0 to 1
-    const frequency = minFreq * Math.pow(maxFreq / minFreq, 1 - normalizedY);
+    lowpass.type = 'lowpass';
+    highpass.type = 'highpass';
     
-    filter.frequency.value = frequency;
-    filter.Q.value = 1.0; // Medium resonance
+    // Define frequency range in logarithmic space
+    const minFreq = 100;   // Lowest frequency
+    const maxFreq = 20000; // Highest frequency
+    const midFreq = Math.sqrt(minFreq * maxFreq); // Geometric mean for logarithmic center
     
-    // Create a dummy source (will be replaced when playing)
-    const source = ctx.createBufferSource();
+    // Normalize y to 0-1 range (0 = bottom, 1 = top)
+    const normalizedY = 1 - (y / 2); // Flip so higher y = higher position
+    
+    // Calculate center frequency and bandwidth based on y position
+    // Use logarithmic scaling for better perceptual spacing
+    let centerFreq, lowpassFreq, highpassFreq, lowpassQ, highpassQ;
+    
+    if (normalizedY < 0.5) {
+      // Bottom half of the grid (bass-focused)
+      const relativePos = normalizedY * 2; // 0-1 within bottom half
+      
+      centerFreq = minFreq * Math.pow(midFreq/minFreq, relativePos);
+      
+      // For lower frequencies, sharp highpass but broad lowpass
+      highpassFreq = centerFreq * (0.7 + 0.3 * relativePos);
+      lowpassFreq = centerFreq * (3 + 4 * (1 - relativePos));
+      
+      // Q values (resonance/sharpness)
+      highpassQ = 0.7 + 0.6 * relativePos; // Sharper as we move up
+      lowpassQ = 0.1 + 0.2 * relativePos; // Broader at bottom
+    } else {
+      // Top half of the grid (treble-focused)
+      const relativePos = (normalizedY - 0.5) * 2; // 0-1 within top half
+      
+      centerFreq = midFreq * Math.pow(maxFreq/midFreq, relativePos);
+      
+      // For higher frequencies, sharp lowpass but broad highpass
+      lowpassFreq = centerFreq * (1.3 - 0.3 * relativePos);
+      highpassFreq = centerFreq * (0.3 + 0.3 * relativePos);
+      
+      // Q values (resonance/sharpness)
+      lowpassQ = 0.7 + 0.6 * relativePos; // Sharper as we move up
+      highpassQ = 0.1 + 0.3 * relativePos; // Broader at top
+    }
+    
+    // Apply filter settings
+    lowpass.frequency.value = lowpassFreq;
+    lowpass.Q.value = lowpassQ;
+    
+    highpass.frequency.value = highpassFreq;
+    highpass.Q.value = highpassQ;
     
     // Store the nodes
     this.audioNodes.set(dotKey, {
-      source,
+      source: ctx.createBufferSource(), // Dummy source (will be replaced when playing)
       gain,
       panner,
-      filter
+      lowpass,
+      highpass
     });
     
-    console.log(`🔊 Added dot ${dotKey} with frequency ${frequency.toFixed(0)}Hz and pan ${normalizedX.toFixed(2)}`);
+    console.log(`🔊 Added dot ${dotKey} at position (${x},${y})`);
+    console.log(`   Pan: ${normalizedX.toFixed(2)}`);
+    console.log(`   Center freq: ${centerFreq.toFixed(0)}Hz`);
+    console.log(`   Lowpass: ${lowpassFreq.toFixed(0)}Hz (Q=${lowpassQ.toFixed(2)})`);
+    console.log(`   Highpass: ${highpassFreq.toFixed(0)}Hz (Q=${highpassQ.toFixed(2)})`);
   }
   
   /**
