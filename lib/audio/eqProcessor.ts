@@ -47,51 +47,87 @@ class EQProcessor {
   
   // Create the filter chain based on profile bands
   private createFilterChain(profile: EQProfile): void {
-    console.log('🎮 EQProcessor.createFilterChain called with', profile.bands.length, 'bands');
+    console.log('🎮 EQProcessor.createFilterChain called with', profile.bands?.length || 0, 'bands');
     
-    // Disconnect existing filters if any
-    this.disconnectFilters();
-    
-    // Clear the filters array
-    this.filters = [];
-    
-    // If there are no bands, just connect input directly to volume node
+    // If there are no bands, just ensure input is connected to volume node
     if (!profile.bands || profile.bands.length === 0) {
-      console.log('🎮 No bands in profile, using direct connection');
+      // If we already have a direct connection, keep it
+      if (this.filters.length === 0) {
+        console.log('🎮 No bands in profile, maintaining direct connection');
+        return;
+      }
+      
+      // Otherwise, disconnect filters and create direct connection
+      console.log('🎮 No bands in profile, creating direct connection');
+      this.disconnectFilters();
+      this.filters = [];
       this.inputNode!.connect(this.volumeNode!);
       return;
     }
     
-    // Create filters for each band
-    profile.bands.forEach((band, index) => {
-      const filter = audioContext.getAudioContext().createBiquadFilter();
-      filter.type = 'peaking'; // EQ bands are typically peaking filters
-      filter.frequency.value = band.frequency;
-      filter.gain.value = this.isEnabled ? band.gain : 0;
-      filter.Q.value = band.q;
-      
-      this.filters.push(filter);
-      console.log(`🎮 Created filter ${index}: freq=${band.frequency}, gain=${band.gain}, Q=${band.q}`);
-    });
+    const audioCtx = audioContext.getAudioContext();
+    const currentTime = audioCtx.currentTime;
+    const TRANSITION_TIME = 0.05; // 50ms transition for smoothness
     
-    // Connect the filter chain
-    if (this.filters.length > 0) {
-      // Input to first filter
-      this.inputNode!.connect(this.filters[0]);
+    // Check if we need to create new filters or can reuse existing ones
+    if (this.filters.length !== profile.bands.length) {
+      // Number of bands changed, we need to recreate the filter chain
+      console.log('🎮 Number of bands changed, recreating filter chain');
       
-      // Connect filters in series
-      for (let i = 0; i < this.filters.length - 1; i++) {
-        this.filters[i].connect(this.filters[i + 1]);
+      // Disconnect existing filters
+      this.disconnectFilters();
+      
+      // Clear the filters array
+      this.filters = [];
+      
+      // Create new filters for each band
+      profile.bands.forEach((band, index) => {
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = 'peaking';
+        filter.frequency.value = band.frequency;
+        filter.Q.value = band.q;
+        
+        // Set gain with immediate value but prepare for ramping in future changes
+        filter.gain.value = this.isEnabled ? band.gain : 0;
+        
+        this.filters.push(filter);
+        console.log(`🎮 Created filter ${index}: freq=${band.frequency}, gain=${band.gain}, Q=${band.q}`);
+      });
+      
+      // Connect the filter chain
+      if (this.filters.length > 0) {
+        // Input to first filter
+        this.inputNode!.connect(this.filters[0]);
+        
+        // Connect filters in series
+        for (let i = 0; i < this.filters.length - 1; i++) {
+          this.filters[i].connect(this.filters[i + 1]);
+        }
+        
+        // Last filter to volume node
+        this.filters[this.filters.length - 1].connect(this.volumeNode!);
+        
+        console.log('🎮 New filter chain connected');
       }
-      
-      // Last filter to volume node
-      this.filters[this.filters.length - 1].connect(this.volumeNode!);
-      
-      console.log('🎮 Filter chain connected');
     } else {
-      // Fallback direct connection if no filters were created
-      this.inputNode!.connect(this.volumeNode!);
-      console.log('🎮 No filters created, using direct connection');
+      // Same number of bands, we can update existing filters
+      console.log('🎮 Updating existing filters with smooth transitions');
+      
+      profile.bands.forEach((band, index) => {
+        const filter = this.filters[index];
+        
+        // Smoothly transition to new frequency
+        filter.frequency.linearRampToValueAtTime(band.frequency, currentTime + TRANSITION_TIME);
+        
+        // Smoothly transition to new Q
+        filter.Q.linearRampToValueAtTime(band.q, currentTime + TRANSITION_TIME);
+        
+        // Smoothly transition to new gain (respecting enabled state)
+        const targetGain = this.isEnabled ? band.gain : 0;
+        filter.gain.linearRampToValueAtTime(targetGain, currentTime + TRANSITION_TIME);
+        
+        console.log(`🎮 Updated filter ${index} with smooth transition`);
+      });
     }
   }
   
@@ -115,21 +151,29 @@ class EQProcessor {
     console.log('🎮 EQProcessor.applyProfile called with profile:', profile.name);
     this.currentProfile = profile;
     
-    // Create a new filter chain with this profile's bands
+    // Create or update the filter chain with this profile's bands
     this.createFilterChain(profile);
     
-    // Set volume according to profile
+    // Set volume according to profile with smooth transition
     if (this.volumeNode) {
+      const audioCtx = audioContext.getAudioContext();
+      const TRANSITION_TIME = 0.05; // 50ms
+      
       // Convert from dB to linear gain if needed
       const volumeGain = this.isEnabled && profile.volume ? 
         Math.pow(10, profile.volume / 20) : 1.0;
       
-      this.volumeNode.gain.value = volumeGain;
-      console.log('🎮 Volume set to', volumeGain, '(', profile.volume, 'dB)');
+      // Smoothly transition to new volume
+      this.volumeNode.gain.linearRampToValueAtTime(
+        volumeGain, 
+        audioCtx.currentTime + TRANSITION_TIME
+      );
+      
+      console.log('🎮 Volume smoothly transitioning to', volumeGain, '(', profile.volume, 'dB)');
     }
   }
   
-  // Enable or disable the EQ
+  // Enable or disable the EQ with smooth transition
   public setEnabled(enabled: boolean): void {
     console.log('🎮 EQProcessor.setEnabled called:', enabled);
     
@@ -141,10 +185,35 @@ class EQProcessor {
     
     this.isEnabled = enabled;
     
-    // If we have a profile, reapply it to update the filter gains
-    if (this.currentProfile) {
-      console.log('🎮 Reapplying profile with new enabled state');
-      this.applyProfile(this.currentProfile);
+    // If we have a current profile and filters, smoothly transition them
+    if (this.currentProfile && this.filters.length > 0) {
+      const audioCtx = audioContext.getAudioContext();
+      const currentTime = audioCtx.currentTime;
+      const TRANSITION_TIME = 0.01; // 100ms for enable/disable
+      
+      console.log('🎮 Smoothly transitioning filters to', enabled ? 'enabled' : 'disabled', 'state');
+      
+      // For each filter, smoothly transition its gain to the target value
+      this.currentProfile.bands.forEach((band, index) => {
+        if (index < this.filters.length) {
+          const filter = this.filters[index];
+          const targetGain = enabled ? band.gain : 0;
+          
+          // Start transition from current value to target
+          filter.gain.linearRampToValueAtTime(targetGain, currentTime + TRANSITION_TIME);
+        }
+      });
+      
+      // Also smoothly transition volume if needed
+      if (this.volumeNode && this.currentProfile.volume) {
+        const volumeGain = enabled ? 
+          Math.pow(10, this.currentProfile.volume / 20) : 1.0;
+        
+        this.volumeNode.gain.linearRampToValueAtTime(
+          volumeGain, 
+          currentTime + TRANSITION_TIME
+        );
+      }
     }
   }
   
@@ -158,37 +227,72 @@ class EQProcessor {
     return this.currentProfile;
   }
   
-  // Update a single band in the current profile
-  public updateBand(index: number, gain: number): void {
+  // Update a single band with smooth transition
+  public updateBand(index: number, gain: number, frequency?: number, q?: number): void {
     if (index < this.filters.length && this.currentProfile) {
-      // Update the filter directly
-      this.filters[index].gain.value = this.isEnabled ? gain : 0;
+      const audioCtx = audioContext.getAudioContext();
+      const currentTime = audioCtx.currentTime;
+      const TRANSITION_TIME = 0.01; // 50ms
+      
+      const filter = this.filters[index];
+      const targetGain = this.isEnabled ? gain : 0;
+      
+      // Smoothly transition to new gain
+      filter.gain.linearRampToValueAtTime(targetGain, currentTime + TRANSITION_TIME);
+      
+      // Optionally update frequency
+      if (frequency !== undefined) {
+        filter.frequency.linearRampToValueAtTime(frequency, currentTime + TRANSITION_TIME);
+      }
+      
+      // Optionally update Q
+      if (q !== undefined) {
+        filter.Q.linearRampToValueAtTime(q, currentTime + TRANSITION_TIME);
+      }
+      
+      console.log(`🎮 Smoothly updating filter ${index}: gain=${gain}${frequency ? ', freq='+frequency : ''}${q ? ', Q='+q : ''}`);
       
       // Update the profile in memory
       const updatedBands = [...this.currentProfile.bands];
       updatedBands[index] = {
         ...updatedBands[index],
-        gain
+        gain,
+        ...(frequency !== undefined && { frequency }),
+        ...(q !== undefined && { q })
       };
       
       this.currentProfile = {
         ...this.currentProfile,
-        bands: updatedBands
+        bands: updatedBands,
+        lastModified: Date.now()
       };
     }
   }
   
-  // Update the volume offset
+  // Update volume with smooth transition
   public updateVolume(volume: number): void {
-    if (this.currentProfile) {
-      // Update the volume node directly
-      this.volumeNode!.gain.value = this.isEnabled ? 
+    if (this.volumeNode && this.currentProfile) {
+      const audioCtx = audioContext.getAudioContext();
+      const currentTime = audioCtx.currentTime;
+      const TRANSITION_TIME = 0.05; // 50ms
+      
+      // Convert from dB to linear gain
+      const volumeGain = this.isEnabled ? 
         Math.pow(10, volume / 20) : 1.0;
+      
+      // Smoothly transition to new volume
+      this.volumeNode.gain.linearRampToValueAtTime(
+        volumeGain, 
+        currentTime + TRANSITION_TIME
+      );
+      
+      console.log('🎮 Volume smoothly transitioning to', volumeGain, '(', volume, 'dB)');
       
       // Update the profile in memory
       this.currentProfile = {
         ...this.currentProfile,
-        volume
+        volume,
+        lastModified: Date.now()
       };
     }
   }
