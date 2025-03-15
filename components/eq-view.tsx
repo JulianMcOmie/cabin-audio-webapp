@@ -51,6 +51,10 @@ export function EQView({ isPlaying, setIsPlaying, onSignupClick }: EQViewProps) 
     return `${Math.round(gain * 100)}%`;
   }
 
+  const toggleEQ = () => {
+    setEQEnabled(!isEQEnabled);
+  };
+
   return (
     <div className="mx-auto space-y-8 pb-24">
       <div className="flex justify-between items-center mb-2">
@@ -85,13 +89,14 @@ export function EQView({ isPlaying, setIsPlaying, onSignupClick }: EQViewProps) 
             {instruction}
           </div>
 
-          {/* EQ Toggle Overlay */}
+          {/* EQ Toggle Button - Updated for consistency */}
           <div className="eq-toggle-container">
             <Button
               variant={isEQEnabled ? "default" : "outline"}
               size="sm"
               className={isEQEnabled ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : ""}
-              onClick={() => setEQEnabled(!isEQEnabled)}
+              onClick={toggleEQ}
+              title={isEQEnabled ? "Turn EQ Off" : "Turn EQ On"}
             >
               <Power className="h-4 w-4 mr-2" />
               {isEQEnabled ? "EQ On" : "EQ Off"}

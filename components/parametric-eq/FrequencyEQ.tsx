@@ -48,6 +48,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     }
     
     // Ensure profile bands have IDs and add UI properties
+    // Calculate exact frequency response using the Web Audio API's getFrequencyResponse method
     const updatedBands: EQBandWithUI[] = profile.bands.map(band => ({
       ...band,
       isHovered: false,

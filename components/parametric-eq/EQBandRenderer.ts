@@ -1,6 +1,7 @@
 import { EQBandWithUI } from './types';
 import { EQCurveRenderer } from './EQCurveRenderer';
 import { EQCoordinateUtils } from './EQCoordinateUtils';
+import { calculateBandResponse } from './useEQProcessor';
 
 export class EQBandRenderer {
   /**
@@ -16,7 +17,6 @@ export class EQBandRenderer {
     isHovered: boolean,
     isEnabled: boolean = true
   ) {
-    console.log("drawing band at frequency: ", band.frequency);
     // Skip if band is outside visible range
     if (band.frequency < freqRange.min || band.frequency > freqRange.max) return;
     
@@ -32,30 +32,20 @@ export class EQBandRenderer {
       ? EQCoordinateUtils.getBandColor(band.frequency, strokeOpacity, isDarkMode)
       : `rgba(128, 128, 128, ${strokeOpacity})`;
     
-    // Draw band response curve
-    if (band.frequencyResponse && band.frequencyResponse.length > 0) {
-      // Use pre-calculated frequency response if available
-      EQCurveRenderer.drawFilledFrequencyResponse(
-        ctx, 
-        band.frequencyResponse, 
-        width, 
-        height, 
-        freqRange, 
-        bandColor, 
-        strokeColor
-      );
-    } else {
-      // Otherwise use approximation formulas
-      EQCurveRenderer.drawApproximatedBandResponse(
-        ctx,
-        band,
-        width,
-        height,
-        freqRange,
-        bandColor,
-        strokeColor
-      );
-    }
+    // Always calculate the exact frequency response for the most accurate rendering
+    // This ensures we're using the Web Audio API's getFrequencyResponse method
+    const response = calculateBandResponse(band);
+    
+    // Draw band response curve using the exact frequency response
+    EQCurveRenderer.drawFilledFrequencyResponse(
+      ctx,
+      response,
+      width,
+      height,
+      freqRange,
+      bandColor,
+      strokeColor
+    );
     
     // Draw the band handle
     const x = EQCoordinateUtils.freqToX(band.frequency, width, freqRange);
@@ -83,11 +73,25 @@ export class EQBandRenderer {
   ) {
     const handleRadius = isHighlighted ? 10 : 8;
     
+    // Create a shadow effect for depth
+    if (isEnabled && isHighlighted) {
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+      ctx.shadowBlur = 4;
+      ctx.shadowOffsetX = 1;
+      ctx.shadowOffsetY = 1;
+    }
+    
     // Draw the outer circle
     ctx.beginPath();
     ctx.arc(x, y, handleRadius, 0, Math.PI * 2);
     ctx.fillStyle = color;
     ctx.fill();
+    
+    // Reset shadow for other elements
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
     
     // Draw border
     ctx.strokeStyle = isEnabled 
@@ -101,6 +105,12 @@ export class EQBandRenderer {
       ctx.beginPath();
       ctx.arc(x, y, handleRadius - 4, 0, Math.PI * 2);
       ctx.fillStyle = isEnabled ? 'rgba(255, 255, 255, 0.3)' : 'rgba(200, 200, 200, 0.3)';
+      ctx.fill();
+      
+      // Draw a smaller inner circle for depth
+      ctx.beginPath();
+      ctx.arc(x, y, handleRadius / 3, 0, Math.PI * 2);
+      ctx.fillStyle = isEnabled ? 'rgba(255, 255, 255, 0.6)' : 'rgba(200, 200, 200, 0.6)';
       ctx.fill();
     }
   }
@@ -129,6 +139,7 @@ export class EQBandRenderer {
       ? (isDarkMode ? '#fff' : '#000')
       : (isDarkMode ? '#aaa' : '#777');
     ctx.lineWidth = 2;
+    ctx.lineCap = 'round'; // Round ends for smoother appearance
     ctx.stroke();
     
     // Draw Q value text
@@ -137,6 +148,20 @@ export class EQBandRenderer {
       : (isDarkMode ? '#aaa' : '#777');
     ctx.font = '10px Arial';
     ctx.textAlign = 'center';
+    ctx.fillText(`Q: ${band.q.toFixed(1)}`, x, y + 20);
+    
+    // Draw a background for the text to improve readability
+    const textWidth = ctx.measureText(`Q: ${band.q.toFixed(1)}`).width;
+    const textHeight = 14;
+    ctx.fillStyle = isEnabled
+      ? (isDarkMode ? 'rgba(0, 0, 0, 0.5)' : 'rgba(255, 255, 255, 0.5)')
+      : 'rgba(128, 128, 128, 0.3)';
+    ctx.fillRect(x - textWidth / 2 - 2, y + 20 - textHeight / 2 - 2, textWidth + 4, textHeight);
+    
+    // Re-draw text over background
+    ctx.fillStyle = isEnabled 
+      ? (isDarkMode ? '#fff' : '#000')
+      : (isDarkMode ? '#aaa' : '#777');
     ctx.fillText(`Q: ${band.q.toFixed(1)}`, x, y + 20);
   }
 } 

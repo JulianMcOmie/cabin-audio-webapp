@@ -154,7 +154,26 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
       
       // Then persist to IndexedDB (fire and forget)
       indexedDBManager.addItem(indexedDBManager.STORES.EQ_PROFILES, profile)
-        .catch(error => console.error('Failed to save EQ profile:', error));
+        .catch(error => {
+          // Check if this is a constraint error (key already exists)
+          if (error.name === 'ConstraintError' || (error.toString && error.toString().includes('Key already exists'))) {
+            console.log(`Profile ${profile.id} already exists, updating instead of adding`);
+            
+            // Update the profile with current timestamp and sync status
+            const updatedProfile = {
+              ...profile,
+              lastModified: Date.now(),
+              syncStatus: 'modified' as SyncStatus
+            };
+            
+            // Use updateItem instead
+            indexedDBManager.updateItem(indexedDBManager.STORES.EQ_PROFILES, updatedProfile)
+              .catch(updateError => console.error('Failed to update existing EQ profile:', updateError));
+          } else {
+            // Log other types of errors
+            console.error('Failed to save EQ profile:', error);
+          }
+        });
     },
     
     updateProfile: (profileId: string, updates: Partial<EQProfileWithDefault>) => {

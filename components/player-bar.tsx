@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import { useToast } from "@/components/common/ToastManager"
 import { usePlayerStore, useTrackStore } from "@/lib/stores"
+import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
+import { cn } from "@/lib/utils"
 
 // Dummy track interface
 interface Track {
@@ -17,6 +19,31 @@ interface Track {
   coverUrl: string
   currentTime?: number
 }
+
+// Custom EQ icon component
+const EQIcon = ({ className }: { className?: string }) => (
+  <svg 
+    width="15" 
+    height="15" 
+    viewBox="0 0 24 24" 
+    fill="none" 
+    stroke="currentColor" 
+    strokeWidth="2" 
+    strokeLinecap="round" 
+    strokeLinejoin="round" 
+    className={className}
+  >
+    <line x1="4" y1="21" x2="4" y2="14" />
+    <line x1="4" y1="10" x2="4" y2="3" />
+    <line x1="12" y1="21" x2="12" y2="12" />
+    <line x1="12" y1="8" x2="12" y2="3" />
+    <line x1="20" y1="21" x2="20" y2="16" />
+    <line x1="20" y1="12" x2="20" y2="3" />
+    <line x1="1" y1="14" x2="7" y2="14" />
+    <line x1="9" y1="8" x2="15" y2="8" />
+    <line x1="17" y1="16" x2="23" y2="16" />
+  </svg>
+);
 
 export function PlayerBar() {
   const { showToast } = useToast()
@@ -42,6 +69,9 @@ export function PlayerBar() {
   // Get track information from the track store
   const getTrackById = useTrackStore(state => state.getTrackById)
   const currentTrack = currentTrackId ? getTrackById(currentTrackId) : null
+  
+  // Get EQ state from the EQ profile store
+  const { isEQEnabled, setEQEnabled } = useEQProfileStore()
   
   const [isTrackLoading, setIsTrackLoading] = useState(false)
   // State to track seeking and temporary position during seek
@@ -98,6 +128,14 @@ export function PlayerBar() {
 
   const toggleMute = () => {
     setIsMuted(!isMuted)
+  }
+
+  const toggleEQ = () => {
+    setEQEnabled(!isEQEnabled);
+    showToast({
+      message: `EQ ${!isEQEnabled ? 'enabled' : 'disabled'}`,
+      variant: "info",
+    });
   }
 
   const formatTime = (seconds: number) => {
@@ -192,6 +230,9 @@ export function PlayerBar() {
 
           <div className="flex items-center gap-2 w-[20%] min-w-[120px] justify-end">
             <Button variant="ghost" size="icon" className="h-8 w-8" disabled>
+              <EQIcon className="h-4 w-4 opacity-50" />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-8 w-8" disabled>
               <Volume2 className="h-4 w-4" />
             </Button>
             <div className="h-1 bg-muted rounded-full w-24"></div>
@@ -263,6 +304,18 @@ export function PlayerBar() {
         </div>
 
         <div className="flex items-center gap-2 w-[20%] min-w-[120px] justify-end">
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            className={cn(
+              "h-8 w-8 transition-colors", 
+              isEQEnabled && "text-electric-blue"
+            )}
+            onClick={toggleEQ} 
+            title={isEQEnabled ? "Disable EQ" : "Enable EQ"}
+          >
+            <EQIcon className="h-4 w-4" />
+          </Button>
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={toggleMute}>
             {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
           </Button>
