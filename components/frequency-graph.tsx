@@ -1,6 +1,7 @@
 "use client"
 
 import { FrequencyEQ } from "./parametric-eq"
+import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
 
 interface FrequencyGraphProps {
   selectedDot?: [number, number] | null
@@ -17,9 +18,14 @@ export function FrequencyGraph({
   onInstructionChange,
   onRequestEnable
 }: FrequencyGraphProps) {
+  // Get the active profile ID from the store
+  const { getActiveProfile } = useEQProfileStore();
+  const activeProfile = getActiveProfile();
+  
   return (
     <div className={className}>
       <FrequencyEQ
+        profileId={activeProfile?.id}
         disabled={disabled}
         onInstructionChange={onInstructionChange}
         onRequestEnable={onRequestEnable}

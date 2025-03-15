@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { HelpCircle, Play, Power, Volume2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { FrequencyGraph } from "@/components/frequency-graph"
@@ -12,20 +12,40 @@ import { SignupModal } from "@/components/signup-modal"
 import { InfoCircle } from "@/components/ui/info-circle"
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
 import { Slider } from "@/components/ui/slider"
+import { Input } from "@/components/ui/input"
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { v4 as uuidv4 } from 'uuid'
+import { SyncStatus } from "@/lib/models/SyncStatus"
 
 interface EQViewProps {
   isPlaying: boolean
   setIsPlaying: (isPlaying: boolean) => void
+  eqEnabled: boolean
+  setEqEnabled: (enabled: boolean) => void
   onSignupClick: () => void
 }
 
-export function EQView({ isPlaying, setIsPlaying, onSignupClick }: EQViewProps) {
+export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSignupClick }: EQViewProps) {
   const [selectedDot, setSelectedDot] = useState<[number, number] | null>(null)
   const [instruction, setInstruction] = useState("Click + drag on the center line to add a band")
-  const { isEQEnabled, setEQEnabled, distortionGain, setDistortionGain } = useEQProfileStore()
+  const { 
+    isEQEnabled, 
+    setEQEnabled, 
+    distortionGain, 
+    setDistortionGain,
+    getProfiles,
+    getActiveProfile,
+    setActiveProfile,
+    addProfile 
+  } = useEQProfileStore()
+  
   const [showCalibrationModal, setShowCalibrationModal] = useState(false)
-  const [showCreateNewOverlay, setShowCreateNewOverlay] = useState(false)
-  const [selectedProfile, setSelectedProfile] = useState("Flat")
+  const [showCreateNewDialog, setShowCreateNewDialog] = useState(false)
+  const [newProfileName, setNewProfileName] = useState("")
+  
+  // Track the selected profile ID
+  const [selectedProfileId, setSelectedProfileId] = useState<string>("")
+  
   const [activeTab, setActiveTab] = useState("eq")
   const [showLoginModal, setShowLoginModal] = useState(false)
   const [showSignupModal, setShowSignupModal] = useState(false)
@@ -33,13 +53,56 @@ export function EQView({ isPlaying, setIsPlaying, onSignupClick }: EQViewProps) 
   // State for the dot grid calibration audio
   const [dotGridPlaying, setDotGridPlaying] = useState(false)
 
+  // Sync local eqEnabled state with the store
+  useEffect(() => {
+    setEqEnabled(isEQEnabled);
+  }, [isEQEnabled, setEqEnabled]);
+
+  // Initialize selected profile from the active profile
+  useEffect(() => {
+    const activeProfile = getActiveProfile();
+    if (activeProfile) {
+      setSelectedProfileId(activeProfile.id);
+    } else {
+      // If no active profile, select the first available one
+      const profiles = getProfiles();
+      if (profiles.length > 0) {
+        setSelectedProfileId(profiles[0].id);
+        setActiveProfile(profiles[0].id);
+      }
+    }
+  }, [getActiveProfile, getProfiles, setActiveProfile]);
+
   const handleProfileClick = () => {
-    setShowCreateNewOverlay(true)
+    setNewProfileName("");
+    setShowCreateNewDialog(true);
   }
 
-  const handleSelectProfile = (name: string) => {
-    setSelectedProfile(name)
-    setShowCreateNewOverlay(false)
+  const handleSelectProfile = (profileId: string) => {
+    setSelectedProfileId(profileId);
+    setActiveProfile(profileId);
+  }
+
+  const handleCreateNewProfile = () => {
+    if (!newProfileName.trim()) return;
+    
+    // Create a new profile with a unique ID
+    const newProfile = {
+      id: uuidv4(),
+      name: newProfileName.trim(),
+      bands: [],
+      volume: 0,
+      lastModified: Date.now(),
+      syncStatus: 'modified' as SyncStatus
+    };
+    
+    // Add the new profile and select it
+    addProfile(newProfile);
+    setSelectedProfileId(newProfile.id);
+    setActiveProfile(newProfile.id);
+    
+    // Close the dialog
+    setShowCreateNewDialog(false);
   }
 
   const handleDistortionGainChange = (value: number[]) => {
@@ -102,20 +165,6 @@ export function EQView({ isPlaying, setIsPlaying, onSignupClick }: EQViewProps) 
               {isEQEnabled ? "EQ On" : "EQ Off"}
             </Button>
           </div>
-
-          {showCreateNewOverlay && (
-            <div className="absolute inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center rounded-lg">
-              <div className="text-center p-6 max-w-xs">
-                <p className="mb-4">Sign up to create more profiles.</p>
-                <Button
-                  onClick={() => setShowSignupModal(true)}
-                  className="bg-electric-blue hover:bg-electric-blue/90 text-white"
-                >
-                  Sign up
-                </Button>
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Distortion Control Section */}
@@ -284,28 +333,49 @@ export function EQView({ isPlaying, setIsPlaying, onSignupClick }: EQViewProps) 
         </div>
       </div>
 
-      {/* TODO: Add back in profiles when functional */}
-      {/* <div className="mt-8">
+      {/* EQ Profiles Section */}
+      <div className="mt-8">
         <h3 className="text-lg font-medium mb-4">EQ Profiles</h3>
         <EQProfiles
           onProfileClick={handleProfileClick}
-          selectedProfile={selectedProfile}
+          selectedProfile={selectedProfileId}
           onSelectProfile={handleSelectProfile}
         />
       </div>
 
-      <div className="mt-4 text-center">
-        <p className="text-sm text-muted-foreground">
-          <Button
-            variant="link"
-            className="text-electric-blue hover:text-electric-blue/80 font-medium p-0 h-auto"
-            onClick={() => setShowSignupModal(true)}
-          >
-            Sign up
-          </Button>{" "}
-          to save your custom EQ settings.
-        </p>
-      </div> */}
+      {/* Create New Profile Dialog */}
+      <Dialog open={showCreateNewDialog} onOpenChange={setShowCreateNewDialog}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Create New EQ Profile</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <label htmlFor="profile-name" className="block text-sm font-medium mb-2">
+              Profile Name
+            </label>
+            <Input
+              id="profile-name"
+              value={newProfileName}
+              onChange={(e) => setNewProfileName(e.target.value)}
+              placeholder="My Custom EQ"
+              className="w-full"
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCreateNewDialog(false)}>
+              Cancel
+            </Button>
+            <Button 
+              className="bg-electric-blue hover:bg-electric-blue/90 text-white"
+              onClick={handleCreateNewProfile}
+              disabled={!newProfileName.trim()}
+            >
+              Create Profile
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <EQCalibrationModal open={showCalibrationModal} onClose={() => setShowCalibrationModal(false)} />
       <LoginModal open={showLoginModal} onClose={() => setShowLoginModal(false)} />

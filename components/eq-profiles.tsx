@@ -11,47 +11,51 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-
-interface EQProfile {
-  id: string
-  name: string
-  imageUrl: string
-}
+import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
+import { EQProfile } from "@/lib/models/EQProfile"
+import { useEffect, useState } from "react"
 
 interface EQProfilesProps {
   onProfileClick?: () => void
   selectedProfile: string
-  onSelectProfile: (name: string) => void
+  onSelectProfile: (profileId: string) => void
 }
 
 export function EQProfiles({ onProfileClick, selectedProfile, onSelectProfile }: EQProfilesProps) {
-  const profiles: EQProfile[] = [
-    {
-      id: "1",
-      name: "Flat",
-      imageUrl: "/placeholder.svg?height=80&width=160",
-    },
-    {
-      id: "2",
-      name: "Bass Boost",
-      imageUrl: "/placeholder.svg?height=80&width=160",
-    },
-    {
-      id: "3",
-      name: "Vocal Clarity",
-      imageUrl: "/placeholder.svg?height=80&width=160",
-    },
-    {
-      id: "4",
-      name: "Treble Boost",
-      imageUrl: "/placeholder.svg?height=80&width=160",
-    },
-    {
-      id: "5",
-      name: "Cinema",
-      imageUrl: "/placeholder.svg?height=80&width=160",
-    },
-  ]
+  const { getProfiles, deleteProfile, getActiveProfile, setActiveProfile } = useEQProfileStore()
+  const [profiles, setProfiles] = useState<EQProfile[]>([])
+  
+  // Load profiles from store
+  useEffect(() => {
+    setProfiles(getProfiles())
+  }, [getProfiles])
+
+  const handleDeleteProfile = (profileId: string, e: React.MouseEvent) => {
+    e.stopPropagation() // Prevent triggering the card click
+    
+    // Don't delete if it's the only profile
+    if (profiles.length <= 1) return
+    
+    // Delete the profile
+    deleteProfile(profileId)
+    
+    // Update profiles list
+    setProfiles(getProfiles())
+    
+    // If deleted profile was selected, select another one
+    if (selectedProfile === profileId) {
+      const activeProfile = getActiveProfile()
+      if (activeProfile) {
+        onSelectProfile(activeProfile.id)
+      } else if (profiles.length > 0) {
+        // Select the first available profile
+        const remainingProfiles = getProfiles()
+        if (remainingProfiles.length > 0) {
+          onSelectProfile(remainingProfiles[0].id)
+        }
+      }
+    }
+  }
 
   return (
     <div>
@@ -64,8 +68,9 @@ export function EQProfiles({ onProfileClick, selectedProfile, onSelectProfile }:
               <ProfileCard
                 key={profile.id}
                 profile={profile}
-                isSelected={selectedProfile === profile.name}
-                onSelect={() => onSelectProfile(profile.name)}
+                isSelected={selectedProfile === profile.id}
+                onSelect={() => onSelectProfile(profile.id)}
+                onDelete={(e) => handleDeleteProfile(profile.id, e)}
               />
             ))}
 
@@ -89,11 +94,24 @@ function ProfileCard({
   profile,
   isSelected,
   onSelect,
+  onDelete,
 }: {
   profile: EQProfile
   isSelected: boolean
   onSelect: () => void
+  onDelete: (e: React.MouseEvent) => void
 }) {
+  // Generate a simple visualization based on the profile's bands
+  const generateVisualization = () => {
+    if (!profile.bands || profile.bands.length === 0) {
+      return "/placeholder.svg?height=80&width=160" // Default flat line if no bands
+    }
+    
+    // In a real implementation, we would generate a proper visualization here
+    // For now, just return a placeholder
+    return "/placeholder.svg?height=80&width=160"
+  }
+
   return (
     <Card
       className={`w-[160px] h-[120px] flex-shrink-0 cursor-pointer transition-colors relative ${
@@ -115,13 +133,22 @@ function ProfileCard({
               <DropdownMenuSeparator />
               <DropdownMenuItem>Download</DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-red-600">Delete</DropdownMenuItem>
+              <DropdownMenuItem 
+                className="text-red-600"
+                onClick={onDelete}
+              >
+                Delete
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
 
         <div className="aspect-[2/1] overflow-hidden rounded-md mb-2">
-          <img src={profile.imageUrl || "/placeholder.svg"} alt={profile.name} className="w-full h-full object-cover" />
+          <img 
+            src={generateVisualization()} 
+            alt={profile.name} 
+            className="w-full h-full object-cover" 
+          />
         </div>
         <h4 className="font-medium text-center">{profile.name}</h4>
 

@@ -18,7 +18,7 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<"eq" | "library" | "export" | "desktop" | "mobile" | "profile">("library")
   const [showPricingModal, setShowPricingModal] = useState(false)
   const [showSignupModal, setShowSignupModal] = useState(false)
-  const [eqEnabled, setEqEnabled] = useState(false) // Add this state
+  const [eqEnabled, setEqEnabled] = useState(false)
 
   // Function to show the upgrade/pricing modal
   const handleShowUpgrade = () => {
