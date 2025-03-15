@@ -4,7 +4,7 @@ import { useState } from "react"
 import { HelpCircle, Play, Power, Volume2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { FrequencyGraph } from "@/components/frequency-graph"
-import { DotGrid } from "@/components/dot-grid"
+import { DotCalibration } from "@/components/dot-grid"
 import { EQProfiles } from "@/components/eq-profiles"
 import { EQCalibrationModal } from "@/components/eq-calibration-modal"
 import { LoginModal } from "@/components/login-modal"
@@ -21,7 +21,6 @@ interface EQViewProps {
 
 export function EQView({ isPlaying, setIsPlaying, onSignupClick }: EQViewProps) {
   const [selectedDot, setSelectedDot] = useState<[number, number] | null>(null)
-  const [gridSize, setGridSize] = useState(8)
   const [instruction, setInstruction] = useState("Click + drag on the center line to add a band")
   const { isEQEnabled, setEQEnabled, distortionGain, setDistortionGain } = useEQProfileStore()
   const [showCalibrationModal, setShowCalibrationModal] = useState(false)
@@ -30,18 +29,6 @@ export function EQView({ isPlaying, setIsPlaying, onSignupClick }: EQViewProps) 
   const [activeTab, setActiveTab] = useState("eq")
   const [showLoginModal, setShowLoginModal] = useState(false)
   const [showSignupModal, setShowSignupModal] = useState(false)
-
-  const increaseResolution = () => {
-    if (gridSize < 16) {
-      setGridSize(gridSize + 1)
-    }
-  }
-
-  const decreaseResolution = () => {
-    if (gridSize > 4) {
-      setGridSize(gridSize - 1)
-    }
-  }
 
   const handleProfileClick = () => {
     setShowCreateNewOverlay(true)
@@ -151,7 +138,7 @@ export function EQView({ isPlaying, setIsPlaying, onSignupClick }: EQViewProps) 
             />
             
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Less Volume, No Distortion</span>
+              <span>Less Volume, Less Distortion</span>
               <span>Full Volume</span>
             </div>
           </div>
@@ -268,35 +255,13 @@ export function EQView({ isPlaying, setIsPlaying, onSignupClick }: EQViewProps) 
               <div className="bg-muted/50 p-4 rounded-lg">
                 <h4 className="font-medium mb-3 text-center">Calibration Controls</h4>
 
-                {/* Actual Dot Grid */}
-                <div className="h-[180px] mb-3 bg-background/50 rounded-lg p-3">
-                  <DotGrid selectedDot={selectedDot} setSelectedDot={setSelectedDot} gridSize={gridSize} />
-                </div>
-
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs text-muted-foreground">
-                    Grid Size: {gridSize}×{gridSize}
-                  </span>
-                  <div className="flex items-center space-x-2">
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="h-7 w-7"
-                      onClick={decreaseResolution}
-                      disabled={gridSize <= 4 || !isEQEnabled}
-                    >
-                      <span className="text-sm">-</span>
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="h-7 w-7"
-                      onClick={increaseResolution}
-                      disabled={gridSize >= 16 || !isEQEnabled}
-                    >
-                      <span className="text-sm">+</span>
-                    </Button>
-                  </div>
+                {/* Replace original DotGrid with new DotCalibration component */}
+                <div className="mb-3">
+                  <DotCalibration 
+                    isPlaying={isPlaying}
+                    setIsPlaying={setIsPlaying}
+                    disabled={!isEQEnabled}
+                  />
                 </div>
 
                 <Button
@@ -309,7 +274,7 @@ export function EQView({ isPlaying, setIsPlaying, onSignupClick }: EQViewProps) 
                 </Button>
 
                 <p className="text-xs text-center text-muted-foreground">
-                  Click dots on the grid to play different test sounds
+                  Select dots on the grid to play different test sounds
                 </p>
               </div>
             </div>
