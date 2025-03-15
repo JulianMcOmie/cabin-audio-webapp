@@ -72,26 +72,42 @@ export default function ExportView() {
       "15-band": bandCount > 15
     })
     
-    // Generate 10-band EQ format (use first 10 bands, add zeros if needed)
-    const bandsFor10 = sortedBands.slice(0, 10)
-    const format10 = bandsFor10.map(band => 
-      `${band.frequency < 1000 ? band.frequency : band.frequency/1000 + 'k'}Hz: ${band.gain.toFixed(1)}dB`
-    )
+    // Generate APO-compatible format for 10-band EQ
+    let format10 = [`Preamp: ${profile.volume || 0} dB`]
     
-    // Add zeros for missing bands
-    while (format10.length < 10) {
-      format10.push(`Band ${format10.length + 1}: 0.0dB`)
+    // Add bands in standard APO format
+    const bandsFor10 = sortedBands.slice(0, 10)
+    bandsFor10.forEach((band, index) => {
+      // Determine filter type based on band type or reasonable default
+      let filterType = "PK" // Default to peaking
+      if (band.type === "lowshelf") filterType = "LSC"
+      if (band.type === "highshelf") filterType = "HSC"
+      
+      format10.push(`Filter ${index + 1}: ON ${filterType} Fc ${Math.round(band.frequency)} Hz Gain ${band.gain.toFixed(1)} dB Q ${band.q ? band.q.toFixed(2) : "1.00"}`)
+    })
+    
+    // Add placeholder bands for missing bands
+    for (let i = bandsFor10.length; i < 10; i++) {
+      format10.push(`Filter ${i + 1}: ON PK Fc ${500 * (i + 1)} Hz Gain 0.0 dB Q 1.00`)
     }
     
-    // Generate 15-band EQ format (use first 15 bands, add zeros if needed)
-    const bandsFor15 = sortedBands.slice(0, 15)
-    const format15 = bandsFor15.map(band => 
-      `${band.frequency < 1000 ? band.frequency : band.frequency/1000 + 'k'}Hz: ${band.gain.toFixed(1)}dB`
-    )
+    // Generate APO-compatible format for 15-band EQ
+    let format15 = [`Preamp: ${profile.volume || 0} dB`]
     
-    // Add zeros for missing bands
-    while (format15.length < 15) {
-      format15.push(`Band ${format15.length + 1}: 0.0dB`)
+    // Add bands in standard APO format
+    const bandsFor15 = sortedBands.slice(0, 15)
+    bandsFor15.forEach((band, index) => {
+      // Determine filter type based on band type or reasonable default
+      let filterType = "PK" // Default to peaking
+      if (band.type === "lowshelf") filterType = "LSC"
+      if (band.type === "highshelf") filterType = "HSC"
+      
+      format15.push(`Filter ${index + 1}: ON ${filterType} Fc ${Math.round(band.frequency)} Hz Gain ${band.gain.toFixed(1)} dB Q ${band.q ? band.q.toFixed(2) : "1.00"}`)
+    })
+    
+    // Add placeholder bands for missing bands
+    for (let i = bandsFor15.length; i < 15; i++) {
+      format15.push(`Filter ${i + 1}: ON PK Fc ${300 * (i + 1)} Hz Gain 0.0 dB Q 1.00`)
     }
     
     formats["10-band"][profile.name] = format10.join('\n')
@@ -187,11 +203,11 @@ export default function ExportView() {
                   <h2 className="text-lg font-medium">15-Band EQ Settings</h2>
                 </div>
 
-                {hasTooManyBands["15-band"] && (
+                {hasTooManyBands["15-band"] && selectedProfileId && profiles.find(p => p.id === selectedProfileId) && (
                   <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3 mb-4 flex items-center text-sm text-yellow-800 dark:bg-yellow-900/20 dark:border-yellow-800 dark:text-yellow-300">
                     <AlertCircle className="h-4 w-4 mr-2 flex-shrink-0" />
                     <div>
-                      This profile has more than 15 bands. Only the first 15 bands are included.
+                      This profile has {profiles.find(p => p.id === selectedProfileId)?.bands?.length || 0} bands. Only the first 15 bands are included.
                     </div>
                   </div>
                 )}
@@ -225,11 +241,11 @@ export default function ExportView() {
                   <h2 className="text-lg font-medium">10-Band EQ Settings</h2>
                 </div>
 
-                {hasTooManyBands["10-band"] && (
+                {hasTooManyBands["10-band"] && selectedProfileId && profiles.find(p => p.id === selectedProfileId) && (
                   <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3 mb-4 flex items-center text-sm text-yellow-800 dark:bg-yellow-900/20 dark:border-yellow-800 dark:text-yellow-300">
                     <AlertCircle className="h-4 w-4 mr-2 flex-shrink-0" />
                     <div>
-                      This profile has more than 10 bands. Only the first 10 bands are included.
+                      This profile has {profiles.find(p => p.id === selectedProfileId)?.bands?.length || 0} bands. Only the first 10 bands are included.
                     </div>
                   </div>
                 )}
