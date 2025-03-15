@@ -470,11 +470,12 @@ class DotGridAudioPlayer {
     // Calculate how many octaves we are above minFreq
     const octavesAboveMin = Math.log2(centerFreq / minFreq);
     
-    // Each octave lower needs +3dB of gain (which is a factor of ~1.414)
-    // So going up one octave means 0.707x gain, going down one octave means 1.414x gain
-    // We calculate this by using 2^(-octaves * 0.5)
-    // The 0.5 gives us the -3dB/octave slope (because 10*log10(2^0.5) ≈ 3dB)
-    const frequencyGainFactor = Math.pow(2, -octavesAboveMin * 0.5);
+    // Each octave lower needs compensation based on our slope setting in dB/octave
+    // For example: -3dB/octave = 0.5, -6dB/octave = 1.0, -1.5dB/octave = 0.25
+    // The formula is: slopeFactor = |dBPerOctave| / 6
+    const DB_PER_OCTAVE = -1.5; // Can be adjusted to control the slope
+    const slopeFactor = Math.abs(DB_PER_OCTAVE) / 6;
+    const frequencyGainFactor = Math.pow(2, -octavesAboveMin * slopeFactor);
     
     // Apply gain with frequency compensation
     gain.gain.value = MASTER_GAIN * frequencyGainFactor;
