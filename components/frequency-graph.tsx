@@ -7,14 +7,22 @@ interface FrequencyGraphProps {
   disabled?: boolean
   className?: string
   onInstructionChange?: (instruction: string) => void
+  onRequestEnable?: () => void
 }
 
-export function FrequencyGraph({ selectedDot = null, disabled = false, className, onInstructionChange }: FrequencyGraphProps) {
+export function FrequencyGraph({ 
+  selectedDot = null, 
+  disabled = false, 
+  className, 
+  onInstructionChange,
+  onRequestEnable
+}: FrequencyGraphProps) {
   return (
     <div className={className}>
       <FrequencyEQ
         disabled={disabled}
         onInstructionChange={onInstructionChange}
+        onRequestEnable={onRequestEnable}
       />
     </div>
   )

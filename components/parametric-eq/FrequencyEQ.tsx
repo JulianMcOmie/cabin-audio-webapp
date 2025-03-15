@@ -16,9 +16,10 @@ interface FrequencyEQProps {
   disabled?: boolean
   className?: string
   onInstructionChange?: (instruction: string) => void
+  onRequestEnable?: () => void
 }
 
-export function FrequencyEQ({ profileId, disabled = false, className, onInstructionChange }: FrequencyEQProps) {
+export function FrequencyEQ({ profileId, disabled = false, className, onInstructionChange, onRequestEnable }: FrequencyEQProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const { theme } = useTheme()
   const [isDarkMode, setIsDarkMode] = useState(false)
@@ -80,6 +81,11 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       type: band.type || 'peaking' // Include type in the profile band
     }
     
+    // Check if this is the first band - if so, request to enable the EQ
+    if (profile.bands.length === 0 && onRequestEnable && disabled) {
+      onRequestEnable();
+    }
+    
     // Add band to profile immediately
     updateProfile(profile.id, {
       bands: [...profile.bands, newProfileBand]
@@ -87,7 +93,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     
     // Return the new band ID so it can be selected for dragging
     return newProfileBand.id
-  }, [profile, updateProfile])
+  }, [profile, updateProfile, onRequestEnable, disabled])
   
   const handleBandUpdate = useCallback((id: string, updates: Partial<EQBandWithUI>) => {
     if (!profile) return
