@@ -3,7 +3,7 @@ import * as eqProcessor from './eqProcessor';
 import * as audioRouting from './audioRouting';
 import * as fileStorage from '../storage/fileStorage';
 import * as metadataStorage from '../storage/metadataStorage';
-import { useTrackStore } from '../stores';
+import { useTrackStore, useEQProfileStore } from '../stores';
 
 // Define callback types
 type ProgressCallback = (progress: number) => void;
@@ -14,6 +14,7 @@ class AudioPlayer {
   private audioBuffer: AudioBuffer | null = null;
   private sourceNode: AudioBufferSourceNode | null = null;
   private gainNode: GainNode | null = null;
+  private distortionGainNode: GainNode | null = null;
   private startTime: number = 0;
   private pausedTime: number = 0;
   private isPlaying: boolean = false;
@@ -34,11 +35,19 @@ class AudioPlayer {
       // Create a gain node for volume control
       this.gainNode = audioContext.createGain();
       console.log('🎵 Gain node created:', this.gainNode);
-
+      
+      // Create a distortion gain node for preventing clipping
+      this.distortionGainNode = audioContext.createGain();
+      this.distortionGainNode.gain.value = 1.0; // Default to no reduction
+      console.log('🎵 Distortion gain node created');
+      
       // Get the EQ processor and connect through it
       const eq = eqProcessor.getEQProcessor();
-      this.gainNode.connect(eq.getInputNode());
-      console.log('🎵 Gain node connected to EQ processor input');
+      
+      // Connect nodes: gainNode -> distortionGainNode -> EQ -> destination
+      this.gainNode.connect(this.distortionGainNode!);
+      this.distortionGainNode!.connect(eq.getInputNode());
+      console.log('🎵 Audio chain connected: gainNode -> distortionGainNode -> EQ');
       
       // Connect EQ output to destination
       eq.getOutputNode().connect(audioContext.getAudioContext().destination);
@@ -47,10 +56,46 @@ class AudioPlayer {
       // Set up progress tracking
       this.setupProgressTracking();
       
+      // Apply initial distortion gain from store
+      const distortionGain = useEQProfileStore.getState().distortionGain;
+      this.setDistortionGain(distortionGain);
+      
+      // Subscribe to distortion gain changes
+      useEQProfileStore.subscribe(
+        (state) => {
+          this.setDistortionGain(state.distortionGain);
+        }
+      );
+      
       console.log('🎵 AudioPlayer initialization complete');
     } catch (error) {
       console.error('🎵 Error during AudioPlayer initialization:', error);
     }
+  }
+  
+  // Set distortion gain (0-1) to prevent clipping
+  public setDistortionGain(gain: number): void {
+    console.log('🎵 AudioPlayer.setDistortionGain called with:', gain);
+    
+    if (!this.distortionGainNode) {
+      console.log('🎵 Cannot set distortion gain: No distortion gain node');
+      return;
+    }
+    
+    // Clamp gain between 0 and 1
+    const clampedGain = Math.max(0, Math.min(1, gain));
+    
+    // Apply gain with a smooth transition
+    const audioCtx = audioContext.getAudioContext();
+    const currentTime = audioCtx.currentTime;
+    const TRANSITION_TIME = 0.05; // 50ms
+    
+    this.distortionGainNode.gain.linearRampToValueAtTime(
+      clampedGain,
+      currentTime + TRANSITION_TIME
+    );
+    
+    console.log('🎵 Distortion gain set to:', clampedGain);
   }
   
   // Set up progress tracking interval

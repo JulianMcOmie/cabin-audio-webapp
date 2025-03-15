@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { HelpCircle, Play, Power } from "lucide-react"
+import { HelpCircle, Play, Power, Volume2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { FrequencyGraph } from "@/components/frequency-graph"
 import { DotGrid } from "@/components/dot-grid"
@@ -11,6 +11,7 @@ import { LoginModal } from "@/components/login-modal"
 import { SignupModal } from "@/components/signup-modal"
 import { InfoCircle } from "@/components/ui/info-circle"
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
+import { Slider } from "@/components/ui/slider"
 
 interface EQViewProps {
   isPlaying: boolean
@@ -22,7 +23,7 @@ export function EQView({ isPlaying, setIsPlaying, onSignupClick }: EQViewProps) 
   const [selectedDot, setSelectedDot] = useState<[number, number] | null>(null)
   const [gridSize, setGridSize] = useState(8)
   const [instruction, setInstruction] = useState("Click + drag on the center line to add a band")
-  const { isEQEnabled, setEQEnabled } = useEQProfileStore()
+  const { isEQEnabled, setEQEnabled, distortionGain, setDistortionGain } = useEQProfileStore()
   const [showCalibrationModal, setShowCalibrationModal] = useState(false)
   const [showCreateNewOverlay, setShowCreateNewOverlay] = useState(false)
   const [selectedProfile, setSelectedProfile] = useState("Flat")
@@ -49,6 +50,15 @@ export function EQView({ isPlaying, setIsPlaying, onSignupClick }: EQViewProps) 
   const handleSelectProfile = (name: string) => {
     setSelectedProfile(name)
     setShowCreateNewOverlay(false)
+  }
+
+  const handleDistortionGainChange = (value: number[]) => {
+    setDistortionGain(value[0])
+  }
+
+  // Format the gain as a percentage
+  const formatDistortionGain = (gain: number): string => {
+    return `${Math.round(gain * 100)}%`;
   }
 
   return (
@@ -111,6 +121,40 @@ export function EQView({ isPlaying, setIsPlaying, onSignupClick }: EQViewProps) 
               </div>
             </div>
           )}
+        </div>
+
+        {/* Distortion Control Section */}
+        <div className="border rounded-lg p-6 bg-card">
+          <div className="flex items-center mb-3">
+            <Volume2 className="h-5 w-5 mr-2 text-muted-foreground" />
+            <h3 className="text-lg font-medium">Anti-Distortion Control</h3>
+          </div>
+          
+          <p className="text-sm text-muted-foreground mb-4">
+            If you hear distortion or clipping, reduce the volume using this slider to prevent audio artifacts.
+            This is especially useful when using strong EQ settings.
+          </p>
+          
+          <div className="flex flex-col gap-1.5">
+            <div className="flex justify-between items-center">
+              <span className="text-sm font-medium">Volume Level</span>
+              <span className="text-sm font-medium">{formatDistortionGain(distortionGain)}</span>
+            </div>
+            
+            <Slider
+              value={[distortionGain]}
+              min={0.01}
+              max={1.0}
+              step={0.01}
+              onValueChange={handleDistortionGainChange}
+              className="w-full"
+            />
+            
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>Less Volume, No Distortion</span>
+              <span>Full Volume</span>
+            </div>
+          </div>
         </div>
 
         {/* Calibration Section */}

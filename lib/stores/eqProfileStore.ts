@@ -13,6 +13,7 @@ interface EQProfileState {
   activeProfileId: string | null;
   isLoading: boolean;
   isEQEnabled: boolean;
+  distortionGain: number;
   
   // Actions
   addProfile: (profile: EQProfileWithDefault) => void;
@@ -20,6 +21,7 @@ interface EQProfileState {
   deleteProfile: (profileId: string) => void;
   setActiveProfile: (profileId: string | null) => void;
   setEQEnabled: (enabled: boolean) => void;
+  setDistortionGain: (gain: number) => void;
   getProfiles: () => EQProfileWithDefault[];
   getProfileById: (profileId: string) => EQProfileWithDefault | undefined;
   getActiveProfile: () => EQProfileWithDefault | null;
@@ -51,6 +53,17 @@ const loadEQEnabledState = async (): Promise<boolean> => {
   }
 };
 
+// Helper to load distortion gain state from storage
+const loadDistortionGainState = async (): Promise<number> => {
+  try {
+    const state = await indexedDBManager.getItem<{gain: number}>(indexedDBManager.STORES.SYNC_STATE, 'distortionGain');
+    return state?.gain ?? 1.0; // Default to 1.0 (no reduction) if not found
+  } catch (error) {
+    console.error('Error loading distortion gain state:', error);
+    return 1.0; // Default to 1.0 on error
+  }
+};
+
 export const useEQProfileStore = create<EQProfileState>((set, get) => {
   // Track initialization state
   let initialized = false;
@@ -66,9 +79,10 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
     // Load profiles from storage
     initialLoadPromise = Promise.all([
       loadProfilesFromStorage(),
-      loadEQEnabledState()
+      loadEQEnabledState(),
+      loadDistortionGainState()
     ])
-      .then(([loadedProfiles, isEQEnabled]) => {
+      .then(([loadedProfiles, isEQEnabled, distortionGain]) => {
         // Create default flat profile ONLY if no profiles exist at all
         if (Object.keys(loadedProfiles).length === 0) {
           const defaultProfile: EQProfileWithDefault = {
@@ -92,6 +106,7 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
             profiles: loadedProfiles, 
             activeProfileId: defaultProfile.id,
             isEQEnabled,
+            distortionGain,
             isLoading: false 
           });
         } else {
@@ -103,6 +118,7 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
             profiles: loadedProfiles, 
             activeProfileId: get().activeProfileId || (defaultProfile?.id || firstProfile?.id || null),
             isEQEnabled,
+            distortionGain,
             isLoading: false 
           });
         }
@@ -125,6 +141,7 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
     activeProfileId: null,
     isLoading: true, // Initially loading
     isEQEnabled: true, // Default to enabled
+    distortionGain: 1.0, // Default to no reduction
     
     addProfile: (profile: EQProfileWithDefault) => {
       // Update local state first for immediate UI feedback
@@ -200,6 +217,16 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
         id: 'eqEnabled',
         enabled
       }).catch(error => console.error('Failed to save EQ enabled state:', error));
+    },
+    
+    setDistortionGain: (gain: number) => {
+      set({ distortionGain: gain });
+      
+      // Persist to IndexedDB
+      indexedDBManager.updateItem(indexedDBManager.STORES.SYNC_STATE, {
+        id: 'distortionGain',
+        gain
+      }).catch(error => console.error('Failed to save distortion gain state:', error));
     },
     
     getProfiles: () => {
