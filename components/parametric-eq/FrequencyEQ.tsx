@@ -233,10 +233,8 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
       ctx.fillText(dbLabels[i], rect.width - 10, y)
     }
 
-    // Draw all EQ bands
-    if (!disabled) {
-      // Draw individual band responses
-      renderableBands.forEach((band) => {
+    // Draw individual band responses
+    renderableBands.forEach((band) => {
         EQBandRenderer.drawBand(
           ctx,
           band,
@@ -258,8 +256,7 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
             isDarkMode
           )
         }
-      })
-    }
+    })
 
     // Draw the combined EQ curve
     if (disabled) {

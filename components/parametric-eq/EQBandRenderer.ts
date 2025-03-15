@@ -15,6 +15,7 @@ export class EQBandRenderer {
     isDarkMode: boolean,
     isSelected: boolean
   ) {
+    console.log("drawing band at frequency: ", band.frequency);
     // Skip if band is outside visible range
     if (band.frequency < freqRange.min || band.frequency > freqRange.max) return;
     

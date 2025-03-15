@@ -157,11 +157,7 @@ class EQProcessor {
     return {
       id: 'default',
       name: 'Flat',
-      bands: DEFAULT_FREQUENCIES.map(frequency => ({
-        frequency,
-        gain: 0,
-        q: DEFAULT_Q
-      })),
+      bands: [],
       volume: 0,
       lastModified: Date.now(),
       syncStatus: 'synced'

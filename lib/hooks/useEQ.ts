@@ -61,12 +61,7 @@ export const useEQ = () => {
   
   // Create a new profile
   const createProfile = useCallback(async (name: string) => {
-    // Create default bands
-    const bands: EQBand[] = eqProcessor.DEFAULT_FREQUENCIES.map(frequency => ({
-      frequency,
-      gain: 0,
-      q: eqProcessor.DEFAULT_Q
-    }));
+    const bands: EQBand[] = [];
     
     // Create new profile
     const newProfile: EQProfile = {
