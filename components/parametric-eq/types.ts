@@ -1,3 +1,5 @@
+import { EQBand } from '@/lib/models/EQBand';
+
 export interface FrequencyResponse {
   frequency: number;
   magnitude: number;
@@ -6,16 +8,9 @@ export interface FrequencyResponse {
 // Extended EQBand for UI interaction, including additional properties
 // to handle rendering and interaction
 export interface EQBandWithUI extends EQBand {
-  id: string;
-  type: BiquadFilterType;
   isHovered: boolean;
+  type: BiquadFilterType;
   frequencyResponse?: FrequencyResponse[];
 }
 
-// Base EQBand from the model for storage
-export interface EQBand {
-  frequency: number;
-  gain: number;
-  q: number;
-  type: BiquadFilterType;
-} 
+// We now import EQBand from lib/models/EQBand.ts 

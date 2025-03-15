@@ -1,7 +1,6 @@
 "use client"
 
 import { useRef, useEffect, useState, useCallback } from "react"
-import { v4 as uuidv4 } from 'uuid'
 import { useTheme } from "@/components/theme-provider"
 import { EQBandWithUI } from "./types"
 import { EQBandRenderer } from "./EQBandRenderer"
@@ -10,6 +9,7 @@ import { EQCoordinateUtils } from "./EQCoordinateUtils"
 import { useEQInteraction } from "./useEQInteraction"
 import { useEQProcessor, calculateBandResponse } from "./useEQProcessor"
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
+import { EQBand } from "@/lib/models/EQBand"
 
 interface FrequencyEQProps {
   profileId?: string
@@ -35,63 +35,83 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
     ? getProfileById(profileId) 
     : getActiveProfile()
   
-  // Convert profile bands to EQBandWithUI for rendering
-  const [bands, setBands] = useState<EQBandWithUI[]>([])
+  // Prepare bands for rendering by adding UI properties
+  const [renderableBands, setRenderableBands] = useState<EQBandWithUI[]>([])
   
-  // Update bands when profile changes
+  // Update renderable bands when profile changes
   useEffect(() => {
     if (!profile) {
-      setBands([])
+      setRenderableBands([])
       return
     }
     
-    // Convert profile bands to EQBandWithUI
-    const uiBands: EQBandWithUI[] = profile.bands.map(band => ({
+    // Ensure profile bands have IDs and add UI properties
+    const updatedBands: EQBandWithUI[] = profile.bands.map(band => ({
       ...band,
-      id: uuidv4(), // Generate IDs for UI bands
       isHovered: false,
       type: 'peaking' as BiquadFilterType, // Default type for all bands
       frequencyResponse: calculateBandResponse({
         ...band,
-        id: '',
         isHovered: false,
         type: 'peaking' as BiquadFilterType,
       })
     }))
     
-    setBands(uiBands)
+    setRenderableBands(updatedBands)
   }, [profile])
   
   // Fixed frequency range
   const freqRange = { min: 20, max: 20000 }
   
   // Process EQ bands to get frequency response
-  const { frequencyResponse } = useEQProcessor(bands)
+  const { frequencyResponse } = useEQProcessor(renderableBands)
   
   // Handle band operations
   const handleBandAdd = useCallback((band: Omit<EQBandWithUI, 'id' | 'isHovered' | 'frequencyResponse'>) => {
     if (!profile) return
     
     // Create a new band and add to profile
-    const newProfileBand = {
+    const newProfileBand: EQBand = {
+      id: `band-${Date.now()}`, // Generate a unique ID
       frequency: band.frequency,
       gain: band.gain,
       q: band.q,
+      type: band.type || 'peaking' // Include type in the profile band
     }
     
-    // Add band to profile
+    // Add band to profile immediately
     updateProfile(profile.id, {
       bands: [...profile.bands, newProfileBand]
     })
+    
+    // Return the new band ID so it can be selected for dragging
+    return newProfileBand.id
   }, [profile, updateProfile])
   
   const handleBandUpdate = useCallback((id: string, updates: Partial<EQBandWithUI>) => {
     if (!profile) return
 
+    // Find the band in the profile
+    const bandIndex = profile.bands.findIndex(b => b.id === id)
+    if (bandIndex === -1) return
+
     console.log("updates", updates)
 
-    // Update local state first for responsive UI
-    setBands(prev => {
+    // Create updated profile bands
+    const updatedBands = [...profile.bands]
+    updatedBands[bandIndex] = { 
+      ...updatedBands[bandIndex],
+      ...(updates.frequency !== undefined ? { frequency: updates.frequency } : {}),
+      ...(updates.gain !== undefined ? { gain: updates.gain } : {}),
+      ...(updates.q !== undefined ? { q: updates.q } : {}),
+      ...(updates.type !== undefined ? { type: updates.type } : {})
+    }
+    
+    // Update profile with the new bands
+    updateProfile(profile.id, { bands: updatedBands })
+    
+    // Also update renderable bands for responsive UI
+    setRenderableBands(prev => {
       const newBands = [...prev]
       const index = newBands.findIndex(b => b.id === id)
       if (index !== -1) {
@@ -104,36 +124,15 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
       }
       return newBands
     })
-    
-    // Sync changes back to the profile
-    const bandIndex = bands.findIndex(b => b.id === id)
-    console.log('bandIndex', bandIndex)
-    if (bandIndex !== -1 && (updates.frequency !== undefined || updates.gain !== undefined || updates.q !== undefined)) {
-      const profileBands = [...profile.bands]
-      profileBands[bandIndex] = { 
-        ...profileBands[bandIndex],
-        frequency: updates.frequency !== undefined ? updates.frequency : bands[bandIndex].frequency,
-        gain: updates.gain !== undefined ? updates.gain : bands[bandIndex].gain,
-        q: updates.q !== undefined ? updates.q : bands[bandIndex].q,
-      }
-      
-      updateProfile(profile.id, { bands: profileBands })
-    }
-  }, [profile, bands, updateProfile])
+  }, [profile, updateProfile])
   
   const handleBandRemove = useCallback((id: string) => {
     if (!profile) return
     
-    // Find the index of the band to remove
-    const bandIndex = bands.findIndex(b => b.id === id)
-    if (bandIndex !== -1) {
-      // Remove from profile
-      const profileBands = [...profile.bands]
-      profileBands.splice(bandIndex, 1)
-      
-      updateProfile(profile.id, { bands: profileBands })
-    }
-  }, [profile, bands, updateProfile])
+    // Find and remove the band from profile
+    const updatedBands = profile.bands.filter(band => band.id !== id)
+    updateProfile(profile.id, { bands: updatedBands })
+  }, [profile, updateProfile])
   
   // Set up EQ interaction
   const { 
@@ -143,7 +142,7 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
     ghostNode,
   } = useEQInteraction({
     canvasRef,
-    bands,
+    bands: renderableBands,
     freqRange,
     onBandAdd: handleBandAdd,
     onBandUpdate: handleBandUpdate,
@@ -237,7 +236,7 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
     // Draw all EQ bands
     if (!disabled) {
       // Draw individual band responses
-      bands.forEach((band) => {
+      renderableBands.forEach((band) => {
         EQBandRenderer.drawBand(
           ctx,
           band,
@@ -310,7 +309,7 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
       )
     }
 
-  }, [bands, frequencyResponse, disabled, isDarkMode, selectedBandId, isShiftPressed, ghostNode])
+  }, [renderableBands, frequencyResponse, disabled, isDarkMode, selectedBandId, isShiftPressed, ghostNode])
 
   return (
     <div

@@ -7,7 +7,7 @@ interface UseEQInteractionProps {
   canvasRef: RefObject<HTMLCanvasElement | null>;
   bands: EQBandWithUI[];
   freqRange: { min: number; max: number };
-  onBandAdd: (band: Omit<EQBandWithUI, 'id' | 'isHovered' | 'frequencyResponse'>) => void;
+  onBandAdd: (band: Omit<EQBandWithUI, 'id' | 'isHovered' | 'frequencyResponse'>) => string | undefined;
   onBandUpdate: (id: string, updates: Partial<EQBandWithUI>) => void;
   onBandRemove: (id: string) => void;
   onBandSelect: (id: string | null) => void;
@@ -289,8 +289,8 @@ export function useEQInteraction({
             type: 'peaking' as BiquadFilterType
           };
           
-          // Add the band and get the ID back
-          onBandAdd(newBand);
+          // Add the band and get the new ID back
+          const newBandId = onBandAdd(newBand);
           
           // Hide ghost node
           setGhostNode(prev => ({
@@ -298,8 +298,13 @@ export function useEQInteraction({
             visible: false
           }));
           
-          // The new band ID will be set when the bands array is updated
-          // We'll start dragging in the next render cycle
+          // Immediately start dragging the new band if we got an ID back
+          if (newBandId) {
+            setDraggingBand(newBandId);
+            setIsDragging(true);
+            onBandSelect(newBandId);
+            console.log("Created and started dragging new band:", newBandId);
+          }
         }
       }
     } else if (e.button === 2 && clickedBandId) { // Right click
