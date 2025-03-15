@@ -39,17 +39,17 @@ export function Sidebar({ activeTab, setActiveTab, onUpgradeClick }: SidebarProp
             </Button>
           </div>
 
-          <Separator className="my-4" />
+          {/* <Separator className="my-4" /> */}
 
           <div className="space-y-1">
-            <Button
+            {/* <Button
               variant="ghost"
               className={`w-full justify-start ${activeTab === "export" ? "bg-red-light text-red hover:bg-red-light hover:text-red" : ""}`}
               onClick={() => setActiveTab("export")}
             >
               <ExternalLink className={`mr-2 h-4 w-4 ${activeTab === "export" ? "text-red" : ""}`} />
               Export EQ Settings
-            </Button>
+            </Button> */}
 
             {/* <Button
               variant="ghost"

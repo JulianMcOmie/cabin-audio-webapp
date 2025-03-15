@@ -22,6 +22,7 @@ interface EQViewProps {
 export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSignupClick }: EQViewProps) {
   const [selectedDot, setSelectedDot] = useState<[number, number] | null>(null)
   const [gridSize, setGridSize] = useState(8)
+  const [instruction, setInstruction] = useState("Click + drag on the center line to add a band")
   // Remove the local eqEnabled state since it's now passed as a prop
   const [showCalibrationModal, setShowCalibrationModal] = useState(false)
   const [showCreateNewOverlay, setShowCreateNewOverlay] = useState(false)
@@ -72,11 +73,16 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
       <div className="space-y-6">
         {/* Frequency Graph (on top) */}
         <div className="relative">
-          <FrequencyGraph selectedDot={selectedDot} disabled={!eqEnabled} className="w-full" />
+          <FrequencyGraph 
+            selectedDot={selectedDot} 
+            disabled={!eqEnabled} 
+            className="w-full" 
+            onInstructionChange={setInstruction}
+          />
 
           {/* Contextual Instructions */}
           <div className="mt-1 mb-3 px-2 py-1.5 bg-muted/40 rounded text-sm text-muted-foreground border-l-2 border-electric-blue">
-            Click + drag on the center line to add a band
+            {instruction}
           </div>
 
           {/* EQ Toggle Overlay */}
@@ -267,7 +273,8 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
         </div>
       </div>
 
-      <div className="mt-8">
+      {/* TODO: Add back in profiles when functional */}
+      {/* <div className="mt-8">
         <h3 className="text-lg font-medium mb-4">EQ Profiles</h3>
         <EQProfiles
           onProfileClick={handleProfileClick}
@@ -287,7 +294,7 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
           </Button>{" "}
           to save your custom EQ settings.
         </p>
-      </div>
+      </div> */}
 
       <EQCalibrationModal open={showCalibrationModal} onClose={() => setShowCalibrationModal(false)} />
       <LoginModal open={showLoginModal} onClose={() => setShowLoginModal(false)} />

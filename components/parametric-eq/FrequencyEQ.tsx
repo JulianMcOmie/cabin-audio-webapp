@@ -15,9 +15,10 @@ interface FrequencyEQProps {
   profileId?: string
   disabled?: boolean
   className?: string
+  onInstructionChange?: (instruction: string) => void
 }
 
-export function FrequencyEQ({ profileId, disabled = false, className }: FrequencyEQProps) {
+export function FrequencyEQ({ profileId, disabled = false, className, onInstructionChange }: FrequencyEQProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const { theme } = useTheme()
   const [isDarkMode, setIsDarkMode] = useState(false)
@@ -141,6 +142,7 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
     isShiftPressed,
     ghostNode,
     draggingBand: draggingBandId,
+    hoveredBandId
   } = useEQInteraction({
     canvasRef,
     bands: renderableBands,
@@ -150,6 +152,21 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
     onBandRemove: handleBandRemove,
     onBandSelect: setSelectedBandId,
   })
+  
+  // Update instruction text based on interaction state
+  useEffect(() => {
+    if (!onInstructionChange) return;
+    
+    if (draggingBandId) {
+      // Always show the shift+drag instruction for better discoverability, 
+      // even when not currently pressing shift
+      onInstructionChange("Shift + drag to change bandwidth (Q)");
+    } else if (hoveredBandId) {
+      onInstructionChange("Right click to delete band");
+    } else {
+      onInstructionChange("Click + drag on the center line to add a band");
+    }
+  }, [draggingBandId, hoveredBandId, isShiftPressed, onInstructionChange]);
 
   // Set up observer to detect theme changes
   useEffect(() => {
@@ -299,7 +316,7 @@ export function FrequencyEQ({ profileId, disabled = false, className }: Frequenc
       )
     }
 
-  }, [renderableBands, frequencyResponse, disabled, isDarkMode, selectedBandId, isShiftPressed, ghostNode, draggingBandId])
+  }, [renderableBands, frequencyResponse, disabled, isDarkMode, selectedBandId, isShiftPressed, ghostNode, draggingBandId, hoveredBandId])
 
   return (
     <div

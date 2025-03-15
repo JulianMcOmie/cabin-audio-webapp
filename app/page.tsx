@@ -44,7 +44,7 @@ export default function Home() {
         />
 
         <div className="flex flex-col flex-1 overflow-hidden">
-          <TopBar setActiveTab={setActiveTab} />
+          {/* <TopBar setActiveTab={setActiveTab} /> */}
 
           <div className="flex-1 pr-4 bg-main-section rounded-lg overflow-auto mb-2">
             <main className="h-full p-6 pb-0">
