@@ -129,7 +129,12 @@ interface MultiSelectionDotGridProps {
 }
 
 // Constants for the grid
-const COLUMNS = 5; // Always 5 panning positions
+const DEFAULT_COLUMNS = 5; // Default panning positions
+const DEFAULT_ROWS = 3; // Default number of rows
+const MIN_COLUMNS = 3; // Minimum columns
+const MAX_COLUMNS = 9; // Maximum columns
+const MIN_ROWS = 3; // Minimum rows
+const MAX_ROWS = 9; // Maximum rows
 const BASE_DOT_RADIUS = 6; // Base dot size, will be adjusted as needed
 
 // New DotGrid component with multiple selection support
@@ -138,8 +143,9 @@ export function DotGrid({
   selectedDots,
   onDotToggle,
   disabled = false,
-  isPlaying = false
-}: MultiSelectionDotGridProps) {
+  isPlaying = false,
+  columnCount = DEFAULT_COLUMNS
+}: MultiSelectionDotGridProps & { columnCount?: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 })
@@ -185,7 +191,7 @@ export function DotGrid({
   // Calculate dot sizing and spacing based on grid dimensions
   const gridDimensions = useMemo(() => {
     const rows = gridSize;
-    const cols = COLUMNS;
+    const cols = columnCount;
     
     // Determine proper spacing and dot size based on canvas dimensions
     const size = Math.min(canvasSize.width, canvasSize.height);
@@ -224,7 +230,7 @@ export function DotGrid({
       hGap,
       vGap
     };
-  }, [gridSize, canvasSize]);
+  }, [gridSize, columnCount, canvasSize]);
 
   // Draw dots when dependencies change
   useEffect(() => {
@@ -352,7 +358,8 @@ interface DotCalibrationProps {
 }
 
 export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: DotCalibrationProps) {
-  const [gridSize, setGridSize] = useState(3);
+  const [gridSize, setGridSize] = useState(DEFAULT_ROWS);
+  const [columnCount, setColumnCount] = useState(DEFAULT_COLUMNS);
   const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set());
   
   // Initialize the audio player
@@ -368,8 +375,8 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
   // Update audio player when selected dots change
   useEffect(() => {
     const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
-    audioPlayer.updateDots(selectedDots, gridSize);
-  }, [selectedDots, gridSize]);
+    audioPlayer.updateDots(selectedDots, gridSize, columnCount);
+  }, [selectedDots, gridSize, columnCount]);
   
   // Update audio player when playing state changes
   useEffect(() => {
@@ -390,25 +397,48 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
     setSelectedDots(newSelectedDots);
   };
   
-  const increaseGridSize = () => {
-    if (gridSize < 9) {
+  const increaseRows = () => {
+    if (gridSize < MAX_ROWS) {
       setGridSize(gridSize + 1);
     }
   };
   
-  const decreaseGridSize = () => {
-    if (gridSize > 3) {
+  const decreaseRows = () => {
+    if (gridSize > MIN_ROWS) {
       // Clean up any dots outside new grid size
       const newSelectedDots = new Set<string>();
       
       selectedDots.forEach(dot => {
         const [x, y] = dot.split(',').map(Number);
-        if (x < COLUMNS && y < gridSize - 1) {
+        if (x < columnCount && y < gridSize - 1) {
           newSelectedDots.add(dot);
         }
       });
       
       setGridSize(gridSize - 1);
+      setSelectedDots(newSelectedDots);
+    }
+  };
+
+  const increaseColumns = () => {
+    if (columnCount < MAX_COLUMNS) {
+      setColumnCount(columnCount + 1);
+    }
+  };
+  
+  const decreaseColumns = () => {
+    if (columnCount > MIN_COLUMNS) {
+      // Clean up any dots that would be outside the new grid dimensions
+      const newSelectedDots = new Set<string>();
+      
+      selectedDots.forEach(dot => {
+        const [x, y] = dot.split(',').map(Number);
+        if (x < columnCount - 1 && y < gridSize) {
+          newSelectedDots.add(dot);
+        }
+      });
+      
+      setColumnCount(columnCount - 1);
       setSelectedDots(newSelectedDots);
     }
   };
@@ -422,6 +452,7 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
       <div className="relative bg-background/50 rounded-lg p-3">
         <DotGrid
           gridSize={gridSize}
+          columnCount={columnCount}
           selectedDots={selectedDots}
           onDotToggle={handleDotToggle}
           disabled={disabled}
@@ -429,45 +460,84 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
         />
       </div>
       
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-xs text-muted-foreground">
-          Grid Size: {gridSize}×{COLUMNS}
+      <div className="flex flex-col space-y-2">
+        {/* Grid dimensions display */}
+        <span className="text-xs text-muted-foreground text-center">
+          Grid Size: {gridSize}×{columnCount}
         </span>
-        <div className="flex items-center space-x-2">
-          <button
-            className={`h-7 w-7 rounded flex items-center justify-center border ${
-              gridSize <= 3 || disabled
-                ? 'opacity-50 cursor-not-allowed'
-                : 'hover:bg-muted'
-            }`}
-            onClick={decreaseGridSize}
-            disabled={gridSize <= 3 || disabled}
-          >
-            <span className="text-sm">-</span>
-          </button>
-          <button
-            className={`h-7 w-7 rounded flex items-center justify-center border ${
-              gridSize >= 9 || disabled
-                ? 'opacity-50 cursor-not-allowed'
-                : 'hover:bg-muted'
-            }`}
-            onClick={increaseGridSize}
-            disabled={gridSize >= 9 || disabled}
-          >
-            <span className="text-sm">+</span>
-          </button>
-          <button
-            className={`ml-2 px-2 h-7 rounded flex items-center text-xs border ${
-              selectedDots.size === 0 || disabled
-                ? 'opacity-50 cursor-not-allowed'
-                : 'hover:bg-muted'
-            }`}
-            onClick={clearSelection}
-            disabled={selectedDots.size === 0 || disabled}
-          >
-            Clear
-          </button>
+        
+        {/* Row controls */}
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-muted-foreground">Rows:</span>
+          <div className="flex items-center space-x-2">
+            <button
+              className={`h-7 w-7 rounded flex items-center justify-center border ${
+                gridSize <= MIN_ROWS || disabled
+                  ? 'opacity-50 cursor-not-allowed'
+                  : 'hover:bg-muted'
+              }`}
+              onClick={decreaseRows}
+              disabled={gridSize <= MIN_ROWS || disabled}
+            >
+              <span className="text-sm">-</span>
+            </button>
+            <span className="w-5 text-center text-sm">{gridSize}</span>
+            <button
+              className={`h-7 w-7 rounded flex items-center justify-center border ${
+                gridSize >= MAX_ROWS || disabled
+                  ? 'opacity-50 cursor-not-allowed'
+                  : 'hover:bg-muted'
+              }`}
+              onClick={increaseRows}
+              disabled={gridSize >= MAX_ROWS || disabled}
+            >
+              <span className="text-sm">+</span>
+            </button>
+          </div>
         </div>
+        
+        {/* Column controls */}
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-muted-foreground">Columns:</span>
+          <div className="flex items-center space-x-2">
+            <button
+              className={`h-7 w-7 rounded flex items-center justify-center border ${
+                columnCount <= MIN_COLUMNS || disabled
+                  ? 'opacity-50 cursor-not-allowed'
+                  : 'hover:bg-muted'
+              }`}
+              onClick={decreaseColumns}
+              disabled={columnCount <= MIN_COLUMNS || disabled}
+            >
+              <span className="text-sm">-</span>
+            </button>
+            <span className="w-5 text-center text-sm">{columnCount}</span>
+            <button
+              className={`h-7 w-7 rounded flex items-center justify-center border ${
+                columnCount >= MAX_COLUMNS || disabled
+                  ? 'opacity-50 cursor-not-allowed'
+                  : 'hover:bg-muted'
+              }`}
+              onClick={increaseColumns}
+              disabled={columnCount >= MAX_COLUMNS || disabled}
+            >
+              <span className="text-sm">+</span>
+            </button>
+          </div>
+        </div>
+        
+        {/* Clear button */}
+        <button
+          className={`px-2 h-7 rounded flex items-center justify-center text-xs border ${
+            selectedDots.size === 0 || disabled
+              ? 'opacity-50 cursor-not-allowed'
+              : 'hover:bg-muted'
+          }`}
+          onClick={clearSelection}
+          disabled={selectedDots.size === 0 || disabled}
+        >
+          Clear Selection
+        </button>
       </div>
       
       <div className="text-xs text-center text-muted-foreground">
