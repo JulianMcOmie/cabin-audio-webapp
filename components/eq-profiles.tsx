@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
 import { EQProfile } from "@/lib/models/EQProfile"
-import { useEffect, useState } from "react"
+import { CheckCircle } from "lucide-react"
 
 interface EQProfilesProps {
   onProfileClick?: () => void
@@ -23,12 +23,21 @@ interface EQProfilesProps {
 
 export function EQProfiles({ onProfileClick, selectedProfile, onSelectProfile }: EQProfilesProps) {
   const { getProfiles, deleteProfile, getActiveProfile, setActiveProfile } = useEQProfileStore()
-  const [profiles, setProfiles] = useState<EQProfile[]>([])
   
-  // Load profiles from store
-  useEffect(() => {
-    setProfiles(getProfiles())
-  }, [getProfiles])
+  // Get profiles directly from the store
+  const profiles = getProfiles()
+  
+  // Get the active profile from the store
+  const activeProfile = getActiveProfile()
+  const activeProfileId = activeProfile?.id || ""
+
+  const handleSelectProfile = (profileId: string) => {
+    // Set this profile as the active profile in the store
+    setActiveProfile(profileId)
+    
+    // Also call the parent's onSelectProfile function to update its state
+    onSelectProfile(profileId)
+  }
 
   const handleDeleteProfile = (profileId: string, e: React.MouseEvent) => {
     e.stopPropagation() // Prevent triggering the card click
@@ -38,9 +47,6 @@ export function EQProfiles({ onProfileClick, selectedProfile, onSelectProfile }:
     
     // Delete the profile
     deleteProfile(profileId)
-    
-    // Update profiles list
-    setProfiles(getProfiles())
     
     // If deleted profile was selected, select another one
     if (selectedProfile === profileId) {
@@ -69,7 +75,8 @@ export function EQProfiles({ onProfileClick, selectedProfile, onSelectProfile }:
                 key={profile.id}
                 profile={profile}
                 isSelected={selectedProfile === profile.id}
-                onSelect={() => onSelectProfile(profile.id)}
+                isActive={activeProfileId === profile.id}
+                onSelect={() => handleSelectProfile(profile.id)}
                 onDelete={(e) => handleDeleteProfile(profile.id, e)}
               />
             ))}
@@ -93,11 +100,13 @@ export function EQProfiles({ onProfileClick, selectedProfile, onSelectProfile }:
 function ProfileCard({
   profile,
   isSelected,
+  isActive,
   onSelect,
   onDelete,
 }: {
   profile: EQProfile
   isSelected: boolean
+  isActive: boolean
   onSelect: () => void
   onDelete: (e: React.MouseEvent) => void
 }) {
@@ -150,7 +159,12 @@ function ProfileCard({
             className="w-full h-full object-cover" 
           />
         </div>
-        <h4 className="font-medium text-center">{profile.name}</h4>
+        <div className="flex items-center justify-center">
+          <h4 className="font-medium text-center">{profile.name}</h4>
+          {isActive && (
+            <CheckCircle className="h-4 w-4 ml-2 text-green-500" />
+          )}
+        </div>
 
         {isSelected && (
           <div className="absolute inset-0 bg-electric-blue-light/30 dark:bg-electric-blue-light/20 rounded-md"></div>

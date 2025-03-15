@@ -58,7 +58,7 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
     setEqEnabled(isEQEnabled);
   }, [isEQEnabled, setEqEnabled]);
 
-  // Initialize selected profile from the active profile
+  // Initialize selected profile from the active profile and keep it synced
   useEffect(() => {
     const activeProfile = getActiveProfile();
     if (activeProfile) {
@@ -79,8 +79,9 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
   }
 
   const handleSelectProfile = (profileId: string) => {
+    // Just update the local selected profile ID
+    // (The active profile is already set in the EQProfiles component)
     setSelectedProfileId(profileId);
-    setActiveProfile(profileId);
   }
 
   const handleCreateNewProfile = () => {
@@ -334,14 +335,14 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
       </div>
 
       {/* EQ Profiles Section */}
-      <div className="mt-8">
+      {/* <div className="mt-8">
         <h3 className="text-lg font-medium mb-4">EQ Profiles</h3>
         <EQProfiles
           onProfileClick={handleProfileClick}
           selectedProfile={selectedProfileId}
           onSelectProfile={handleSelectProfile}
         />
-      </div>
+      </div> */}
 
       {/* Create New Profile Dialog */}
       <Dialog open={showCreateNewDialog} onOpenChange={setShowCreateNewDialog}>

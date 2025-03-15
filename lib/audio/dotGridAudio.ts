@@ -14,10 +14,12 @@ const ENVELOPE_MIN_GAIN = 0.0; // Minimum gain during envelope cycle
 const ENVELOPE_MAX_GAIN = 1.0; // Maximum gain during envelope cycle
 const ENVELOPE_ATTACK = 0.002; // Faster attack time in seconds - for very punchy transients
 const ENVELOPE_RELEASE = 0.3; // Shorter release time in seconds
-const MASTER_GAIN = 3.0; // Much louder master gain for calibration
+const MASTER_GAIN = 1.0; // Much louder master gain for calibration
 
-// Sequential playback settings
-const DOT_TIMING = 0.2; // Time between dot playback in sequence (seconds)
+// Polyrhythm settings
+const BASE_CYCLE_TIME = 2.0; // Base cycle time in seconds
+const MIN_SUBDIVISION = 2; // Minimum subdivision (lower dots)
+const MAX_SUBDIVISION = 16; // Maximum subdivision (higher dots)
 
 class DotGridAudioPlayer {
   private static instance: DotGridAudioPlayer;
@@ -30,12 +32,14 @@ class DotGridAudioPlayer {
     panner: StereoPannerNode;
     filter: BiquadFilterNode;
     position: number; // Position for sorting
+    rhythmInterval: number | null; // Rhythm interval ID
+    subdivision: number; // Rhythm subdivision
+    nextTriggerTime: number; // Next time to trigger this dot
   }> = new Map();
   private gridSize: number = 3; // Default row count
   private columnCount: number = COLUMNS; // Default column count
-  private sequenceTimer: number | null = null;
-  private sequenceIndex: number = 0;
-  private orderedDots: string[] = []; // Dots in reading order
+  private masterTimerId: number | null = null;
+  private startTime: number = 0; // When playback started
   
   private constructor() {
     // Initialize pink noise buffer
@@ -61,8 +65,11 @@ class DotGridAudioPlayer {
     
     console.log(`🔊 Grid size set to ${this.gridSize} rows × ${this.columnCount} columns`);
     
-    // Update ordered dots for sequence
-    this.updateOrderedDots();
+    // Update subdivisions for dots
+    if (this.isPlaying) {
+      this.stopAllRhythms();
+      this.startAllRhythms();
+    }
   }
 
   /**
@@ -142,39 +149,42 @@ class DotGridAudioPlayer {
       }
     });
     
-    // Update the ordered dots array for sequential playback
-    this.updateOrderedDots();
-    
-    // If playing, restart sequence
+    // If playing, restart rhythms for new configuration
     if (this.isPlaying) {
-      this.stopSequence();
+      this.stopAllRhythms();
       this.stopAllSources();
       this.startAllSources();
-      this.startSequence();
+      this.startAllRhythms();
     }
   }
 
   /**
-   * Update the ordered array of dots for sequential playback
+   * Calculate subdivision based on vertical position
+   * Higher dots (smaller y values) get more subdivisions
    */
-  private updateOrderedDots(): void {
-    // Get all selected dots
-    const dots = Array.from(this.audioNodes.keys());
+  private calculateSubdivision(y: number): number {
+    // Invert y to make higher dots have more subdivisions
+    // Normalize to 0-1 range
+    const normalizedY = 1 - (y / (this.gridSize - 1));
     
-    // Sort dots in reading order (left-to-right, top-to-bottom)
-    dots.sort((a, b) => {
-      const [xa, ya] = a.split(',').map(Number);
-      const [xb, yb] = b.split(',').map(Number);
-      
-      // Compare rows first (top to bottom)
-      if (ya !== yb) return ya - yb;
-      
-      // If same row, compare columns (left to right)
-      return xa - xb;
-    });
+    // Calculate subdivision - higher dots get more subdivisions
+    const subdivision = Math.floor(MIN_SUBDIVISION + normalizedY * (MAX_SUBDIVISION - MIN_SUBDIVISION));
     
-    this.orderedDots = dots;
-    console.log(`🔊 Updated sequence: ${this.orderedDots.length} dots in reading order`);
+    // Use musically useful subdivisions: 2, 3, 4, 5, 6, 8, 12, 16
+    // Find the closest musically useful subdivision
+    const musicalSubdivisions = [2, 3, 4, 5, 6, 8, 12, 16];
+    let closestSubdivision = musicalSubdivisions[0];
+    let closestDistance = Math.abs(subdivision - closestSubdivision);
+    
+    for (let i = 1; i < musicalSubdivisions.length; i++) {
+      const distance = Math.abs(subdivision - musicalSubdivisions[i]);
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestSubdivision = musicalSubdivisions[i];
+      }
+    }
+    
+    return closestSubdivision;
   }
 
   /**
@@ -188,63 +198,64 @@ class DotGridAudioPlayer {
     this.isPlaying = playing;
     
     if (playing) {
+      this.startTime = Date.now() / 1000; // Start time in seconds
       this.startAllSources();
-      this.startSequence();
+      this.startAllRhythms();
     } else {
-      this.stopSequence();
+      this.stopAllRhythms();
       this.stopAllSources();
     }
   }
 
   /**
-   * Start the sequence timer
+   * Start all rhythm timers
    */
-  private startSequence(): void {
-    // Stop any existing sequence
-    this.stopSequence();
+  private startAllRhythms(): void {
+    // Start the master timer that checks all dots
+    this.masterTimerId = window.setInterval(() => {
+      this.checkAndTriggerDots();
+    }, 10); // Check every 10ms for precision
     
-    // Reset sequence position
-    this.sequenceIndex = 0;
+    // Initialize next trigger times
+    const now = Date.now() / 1000; // Current time in seconds
+    this.audioNodes.forEach((nodes, dotKey) => {
+      nodes.nextTriggerTime = now;
+    });
     
-    // If no dots, nothing to do
-    if (this.orderedDots.length === 0) return;
-    
-    // Play the first dot immediately
-    this.playNextDot();
-    
-    // Set up the sequence timer to play dots one after another
-    this.sequenceTimer = window.setInterval(() => {
-      this.playNextDot();
-    }, DOT_TIMING * 1000);
-    
-    console.log(`🔊 Started sequential playback: ${DOT_TIMING.toFixed(2)}s per dot`);
+    console.log(`🔊 Started polyrhythm system with cycle time: ${BASE_CYCLE_TIME}s`);
   }
   
   /**
-   * Stop the sequence timer
+   * Check all dots and trigger them if it's their time
    */
-  private stopSequence(): void {
-    if (this.sequenceTimer !== null) {
-      window.clearInterval(this.sequenceTimer);
-      this.sequenceTimer = null;
+  private checkAndTriggerDots(): void {
+    const now = Date.now() / 1000; // Current time in seconds
+    
+    this.audioNodes.forEach((nodes, dotKey) => {
+      if (now >= nodes.nextTriggerTime) {
+        // Trigger the dot
+        this.triggerDotEnvelope(dotKey);
+        
+        // Calculate time for next trigger
+        const interval = BASE_CYCLE_TIME / nodes.subdivision;
+        nodes.nextTriggerTime = nodes.nextTriggerTime + interval;
+        
+        // If we've fallen behind significantly, reset to now plus interval
+        if (nodes.nextTriggerTime < now) {
+          nodes.nextTriggerTime = now + interval;
+        }
+      }
+    });
+  }
+  
+  /**
+   * Stop all rhythm timers
+   */
+  private stopAllRhythms(): void {
+    if (this.masterTimerId !== null) {
+      window.clearInterval(this.masterTimerId);
+      this.masterTimerId = null;
     }
-  }
-  
-  /**
-   * Play the next dot in sequence
-   */
-  private playNextDot(): void {
-    // If no dots, nothing to do
-    if (this.orderedDots.length === 0) return;
-    
-    // Get the current dot in sequence
-    const dotKey = this.orderedDots[this.sequenceIndex];
-    
-    // Trigger envelope for the current dot
-    this.triggerDotEnvelope(dotKey);
-    
-    // Move to the next dot in sequence
-    this.sequenceIndex = (this.sequenceIndex + 1) % this.orderedDots.length;
   }
 
   /**
@@ -345,7 +356,7 @@ class DotGridAudioPlayer {
     nodes.envelopeGain.gain.setValueAtTime(0, now + ENVELOPE_ATTACK + ENVELOPE_RELEASE + 0.001);
     
     // Visual feedback via console
-    console.log(`🔊 Triggered envelope for dot ${dotKey}`);
+    console.log(`🔊 Triggered dot ${dotKey} with subdivision ${nodes.subdivision}`);
   }
 
   /**
@@ -381,7 +392,7 @@ class DotGridAudioPlayer {
     // So going up one octave means 0.707x gain, going down one octave means 1.414x gain
     // We calculate this by using 2^(-octaves * 0.5)
     // The 0.5 gives us the -3dB/octave slope (because 10*log10(2^0.5) ≈ 3dB)
-    const frequencyGainFactor = 1;//Math.pow(2, -octavesAboveMin * 0.5);
+    const frequencyGainFactor = 1; // Removed frequency-based gain adjustment
     
     // Apply gain with frequency compensation
     gain.gain.value = MASTER_GAIN * frequencyGainFactor;
@@ -414,6 +425,9 @@ class DotGridAudioPlayer {
     // Calculate position for sorting
     const position = y * this.columnCount + x;
     
+    // Calculate subdivision based on vertical position
+    const subdivision = this.calculateSubdivision(y);
+    
     // Store the nodes
     this.audioNodes.set(dotKey, {
       source: ctx.createBufferSource(), // Dummy source (will be replaced when playing)
@@ -421,21 +435,19 @@ class DotGridAudioPlayer {
       envelopeGain,
       panner,
       filter,
-      position // Store position for sorting
+      position, // Store position for sorting
+      rhythmInterval: null, // Rhythm interval ID
+      subdivision, // Subdivision for this dot
+      nextTriggerTime: 0 // Will be set when playback starts
     });
-    
-    // dB representation for logging
-    const gainDB = 20 * Math.log10(frequencyGainFactor);
     
     console.log(`🔊 Added dot ${dotKey} at position (${x},${y})`);
     console.log(`   Pan: ${normalizedX.toFixed(2)}`);
     console.log(`   Position: ${normalizedY.toFixed(2)}`);
     console.log(`   Center frequency: ${centerFreq.toFixed(0)}Hz`);
-    console.log(`   Octaves above min: ${octavesAboveMin.toFixed(2)}`);
-    console.log(`   Slope compensation: -3dB/octave`);
-    console.log(`   Frequency gain: ${frequencyGainFactor.toFixed(3)}x (${gainDB.toFixed(1)}dB)`);
-    console.log(`   Final gain: ${(MASTER_GAIN * frequencyGainFactor * 5.0).toFixed(2)}`);
     console.log(`   Bandwidth (Q): ${filter.Q.value.toFixed(2)}`);
+    console.log(`   Subdivision: ${subdivision}`);
+    console.log(`   Rhythm: ${(BASE_CYCLE_TIME / subdivision).toFixed(3)}s intervals`);
   }
   
   /**
@@ -470,7 +482,7 @@ class DotGridAudioPlayer {
     console.log('🔊 Disposing DotGridAudioPlayer');
     
     this.setPlaying(false);
-    this.stopSequence();
+    this.stopAllRhythms();
     this.stopAllSources();
     this.audioNodes.clear();
     this.pinkNoiseBuffer = null;
