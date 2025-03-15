@@ -242,16 +242,6 @@ export function DotGrid({
         }
 
         ctx.fill()
-        
-        // Draw label for dot
-        if (isSelected && !disabled) {
-          const label = `${x+1},${y+1}`;
-          ctx.font = '9px sans-serif';
-          ctx.fillStyle = 'white';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(label, centerX, centerY);
-        }
       }
     }
     
@@ -274,31 +264,37 @@ export function DotGrid({
     const clickX = e.clientX - rect.left
     const clickY = e.clientY - rect.top
     
-    // Calculate which dot was clicked
+    // Calculate spacing between dots
     const size = Math.min(rect.width, rect.height)
     const totalDotSpace = DOT_RADIUS * 2 * gridSize
     const remainingSpace = size - totalDotSpace
     const gap = remainingSpace / (gridSize + 1)
     
-    // Find clicked dot
+    // Find the closest dot to the click point
+    let closestDot = { x: 0, y: 0 };
+    let closestDistance = Infinity;
+    
     for (let y = 0; y < gridSize; y++) {
       for (let x = 0; x < gridSize; x++) {
         const centerX = gap + (x * (DOT_RADIUS * 2 + gap)) + DOT_RADIUS
         const centerY = gap + (y * (DOT_RADIUS * 2 + gap)) + DOT_RADIUS
         
-        // Check if click is within dot
+        // Calculate distance to this dot
         const distance = Math.sqrt(
           Math.pow(clickX - centerX, 2) + 
           Math.pow(clickY - centerY, 2)
         )
         
-        if (distance <= DOT_RADIUS * 1.5) {
-          // Toggle this dot
-          onDotToggle(x, y)
-          return
+        // Update closest dot if this one is closer
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          closestDot = { x, y };
         }
       }
     }
+    
+    // Toggle the closest dot
+    onDotToggle(closestDot.x, closestDot.y);
   }
 
   return (
@@ -318,7 +314,7 @@ interface DotCalibrationProps {
 }
 
 export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: DotCalibrationProps) {
-  const [gridSize, setGridSize] = useState(5);
+  const [gridSize, setGridSize] = useState(3);
   const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set());
   
   const handleDotToggle = (x: number, y: number) => {
