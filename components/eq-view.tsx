@@ -10,20 +10,19 @@ import { EQCalibrationModal } from "@/components/eq-calibration-modal"
 import { LoginModal } from "@/components/login-modal"
 import { SignupModal } from "@/components/signup-modal"
 import { InfoCircle } from "@/components/ui/info-circle"
+import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
 
 interface EQViewProps {
   isPlaying: boolean
   setIsPlaying: (isPlaying: boolean) => void
-  eqEnabled: boolean
-  setEqEnabled: (enabled: boolean) => void
   onSignupClick: () => void
 }
 
-export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSignupClick }: EQViewProps) {
+export function EQView({ isPlaying, setIsPlaying, onSignupClick }: EQViewProps) {
   const [selectedDot, setSelectedDot] = useState<[number, number] | null>(null)
   const [gridSize, setGridSize] = useState(8)
   const [instruction, setInstruction] = useState("Click + drag on the center line to add a band")
-  // Remove the local eqEnabled state since it's now passed as a prop
+  const { isEQEnabled, setEQEnabled } = useEQProfileStore()
   const [showCalibrationModal, setShowCalibrationModal] = useState(false)
   const [showCreateNewOverlay, setShowCreateNewOverlay] = useState(false)
   const [selectedProfile, setSelectedProfile] = useState("Flat")
@@ -59,8 +58,8 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
           <h2 className="text-2xl font-semibold">EQ</h2>
           <p className="text-sm text-muted-foreground">Make your music sound incredible with personalized EQ.</p>
           <div className="flex items-center mt-1">
-            <div className={`h-2 w-2 rounded-full mr-2 ${eqEnabled ? "bg-green-500" : "bg-red-500"}`}></div>
-            <span className="text-xs text-muted-foreground">EQ is currently {eqEnabled ? "enabled" : "disabled"}</span>
+            <div className={`h-2 w-2 rounded-full mr-2 ${isEQEnabled ? "bg-green-500" : "bg-red-500"}`}></div>
+            <span className="text-xs text-muted-foreground">EQ is currently {isEQEnabled ? "enabled" : "disabled"}</span>
           </div>
         </div>
         <Button variant="outline" onClick={() => setShowCalibrationModal(true)}>
@@ -75,10 +74,10 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
         <div className="relative">
           <FrequencyGraph 
             selectedDot={selectedDot} 
-            disabled={!eqEnabled} 
+            disabled={!isEQEnabled} 
             className="w-full" 
             onInstructionChange={setInstruction}
-            onRequestEnable={() => setEqEnabled(true)}
+            onRequestEnable={() => setEQEnabled(true)}
           />
 
           {/* Contextual Instructions */}
@@ -89,13 +88,13 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
           {/* EQ Toggle Overlay */}
           <div className="eq-toggle-container">
             <Button
-              variant={eqEnabled ? "default" : "outline"}
+              variant={isEQEnabled ? "default" : "outline"}
               size="sm"
-              className={eqEnabled ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : ""}
-              onClick={() => setEqEnabled(!eqEnabled)}
+              className={isEQEnabled ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : ""}
+              onClick={() => setEQEnabled(!isEQEnabled)}
             >
               <Power className="h-4 w-4 mr-2" />
-              {eqEnabled ? "EQ On" : "EQ Off"}
+              {isEQEnabled ? "EQ On" : "EQ Off"}
             </Button>
           </div>
 
@@ -240,7 +239,7 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
                       size="icon"
                       className="h-7 w-7"
                       onClick={decreaseResolution}
-                      disabled={gridSize <= 4 || !eqEnabled}
+                      disabled={gridSize <= 4 || !isEQEnabled}
                     >
                       <span className="text-sm">-</span>
                     </Button>
@@ -249,7 +248,7 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
                       size="icon"
                       className="h-7 w-7"
                       onClick={increaseResolution}
-                      disabled={gridSize >= 16 || !eqEnabled}
+                      disabled={gridSize >= 16 || !isEQEnabled}
                     >
                       <span className="text-sm">+</span>
                     </Button>

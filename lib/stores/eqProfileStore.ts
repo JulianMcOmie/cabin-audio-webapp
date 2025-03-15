@@ -12,12 +12,14 @@ interface EQProfileState {
   profiles: Record<string, EQProfileWithDefault>;
   activeProfileId: string | null;
   isLoading: boolean;
+  isEQEnabled: boolean;
   
   // Actions
   addProfile: (profile: EQProfileWithDefault) => void;
   updateProfile: (profileId: string, updates: Partial<EQProfileWithDefault>) => void;
   deleteProfile: (profileId: string) => void;
   setActiveProfile: (profileId: string | null) => void;
+  setEQEnabled: (enabled: boolean) => void;
   getProfiles: () => EQProfileWithDefault[];
   getProfileById: (profileId: string) => EQProfileWithDefault | undefined;
   getActiveProfile: () => EQProfileWithDefault | null;
@@ -38,6 +40,17 @@ const loadProfilesFromStorage = async (): Promise<Record<string, EQProfileWithDe
   }
 };
 
+// Helper to load EQ enabled state from storage
+const loadEQEnabledState = async (): Promise<boolean> => {
+  try {
+    const state = await indexedDBManager.getItem<{enabled: boolean}>(indexedDBManager.STORES.SYNC_STATE, 'eqEnabled');
+    return state?.enabled ?? true; // Default to true if not found
+  } catch (error) {
+    console.error('Error loading EQ enabled state:', error);
+    return true; // Default to true on error
+  }
+};
+
 export const useEQProfileStore = create<EQProfileState>((set, get) => {
   // Track initialization state
   let initialized = false;
@@ -51,8 +64,11 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
     set({ isLoading: true });
     
     // Load profiles from storage
-    initialLoadPromise = loadProfilesFromStorage()
-      .then(loadedProfiles => {
+    initialLoadPromise = Promise.all([
+      loadProfilesFromStorage(),
+      loadEQEnabledState()
+    ])
+      .then(([loadedProfiles, isEQEnabled]) => {
         // Create default flat profile ONLY if no profiles exist at all
         if (Object.keys(loadedProfiles).length === 0) {
           const defaultProfile: EQProfileWithDefault = {
@@ -75,6 +91,7 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
           set({ 
             profiles: loadedProfiles, 
             activeProfileId: defaultProfile.id,
+            isEQEnabled,
             isLoading: false 
           });
         } else {
@@ -85,6 +102,7 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
           set({ 
             profiles: loadedProfiles, 
             activeProfileId: get().activeProfileId || (defaultProfile?.id || firstProfile?.id || null),
+            isEQEnabled,
             isLoading: false 
           });
         }
@@ -106,6 +124,7 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
     profiles: {},
     activeProfileId: null,
     isLoading: true, // Initially loading
+    isEQEnabled: true, // Default to enabled
     
     addProfile: (profile: EQProfileWithDefault) => {
       // Update local state first for immediate UI feedback
@@ -171,6 +190,16 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
     
     setActiveProfile: (profileId: string | null) => {
       set({ activeProfileId: profileId });
+    },
+    
+    setEQEnabled: (enabled: boolean) => {
+      set({ isEQEnabled: enabled });
+      
+      // Persist to IndexedDB
+      indexedDBManager.updateItem(indexedDBManager.STORES.SYNC_STATE, {
+        id: 'eqEnabled',
+        enabled
+      }).catch(error => console.error('Failed to save EQ enabled state:', error));
     },
     
     getProfiles: () => {
