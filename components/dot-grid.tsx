@@ -2,6 +2,7 @@
 
 import type React from "react"
 import { useRef, useEffect, useState, useMemo } from "react"
+import * as dotGridAudio from '@/lib/audio/dotGridAudio'
 
 interface DotGridProps {
   selectedDot: [number, number] | null
@@ -316,6 +317,28 @@ interface DotCalibrationProps {
 export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: DotCalibrationProps) {
   const [gridSize, setGridSize] = useState(3);
   const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set());
+  
+  // Initialize the audio player
+  useEffect(() => {
+    const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
+    
+    return () => {
+      // Clean up audio on unmount
+      audioPlayer.setPlaying(false);
+    };
+  }, []);
+  
+  // Update audio player when selected dots change
+  useEffect(() => {
+    const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
+    audioPlayer.updateDots(selectedDots);
+  }, [selectedDots]);
+  
+  // Update audio player when playing state changes
+  useEffect(() => {
+    const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
+    audioPlayer.setPlaying(isPlaying);
+  }, [isPlaying]);
   
   const handleDotToggle = (x: number, y: number) => {
     const dotKey = `${x},${y}`;

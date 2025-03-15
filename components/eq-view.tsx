@@ -29,6 +29,9 @@ export function EQView({ isPlaying, setIsPlaying, onSignupClick }: EQViewProps) 
   const [activeTab, setActiveTab] = useState("eq")
   const [showLoginModal, setShowLoginModal] = useState(false)
   const [showSignupModal, setShowSignupModal] = useState(false)
+  
+  // State for the dot grid calibration audio
+  const [dotGridPlaying, setDotGridPlaying] = useState(false)
 
   const handleProfileClick = () => {
     setShowCreateNewOverlay(true)
@@ -168,8 +171,8 @@ export function EQView({ isPlaying, setIsPlaying, onSignupClick }: EQViewProps) 
               <div>
                 <h4 className="font-medium mb-2">Calibration Steps</h4>
                 <ol className="list-decimal pl-5 space-y-2 text-sm text-muted-foreground">
-                  <li>Play the noise bursts by clicking points on the grid</li>
-                  <li>Listen to how the sounds appear positioned in space</li>
+                  <li>Select dots on the grid by clicking them (select multiple dots if desired)</li>
+                  <li>Press Play to hear pink noise bursts at the selected positions</li>
                   <li>
                     Adjust the EQ settings until:
                     <ul className="list-disc pl-5 mt-1 space-y-1">
@@ -222,24 +225,19 @@ export function EQView({ isPlaying, setIsPlaying, onSignupClick }: EQViewProps) 
                   </summary>
                   <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground mt-2">
                     <li>
-                      <strong>Use extreme adjustments</strong> - good results often require dramatic bass and treble
-                      boosts
+                      <strong>Try different dot combinations</strong> - select dots in a pattern to test spatial imaging
                     </li>
                     <li>
-                      <strong>Test all positions</strong> - check multiple points as each responds differently to EQ
-                      changes
+                      <strong>Select dots on the same row</strong> - to test stereo imaging across left-right axis
                     </li>
                     <li>
-                      <strong>Toggle EQ on/off</strong> - compare with and without EQ to verify you're making
-                      improvements
+                      <strong>Select dots on the same column</strong> - to test frequency separation top-to-bottom
                     </li>
                     <li>
-                      <strong>Trust your ears</strong> - effective changes may seem unintuitive, but focus on what
-                      sounds right
+                      <strong>Toggle EQ on/off</strong> - compare with and without EQ to verify improvements
                     </li>
                     <li>
-                      <strong>Use calibration sounds only</strong> - calibrating while listening to music rarely works
-                      well
+                      <strong>Increase grid size</strong> - for more detailed spatial testing with more points
                     </li>
                   </ul>
                 </details>
@@ -255,11 +253,11 @@ export function EQView({ isPlaying, setIsPlaying, onSignupClick }: EQViewProps) 
               <div className="bg-muted/50 p-4 rounded-lg">
                 <h4 className="font-medium mb-3 text-center">Calibration Controls</h4>
 
-                {/* Replace original DotGrid with new DotCalibration component */}
+                {/* Dot Calibration component */}
                 <div className="mb-3">
                   <DotCalibration 
-                    isPlaying={isPlaying}
-                    setIsPlaying={setIsPlaying}
+                    isPlaying={dotGridPlaying}
+                    setIsPlaying={setDotGridPlaying}
                     disabled={!isEQEnabled}
                   />
                 </div>
@@ -267,14 +265,14 @@ export function EQView({ isPlaying, setIsPlaying, onSignupClick }: EQViewProps) 
                 <Button
                   size="sm"
                   className="w-full bg-electric-blue hover:bg-electric-blue/90 text-white mb-2"
-                  onClick={() => setIsPlaying(!isPlaying)}
+                  onClick={() => setDotGridPlaying(!dotGridPlaying)}
                 >
                   <Play className="mr-2 h-4 w-4" />
-                  {isPlaying ? "Pause Sound" : "Play Test Sound"}
+                  {dotGridPlaying ? "Stop Calibration Sound" : "Play Calibration Sound"}
                 </Button>
 
                 <p className="text-xs text-center text-muted-foreground">
-                  Select dots on the grid to play different test sounds
+                  Select multiple dots on the grid to test different spatial positions
                 </p>
               </div>
             </div>
