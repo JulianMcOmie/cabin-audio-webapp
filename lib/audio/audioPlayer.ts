@@ -35,11 +35,9 @@ class AudioPlayer {
       this.gainNode = audioContext.createGain();
       console.log('🎵 Gain node created:', this.gainNode);
       
-      // Connect to the EQ processor
-      const eqInput = eqProcessor.getEQProcessor().getInputNode();
-      console.log('🎵 EQ processor input node:', eqInput);
-      this.gainNode.connect(eqInput);
-      console.log('🎵 Gain node connected to EQ processor');
+      // Connect directly to destination instead of EQ processor
+      this.gainNode.connect(audioContext.getAudioContext().destination);
+      console.log('🎵 Gain node connected to audio destination');
       
       // Set up progress tracking
       this.setupProgressTracking();
