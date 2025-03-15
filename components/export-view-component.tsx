@@ -1,251 +1,287 @@
 "use client"
 
-import { useState } from "react"
-import { Copy, Download, FileDown } from "lucide-react"
+import { useState, useEffect } from "react"
+import { Copy, Download, FileDown, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
+import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
+import { EQBand } from "@/lib/models/EQBand"
+import { useToast } from "@/components/common/ToastManager"
+import { EQProfile } from "@/lib/models/EQProfile"
+
+// EQ formats interface to type-check the export data
+interface EQFormats {
+  "15-band": Record<string, string>;
+  "10-band": Record<string, string>;
+}
 
 export default function ExportView() {
-  const [selectedProfile, setSelectedProfile] = useState("Bass Boost")
+  const { showToast } = useToast()
+  const { getProfiles, getActiveProfile } = useEQProfileStore()
+  
+  // State for profiles and selection
+  const [profiles, setProfiles] = useState<EQProfile[]>([])
+  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null)
+  
+  // Export format state
+  const [exportFormats, setExportFormats] = useState<EQFormats>({
+    "15-band": {},
+    "10-band": {}
+  })
+  const [hasTooManyBands, setHasTooManyBands] = useState({
+    "10-band": false,
+    "15-band": false
+  })
+  
+  // Load profiles once on component mount
+  useEffect(() => {
+    const loadedProfiles = getProfiles()
+    setProfiles(loadedProfiles)
+    
+    // Set active profile as default selected if available
+    const active = getActiveProfile()
+    if (active && !selectedProfileId) {
+      setSelectedProfileId(active.id)
+    }
+  }, [getProfiles, getActiveProfile, selectedProfileId])
+  
+  // Generate EQ formats based on the selected profile
+  useEffect(() => {
+    if (!selectedProfileId || profiles.length === 0) return
+    
+    const profile = profiles.find(p => p.id === selectedProfileId)
+    if (!profile) return
+    
+    // Create simple 10-band and 15-band exports by taking the first N bands
+    const formats: EQFormats = {
+      "15-band": {},
+      "10-band": {}
+    }
+    
+    const bands = profile.bands || []
+    const bandCount = bands.length
+    
+    // Sort bands by frequency for consistent export
+    const sortedBands = [...bands].sort((a, b) => a.frequency - b.frequency)
+    
+    // Check if we have more bands than can be exported in each format
+    setHasTooManyBands({
+      "10-band": bandCount > 10,
+      "15-band": bandCount > 15
+    })
+    
+    // Generate 10-band EQ format (use first 10 bands, add zeros if needed)
+    const bandsFor10 = sortedBands.slice(0, 10)
+    const format10 = bandsFor10.map(band => 
+      `${band.frequency < 1000 ? band.frequency : band.frequency/1000 + 'k'}Hz: ${band.gain.toFixed(1)}dB`
+    )
+    
+    // Add zeros for missing bands
+    while (format10.length < 10) {
+      format10.push(`Band ${format10.length + 1}: 0.0dB`)
+    }
+    
+    // Generate 15-band EQ format (use first 15 bands, add zeros if needed)
+    const bandsFor15 = sortedBands.slice(0, 15)
+    const format15 = bandsFor15.map(band => 
+      `${band.frequency < 1000 ? band.frequency : band.frequency/1000 + 'k'}Hz: ${band.gain.toFixed(1)}dB`
+    )
+    
+    // Add zeros for missing bands
+    while (format15.length < 15) {
+      format15.push(`Band ${format15.length + 1}: 0.0dB`)
+    }
+    
+    formats["10-band"][profile.name] = format10.join('\n')
+    formats["15-band"][profile.name] = format15.join('\n')
+    
+    setExportFormats(formats)
+  }, [selectedProfileId, profiles])
 
-  const profiles = ["Flat", "Bass Boost", "Vocal Clarity", "Treble Boost", "Cinema"]
-
-  // Sample EQ data for demonstration
-  const eqData = {
-    "15-band": {
-      "Bass Boost":
-        "25Hz: 6.0dB\n40Hz: 5.5dB\n63Hz: 5.0dB\n100Hz: 4.0dB\n160Hz: 2.5dB\n250Hz: 1.0dB\n400Hz: 0.0dB\n630Hz: 0.0dB\n1kHz: 0.0dB\n1.6kHz: 0.0dB\n2.5kHz: 0.0dB\n4kHz: 0.0dB\n6.3kHz: 0.0dB\n10kHz: 0.0dB\n16kHz: 0.0dB",
-      Flat: "25Hz: 0.0dB\n40Hz: 0.0dB\n63Hz: 0.0dB\n100Hz: 0.0dB\n160Hz: 0.0dB\n250Hz: 0.0dB\n400Hz: 0.0dB\n630Hz: 0.0dB\n1kHz: 0.0dB\n1.6kHz: 0.0dB\n2.5kHz: 0.0dB\n4kHz: 0.0dB\n6.3kHz: 0.0dB\n10kHz: 0.0dB\n16kHz: 0.0dB",
-      "Vocal Clarity":
-        "25Hz: -1.0dB\n40Hz: -1.0dB\n63Hz: -0.5dB\n100Hz: 0.0dB\n160Hz: 0.0dB\n250Hz: 1.0dB\n400Hz: 2.0dB\n630Hz: 3.0dB\n1kHz: 3.5dB\n1.6kHz: 3.0dB\n2.5kHz: 2.0dB\n4kHz: 1.0dB\n6.3kHz: 0.0dB\n10kHz: 0.0dB\n16kHz: 0.0dB",
-      "Treble Boost":
-        "25Hz: 0.0dB\n40Hz: 0.0dB\n63Hz: 0.0dB\n100Hz: 0.0dB\n160Hz: 0.0dB\n250Hz: 0.0dB\n400Hz: 0.0dB\n630Hz: 0.0dB\n1kHz: 0.5dB\n1.6kHz: 1.0dB\n2.5kHz: 2.0dB\n4kHz: 3.0dB\n6.3kHz: 4.0dB\n10kHz: 4.5dB\n16kHz: 5.0dB",
-      Cinema:
-        "25Hz: 4.0dB\n40Hz: 4.0dB\n63Hz: 3.5dB\n100Hz: 3.0dB\n160Hz: 1.5dB\n250Hz: 0.0dB\n400Hz: -0.5dB\n630Hz: -1.0dB\n1kHz: 0.0dB\n1.6kHz: 1.0dB\n2.5kHz: 2.0dB\n4kHz: 2.5dB\n6.3kHz: 3.0dB\n10kHz: 3.0dB\n16kHz: 2.0dB",
-    },
-    "10-band": {
-      "Bass Boost":
-        "32Hz: 6.0dB\n64Hz: 5.0dB\n125Hz: 3.5dB\n250Hz: 1.0dB\n500Hz: 0.0dB\n1kHz: 0.0dB\n2kHz: 0.0dB\n4kHz: 0.0dB\n8kHz: 0.0dB\n16kHz: 0.0dB",
-      Flat: "32Hz: 0.0dB\n64Hz: 0.0dB\n125Hz: 0.0dB\n250Hz: 0.0dB\n500Hz: 0.0dB\n1kHz: 0.0dB\n2kHz: 0.0dB\n4kHz: 0.0dB\n8kHz: 0.0dB\n16kHz: 0.0dB",
-      "Vocal Clarity":
-        "32Hz: -1.0dB\n64Hz: -0.5dB\n125Hz: 0.0dB\n250Hz: 1.0dB\n500Hz: 2.5dB\n1kHz: 3.5dB\n2kHz: 2.5dB\n4kHz: 1.0dB\n8kHz: 0.0dB\n16kHz: 0.0dB",
-      "Treble Boost":
-        "32Hz: 0.0dB\n64Hz: 0.0dB\n125Hz: 0.0dB\n250Hz: 0.0dB\n500Hz: 0.0dB\n1kHz: 0.5dB\n2kHz: 1.5dB\n4kHz: 3.0dB\n8kHz: 4.5dB\n16kHz: 5.0dB",
-      Cinema:
-        "32Hz: 4.0dB\n64Hz: 3.5dB\n125Hz: 2.5dB\n250Hz: 0.0dB\n500Hz: -0.5dB\n1kHz: 0.0dB\n2kHz: 1.5dB\n4kHz: 2.5dB\n8kHz: 3.0dB\n16kHz: 2.0dB",
-    },
-    Wavelet: {
-      "Bass Boost":
-        "GraphicEQ: 25 6.0; 40 5.5; 63 5.0; 100 4.0; 160 2.5; 250 1.0; 400 0.0; 630 0.0; 1000 0.0; 1600 0.0; 2500 0.0; 4000 0.0; 6300 0.0; 10000 0.0; 16000 0.0",
-      Flat: "GraphicEQ: 25 0.0; 40 0.0; 63 0.0; 100 0.0; 160 0.0; 250 0.0; 400 0.0; 630 0.0; 1000 0.0; 1600 0.0; 2500 0.0; 4000 0.0; 6300 0.0; 10000 0.0; 16000 0.0",
-      "Vocal Clarity":
-        "GraphicEQ: 25 -1.0; 40 -1.0; 63 -0.5; 100 0.0; 160 0.0; 250 1.0; 400 2.0; 630 3.0; 1000 3.5; 1600 3.0; 2500 2.0; 4000 1.0; 6300 0.0; 10000 0.0; 16000 0.0",
-      "Treble Boost":
-        "GraphicEQ: 25 0.0; 40 0.0; 63 0.0; 100 0.0; 160 0.0; 250 0.0; 400 0.0; 630 0.0; 1000 0.5; 1600 1.0; 2500 2.0; 4000 3.0; 6300 4.0; 10000 4.5; 16000 5.0",
-      Cinema:
-        "GraphicEQ: 25 4.0; 40 4.0; 63 3.5; 100 3.0; 160 1.5; 250 0.0; 400 -0.5; 630 -1.0; 1000 0.0; 1600 1.0; 2500 2.0; 4000 2.5; 6300 3.0; 10000 3.0; 16000 2.0",
-    },
-    PowerAmp: {
-      "Bass Boost":
-        "25;6.0|40;5.5|63;5.0|100;4.0|160;2.5|250;1.0|400;0.0|630;0.0|1000;0.0|1600;0.0|2500;0.0|4000;0.0|6300;0.0|10000;0.0|16000;0.0",
-      Flat: "25;0.0|40;0.0|63;0.0|100;0.0|160;0.0|250;0.0|400;0.0|630;0.0|1000;0.0|1600;0.0|2500;0.0|4000;0.0|6300;0.0|10000;0.0|16000;0.0",
-      "Vocal Clarity":
-        "25;-1.0|40;-1.0|63;-0.5|100;0.0|160;0.0|250;1.0|400;2.0|630;3.0|1000;3.5|1600;3.0|2500;2.0|4000;1.0|6300;0.0|10000;0.0|16000;0.0",
-      "Treble Boost":
-        "25;0.0|40;0.0|63;0.0|100;0.0|160;0.0|250;0.0|400;0.0|630;0.0|1000;0.5|1600;1.0|2500;2.0|4000;3.0|6300;4.0|10000;4.5|16000;5.0",
-      Cinema:
-        "25;4.0|40;4.0|63;3.5|100;3.0|160;1.5|250;0.0|400;-0.5|630;-1.0|1000;0.0|1600;1.0|2500;2.0|4000;2.5|6300;3.0|10000;3.0|16000;2.0",
-    },
-    Convolution44: {
-      "Bass Boost": "[Generated impulse response file for 44.1kHz]",
-      Flat: "[Generated impulse response file for 44.1kHz]",
-      "Vocal Clarity": "[Generated impulse response file for 44.1kHz]",
-      "Treble Boost": "[Generated impulse response file for 44.1kHz]",
-      Cinema: "[Generated impulse response file for 44.1kHz]",
-    },
-    Convolution48: {
-      "Bass Boost": "[Generated impulse response file for 48kHz]",
-      Flat: "[Generated impulse response file for 48kHz]",
-      "Vocal Clarity": "[Generated impulse response file for 48kHz]",
-      "Treble Boost": "[Generated impulse response file for 48kHz]",
-      Cinema: "[Generated impulse response file for 48kHz]",
-    },
+  const handleCopyToClipboard = (format: keyof EQFormats) => {
+    if (!selectedProfileId) return
+    
+    const profile = profiles.find(p => p.id === selectedProfileId)
+    if (!profile) return
+    
+    const content = exportFormats[format][profile.name]
+    
+    if (content) {
+      navigator.clipboard.writeText(content)
+      showToast({
+        message: "Copied to clipboard",
+        variant: "success"
+      })
+    }
   }
 
-  // EQ curve data for visualization
-  const eqCurveData = {
-    "Bass Boost": [6.0, 5.5, 5.0, 4.0, 2.5, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    Flat: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    "Vocal Clarity": [-1.0, -1.0, -0.5, 0.0, 0.0, 1.0, 2.0, 3.0, 3.5, 3.0, 2.0, 1.0, 0.0, 0.0, 0.0],
-    "Treble Boost": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 2.0, 3.0, 4.0, 4.5, 5.0],
-    Cinema: [4.0, 4.0, 3.5, 3.0, 1.5, 0.0, -0.5, -1.0, 0.0, 1.0, 2.0, 2.5, 3.0, 3.0, 2.0],
-  }
-
-  const handleCopyToClipboard = (format: string) => {
-    const formatKey =
-      format === "15-band"
-        ? "15-band"
-        : format === "10-band"
-          ? "10-band"
-          : format === "wavelet"
-            ? "Wavelet"
-            : format === "poweramp"
-              ? "PowerAmp"
-              : format === "convolution44"
-                ? "Convolution44"
-                : "Convolution48"
-
-    navigator.clipboard.writeText(eqData[formatKey][selectedProfile])
-  }
-
-  const handleDownload = (format: string) => {
-    const formatKey =
-      format === "15-band"
-        ? "15-band"
-        : format === "10-band"
-          ? "10-band"
-          : format === "wavelet"
-            ? "Wavelet"
-            : format === "poweramp"
-              ? "PowerAmp"
-              : format === "convolution44"
-                ? "Convolution44"
-                : "Convolution48"
-
-    const content = eqData[formatKey][selectedProfile]
-    const fileName = `${selectedProfile.replace(/\s+/g, "-").toLowerCase()}_${format}.txt`
-
-    // Create a blob and download it
-    const blob = new Blob([content], { type: "text/plain" })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = fileName
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
+  const handleDownload = (format: keyof EQFormats) => {
+    if (!selectedProfileId) return
+    
+    const profile = profiles.find(p => p.id === selectedProfileId)
+    if (!profile) return
+    
+    const content = exportFormats[format][profile.name]
+    
+    if (content) {
+      const fileName = `${profile.name.replace(/\s+/g, "-").toLowerCase()}_${format}.txt`
+      
+      const blob = new Blob([content], { type: "text/plain" })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = fileName
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      
+      showToast({
+        message: `Downloaded ${fileName}`,
+        variant: "success"
+      })
+    }
   }
 
   return (
     <div className="max-w-4xl mx-auto py-8 pb-24">
-      {" "}
-      {/* Added pb-24 for bottom padding */}
       <h1 className="text-3xl font-bold mb-2">Export EQ Settings</h1>
       <p className="text-muted-foreground mb-8">Download EQ settings for other apps.</p>
       <div className="mb-8">
         <div className="mb-2">
           <label className="block text-sm font-medium mb-2">Select EQ Profile</label>
-          <Select value={selectedProfile} onValueChange={setSelectedProfile}>
+          <Select 
+            value={selectedProfileId || ""} 
+            onValueChange={value => setSelectedProfileId(value)}
+          >
             <SelectTrigger className="w-full max-w-xs">
               <SelectValue placeholder="Select an EQ profile" />
             </SelectTrigger>
             <SelectContent>
               {profiles.map((profile) => (
-                <SelectItem key={profile} value={profile}>
-                  {profile}
+                <SelectItem key={profile.id} value={profile.id}>
+                  {profile.name}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-        <Card>
-          <CardContent className="p-6">
-            <div className="mb-4">
-              <h2 className="text-lg font-medium">15-Band EQ Settings</h2>
-            </div>
+      
+      {(!selectedProfileId || profiles.length === 0) && (
+        <div className="rounded-lg bg-yellow-50 border border-yellow-200 p-4 mb-8 dark:bg-yellow-900/20 dark:border-yellow-800">
+          <p className="text-yellow-800 dark:text-yellow-300">
+            Please select an EQ profile to export. {profiles.length === 0 ? "You don't have any profiles yet." : ""}
+          </p>
+        </div>
+      )}
+      
+      {selectedProfileId && (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+            <Card>
+              <CardContent className="p-6">
+                <div className="mb-4">
+                  <h2 className="text-lg font-medium">15-Band EQ Settings</h2>
+                </div>
 
-            <div className="bg-muted p-4 rounded-md font-mono text-sm whitespace-pre-wrap overflow-auto h-40 relative group">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 bg-background/80"
-                onClick={() => handleCopyToClipboard("15-band")}
-              >
-                <Copy className="h-4 w-4" />
-                <span className="sr-only">Copy to clipboard</span>
-              </Button>
-              {eqData["15-band"][selectedProfile]}
-            </div>
+                {hasTooManyBands["15-band"] && (
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3 mb-4 flex items-center text-sm text-yellow-800 dark:bg-yellow-900/20 dark:border-yellow-800 dark:text-yellow-300">
+                    <AlertCircle className="h-4 w-4 mr-2 flex-shrink-0" />
+                    <div>
+                      This profile has more than 15 bands. Only the first 15 bands are included.
+                    </div>
+                  </div>
+                )}
 
-            <div className="mt-4 text-right">
-              <Button variant="outline" size="sm" onClick={() => handleDownload("15-band")}>
-                <Download className="h-4 w-4 mr-2" />
-                Download
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+                <div className="bg-muted p-4 rounded-md font-mono text-sm whitespace-pre-wrap overflow-auto h-40 relative group">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 bg-background/80"
+                    onClick={() => handleCopyToClipboard("15-band")}
+                  >
+                    <Copy className="h-4 w-4" />
+                    <span className="sr-only">Copy to clipboard</span>
+                  </Button>
+                  {selectedProfileId && profiles.find(p => p.id === selectedProfileId)?.name && 
+                    exportFormats["15-band"][profiles.find(p => p.id === selectedProfileId)!.name]}
+                </div>
 
-        <Card>
-          <CardContent className="p-6">
-            <div className="mb-4">
-              <h2 className="text-lg font-medium">10-Band EQ Settings</h2>
-            </div>
+                <div className="mt-4 text-right">
+                  <Button variant="outline" size="sm" onClick={() => handleDownload("15-band")}>
+                    <Download className="h-4 w-4 mr-2" />
+                    Download
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
 
-            <div className="bg-muted p-4 rounded-md font-mono text-sm whitespace-pre-wrap overflow-auto h-40 relative group">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 bg-background/80"
-                onClick={() => handleCopyToClipboard("10-band")}
-              >
-                <Copy className="h-4 w-4" />
-                <span className="sr-only">Copy to clipboard</span>
-              </Button>
-              {eqData["10-band"][selectedProfile]}
-            </div>
+            <Card>
+              <CardContent className="p-6">
+                <div className="mb-4">
+                  <h2 className="text-lg font-medium">10-Band EQ Settings</h2>
+                </div>
 
-            <div className="mt-4 text-right">
-              <Button variant="outline" size="sm" onClick={() => handleDownload("10-band")}>
-                <Download className="h-4 w-4 mr-2" />
-                Download
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        <Button
-          variant="outline"
-          onClick={() => handleDownload("wavelet")}
-          className="flex flex-col items-center py-6 h-auto"
-        >
-          <FileDown className="h-6 w-6 mb-2" />
-          <span>Wavelet</span>
-        </Button>
+                {hasTooManyBands["10-band"] && (
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3 mb-4 flex items-center text-sm text-yellow-800 dark:bg-yellow-900/20 dark:border-yellow-800 dark:text-yellow-300">
+                    <AlertCircle className="h-4 w-4 mr-2 flex-shrink-0" />
+                    <div>
+                      This profile has more than 10 bands. Only the first 10 bands are included.
+                    </div>
+                  </div>
+                )}
 
-        <Button
-          variant="outline"
-          onClick={() => handleDownload("poweramp")}
-          className="flex flex-col items-center py-6 h-auto"
-        >
-          <FileDown className="h-6 w-6 mb-2" />
-          <span>PowerAmp</span>
-        </Button>
+                <div className="bg-muted p-4 rounded-md font-mono text-sm whitespace-pre-wrap overflow-auto h-40 relative group">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 bg-background/80"
+                    onClick={() => handleCopyToClipboard("10-band")}
+                  >
+                    <Copy className="h-4 w-4" />
+                    <span className="sr-only">Copy to clipboard</span>
+                  </Button>
+                  {selectedProfileId && profiles.find(p => p.id === selectedProfileId)?.name && 
+                    exportFormats["10-band"][profiles.find(p => p.id === selectedProfileId)!.name]}
+                </div>
 
-        <Button
-          variant="outline"
-          onClick={() => handleDownload("convolution44")}
-          className="flex flex-col items-center py-6 h-auto"
-        >
-          <FileDown className="h-6 w-6 mb-2" />
-          <span>44.1kHz Conv</span>
-        </Button>
+                <div className="mt-4 text-right">
+                  <Button variant="outline" size="sm" onClick={() => handleDownload("10-band")}>
+                    <Download className="h-4 w-4 mr-2" />
+                    Download
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+          
+          {/* Additional export formats - commented out for now
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            <Button
+              variant="outline"
+              onClick={() => handleDownload("Wavelet")}
+              className="flex flex-col items-center py-6 h-auto"
+            >
+              <FileDown className="h-6 w-6 mb-2" />
+              <span>Wavelet</span>
+            </Button>
 
-        <Button
-          variant="outline"
-          onClick={() => handleDownload("convolution48")}
-          className="flex flex-col items-center py-6 h-auto"
-        >
-          <FileDown className="h-6 w-6 mb-2" />
-          <span>48kHz Conv</span>
-        </Button>
-      </div>
+            <Button
+              variant="outline"
+              onClick={() => handleDownload("PowerAmp")}
+              className="flex flex-col items-center py-6 h-auto"
+            >
+              <FileDown className="h-6 w-6 mb-2" />
+              <span>PowerAmp</span>
+            </Button>
+          </div>
+          */}
+        </>
+      )}
+      
       <div className="space-y-6">
         <h2 className="text-xl font-medium mb-4">Instructions</h2>
 
