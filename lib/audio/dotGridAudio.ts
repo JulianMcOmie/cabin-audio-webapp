@@ -21,6 +21,10 @@ const BASE_CYCLE_TIME = 2.0; // Base cycle time in seconds
 const MIN_SUBDIVISION = 2; // Minimum subdivision (lower dots)
 const MAX_SUBDIVISION = 16; // Maximum subdivision (higher dots)
 
+// Analyzer settings
+const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
+const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
+
 class DotGridAudioPlayer {
   private static instance: DotGridAudioPlayer;
   private pinkNoiseBuffer: AudioBuffer | null = null;
@@ -40,6 +44,8 @@ class DotGridAudioPlayer {
   private columnCount: number = COLUMNS; // Default column count
   private masterTimerId: number | null = null;
   private startTime: number = 0; // When playback started
+  private preEQAnalyser: AnalyserNode | null = null; // Pre-EQ analyzer node
+  private preEQGain: GainNode | null = null; // Gain node for connecting all sources to analyzer
   
   private constructor() {
     // Initialize pink noise buffer
@@ -122,6 +128,65 @@ class DotGridAudioPlayer {
   }
 
   /**
+   * Create and return a pre-EQ analyzer node
+   */
+  public createPreEQAnalyser(): AnalyserNode {
+    const ctx = audioContext.getAudioContext();
+    
+    // Create analyzer if it doesn't exist
+    if (!this.preEQAnalyser) {
+      // Create a gain node to combine all sources
+      this.preEQGain = ctx.createGain();
+      this.preEQGain.gain.value = 1.0;
+      
+      // Create analyzer node
+      this.preEQAnalyser = ctx.createAnalyser();
+      this.preEQAnalyser.fftSize = FFT_SIZE;
+      this.preEQAnalyser.smoothingTimeConstant = SMOOTHING;
+      
+      // Connect the gain to the analyzer
+      this.preEQGain.connect(this.preEQAnalyser);
+      
+      // Connect to EQ processor
+      const eq = eqProcessor.getEQProcessor();
+      this.preEQGain.connect(eq.getInputNode());
+      
+      // If already playing, reconnect all sources
+      if (this.isPlaying) {
+        this.reconnectAllSources();
+      }
+    }
+    
+    return this.preEQAnalyser;
+  }
+  
+  /**
+   * Get the pre-EQ analyzer, creating it if needed
+   */
+  public getPreEQAnalyser(): AnalyserNode | null {
+    return this.preEQAnalyser;
+  }
+  
+  /**
+   * Reconnect all sources to include the analyzer in the signal chain
+   */
+  private reconnectAllSources(): void {
+    // Skip if analyzer not created or no gain node
+    if (!this.preEQGain) return;
+    
+    // Reconnect all sources to include analyzer
+    this.audioNodes.forEach((nodes) => {
+      // Disconnect gain from its current destination
+      nodes.gain.disconnect();
+      
+      // Connect to the pre-EQ gain node
+      nodes.gain.connect(this.preEQGain);
+    });
+    
+    console.log('🔊 Reconnected all sources to include analyzer');
+  }
+
+  /**
    * Update the set of active dots
    */
   public updateDots(dots: Set<string>, currentGridSize?: number, currentColumns?: number): void {
@@ -162,45 +227,29 @@ class DotGridAudioPlayer {
    * Calculate subdivision based on vertical position
    * Higher dots (smaller y values) get more subdivisions
    */
-  private calculateSubdivision(x: number, y: number): number {
+  private calculateSubdivision(y: number): number {
     // Invert y to make higher dots have more subdivisions
     // Normalize to 0-1 range
     const normalizedY = 1 - (y / (this.gridSize - 1));
     
-    // Normalize x to 0-1 range
-    const normalizedX = x / (this.columnCount - 1);
+    // Calculate subdivision - higher dots get more subdivisions
+    const subdivision = Math.floor(MIN_SUBDIVISION + normalizedY * (MAX_SUBDIVISION - MIN_SUBDIVISION));
     
-    // Basic subdivision range based on height (keeping the trend where higher = faster)
-    // This sets the "class" of rhythms available at this height
-    let subdivisionRange: number[];
+    // Use musically useful subdivisions: 2, 3, 4, 5, 6, 8, 12, 16
+    // Find the closest musically useful subdivision
+    const musicalSubdivisions = [2, 3, 4, 5, 6, 8, 12, 16];
+    let closestSubdivision = musicalSubdivisions[0];
+    let closestDistance = Math.abs(subdivision - closestSubdivision);
     
-    if (normalizedY > 0.8) {
-      // Top row - fastest (12, 16)
-      subdivisionRange = [12, 16];
-    } else if (normalizedY > 0.6) {
-      // Second row - fast (8, 12)
-      subdivisionRange = [8, 12];
-    } else if (normalizedY > 0.4) {
-      // Middle row - medium (5, 6, 8)
-      subdivisionRange = [5, 6, 8];
-    } else if (normalizedY > 0.2) {
-      // Fourth row - slow (3, 4, 5)
-      subdivisionRange = [3, 4, 5];
-    } else {
-      // Bottom row - slowest (2, 3)
-      subdivisionRange = [2, 3];
+    for (let i = 1; i < musicalSubdivisions.length; i++) {
+      const distance = Math.abs(subdivision - musicalSubdivisions[i]);
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestSubdivision = musicalSubdivisions[i];
+      }
     }
     
-    // Use x position to select from the available subdivisions at this height
-    // This ensures different dots at the same height get different rhythms
-    
-    // Hash function based on x and y to select a subdivision from the range
-    // We use both coordinates so a dot's subdivision feels tied to its position
-    // This creates a consistent pattern that feels deliberate, not random
-    const hashValue = (x * 7919 + y * 6971) % 1000; // Use prime numbers for better distribution
-    const indexInRange = hashValue % subdivisionRange.length;
-    
-    return subdivisionRange[indexInRange];
+    return closestSubdivision;
   }
 
   /**
@@ -289,8 +338,21 @@ class DotGridAudioPlayer {
       return;
     }
     
-    // Get the EQ processor for audio processing
-    const eq = eqProcessor.getEQProcessor();
+    // Create pre-EQ gain node if needed for analyzer
+    if (this.preEQAnalyser && !this.preEQGain) {
+      this.preEQGain = ctx.createGain();
+      this.preEQGain.gain.value = 1.0;
+      this.preEQGain.connect(this.preEQAnalyser);
+      
+      // Connect to EQ processor
+      const eq = eqProcessor.getEQProcessor();
+      this.preEQGain.connect(eq.getInputNode());
+    }
+    
+    // Get the destination node (either preEQGain or directly to EQ processor)
+    const destinationNode = this.preEQGain ? 
+      this.preEQGain as AudioNode : 
+      eqProcessor.getEQProcessor().getInputNode();
     
     // Start each source
     this.audioNodes.forEach((nodes, dotKey) => {
@@ -301,14 +363,16 @@ class DotGridAudioPlayer {
         source.loop = true;
         
         // Connect the audio chain
-        // source -> filter -> panner -> envelopeGain -> gain -> EQ -> destination
+        // source -> filter -> panner -> envelopeGain -> gain -> (preEQGain or EQ) -> destination
         source.connect(nodes.filter);
         nodes.filter.connect(nodes.panner);
         nodes.panner.connect(nodes.envelopeGain);
         nodes.envelopeGain.connect(nodes.gain);
         
-        // Connect to EQ processor instead of directly to destination
-        nodes.gain.connect(eq.getInputNode());
+        // Connect to destination (preEQGain or directly to EQ)
+        if (destinationNode) {
+          nodes.gain.connect(destinationNode);
+        }
         
         // Start with gain at minimum (silent)
         nodes.envelopeGain.gain.value = ENVELOPE_MIN_GAIN;
@@ -441,8 +505,8 @@ class DotGridAudioPlayer {
     // Calculate position for sorting
     const position = y * this.columnCount + x;
     
-    // Calculate subdivision based on both x and y positions
-    const subdivision = this.calculateSubdivision(x, y);
+    // Calculate subdivision based on vertical position
+    const subdivision = this.calculateSubdivision(y);
     
     // Store the nodes
     this.audioNodes.set(dotKey, {
@@ -500,6 +564,18 @@ class DotGridAudioPlayer {
     this.setPlaying(false);
     this.stopAllRhythms();
     this.stopAllSources();
+    
+    // Clean up analyzer nodes
+    if (this.preEQGain) {
+      this.preEQGain.disconnect();
+      this.preEQGain = null;
+    }
+    
+    if (this.preEQAnalyser) {
+      this.preEQAnalyser.disconnect();
+      this.preEQAnalyser = null;
+    }
+    
     this.audioNodes.clear();
     this.pinkNoiseBuffer = null;
   }

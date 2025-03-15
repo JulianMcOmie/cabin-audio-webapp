@@ -16,6 +16,8 @@ import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { v4 as uuidv4 } from 'uuid'
 import { SyncStatus } from "@/lib/models/SyncStatus"
+import { FFTVisualizer } from "@/components/audio/FFTVisualizer"
+import { getDotGridAudioPlayer } from "@/lib/audio/dotGridAudio"
 
 interface EQViewProps {
   isPlaying: boolean
@@ -52,11 +54,27 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
   
   // State for the dot grid calibration audio
   const [dotGridPlaying, setDotGridPlaying] = useState(false)
+  
+  // State for the spectrum analyzer
+  const [preEQAnalyser, setPreEQAnalyser] = useState<AnalyserNode | null>(null)
 
   // Sync local eqEnabled state with the store
   useEffect(() => {
     setEqEnabled(isEQEnabled);
   }, [isEQEnabled, setEqEnabled]);
+
+  // Handle creating/removing analyzer when dot grid playing state changes
+  useEffect(() => {
+    if (dotGridPlaying) {
+      // Create and connect the analyzer
+      const dotGridPlayer = getDotGridAudioPlayer();
+      const analyser = dotGridPlayer.createPreEQAnalyser();
+      setPreEQAnalyser(analyser);
+    } else {
+      // Clean up when not playing
+      setPreEQAnalyser(null);
+    }
+  }, [dotGridPlaying]);
 
   // Initialize selected profile from the active profile and keep it synced
   useEffect(() => {
@@ -328,6 +346,22 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
                 <p className="text-xs text-center text-muted-foreground">
                   Select multiple dots on the grid to test different spatial positions
                 </p>
+                
+                {/* Pre-EQ Frequency Visualizer */}
+                {dotGridPlaying && preEQAnalyser && (
+                  <div className="mt-4">
+                    <h5 className="text-sm font-medium mb-2 text-center">Pre-EQ Frequency Spectrum</h5>
+                    <FFTVisualizer 
+                      analyser={preEQAnalyser} 
+                      width={320} 
+                      height={160} 
+                      className="w-full"
+                    />
+                    <p className="text-xs text-center text-muted-foreground mt-2">
+                      Showing the raw audio spectrum before EQ processing
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -335,14 +369,14 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
       </div>
 
       {/* EQ Profiles Section */}
-      {/* <div className="mt-8">
+      <div className="mt-8">
         <h3 className="text-lg font-medium mb-4">EQ Profiles</h3>
         <EQProfiles
           onProfileClick={handleProfileClick}
           selectedProfile={selectedProfileId}
           onSelectProfile={handleSelectProfile}
         />
-      </div> */}
+      </div>
 
       {/* Create New Profile Dialog */}
       <Dialog open={showCreateNewDialog} onOpenChange={setShowCreateNewDialog}>
