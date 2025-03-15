@@ -162,29 +162,45 @@ class DotGridAudioPlayer {
    * Calculate subdivision based on vertical position
    * Higher dots (smaller y values) get more subdivisions
    */
-  private calculateSubdivision(y: number): number {
+  private calculateSubdivision(x: number, y: number): number {
     // Invert y to make higher dots have more subdivisions
     // Normalize to 0-1 range
     const normalizedY = 1 - (y / (this.gridSize - 1));
     
-    // Calculate subdivision - higher dots get more subdivisions
-    const subdivision = Math.floor(MIN_SUBDIVISION + normalizedY * (MAX_SUBDIVISION - MIN_SUBDIVISION));
+    // Normalize x to 0-1 range
+    const normalizedX = x / (this.columnCount - 1);
     
-    // Use musically useful subdivisions: 2, 3, 4, 5, 6, 8, 12, 16
-    // Find the closest musically useful subdivision
-    const musicalSubdivisions = [2, 3, 4, 5, 6, 8, 12, 16];
-    let closestSubdivision = musicalSubdivisions[0];
-    let closestDistance = Math.abs(subdivision - closestSubdivision);
+    // Basic subdivision range based on height (keeping the trend where higher = faster)
+    // This sets the "class" of rhythms available at this height
+    let subdivisionRange: number[];
     
-    for (let i = 1; i < musicalSubdivisions.length; i++) {
-      const distance = Math.abs(subdivision - musicalSubdivisions[i]);
-      if (distance < closestDistance) {
-        closestDistance = distance;
-        closestSubdivision = musicalSubdivisions[i];
-      }
+    if (normalizedY > 0.8) {
+      // Top row - fastest (12, 16)
+      subdivisionRange = [12, 16];
+    } else if (normalizedY > 0.6) {
+      // Second row - fast (8, 12)
+      subdivisionRange = [8, 12];
+    } else if (normalizedY > 0.4) {
+      // Middle row - medium (5, 6, 8)
+      subdivisionRange = [5, 6, 8];
+    } else if (normalizedY > 0.2) {
+      // Fourth row - slow (3, 4, 5)
+      subdivisionRange = [3, 4, 5];
+    } else {
+      // Bottom row - slowest (2, 3)
+      subdivisionRange = [2, 3];
     }
     
-    return closestSubdivision;
+    // Use x position to select from the available subdivisions at this height
+    // This ensures different dots at the same height get different rhythms
+    
+    // Hash function based on x and y to select a subdivision from the range
+    // We use both coordinates so a dot's subdivision feels tied to its position
+    // This creates a consistent pattern that feels deliberate, not random
+    const hashValue = (x * 7919 + y * 6971) % 1000; // Use prime numbers for better distribution
+    const indexInRange = hashValue % subdivisionRange.length;
+    
+    return subdivisionRange[indexInRange];
   }
 
   /**
@@ -425,8 +441,8 @@ class DotGridAudioPlayer {
     // Calculate position for sorting
     const position = y * this.columnCount + x;
     
-    // Calculate subdivision based on vertical position
-    const subdivision = this.calculateSubdivision(y);
+    // Calculate subdivision based on both x and y positions
+    const subdivision = this.calculateSubdivision(x, y);
     
     // Store the nodes
     this.audioNodes.set(dotKey, {
