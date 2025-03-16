@@ -3,6 +3,8 @@
 import type React from "react"
 import { useRef, useEffect, useState, useMemo } from "react"
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
+import { Switch } from "@/components/ui/switch"
+import { Label } from "@/components/ui/label"
 
 interface DotGridProps {
   selectedDot: [number, number] | null
@@ -361,6 +363,9 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
   const [gridSize, setGridSize] = useState(DEFAULT_ROWS);
   const [columnCount, setColumnCount] = useState(DEFAULT_COLUMNS);
   const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set());
+  const [playbackMode, setPlaybackMode] = useState<dotGridAudio.PlaybackMode>(
+    dotGridAudio.PlaybackMode.POLYRHYTHM
+  );
   
   // Initialize the audio player
   useEffect(() => {
@@ -384,6 +389,12 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
     audioPlayer.setPlaying(isPlaying);
   }, [isPlaying]);
   
+  // Update audio player when playback mode changes
+  useEffect(() => {
+    const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
+    audioPlayer.setPlaybackMode(playbackMode);
+  }, [playbackMode]);
+  
   const handleDotToggle = (x: number, y: number) => {
     const dotKey = `${x},${y}`;
     const newSelectedDots = new Set(selectedDots);
@@ -395,6 +406,14 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
     }
     
     setSelectedDots(newSelectedDots);
+  };
+  
+  const togglePlaybackMode = () => {
+    setPlaybackMode(prevMode => 
+      prevMode === dotGridAudio.PlaybackMode.POLYRHYTHM
+        ? dotGridAudio.PlaybackMode.SEQUENTIAL
+        : dotGridAudio.PlaybackMode.POLYRHYTHM
+    );
   };
   
   const increaseRows = () => {
@@ -461,6 +480,29 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
       </div>
       
       <div className="flex flex-col space-y-2">
+        {/* Playback mode toggle */}
+        <div className="flex items-center justify-between space-x-2">
+          <div className="flex flex-col space-y-0.5">
+            <span className="text-xs font-medium">Playback Mode:</span>
+            <span className="text-xs text-muted-foreground">
+              {playbackMode === dotGridAudio.PlaybackMode.POLYRHYTHM 
+                ? "Polyrhythm (each dot has its own rhythm)" 
+                : "Sequential (one dot at a time, in order)"}
+            </span>
+          </div>
+          <div className="flex items-center space-x-2">
+            <Label htmlFor="mode-toggle" className="text-xs">
+              {playbackMode === dotGridAudio.PlaybackMode.SEQUENTIAL ? "Sequential" : "Polyrhythm"}
+            </Label>
+            <Switch
+              id="mode-toggle"
+              checked={playbackMode === dotGridAudio.PlaybackMode.SEQUENTIAL}
+              onCheckedChange={togglePlaybackMode}
+              disabled={disabled}
+            />
+          </div>
+        </div>
+        
         {/* Grid dimensions display */}
         <span className="text-xs text-muted-foreground text-center">
           Grid Size: {gridSize}×{columnCount}

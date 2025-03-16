@@ -21,9 +21,18 @@ const BASE_CYCLE_TIME = 2.0; // Base cycle time in seconds
 const MIN_SUBDIVISION = 2; // Minimum subdivision (lower dots)
 const MAX_SUBDIVISION = 16; // Maximum subdivision (higher dots)
 
+// Sequential playback settings
+const DOT_TIMING = 0.2; // Time between dots in sequential mode (seconds)
+
 // Analyzer settings
 const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
 const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
+
+// Playback mode enum
+export enum PlaybackMode {
+  POLYRHYTHM = 'polyrhythm',
+  SEQUENTIAL = 'sequential'
+}
 
 class DotGridAudioPlayer {
   private static instance: DotGridAudioPlayer;
@@ -47,6 +56,12 @@ class DotGridAudioPlayer {
   private preEQAnalyser: AnalyserNode | null = null; // Pre-EQ analyzer node
   private preEQGain: GainNode | null = null; // Gain node for connecting all sources to analyzer
   
+  // Sequential playback properties
+  private playbackMode: PlaybackMode = PlaybackMode.POLYRHYTHM; // Default to polyrhythm mode
+  private sequenceTimer: number | null = null; // Timer for sequential playback
+  private sequenceIndex: number = 0; // Current index in the sequence
+  private orderedDots: string[] = []; // Dots ordered for sequential playback
+  
   private constructor() {
     // Initialize pink noise buffer
     this.generatePinkNoiseBuffer();
@@ -57,6 +72,38 @@ class DotGridAudioPlayer {
       DotGridAudioPlayer.instance = new DotGridAudioPlayer();
     }
     return DotGridAudioPlayer.instance;
+  }
+
+  /**
+   * Set the playback mode
+   */
+  public setPlaybackMode(mode: PlaybackMode): void {
+    if (this.playbackMode === mode) return;
+    
+    console.log(`🔊 Switching playback mode to: ${mode}`);
+    
+    // Store the previous playing state
+    const wasPlaying = this.isPlaying;
+    
+    // Stop current playback
+    if (wasPlaying) {
+      this.setPlaying(false);
+    }
+    
+    // Update mode
+    this.playbackMode = mode;
+    
+    // Resume playback if it was playing
+    if (wasPlaying) {
+      this.setPlaying(true);
+    }
+  }
+  
+  /**
+   * Get the current playback mode
+   */
+  public getPlaybackMode(): PlaybackMode {
+    return this.playbackMode;
   }
 
   /**
@@ -71,10 +118,15 @@ class DotGridAudioPlayer {
     
     console.log(`🔊 Grid size set to ${this.gridSize} rows × ${this.columnCount} columns`);
     
-    // Update subdivisions for dots
+    // Update playback based on current mode
     if (this.isPlaying) {
-      this.stopAllRhythms();
-      this.startAllRhythms();
+      if (this.playbackMode === PlaybackMode.POLYRHYTHM) {
+        this.stopAllRhythms();
+        this.startAllRhythms();
+      } else {
+        // For sequential mode, update the ordered dots
+        this.updateOrderedDots();
+      }
     }
   }
 
@@ -216,13 +268,48 @@ class DotGridAudioPlayer {
       }
     });
     
-    // If playing, restart rhythms for new configuration
+    // Update ordered dots for sequential playback
+    this.updateOrderedDots();
+    
+    // If playing, restart based on playback mode
     if (this.isPlaying) {
-      this.stopAllRhythms();
-      this.stopAllSources();
-      this.startAllSources();
-      this.startAllRhythms();
+      if (this.playbackMode === PlaybackMode.POLYRHYTHM) {
+        this.stopAllRhythms();
+        this.stopAllSources();
+        this.startAllSources();
+        this.startAllRhythms();
+      } else {
+        this.stopSequence();
+        this.stopAllSources();
+        this.startAllSources();
+        this.startSequence();
+      }
     }
+  }
+  
+  /**
+   * Update the ordered dots for sequential playback
+   */
+  private updateOrderedDots(): void {
+    // Get all dot keys
+    const dotKeys = Array.from(this.audioNodes.keys());
+    
+    // Parse the keys into x,y coordinates for sorting
+    const dots = dotKeys.map(key => {
+      const [x, y] = key.split(',').map(Number);
+      return { key, x, y };
+    });
+    
+    // Sort in reading order (top-to-bottom, left-to-right)
+    dots.sort((a, b) => {
+      if (a.y !== b.y) return a.y - b.y; // Sort by row first
+      return a.x - b.x; // Then by column
+    });
+    
+    // Extract the sorted keys
+    this.orderedDots = dots.map(dot => dot.key);
+    
+    console.log(`🔊 Updated ordered dots for sequential playback: ${this.orderedDots.length} dots`);
   }
 
   /**
@@ -267,11 +354,73 @@ class DotGridAudioPlayer {
     if (playing) {
       this.startTime = Date.now() / 1000; // Start time in seconds
       this.startAllSources();
-      this.startAllRhythms();
+      
+      // Start the appropriate playback based on mode
+      if (this.playbackMode === PlaybackMode.POLYRHYTHM) {
+        this.startAllRhythms();
+      } else {
+        this.startSequence();
+      }
     } else {
-      this.stopAllRhythms();
+      // Stop the appropriate playback based on mode
+      if (this.playbackMode === PlaybackMode.POLYRHYTHM) {
+        this.stopAllRhythms();
+      } else {
+        this.stopSequence();
+      }
+      
       this.stopAllSources();
     }
+  }
+
+  /**
+   * Start sequential playback
+   */
+  private startSequence(): void {
+    // Reset sequence index
+    this.sequenceIndex = 0;
+    
+    // If no dots, do nothing
+    if (this.orderedDots.length === 0) return;
+    
+    console.log(`🔊 Starting sequential playback with ${this.orderedDots.length} dots`);
+    
+    // Start the sequence timer
+    this.advanceSequence(); // Play the first dot immediately
+    
+    // Set up timer for subsequent dots
+    this.sequenceTimer = window.setInterval(() => {
+      this.advanceSequence();
+    }, DOT_TIMING * 1000);
+  }
+  
+  /**
+   * Advance the sequence to the next dot
+   */
+  private advanceSequence(): void {
+    // If no dots, do nothing
+    if (this.orderedDots.length === 0) return;
+    
+    // Get the current dot key
+    const dotKey = this.orderedDots[this.sequenceIndex];
+    
+    // Trigger the envelope for this dot
+    this.triggerDotEnvelope(dotKey);
+    
+    // Advance to the next dot
+    this.sequenceIndex = (this.sequenceIndex + 1) % this.orderedDots.length;
+  }
+  
+  /**
+   * Stop sequential playback
+   */
+  private stopSequence(): void {
+    if (this.sequenceTimer !== null) {
+      window.clearInterval(this.sequenceTimer);
+      this.sequenceTimer = null;
+    }
+    
+    this.sequenceIndex = 0;
   }
 
   /**
@@ -502,8 +651,8 @@ class DotGridAudioPlayer {
     const baseQ = centerFreq < 300 ? 0.3 : centerFreq < 1000 ? 0.5 : 0.8;
     // const minQ = baseQ * 3.0;  // Wide bandwidth at extremes
     // const maxQ = (baseQ + 0.7) * 3.0;  // Narrower in the middle, but still reasonably wide
-    const minQ = 5.0;
-    const maxQ = 5.0;
+    const minQ = 1.0;
+    const maxQ = 1.0;
 
     filter.Q.value = maxQ - distFromCenter * (maxQ - minQ);
     
@@ -568,6 +717,7 @@ class DotGridAudioPlayer {
     
     this.setPlaying(false);
     this.stopAllRhythms();
+    this.stopSequence();
     this.stopAllSources();
     
     // Clean up analyzer nodes
