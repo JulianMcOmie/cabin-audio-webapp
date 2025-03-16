@@ -12,8 +12,8 @@ const COLUMNS = 5; // Always 5 panning positions - match the value in dot-grid.t
 // Envelope settings
 const ENVELOPE_MIN_GAIN = 0.0; // Minimum gain during envelope cycle
 const ENVELOPE_MAX_GAIN = 1.0; // Maximum gain during envelope cycle
-const ENVELOPE_ATTACK = 0.002; // Faster attack time in seconds - for very punchy transients
-const ENVELOPE_RELEASE = 0.1; // Shorter release time in seconds
+const ENVELOPE_ATTACK = 0.001; // Faster attack time in seconds - for very punchy transients
+const ENVELOPE_RELEASE = 0.001; // Shorter release time in seconds
 const MASTER_GAIN = 1.0; // Much louder master gain for calibration
 
 // Polyrhythm settings
@@ -655,8 +655,8 @@ class DotGridAudioPlayer {
     const normalizedY = 1 - (y / (this.gridSize - 1)); // Flip so higher y = higher position
     
     // Calculate the frequency for this position
-    const minFreq = 150;
-    const maxFreq = 10000;
+    const minFreq = 60;
+    const maxFreq = 15000;
     const logMinFreq = Math.log2(minFreq);
     const logMaxFreq = Math.log2(maxFreq);
     const logFreqRange = logMaxFreq - logMinFreq;
@@ -701,10 +701,10 @@ class DotGridAudioPlayer {
     const baseQ = centerFreq < 300 ? 0.3 : centerFreq < 1000 ? 0.5 : 0.8;
     // const minQ = baseQ * 3.0;  // Wide bandwidth at extremes
     // const maxQ = (baseQ + 0.7) * 3.0;  // Narrower in the middle, but still reasonably wide
-    const minQ = 1.0;
-    const maxQ = 1.0;
+    const minQ = 0.5;
+    const maxQ = 0.5;
 
-    filter.Q.value = maxQ - distFromCenter * (maxQ - minQ);
+    filter.Q.value = maxQ;// - distFromCenter * (maxQ - minQ);
     
     // Calculate position for sorting
     const position = y * this.columnCount + x;

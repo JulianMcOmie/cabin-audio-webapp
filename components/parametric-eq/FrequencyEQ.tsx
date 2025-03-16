@@ -25,6 +25,9 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [selectedBandId, setSelectedBandId] = useState<string | null>(null)
   
+  // Volume control state
+  const [isDraggingVolume, setIsDraggingVolume] = useState(false)
+  
   // Connect to EQ profile store
   const { 
     getProfileById, 
@@ -142,10 +145,37 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     updateProfile(profile.id, { bands: updatedBands })
   }, [profile, updateProfile])
   
+  // Convert volume in dB to y-coordinate on canvas
+  const volumeToY = useCallback((volume: number, height: number) => {
+    // Map volume from -18dB to +12dB to canvas height (top to bottom)
+    // Center (0dB) is at height * 0.5
+    const maxDb = 12;
+    const minDb = -18;
+    const range = maxDb - minDb;
+    
+    // Invert y-axis because canvas y is top-down
+    return height * (0.5 - (volume / range) * 0.75);
+  }, []);
+  
+  // Convert y-coordinate on canvas to volume in dB
+  const yToVolume = useCallback((y: number, height: number) => {
+    // Map y-coordinate to volume (-18dB to +12dB)
+    const maxDb = 12;
+    const minDb = -18;
+    const range = maxDb - minDb;
+    
+    // Calculate the position relative to the center (0dB)
+    const normalizedY = 0.5 - y / height;
+    const volume = normalizedY * range * (1/0.75);
+    
+    // Clamp to reasonable range and round to 1 decimal place
+    return Math.round(Math.min(maxDb, Math.max(minDb, volume)) * 10) / 10;
+  }, []);
+  
   // Set up EQ interaction
   const { 
-    handleMouseMove, 
-    handleMouseDown, 
+    handleMouseMove: handleBandMouseMove, 
+    handleMouseDown: handleBandMouseDown, 
     isShiftPressed,
     ghostNode,
     draggingBand: draggingBandId,
@@ -160,11 +190,67 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     onBandSelect: setSelectedBandId,
   })
   
+  // Check if a point is inside the volume control dot
+  const isInVolumeDot = useCallback((x: number, y: number, dotX: number, dotY: number) => {
+    const dotRadius = 8; // Slightly larger hit area for better UX
+    return Math.sqrt(Math.pow(x - dotX, 2) + Math.pow(y - dotY, 2)) <= dotRadius;
+  }, []);
+  
+  // Custom mouse handlers to support volume control
+  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (disabled || !profile) {
+      return;
+    }
+    
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Check if we're clicking on the volume dot
+    const volumeDotX = rect.width - 20; // 20px from the right edge
+    const volumeDotY = volumeToY(profile.volume || 0, rect.height);
+    
+    if (isInVolumeDot(x, y, volumeDotX, volumeDotY)) {
+      setIsDraggingVolume(true);
+      
+      // Add event listeners for mouse move and mouse up
+      const handleDocumentMouseMove = (e: MouseEvent) => {
+        if (!canvas || !profile) return;
+        
+        const rect = canvas.getBoundingClientRect();
+        const y = e.clientY - rect.top;
+        const newVolume = yToVolume(y, rect.height);
+        
+        // Update profile volume
+        updateProfile(profile.id, { volume: newVolume });
+      };
+      
+      const handleDocumentMouseUp = () => {
+        setIsDraggingVolume(false);
+        document.removeEventListener('mousemove', handleDocumentMouseMove);
+        document.removeEventListener('mouseup', handleDocumentMouseUp);
+      };
+      
+      document.addEventListener('mousemove', handleDocumentMouseMove);
+      document.addEventListener('mouseup', handleDocumentMouseUp);
+      
+      return;
+    }
+    
+    // If not clicking on volume dot, delegate to the band mouse handler
+    handleBandMouseDown(e);
+  }, [disabled, handleBandMouseDown, isInVolumeDot, profile, updateProfile, volumeToY, yToVolume]);
+  
   // Update instruction text based on interaction state
   useEffect(() => {
     if (!onInstructionChange) return;
     
-    if (draggingBandId) {
+    if (isDraggingVolume) {
+      onInstructionChange("Drag up/down to adjust volume");
+    } else if (draggingBandId) {
       // Always show the shift+drag instruction for better discoverability, 
       // even when not currently pressing shift
       onInstructionChange("Shift + drag to change bandwidth (Q)");
@@ -173,7 +259,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     } else {
       onInstructionChange("Click + drag on the center line to add a band");
     }
-  }, [draggingBandId, hoveredBandId, isShiftPressed, onInstructionChange]);
+  }, [draggingBandId, hoveredBandId, isDraggingVolume, isShiftPressed, onInstructionChange]);
 
   // Set up observer to detect theme changes
   useEffect(() => {
@@ -326,8 +412,66 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
         isEnabled
       )
     }
-
-  }, [renderableBands, frequencyResponse, disabled, isDarkMode, selectedBandId, isShiftPressed, ghostNode, draggingBandId, hoveredBandId])
+    
+    // Draw volume control if we have a profile
+    if (profile) {
+      const volumeDotX = rect.width - 20; // 20px from right edge
+      const centerY = rect.height * 0.5; // Center line y-position (0dB)
+      
+      // Calculate volume dot position
+      const volumeDotY = volumeToY(profile.volume || 0, rect.height);
+      
+      // Draw center line to volume indicator line
+      ctx.beginPath();
+      ctx.strokeStyle = isDarkMode ? "#a1a1aa" : "#64748b";
+      ctx.lineWidth = 1;
+      ctx.moveTo(volumeDotX - 20, centerY);
+      ctx.lineTo(volumeDotX + 20, centerY);
+      ctx.stroke();
+      
+      // Draw filled rectangle between center line and volume line
+      ctx.beginPath();
+      ctx.fillStyle = isDarkMode 
+        ? `rgba(56, 189, 248, ${isEnabled ? 0.2 : 0.1})` // Blue with opacity
+        : `rgba(2, 132, 199, ${isEnabled ? 0.2 : 0.1})`; // Darker blue with opacity
+      
+      ctx.rect(
+        volumeDotX - 10, // 10px to the left of the dot
+        Math.min(centerY, volumeDotY), // Top of rectangle (either center or volume line)
+        20, // Width - 10px on each side
+        Math.abs(centerY - volumeDotY) // Height - absolute difference between center and volume
+      );
+      ctx.fill();
+      
+      // Draw volume indicator line
+      ctx.beginPath();
+      ctx.strokeStyle = isDarkMode 
+        ? (isEnabled ? "#38bdf8" : "#38bdf8aa") // sky-400
+        : (isEnabled ? "#0284c7" : "#0284c7aa"); // sky-600
+      ctx.lineWidth = 2;
+      ctx.moveTo(volumeDotX - 15, volumeDotY);
+      ctx.lineTo(volumeDotX + 15, volumeDotY);
+      ctx.stroke();
+      
+      // Draw volume dot
+      ctx.beginPath();
+      ctx.fillStyle = isDarkMode 
+        ? (isEnabled ? "#38bdf8" : "#38bdf8aa") // sky-400
+        : (isEnabled ? "#0284c7" : "#0284c7aa"); // sky-600
+      ctx.arc(volumeDotX, volumeDotY, 6, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Draw volume value if being dragged
+      if (isDraggingVolume || Math.abs(profile.volume || 0) > 0.1) {
+        ctx.fillStyle = isDarkMode ? "#ffffff" : "#000000";
+        ctx.textAlign = "left";
+        ctx.font = "12px sans-serif";
+        const volumeText = `${(profile.volume || 0).toFixed(1)} dB`;
+        ctx.fillText(volumeText, volumeDotX + 15, volumeDotY + 5);
+      }
+    }
+    
+  }, [renderableBands, frequencyResponse, disabled, isDarkMode, selectedBandId, isShiftPressed, ghostNode, draggingBandId, hoveredBandId, profile, volumeToY, isDraggingVolume])
 
   return (
     <div
@@ -336,7 +480,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       <canvas 
         ref={canvasRef} 
         className="w-full h-full" 
-        onMouseMove={handleMouseMove}
+        onMouseMove={handleBandMouseMove}
         onMouseDown={handleMouseDown}
         onContextMenu={(e) => e.preventDefault()}
       />
