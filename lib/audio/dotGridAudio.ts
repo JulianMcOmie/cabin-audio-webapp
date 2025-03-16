@@ -1,5 +1,6 @@
 import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
+import { getFrequencyResponseSynthesizer } from './frequencyResponseSynthesizer';
 
 type DotPosition = {
   x: number;
@@ -12,9 +13,7 @@ const COLUMNS = 5; // Always 5 panning positions - match the value in dot-grid.t
 // Envelope settings
 const ENVELOPE_MIN_GAIN = 0.0; // Minimum gain during envelope cycle
 const ENVELOPE_MAX_GAIN = 1.0; // Maximum gain during envelope cycle
-const ENVELOPE_ATTACK = 0.001; // Faster attack time in seconds - for very punchy transients
-const ENVELOPE_RELEASE = 0.001; // Shorter release time in seconds
-const MASTER_GAIN = 1.0; // Much louder master gain for calibration
+const MASTER_GAIN = 1.0; // Master gain for calibration
 
 // Polyrhythm settings
 const BASE_CYCLE_TIME = 2.0; // Base cycle time in seconds
@@ -28,6 +27,11 @@ const DOT_TIMING = 0.2; // Time between dots in sequential mode (seconds)
 const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
 const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
 
+// Slope settings for frequency response
+const MIN_SLOPE = -6; // dB/octave for lowest dots (steeper low-frequency emphasis)
+const MID_SLOPE = -3; // dB/octave for middle dots (pink noise)
+const MAX_SLOPE = 0;  // dB/octave for highest dots (white noise)
+
 // Playback mode enum
 export enum PlaybackMode {
   POLYRHYTHM = 'polyrhythm',
@@ -36,12 +40,11 @@ export enum PlaybackMode {
 
 class DotGridAudioPlayer {
   private static instance: DotGridAudioPlayer;
-  private pinkNoiseBuffer: AudioBuffer | null = null;
+  private clickBuffers: Map<number, AudioBuffer> = new Map(); // Cache for click buffers with different slopes
   private isPlaying: boolean = false;
   private audioNodes: Map<string, {
-    source: AudioBufferSourceNode;
+    // No more need for source and envelope since we're only using clicks
     gain: GainNode;
-    envelopeGain: GainNode;
     panner: StereoPannerNode;
     filter: BiquadFilterNode;
     position: number; // Position for sorting
@@ -49,6 +52,7 @@ class DotGridAudioPlayer {
     subdivision: number; // Rhythm subdivision
     nextTriggerTime: number; // Next time to trigger this dot
     offset: number; // Offset within the row's rhythm (0-1)
+    slope: number; // Spectral slope in dB/octave
   }> = new Map();
   private gridSize: number = 3; // Default row count
   private columnCount: number = COLUMNS; // Default column count
@@ -63,16 +67,58 @@ class DotGridAudioPlayer {
   private sequenceIndex: number = 0; // Current index in the sequence
   private orderedDots: string[] = []; // Dots ordered for sequential playback
   
+  // Track initialization status
+  private initializeBuffersPromise: Promise<void> = Promise.resolve();
+
   private constructor() {
-    // Initialize pink noise buffer
-    this.generatePinkNoiseBuffer();
+    // Initialize click buffers
+    this.initializeBuffersPromise = this.initializeBuffers().catch(error => {
+      console.error('Failed to initialize audio buffers:', error);
+    });
   }
 
-  public static getInstance(): DotGridAudioPlayer {
+  public static async getInstance(): Promise<DotGridAudioPlayer> {
     if (!DotGridAudioPlayer.instance) {
       DotGridAudioPlayer.instance = new DotGridAudioPlayer();
+      // Wait for buffers to initialize
+      await DotGridAudioPlayer.instance.initializeBuffersPromise;
     }
     return DotGridAudioPlayer.instance;
+  }
+
+  // For backward compatibility with synchronous code
+  public static getInstanceSync(): DotGridAudioPlayer {
+    if (!DotGridAudioPlayer.instance) {
+      DotGridAudioPlayer.instance = new DotGridAudioPlayer();
+      // Note: Buffers may not be ready yet when using this method
+      console.warn('🔊 Warning: Using synchronous getInstance - audio buffers may not be ready');
+    }
+    return DotGridAudioPlayer.instance;
+  }
+
+  /**
+   * Initialize the click buffers for each spectral slope
+   */
+  private async initializeBuffers(): Promise<void> {
+    const synthesizer = getFrequencyResponseSynthesizer();
+    
+    // Generate a range of slopes from MIN_SLOPE to MAX_SLOPE
+    const slopes = [MIN_SLOPE, -4.5, MID_SLOPE, -1.5, MAX_SLOPE];
+    
+    // Generate click buffers for each slope
+    const clickPromises = slopes.map(async slope => {
+      try {
+        const buffer = await synthesizer.generateClick(slope);
+        this.clickBuffers.set(slope, buffer);
+        console.log(`🔊 Generated click buffer with slope ${slope} dB/octave`);
+      } catch (error) {
+        console.error(`Error generating click buffer with slope ${slope}:`, error);
+      }
+    });
+    
+    // Wait for all buffers to be generated
+    await Promise.all(clickPromises);
+    console.log('🔊 All click buffers generated successfully');
   }
 
   /**
@@ -132,52 +178,46 @@ class DotGridAudioPlayer {
   }
 
   /**
-   * Generate pink noise buffer
+   * Calculate spectral slope based on vertical position
+   * @param normalizedY Normalized Y position (0 = bottom, 1 = top)
+   * @returns Spectral slope in dB/octave
    */
-  private async generatePinkNoiseBuffer(): Promise<void> {
-    const ctx = audioContext.getAudioContext();
-    const bufferSize = ctx.sampleRate * 2; // 2 seconds of noise
-    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
+  private calculateSpectralSlope(normalizedY: number): number {
+    // Linear interpolation between MIN_SLOPE and MAX_SLOPE based on position
+    const slope = MIN_SLOPE + normalizedY * (MAX_SLOPE - MIN_SLOPE);
+    
+    // Round to nearest 0.5 dB/octave for caching purposes
+    return Math.round(slope * 2) / 2;
+    // return 3;
+  }
 
-    // Improved pink noise generation using Paul Kellet's refined method
-    // This produces a true -3dB/octave spectrum characteristic of pink noise
-    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+  /**
+   * Get the closest precomputed slope from the cache
+   * @param targetSlope The desired slope
+   * @returns The closest available slope
+   */
+  private getClosestSlope(targetSlope: number): number {
+    // Get all available slopes
+    const availableSlopes = Array.from(this.clickBuffers.keys());
     
-    for (let i = 0; i < bufferSize; i++) {
-      // Generate white noise sample
-      const white = Math.random() * 2 - 1;
-      
-      // Pink noise filtering - refined coefficients for accurate spectral slope
-      b0 = 0.99886 * b0 + white * 0.0555179;
-      b1 = 0.99332 * b1 + white * 0.0750759;
-      b2 = 0.96900 * b2 + white * 0.1538520;
-      b3 = 0.86650 * b3 + white * 0.3104856;
-      b4 = 0.55000 * b4 + white * 0.5329522;
-      b5 = -0.7616 * b5 - white * 0.0168980;
-      b6 = white * 0.5362;
-      
-      // Combine with proper scaling to maintain pink noise characteristics
-      // The sum is multiplied by 0.11 to normalize the output
-      data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6) * 0.11;
+    if (availableSlopes.length === 0) {
+      // Return pink noise slope if no buffers are available yet
+      return MID_SLOPE;
     }
     
-    // Apply a second-pass normalization to ensure consistent volume
-    // Find the peak amplitude
-    let peak = 0;
-    for (let i = 0; i < bufferSize; i++) {
-      const abs = Math.abs(data[i]);
-      if (abs > peak) peak = abs;
+    // Find the closest slope
+    let closestSlope = availableSlopes[0];
+    let closestDistance = Math.abs(targetSlope - closestSlope);
+    
+    for (let i = 1; i < availableSlopes.length; i++) {
+      const distance = Math.abs(targetSlope - availableSlopes[i]);
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestSlope = availableSlopes[i];
+      }
     }
     
-    // Normalize to avoid clipping but maintain energy
-    const normalizationFactor = peak > 0.8 ? 0.8 / peak : 1.0;
-    for (let i = 0; i < bufferSize; i++) {
-      data[i] *= normalizationFactor;
-    }
-
-    console.log(`🔊 Generated pink noise buffer: ${bufferSize} samples, normalized by ${normalizationFactor.toFixed(4)}`);
-    this.pinkNoiseBuffer = buffer;
+    return closestSlope;
   }
 
   /**
@@ -203,11 +243,6 @@ class DotGridAudioPlayer {
       // Connect to EQ processor
       const eq = eqProcessor.getEQProcessor();
       this.preEQGain.connect(eq.getInputNode());
-      
-      // If already playing, reconnect all sources
-      if (this.isPlaying) {
-        this.reconnectAllSources();
-      }
     }
     
     return this.preEQAnalyser;
@@ -218,27 +253,6 @@ class DotGridAudioPlayer {
    */
   public getPreEQAnalyser(): AnalyserNode | null {
     return this.preEQAnalyser;
-  }
-  
-  /**
-   * Reconnect all sources to include the analyzer in the signal chain
-   */
-  private reconnectAllSources(): void {
-    // Skip if analyzer not created or no gain node
-    if (!this.preEQGain) return;
-    
-    // Reconnect all sources to include analyzer
-    this.audioNodes.forEach((nodes) => {
-      // Disconnect gain from its current destination
-      nodes.gain.disconnect();
-      
-      // Connect to the pre-EQ gain node
-      if (this.preEQGain) {
-        nodes.gain.connect(this.preEQGain);
-      }
-    });
-    
-    console.log('🔊 Reconnected all sources to include analyzer');
   }
 
   /**
@@ -279,13 +293,9 @@ class DotGridAudioPlayer {
     if (this.isPlaying) {
       if (this.playbackMode === PlaybackMode.POLYRHYTHM) {
         this.stopAllRhythms();
-        this.stopAllSources();
-        this.startAllSources();
         this.startAllRhythms();
       } else {
         this.stopSequence();
-        this.stopAllSources();
-        this.startAllSources();
         this.startSequence();
       }
     }
@@ -400,7 +410,6 @@ class DotGridAudioPlayer {
     
     if (playing) {
       this.startTime = Date.now() / 1000; // Start time in seconds
-      this.startAllSources();
       
       // Start the appropriate playback based on mode
       if (this.playbackMode === PlaybackMode.POLYRHYTHM) {
@@ -415,8 +424,6 @@ class DotGridAudioPlayer {
       } else {
         this.stopSequence();
       }
-      
-      this.stopAllSources();
     }
   }
 
@@ -451,8 +458,8 @@ class DotGridAudioPlayer {
     // Get the current dot key
     const dotKey = this.orderedDots[this.sequenceIndex];
     
-    // Trigger the envelope for this dot
-    this.triggerDotEnvelope(dotKey);
+    // Play a click for this dot
+    this.playClickForDot(dotKey);
     
     // Advance to the next dot
     this.sequenceIndex = (this.sequenceIndex + 1) % this.orderedDots.length;
@@ -499,8 +506,8 @@ class DotGridAudioPlayer {
     
     this.audioNodes.forEach((nodes, dotKey) => {
       if (now >= nodes.nextTriggerTime) {
-        // Trigger the dot
-        this.triggerDotEnvelope(dotKey);
+        // Play a click for this dot
+        this.playClickForDot(dotKey);
         
         // Calculate time for next trigger
         const interval = BASE_CYCLE_TIME / nodes.subdivision;
@@ -525,119 +532,63 @@ class DotGridAudioPlayer {
   }
 
   /**
-   * Start all audio sources
+   * Play a click sound with the appropriate spectral slope for a dot
    */
-  private startAllSources(): void {
-    console.log(`🔊 Starting all sources`);
+  private playClickForDot(dotKey: string): void {
+    const nodes = this.audioNodes.get(dotKey);
+    if (!nodes) return;
     
     const ctx = audioContext.getAudioContext();
+    const clickBuffer = this.getClickBufferForSlope(nodes.slope);
     
-    // Make sure we have pink noise buffer
-    if (!this.pinkNoiseBuffer) {
-      console.warn('Pink noise buffer not ready');
-      this.generatePinkNoiseBuffer();
+    if (!clickBuffer) {
+      console.warn(`No click buffer available for slope ${nodes.slope}`);
       return;
     }
     
-    // Create pre-EQ gain node if needed for analyzer
-    if (this.preEQAnalyser && !this.preEQGain) {
-      this.preEQGain = ctx.createGain();
-      this.preEQGain.gain.value = 1.0;
-      this.preEQGain.connect(this.preEQAnalyser);
-      
-      // Connect to EQ processor
-      const eq = eqProcessor.getEQProcessor();
-      this.preEQGain.connect(eq.getInputNode());
-    }
+    // Create a source for the click
+    const clickSource = ctx.createBufferSource();
+    clickSource.buffer = clickBuffer;
+    
+    // Create a gain node for the click
+    const clickGain = ctx.createGain();
+    clickGain.gain.value = MASTER_GAIN; // Full volume for the click
     
     // Get the destination node (either preEQGain or directly to EQ processor)
     const destinationNode = this.preEQGain ? 
       this.preEQGain as AudioNode : 
       eqProcessor.getEQProcessor().getInputNode();
     
-    // Start each source
-    this.audioNodes.forEach((nodes, dotKey) => {
-      try {
-        // Create a new source
-        const source = ctx.createBufferSource();
-        source.buffer = this.pinkNoiseBuffer;
-        source.loop = true;
-        
-        // Connect the audio chain
-        // source -> filter -> panner -> envelopeGain -> gain -> (preEQGain or EQ) -> destination
-        source.connect(nodes.filter);
-        nodes.filter.connect(nodes.panner);
-        nodes.panner.connect(nodes.envelopeGain);
-        nodes.envelopeGain.connect(nodes.gain);
-        
-        // Connect to destination (preEQGain or directly to EQ)
-        if (destinationNode) {
-          nodes.gain.connect(destinationNode);
-        }
-        
-        // Start with gain at minimum (silent)
-        nodes.envelopeGain.gain.value = ENVELOPE_MIN_GAIN;
-        
-        // Start playback
-        source.start();
-        
-        // Store the new source
-        nodes.source = source;
-      } catch (e) {
-        console.error(`Error starting source for dot ${dotKey}:`, e);
-      }
-    });
-  }
-
-  /**
-   * Stop all audio sources
-   */
-  private stopAllSources(): void {
-    console.log(`🔊 Stopping all sources`);
+    // Connect through the audio path without applying the IIR filter
+    // Skip the filter since the frequency response is already in the synthesized click
+    clickSource.connect(nodes.panner);
+    nodes.panner.connect(clickGain);
+    clickGain.connect(nodes.gain);
     
-    this.audioNodes.forEach((nodes, dotKey) => {
-      try {
-        if (nodes.source) {
-          nodes.source.stop();
-          nodes.source.disconnect();
-        }
-      } catch (e) {
-        console.error(`Error stopping source for dot ${dotKey}:`, e);
-      }
-    });
-  }
-
-  /**
-   * Trigger the envelope for a specific dot
-   */
-  private triggerDotEnvelope(dotKey: string): void {
-    const nodes = this.audioNodes.get(dotKey);
-    if (!nodes) return;
+    // Connect to destination
+    nodes.gain.connect(destinationNode);
     
-    const ctx = audioContext.getAudioContext();
-    const now = ctx.currentTime;
+    // Start the click (one-shot playback)
+    clickSource.start();
     
-    // Reset to minimum gain
-    nodes.envelopeGain.gain.cancelScheduledValues(now);
-    nodes.envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, now);
-    
-    // Attack - extremely fast rise for punchy sound
-    nodes.envelopeGain.gain.linearRampToValueAtTime(
-      ENVELOPE_MAX_GAIN, 
-      now + ENVELOPE_ATTACK
-    );
-    
-    // Release - short tail
-    nodes.envelopeGain.gain.exponentialRampToValueAtTime(
-      0.001, // Can't go to zero with exponentialRamp, use very small value
-      now + ENVELOPE_ATTACK + ENVELOPE_RELEASE
-    );
-    
-    // Finally set to zero after the exponential ramp
-    nodes.envelopeGain.gain.setValueAtTime(0, now + ENVELOPE_ATTACK + ENVELOPE_RELEASE + 0.001);
+    // Clean up when done
+    clickSource.onended = () => {
+      clickSource.disconnect();
+      clickGain.disconnect();
+      nodes.gain.disconnect();
+    };
     
     // Visual feedback via console
-    console.log(`🔊 Triggered dot ${dotKey} with subdivision ${nodes.subdivision}`);
+    console.log(`🔊 Played click for dot ${dotKey} with subdivision ${nodes.subdivision} and slope ${nodes.slope}`);
+  }
+  
+  /**
+   * Get the appropriate click buffer for a given spectral slope
+   */
+  private getClickBufferForSlope(slope: number): AudioBuffer | undefined {
+    // Find the closest precomputed slope
+    const closestSlope = this.getClosestSlope(slope);
+    return this.clickBuffers.get(closestSlope);
   }
 
   /**
@@ -662,26 +613,12 @@ class DotGridAudioPlayer {
     const logFreqRange = logMaxFreq - logMinFreq;
     const centerFreq = Math.pow(2, logMinFreq + normalizedY * logFreqRange);
     
-    // Create a gain node for volume with -3dB/octave slope compensation
+    // Calculate spectral slope based on vertical position
+    const spectralSlope = this.calculateSpectralSlope(normalizedY);
+    
+    // Create a gain node for volume
     const gain = ctx.createGain();
-    
-    // Simple -3dB/octave slope compensation
-    // Calculate how many octaves we are above minFreq
-    const octavesAboveMin = Math.log2(centerFreq / minFreq);
-    
-    // Each octave lower needs compensation based on our slope setting in dB/octave
-    // For example: -3dB/octave = 0.5, -6dB/octave = 1.0, -1.5dB/octave = 0.25
-    // The formula is: slopeFactor = |dBPerOctave| / 6
-    const DB_PER_OCTAVE = -1.5; // Can be adjusted to control the slope
-    const slopeFactor = Math.abs(DB_PER_OCTAVE) / 6;
-    const frequencyGainFactor = Math.pow(2, -octavesAboveMin * slopeFactor);
-    
-    // Apply gain with frequency compensation
-    gain.gain.value = MASTER_GAIN * frequencyGainFactor;
-    
-    // Create an envelope gain node for modulation
-    const envelopeGain = ctx.createGain();
-    envelopeGain.gain.value = ENVELOPE_MIN_GAIN;
+    gain.gain.value = MASTER_GAIN;
     
     // Create a panner node for stereo positioning
     const panner = ctx.createStereoPanner();
@@ -697,14 +634,10 @@ class DotGridAudioPlayer {
     // Calculate Q (bandwidth)
     const distFromCenter = Math.abs(normalizedY - 0.5) * 2;
     
-    // Frequency-dependent Q adjustment - lower Q (wider bandwidth) for low frequencies
-    const baseQ = centerFreq < 300 ? 0.3 : centerFreq < 1000 ? 0.5 : 0.8;
-    // const minQ = baseQ * 3.0;  // Wide bandwidth at extremes
-    // const maxQ = (baseQ + 0.7) * 3.0;  // Narrower in the middle, but still reasonably wide
+    // Frequency-dependent Q adjustment - wider bandwidth for extremes
     const minQ = 0.5;
     const maxQ = 0.5;
-
-    filter.Q.value = maxQ;// - distFromCenter * (maxQ - minQ);
+    filter.Q.value = maxQ;
     
     // Calculate position for sorting
     const position = y * this.columnCount + x;
@@ -714,16 +647,15 @@ class DotGridAudioPlayer {
     
     // Store the nodes
     this.audioNodes.set(dotKey, {
-      source: ctx.createBufferSource(), // Dummy source (will be replaced when playing)
       gain,
-      envelopeGain,
       panner,
       filter,
       position, // Store position for sorting
       rhythmInterval: null, // Rhythm interval ID
       subdivision, // Subdivision for this dot
       nextTriggerTime: 0, // Will be set when playback starts
-      offset: 0 // Default offset, will be updated by calculateRowOffsets
+      offset: 0, // Default offset, will be updated by calculateRowOffsets
+      slope: spectralSlope // Spectral slope for this dot
     });
     
     console.log(`🔊 Added dot ${dotKey} at position (${x},${y})`);
@@ -732,6 +664,7 @@ class DotGridAudioPlayer {
     console.log(`   Center frequency: ${centerFreq.toFixed(0)}Hz`);
     console.log(`   Bandwidth (Q): ${filter.Q.value.toFixed(2)}`);
     console.log(`   Subdivision: ${subdivision}`);
+    console.log(`   Spectral slope: ${spectralSlope.toFixed(1)} dB/octave`);
     console.log(`   Rhythm: ${(BASE_CYCLE_TIME / subdivision).toFixed(3)}s intervals`);
   }
   
@@ -740,19 +673,6 @@ class DotGridAudioPlayer {
    */
   private removeDot(dotKey: string): void {
     console.log(`🔊 Removing dot: ${dotKey}`);
-    
-    const nodes = this.audioNodes.get(dotKey);
-    if (!nodes) return;
-    
-    // Stop and disconnect the source if it's playing
-    if (this.isPlaying && nodes.source) {
-      try {
-        nodes.source.stop();
-        nodes.source.disconnect();
-      } catch (e) {
-        // Ignore errors when stopping
-      }
-    }
     
     // Remove from the map
     this.audioNodes.delete(dotKey);
@@ -769,7 +689,6 @@ class DotGridAudioPlayer {
     this.setPlaying(false);
     this.stopAllRhythms();
     this.stopSequence();
-    this.stopAllSources();
     
     // Clean up analyzer nodes
     if (this.preEQGain) {
@@ -783,14 +702,23 @@ class DotGridAudioPlayer {
     }
     
     this.audioNodes.clear();
-    this.pinkNoiseBuffer = null;
+    this.clickBuffers.clear();
   }
 }
 
 /**
  * Get the singleton instance of the DotGridAudioPlayer
+ * @deprecated Use getDotGridAudioPlayerAsync instead for safer initialization
  */
 export function getDotGridAudioPlayer(): DotGridAudioPlayer {
+  return DotGridAudioPlayer.getInstanceSync();
+}
+
+/**
+ * Get the singleton instance of the DotGridAudioPlayer asynchronously
+ * This ensures audio buffers are properly initialized before use
+ */
+export async function getDotGridAudioPlayerAsync(): Promise<DotGridAudioPlayer> {
   return DotGridAudioPlayer.getInstance();
 }
 
@@ -798,6 +726,7 @@ export function getDotGridAudioPlayer(): DotGridAudioPlayer {
  * Clean up the dot grid audio player
  */
 export function cleanupDotGridAudioPlayer(): void {
-  const player = DotGridAudioPlayer.getInstance();
+  // Use the sync version since we're just cleaning up
+  const player = DotGridAudioPlayer.getInstanceSync();
   player.dispose();
 } 
