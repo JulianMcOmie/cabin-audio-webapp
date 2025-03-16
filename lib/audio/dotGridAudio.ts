@@ -48,6 +48,7 @@ class DotGridAudioPlayer {
     rhythmInterval: number | null; // Rhythm interval ID
     subdivision: number; // Rhythm subdivision
     nextTriggerTime: number; // Next time to trigger this dot
+    offset: number; // Offset within the row's rhythm (0-1)
   }> = new Map();
   private gridSize: number = 3; // Default row count
   private columnCount: number = COLUMNS; // Default column count
@@ -268,6 +269,9 @@ class DotGridAudioPlayer {
       }
     });
     
+    // Calculate offsets for dots in the same row
+    this.calculateRowOffsets();
+    
     // Update ordered dots for sequential playback
     this.updateOrderedDots();
     
@@ -287,6 +291,49 @@ class DotGridAudioPlayer {
     }
   }
   
+  /**
+   * Calculate timing offsets for dots in the same row
+   */
+  private calculateRowOffsets(): void {
+    // Group dots by row
+    const dotsByRow = new Map<number, string[]>();
+    
+    // Collect all dots by row
+    this.audioNodes.forEach((_, dotKey) => {
+      const [x, y] = dotKey.split(',').map(Number);
+      if (!dotsByRow.has(y)) {
+        dotsByRow.set(y, []);
+      }
+      dotsByRow.get(y)?.push(dotKey);
+    });
+    
+    // For each row, assign evenly distributed offsets
+    dotsByRow.forEach((dotsInRow, rowIndex) => {
+      // Sort dots by x-coordinate for consistent assignment
+      dotsInRow.sort((a, b) => {
+        const xA = parseInt(a.split(',')[0]);
+        const xB = parseInt(b.split(',')[0]);
+        return xA - xB;
+      });
+      
+      // Assign evenly distributed offsets (0 to just under 1)
+      dotsInRow.forEach((dotKey, index) => {
+        const nodes = this.audioNodes.get(dotKey);
+        if (nodes) {
+          // If only one dot, no offset needed
+          if (dotsInRow.length === 1) {
+            nodes.offset = 0;
+          } else {
+            // Distribute offsets evenly from 0 to 0.999...
+            nodes.offset = index / dotsInRow.length;
+          }
+        }
+      });
+      
+      console.log(`🔊 Row ${rowIndex}: assigned offsets to ${dotsInRow.length} dots`);
+    });
+  }
+
   /**
    * Update the ordered dots for sequential playback
    */
@@ -432,10 +479,13 @@ class DotGridAudioPlayer {
       this.checkAndTriggerDots();
     }, 10); // Check every 10ms for precision
     
-    // Initialize next trigger times
+    // Initialize next trigger times with proper offsets
     const now = Date.now() / 1000; // Current time in seconds
     this.audioNodes.forEach((nodes, dotKey) => {
-      nodes.nextTriggerTime = now;
+      const baseInterval = BASE_CYCLE_TIME / nodes.subdivision;
+      // Apply the offset to stagger dots in the same row
+      const offsetTime = baseInterval * nodes.offset;
+      nodes.nextTriggerTime = now + offsetTime;
     });
     
     console.log(`🔊 Started polyrhythm system with cycle time: ${BASE_CYCLE_TIME}s`);
@@ -672,7 +722,8 @@ class DotGridAudioPlayer {
       position, // Store position for sorting
       rhythmInterval: null, // Rhythm interval ID
       subdivision, // Subdivision for this dot
-      nextTriggerTime: 0 // Will be set when playback starts
+      nextTriggerTime: 0, // Will be set when playback starts
+      offset: 0 // Default offset, will be updated by calculateRowOffsets
     });
     
     console.log(`🔊 Added dot ${dotKey} at position (${x},${y})`);
