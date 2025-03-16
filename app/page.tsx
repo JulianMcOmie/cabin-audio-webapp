@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { TopBar } from "@/components/top-bar"
+// import { TopBar } from "@/components/top-bar"
 import { EQView } from "@/components/eq-view"
 import { MusicLibrary } from "@/components/music-library/MusicLibrary"
 import { PlayerBar } from "@/components/player-bar"
@@ -38,7 +38,7 @@ export default function Home() {
     <div className="flex flex-col h-screen bg-background">
       <div className="flex flex-1 overflow-hidden">
         <Sidebar 
-          activeTab={activeTab as any} // Use type assertion to fix the type issue
+          activeTab={activeTab} // Use type assertion to fix the type issue
           setActiveTab={setActiveTab}
           onUpgradeClick={handleShowUpgrade} 
         />

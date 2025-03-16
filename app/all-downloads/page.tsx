@@ -11,8 +11,8 @@ import { useState } from "react"
 export default function AllDownloadsPage() {
   const [activeTab, setActiveTab] = useState<"eq" | "library" | "install" | "export">("install")
   const [isPlaying, setIsPlaying] = useState(false)
-  const [showPricingModal, setShowPricingModal] = useState(false)
-  const [currentTrack, setCurrentTrack] = useState({
+  const [setShowPricingModal] = useState(false)
+  const [currentTrack] = useState({
     title: "Ambient Forest",
     artist: "Nature Sounds",
     album: "Relaxation Series",
