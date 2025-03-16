@@ -68,12 +68,10 @@ class FrequencyResponseSynthesizer {
       // Convert from dB to linear magnitude
       const magnitude = Math.pow(10, dbGain / 20.0);
       
-      // For a compact, centered click, use a random phase
-      const phase = Math.random() * 2 * Math.PI;
-      
-      // Convert to real and imaginary components
-      realFFT[i] = magnitude * Math.cos(phase);
-      imagFFT[i] = magnitude * Math.sin(phase);
+      // Use zero phase for all components to align them at t=0
+      // This creates a concentrated click instead of noise
+      realFFT[i] = magnitude;
+      imagFFT[i] = 0;
       
       // Mirror for the negative frequencies (conjugate symmetry)
       if (i > 0 && i < length/2) {
@@ -91,9 +89,9 @@ class FrequencyResponseSynthesizer {
     
     // Step 3: Apply a tapering window
     // Only apply it to the latter portion to preserve the initial impact
-    const fadeStart = Math.floor(length * 0.1); // Start fade at 10% in
+    const fadeStart = Math.floor(length * 0.01); // Start fade very early
     for (let i = fadeStart; i < length; i++) {
-      const fadeAmount = 1.0 - ((i - fadeStart) / (length - fadeStart));
+      const fadeAmount = Math.exp(-5 * (i - fadeStart) / (length - fadeStart));
       outputChannel[i] *= fadeAmount;
     }
     
