@@ -21,100 +21,105 @@ class FrequencyResponseSynthesizer {
   /**
    * Generates a click with the specified spectral slope using direct IFFT.
    * @param slopeDb The spectral slope in dB/octave (e.g., -3 for pink noise, -6 for brown noise)
-   * @returns An AudioBuffer containing the click sound
+   * @returns An AudioBuffer containing the impulse response
    */
   public async generateClick(slopeDb: number): Promise<AudioBuffer> {
     const ctx = audioContext.getAudioContext();
-    const bufferSize = 4096; // Power of 2 for FFT
+    const length = 4096; // Power of 2 for FFT
     const sampleRate = ctx.sampleRate;
     
-    console.log(`🔊 Generating click with ${slopeDb} dB/octave slope`);
+    console.log(`🔊 Generating impulse with ${slopeDb} dB/octave slope`);
     
     // Create our output buffer
-    const buffer = ctx.createBuffer(1, bufferSize, sampleRate);
+    const buffer = ctx.createBuffer(1, length, sampleRate);
     const outputChannel = buffer.getChannelData(0);
     
-    // Step 1: Create frequency-domain representation with desired spectral slope
+    // Step 1: Create the frequency domain representation
     
-    // Arrays for frequency-domain representation (real and imaginary parts)
-    const realFreq = new Float32Array(bufferSize);
-    const imagFreq = new Float32Array(bufferSize);
+    // Create arrays for frequency domain representation
+    const realFFT = new Float32Array(length);
+    const imagFFT = new Float32Array(length);
     
-    // Frequency resolution (Hz per bin)
-    const freqResolution = sampleRate / bufferSize;
+    // Calculate frequency resolution
+    const freqResolution = sampleRate / length;
     
-    // Reference frequency (1kHz is standard for audio)
-    const refFreq = 1000;
+    // Reference frequency (20Hz is standard for audio slope calculations)
+    const refFreq = 20;
     
-    // Flatten the response below 20Hz
-    const flattenFreqHz = 20;
-    const flattenBin = Math.max(1, Math.round(flattenFreqHz / freqResolution));
-    
-    // Calculate the magnitude at 20Hz for flattening
-    const flattenFreqOctaves = Math.log2(flattenFreqHz / refFreq);
-    const flattenMagnitude = Math.pow(10, slopeDb * flattenFreqOctaves / 20);
-    
-    // DC component (0 Hz)
-    realFreq[0] = 0;
-    imagFreq[0] = 0;
-    
-    // Calculate magnitudes for positive frequencies (up to Nyquist)
-    for (let i = 1; i < bufferSize / 2; i++) {
-      const freqHz = i * freqResolution;
+    // Calculate magnitude for each frequency bin
+    for (let i = 0; i < length/2; i++) {
+      // Calculate the frequency at this bin
+      const freq = i * freqResolution;
       
-      // Calculate magnitude based on spectral slope
-      let magnitude;
-      
-      if (i <= flattenBin) {
-        // Below 20Hz, use the flattened magnitude
-        magnitude = flattenMagnitude;
-      } else {
-        // Above 20Hz, apply the spectral slope in dB/octave
-        const octavesFromRef = Math.log2(freqHz / refFreq);
-        const dbAttenuation = slopeDb * octavesFromRef;
-        magnitude = Math.pow(10, dbAttenuation / 20);
+      // Skip DC
+      if (i === 0) {
+        realFFT[i] = 0;
+        imagFFT[i] = 0;
+        continue;
       }
       
-      // Random phase for natural sound (0 to 2π)
+      // Calculate octaves from reference
+      // Reference is 20Hz, so log2(freq/20) gives octaves above 20Hz
+      const octaves = Math.log2(Math.max(freq, refFreq) / refFreq);
+      
+      // Apply the dB/octave slope
+      const dbGain = slopeDb * octaves;
+      
+      // Convert from dB to linear magnitude
+      const magnitude = Math.pow(10, dbGain / 20.0);
+      
+      // For a compact, centered click, use a random phase
       const phase = Math.random() * 2 * Math.PI;
       
-      // Convert magnitude and phase to real and imaginary components
-      realFreq[i] = magnitude * Math.cos(phase);
-      imagFreq[i] = magnitude * Math.sin(phase);
-    }
-    
-    // Nyquist frequency bin (real-only for real-valued output)
-    realFreq[bufferSize / 2] = 0;
-    imagFreq[bufferSize / 2] = 0;
-    
-    // Ensure conjugate symmetry for negative frequencies (for real-valued output)
-    for (let i = 1; i < bufferSize / 2; i++) {
-      realFreq[bufferSize - i] = realFreq[i];
-      imagFreq[bufferSize - i] = -imagFreq[i]; // Note the negative sign
-    }
-    
-    // Step 2: Perform the IFFT directly
-    // For a proper impulse response, we need to directly compute the IFFT
-    
-    // The IFFT formula: x[n] = (1/N) * sum(X[k] * e^(j*2π*k*n/N))
-    for (let n = 0; n < bufferSize; n++) {
-      let real = 0;
-      let imag = 0;
+      // Convert to real and imaginary components
+      realFFT[i] = magnitude * Math.cos(phase);
+      imagFFT[i] = magnitude * Math.sin(phase);
       
-      for (let k = 0; k < bufferSize; k++) {
-        const phase = 2 * Math.PI * k * n / bufferSize;
-        real += realFreq[k] * Math.cos(phase) - imagFreq[k] * Math.sin(phase);
-        imag += realFreq[k] * Math.sin(phase) + imagFreq[k] * Math.cos(phase);
+      // Mirror for the negative frequencies (conjugate symmetry)
+      if (i > 0 && i < length/2) {
+        realFFT[length - i] = realFFT[i];
+        imagFFT[length - i] = -imagFFT[i]; // Note the minus sign for conjugate
       }
-      
-      // Scale by 1/N
-      outputChannel[n] = real / bufferSize;
     }
     
-    // Normalize the output
+    // Set Nyquist bin (real-only for real output signal)
+    realFFT[length/2] = 0;
+    imagFFT[length/2] = 0;
+    
+    // Step 2: Perform IFFT
+    this.performIFFT(realFFT, imagFFT, outputChannel);
+    
+    // Step 3: Apply a tapering window
+    // Only apply it to the latter portion to preserve the initial impact
+    const fadeStart = Math.floor(length * 0.1); // Start fade at 10% in
+    for (let i = fadeStart; i < length; i++) {
+      const fadeAmount = 1.0 - ((i - fadeStart) / (length - fadeStart));
+      outputChannel[i] *= fadeAmount;
+    }
+    
+    // Step 4: Normalize the buffer
     this.normalizeBuffer(outputChannel);
     
     return buffer;
+  }
+  
+  /**
+   * Performs inverse FFT (time domain from frequency domain)
+   */
+  private performIFFT(realFreq: Float32Array, imagFreq: Float32Array, outputSignal: Float32Array): void {
+    const N = realFreq.length;
+    
+    // Simple direct implementation of IFFT
+    for (let n = 0; n < N; n++) {
+      let real = 0;
+      
+      for (let k = 0; k < N; k++) {
+        const phase = 2 * Math.PI * k * n / N;
+        real += realFreq[k] * Math.cos(phase) - imagFreq[k] * Math.sin(phase);
+      }
+      
+      outputSignal[n] = real / N;
+    }
   }
   
   /**

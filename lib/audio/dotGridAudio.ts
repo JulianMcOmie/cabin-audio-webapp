@@ -28,9 +28,9 @@ const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
 const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
 
 // Slope settings for frequency response
-const MIN_SLOPE = -6; // dB/octave for lowest dots (steeper low-frequency emphasis)
+const MIN_SLOPE = -9; // dB/octave for lowest dots (steeper low-frequency emphasis)
 const MID_SLOPE = -3; // dB/octave for middle dots (pink noise)
-const MAX_SLOPE = 0;  // dB/octave for highest dots (white noise)
+const MAX_SLOPE = 3;  // dB/octave for highest dots (high-frequency emphasis)
 
 // Playback mode enum
 export enum PlaybackMode {
@@ -103,7 +103,7 @@ class DotGridAudioPlayer {
     const synthesizer = getFrequencyResponseSynthesizer();
     
     // Generate a range of slopes from MIN_SLOPE to MAX_SLOPE
-    const slopes = [MIN_SLOPE, -4.5, MID_SLOPE, -1.5, MAX_SLOPE];
+    const slopes = [MIN_SLOPE, -7.5, -6, -4.5, MID_SLOPE, -1.5, 0, 1.5, MAX_SLOPE];
     
     // Generate click buffers for each slope
     const clickPromises = slopes.map(async slope => {
@@ -188,7 +188,6 @@ class DotGridAudioPlayer {
     
     // Round to nearest 0.5 dB/octave for caching purposes
     return Math.round(slope * 2) / 2;
-    // return 3;
   }
 
   /**
@@ -664,7 +663,7 @@ class DotGridAudioPlayer {
     console.log(`   Center frequency: ${centerFreq.toFixed(0)}Hz`);
     console.log(`   Bandwidth (Q): ${filter.Q.value.toFixed(2)}`);
     console.log(`   Subdivision: ${subdivision}`);
-    console.log(`   Spectral slope: ${spectralSlope.toFixed(1)} dB/octave`);
+    console.log(`   Spectral slope: ${spectralSlope.toFixed(1)} dB/octave (negative = low freq boost, positive = high freq boost)`);
     console.log(`   Rhythm: ${(BASE_CYCLE_TIME / subdivision).toFixed(3)}s intervals`);
   }
   
