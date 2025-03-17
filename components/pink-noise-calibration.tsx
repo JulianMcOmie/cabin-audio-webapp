@@ -4,6 +4,7 @@ import { useRef, useEffect, useState } from "react"
 import { Play, Plus, Minus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
+import { Slider } from "@/components/ui/slider"
 import * as pinkNoiseCalibration from '@/lib/audio/pinkNoiseCalibration'
 
 interface PinkNoiseCalibrationProps {
@@ -16,6 +17,7 @@ export function PinkNoiseCalibration({ isPlaying, setIsPlaying, disabled = false
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [rowCount, setRowCount] = useState(3) // Default to 3 rows
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set())
+  const [panValue, setPanValue] = useState(0) // Default to center (0)
   const [isDarkMode, setIsDarkMode] = useState(false)
   
   // Constants
@@ -57,6 +59,12 @@ export function PinkNoiseCalibration({ isPlaying, setIsPlaying, disabled = false
       }
     }
   }, [selectedRows, rowCount]);
+
+  // Update when pan value changes
+  useEffect(() => {
+    const calibrator = pinkNoiseCalibration.getPinkNoiseCalibrator();
+    calibrator.setPan(panValue);
+  }, [panValue]);
 
   // Set up observer to detect theme changes
   useEffect(() => {
@@ -243,6 +251,10 @@ export function PinkNoiseCalibration({ isPlaying, setIsPlaying, disabled = false
   const clearSelection = () => {
     setSelectedRows(new Set());
   };
+
+  const handlePanChange = (value: number[]) => {
+    setPanValue(value[0]);
+  };
   
   return (
     <div className="space-y-4">
@@ -266,6 +278,33 @@ export function PinkNoiseCalibration({ isPlaying, setIsPlaying, disabled = false
           <p className="mt-1">
             Select rows to hear specific frequency bands, or leave all unselected to hear full spectrum.
           </p>
+        </div>
+        
+        {/* Pan slider control */}
+        <div className="flex flex-col space-y-1 mt-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">Pan Position:</span>
+            <div className="text-xs text-muted-foreground">
+              {panValue === 0 
+                ? "Center" 
+                : panValue < 0 
+                  ? `${Math.abs(Math.round(panValue * 100))}% Left` 
+                  : `${Math.round(panValue * 100)}% Right`}
+            </div>
+          </div>
+          <div className="flex items-center space-x-2">
+            <span className="text-xs text-muted-foreground">L</span>
+            <Slider
+              disabled={disabled}
+              min={-1}
+              max={1}
+              step={0.01}
+              value={[panValue]}
+              onValueChange={handlePanChange}
+              className={disabled ? "opacity-70" : ""}
+            />
+            <span className="text-xs text-muted-foreground">R</span>
+          </div>
         </div>
         
         {/* Row count controls */}

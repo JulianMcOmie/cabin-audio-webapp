@@ -5,8 +5,8 @@ import * as eqProcessor from './eqProcessor';
 const DEFAULT_ROWS = 3; // Default number of frequency bands
 const MIN_ROWS = 1; // Minimum number of rows
 const MAX_ROWS = 7; // Maximum number of rows
-const PAN_DURATION = 3.0; // Duration for a full pan cycle (left to right and back) in seconds
 const MASTER_GAIN = 0.5; // Default gain level
+const DEFAULT_PAN = 0; // Default pan position (center)
 
 // Frequency ranges for different numbers of rows
 // These define the cutoff frequencies for each band based on the number of rows
@@ -27,6 +27,7 @@ class PinkNoiseCalibrator {
   private pinkNoiseBuffer: AudioBuffer | null = null;
   private rowCount: number = DEFAULT_ROWS;
   private selectedRows: Set<number> = new Set(); // Set of selected row indices (0-based)
+  private panValue: number = DEFAULT_PAN; // Current pan value (-1 to 1)
   private audioNodes: Map<number, {
     source: AudioBufferSourceNode;
     lowpassFilter: BiquadFilterNode;
@@ -34,7 +35,6 @@ class PinkNoiseCalibrator {
     panner: StereoPannerNode;
     gain: GainNode;
   }> = new Map();
-  private panLFO: OscillatorNode | null = null;
   private preEQGain: GainNode | null = null;
   private preEQAnalyser: AnalyserNode | null = null;
 
@@ -187,6 +187,72 @@ class PinkNoiseCalibrator {
   }
 
   /**
+   * Set the pan position for all active audio nodes
+   * @param value Pan position from -1 (full left) to 1 (full right)
+   */
+  public setPan(value: number): void {
+    // Ensure value is within the valid range
+    value = Math.max(-1, Math.min(1, value));
+    
+    if (value === this.panValue) return;
+    
+    console.log(`🔊 Setting pink noise calibration pan: ${value}`);
+    
+    this.panValue = value;
+    
+    // Update all active panners
+    if (this.isPlaying) {
+      this.audioNodes.forEach((nodes) => {
+        nodes.panner.pan.setTargetAtTime(
+          this.panValue,
+          audioContext.getAudioContext().currentTime,
+          0.05 // Time constant
+        );
+        
+        // Apply gain compensation for constant power panning
+        const compensatedGain = this.calculatePanCompensation(this.panValue);
+        if (nodes.gain.gain.value > 0) { // Only adjust gain for active rows
+          nodes.gain.gain.setTargetAtTime(
+            MASTER_GAIN * compensatedGain,
+            audioContext.getAudioContext().currentTime,
+            0.05
+          );
+        }
+      });
+    }
+  }
+
+  /**
+   * Get the current pan value
+   */
+  public getPan(): number {
+    return this.panValue;
+  }
+
+  /**
+   * Calculate gain compensation to maintain constant power during panning
+   * @param panValue The current pan value (-1 to 1)
+   * @returns The compensation factor to maintain constant power
+   */
+  private calculatePanCompensation(panValue: number): number {
+    // Convert to absolute value since compensation is symmetric
+    const absPan = Math.abs(panValue);
+    
+    // Apply equal power panning compensation
+    let compensation = 1;
+    
+    if (absPan > 0) {
+      // This compensates for the perceived volume loss at pan positions away from center
+      compensation = 1 / Math.cos(absPan * Math.PI / 4);
+      
+      // Limit maximum compensation to avoid over-amplification at extreme pan positions
+      compensation = Math.min(compensation, 1.25);
+    }
+    
+    return compensation;
+  }
+
+  /**
    * Update which rows are playing based on selection
    */
   private updatePlayingRows(): void {
@@ -199,9 +265,12 @@ class PinkNoiseCalibrator {
     allRows.forEach(rowIndex => {
       const nodes = this.audioNodes.get(rowIndex);
       if (nodes) {
+        // Calculate gain compensation for constant power panning
+        const compensatedGain = this.calculatePanCompensation(this.panValue);
+        
         // Set gain based on whether this row should play
         nodes.gain.gain.setTargetAtTime(
-          rowsToPlay.includes(rowIndex) ? MASTER_GAIN : 0,
+          rowsToPlay.includes(rowIndex) ? MASTER_GAIN * compensatedGain : 0,
           audioContext.getAudioContext().currentTime,
           0.05 // Time constant
         );
@@ -252,6 +321,8 @@ class PinkNoiseCalibrator {
       
       // Create panner and gain nodes
       const panner = ctx.createStereoPanner();
+      panner.pan.value = this.panValue; // Set initial pan position
+      
       const gain = ctx.createGain();
       
       // Connect the chain
@@ -276,29 +347,8 @@ class PinkNoiseCalibrator {
         gain
       });
       
-      console.log(`🔊 Created pink noise source for row ${i} with range ${lowFreq}Hz - ${highFreq}Hz`);
+      console.log(`🔊 Created pink noise source for row ${i} with range ${lowFreq}Hz - ${highFreq}Hz, pan=${this.panValue}`);
     }
-    
-    // Create LFO for panning
-    this.panLFO = ctx.createOscillator();
-    this.panLFO.type = 'sine';
-    this.panLFO.frequency.value = 1 / PAN_DURATION; // Cycle duration in Hz
-    
-    // Connect the LFO to all panners with a gain node to control depth
-    const lfoGain = ctx.createGain();
-    lfoGain.gain.value = 1.0; // Full panning range
-    this.panLFO.connect(lfoGain);
-    
-    // Connect LFO to all panners
-    for (let i = 0; i < this.rowCount; i++) {
-      const nodes = this.audioNodes.get(i);
-      if (nodes) {
-        lfoGain.connect(nodes.panner.pan);
-      }
-    }
-    
-    // Start the LFO
-    this.panLFO.start();
     
     // Update which rows should be playing
     this.updatePlayingRows();
@@ -308,13 +358,6 @@ class PinkNoiseCalibrator {
    * Stop playback of pink noise
    */
   private stopPlayback(): void {
-    // Stop the LFO
-    if (this.panLFO) {
-      this.panLFO.stop();
-      this.panLFO.disconnect();
-      this.panLFO = null;
-    }
-    
     // Stop and disconnect all audio nodes
     this.audioNodes.forEach((nodes, rowIndex) => {
       try {
