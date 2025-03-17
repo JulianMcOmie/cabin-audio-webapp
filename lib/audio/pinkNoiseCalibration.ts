@@ -2,39 +2,53 @@ import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
 
 // Constants
-const DEFAULT_ROWS = 3; // Default number of frequency bands
-const MIN_ROWS = 1; // Minimum number of rows
-const MAX_ROWS = 7; // Maximum number of rows
 const MASTER_GAIN = 0.5; // Default gain level
 const DEFAULT_PAN = 0; // Default pan position (center)
-
-// Frequency ranges for different numbers of rows
-// These define the cutoff frequencies for each band based on the number of rows
-const FREQUENCY_RANGES = {
-  1: [[20, 20000]],  // Full spectrum for 1 row
-  2: [[20, 500], [500, 20000]],  // 2 bands for 2 rows
-  3: [[20, 250], [250, 2500], [2500, 20000]],  // 3 bands for 3 rows
-  4: [[20, 200], [200, 1000], [1000, 5000], [5000, 20000]],  // 4 bands
-  5: [[20, 150], [150, 500], [500, 2000], [2000, 8000], [8000, 20000]],  // 5 bands
-  6: [[20, 120], [120, 300], [300, 1000], [1000, 3000], [3000, 9000], [9000, 20000]],  // 6 bands
-  7: [[20, 100], [100, 250], [250, 700], [700, 2000], [2000, 5000], [5000, 12000], [12000, 20000]]  // 7 bands
-};
+const DEFAULT_MIN_FREQ = 20; // Default minimum frequency for sweep (Hz)
+const DEFAULT_MAX_FREQ = 20000; // Default maximum frequency for sweep (Hz)
+const DEFAULT_PEAK_GAIN = 6; // Default peak filter gain in dB
+const DEFAULT_PEAK_Q = 1.0; // Default peak filter Q factor
+const MIN_PEAK_Q = 0.1; // Minimum Q value (widest bandwidth)
+const MAX_PEAK_Q = 10.0; // Maximum Q value (narrowest bandwidth)
+const DEFAULT_SWEEP_DURATION = 8.0; // Default duration of one full sweep cycle in seconds
+const DEFAULT_PAN_DURATION = 6.0; // Default duration of one full pan cycle in seconds
+const MIN_SWEEP_DURATION = 2.0; // Minimum sweep cycle duration (fastest)
+const MAX_SWEEP_DURATION = 30.0; // Maximum sweep cycle duration (slowest)
+const MIN_PAN_DURATION = 2.0; // Minimum pan cycle duration (fastest)
+const MAX_PAN_DURATION = 20.0; // Maximum pan cycle duration (slowest)
+const ABSOLUTE_MIN_FREQ = 20; // Absolute minimum frequency (Hz)
+const ABSOLUTE_MAX_FREQ = 20000; // Absolute maximum frequency (Hz)
 
 // Class to manage pink noise calibration
 class PinkNoiseCalibrator {
   private static instance: PinkNoiseCalibrator;
   private isPlaying: boolean = false;
   private pinkNoiseBuffer: AudioBuffer | null = null;
-  private rowCount: number = DEFAULT_ROWS;
-  private selectedRows: Set<number> = new Set(); // Set of selected row indices (0-based)
   private panValue: number = DEFAULT_PAN; // Current pan value (-1 to 1)
-  private audioNodes: Map<number, {
-    source: AudioBufferSourceNode;
-    lowpassFilter: BiquadFilterNode;
-    highpassFilter: BiquadFilterNode;
-    panner: StereoPannerNode;
-    gain: GainNode;
-  }> = new Map();
+  private isPanning: boolean = false; // Whether auto-panning is active
+  private panDuration: number = DEFAULT_PAN_DURATION; // Duration of pan cycle in seconds
+  private isSweeping: boolean = false; // Whether frequency sweep is active
+  private peakGain: number = DEFAULT_PEAK_GAIN; // Peak filter gain in dB
+  private peakQ: number = DEFAULT_PEAK_Q; // Peak filter Q factor
+  private sweepDuration: number = DEFAULT_SWEEP_DURATION; // Duration of sweep cycle in seconds
+  private minSweepFreq: number = DEFAULT_MIN_FREQ; // Minimum frequency for sweep (Hz)
+  private maxSweepFreq: number = DEFAULT_MAX_FREQ; // Maximum frequency for sweep (Hz)
+  private sweepLFO: OscillatorNode | null = null; // LFO for frequency sweep
+  private sweepTimeoutId: number | null = null; // To track and clear sweep timeout
+  private panTimeoutId: number | null = null; // To track and clear pan timeout
+  
+  private audioNodes: {
+    source: AudioBufferSourceNode | null;
+    peakFilter: BiquadFilterNode | null;
+    panner: StereoPannerNode | null;
+    gain: GainNode | null;
+  } = {
+    source: null,
+    peakFilter: null,
+    panner: null,
+    gain: null
+  };
+  
   private preEQGain: GainNode | null = null;
   private preEQAnalyser: AnalyserNode | null = null;
 
@@ -97,65 +111,6 @@ class PinkNoiseCalibrator {
   }
 
   /**
-   * Set the number of rows (frequency bands)
-   */
-  public setRowCount(count: number): void {
-    // Ensure count is within valid range
-    count = Math.max(MIN_ROWS, Math.min(MAX_ROWS, count));
-    
-    if (count === this.rowCount) return;
-    
-    console.log(`🔊 Setting pink noise calibration rows to ${count}`);
-    
-    // Store the previous playing state
-    const wasPlaying = this.isPlaying;
-    
-    // Stop if currently playing
-    if (wasPlaying) {
-      this.setPlaying(false);
-    }
-    
-    this.rowCount = count;
-    
-    // Reset selected rows
-    this.selectedRows.clear();
-    
-    // Resume playback if it was playing
-    if (wasPlaying) {
-      this.setPlaying(true);
-    }
-  }
-
-  /**
-   * Get the current row count
-   */
-  public getRowCount(): number {
-    return this.rowCount;
-  }
-
-  /**
-   * Toggle selection of a specific row
-   */
-  public toggleRow(rowIndex: number): void {
-    // Ensure index is within range
-    if (rowIndex < 0 || rowIndex >= this.rowCount) return;
-    
-    // Toggle the row selection
-    if (this.selectedRows.has(rowIndex)) {
-      this.selectedRows.delete(rowIndex);
-    } else {
-      this.selectedRows.add(rowIndex);
-    }
-    
-    console.log(`🔊 Row ${rowIndex} selection toggled, ${this.selectedRows.size} rows selected`);
-    
-    // Update audio if playing
-    if (this.isPlaying) {
-      this.updatePlayingRows();
-    }
-  }
-
-  /**
    * Set the playing state
    */
   public setPlaying(playing: boolean): void {
@@ -180,14 +135,7 @@ class PinkNoiseCalibrator {
   }
 
   /**
-   * Get the set of selected rows
-   */
-  public getSelectedRows(): Set<number> {
-    return new Set(this.selectedRows);
-  }
-
-  /**
-   * Set the pan position for all active audio nodes
+   * Set the pan position for audio
    * @param value Pan position from -1 (full left) to 1 (full right)
    */
   public setPan(value: number): void {
@@ -200,25 +148,23 @@ class PinkNoiseCalibrator {
     
     this.panValue = value;
     
-    // Update all active panners
-    if (this.isPlaying) {
-      this.audioNodes.forEach((nodes) => {
-        nodes.panner.pan.setTargetAtTime(
-          this.panValue,
-          audioContext.getAudioContext().currentTime,
-          0.05 // Time constant
-        );
-        
-        // Apply gain compensation for constant power panning
+    // Update panner if playing
+    if (this.isPlaying && this.audioNodes.panner) {
+      this.audioNodes.panner.pan.setTargetAtTime(
+        this.panValue,
+        audioContext.getAudioContext().currentTime,
+        0.05 // Time constant
+      );
+      
+      // Apply gain compensation for panning
+      if (this.audioNodes.gain) {
         const compensatedGain = this.calculatePanCompensation(this.panValue);
-        if (nodes.gain.gain.value > 0) { // Only adjust gain for active rows
-          nodes.gain.gain.setTargetAtTime(
-            MASTER_GAIN * compensatedGain,
-            audioContext.getAudioContext().currentTime,
-            0.05
-          );
-        }
-      });
+        this.audioNodes.gain.gain.setTargetAtTime(
+          MASTER_GAIN * compensatedGain,
+          audioContext.getAudioContext().currentTime,
+          0.05
+        );
+      }
     }
   }
 
@@ -230,6 +176,232 @@ class PinkNoiseCalibrator {
   }
 
   /**
+   * Set whether auto-panning is enabled
+   */
+  public setPanning(enabled: boolean): void {
+    if (enabled === this.isPanning) return;
+    
+    console.log(`🔊 Setting auto-panning: ${enabled ? 'enabled' : 'disabled'}`);
+    this.isPanning = enabled;
+    
+    if (this.isPlaying) {
+      if (enabled) {
+        this.startPanning();
+      } else {
+        this.stopPanning();
+      }
+    }
+  }
+
+  /**
+   * Get whether auto-panning is currently enabled
+   */
+  public isPanningEnabled(): boolean {
+    return this.isPanning;
+  }
+
+  /**
+   * Set the pan cycle duration in seconds
+   * @param durationSeconds Duration of a full pan cycle in seconds
+   */
+  public setPanDuration(durationSeconds: number): void {
+    // Limit to reasonable range
+    durationSeconds = Math.max(MIN_PAN_DURATION, Math.min(MAX_PAN_DURATION, durationSeconds));
+    
+    if (durationSeconds === this.panDuration) return;
+    
+    console.log(`🔊 Setting pan cycle duration: ${durationSeconds.toFixed(1)} seconds`);
+    this.panDuration = durationSeconds;
+    
+    // If already panning, restart with new duration
+    if (this.isPlaying && this.isPanning) {
+      this.stopPanning();
+      this.startPanning();
+    }
+  }
+
+  /**
+   * Get the current pan cycle duration in seconds
+   */
+  public getPanDuration(): number {
+    return this.panDuration;
+  }
+
+  /**
+   * Set the sweep speed by setting the duration of a full sweep cycle
+   * @param durationSeconds Duration of a full sweep cycle in seconds
+   */
+  public setSweepDuration(durationSeconds: number): void {
+    // Limit to reasonable range
+    durationSeconds = Math.max(MIN_SWEEP_DURATION, Math.min(MAX_SWEEP_DURATION, durationSeconds));
+    
+    if (durationSeconds === this.sweepDuration) return;
+    
+    console.log(`🔊 Setting sweep cycle duration: ${durationSeconds.toFixed(1)} seconds`);
+    this.sweepDuration = durationSeconds;
+    
+    // If already sweeping, restart the sweep with the new duration
+    if (this.isPlaying && this.isSweeping) {
+      this.stopSweep();
+      this.startSweep();
+    }
+  }
+
+  /**
+   * Get the current sweep duration in seconds
+   */
+  public getSweepDuration(): number {
+    return this.sweepDuration;
+  }
+
+  /**
+   * Set the minimum frequency for the sweep
+   * @param freq Minimum frequency in Hz (20-20000)
+   */
+  public setMinSweepFreq(freq: number): void {
+    // Ensure minimum frequency is within reasonable bounds
+    freq = Math.max(ABSOLUTE_MIN_FREQ, Math.min(this.maxSweepFreq * 0.9, freq));
+    
+    if (freq === this.minSweepFreq) return;
+    
+    console.log(`🔊 Setting minimum sweep frequency: ${freq.toFixed(1)} Hz`);
+    this.minSweepFreq = freq;
+    
+    // If already sweeping, restart with new range
+    if (this.isPlaying && this.isSweeping) {
+      this.stopSweep();
+      this.startSweep();
+    }
+  }
+
+  /**
+   * Get the current minimum sweep frequency
+   */
+  public getMinSweepFreq(): number {
+    return this.minSweepFreq;
+  }
+
+  /**
+   * Set the maximum frequency for the sweep
+   * @param freq Maximum frequency in Hz (20-20000)
+   */
+  public setMaxSweepFreq(freq: number): void {
+    // Ensure maximum frequency is within reasonable bounds
+    freq = Math.max(this.minSweepFreq * 1.1, Math.min(ABSOLUTE_MAX_FREQ, freq));
+    
+    if (freq === this.maxSweepFreq) return;
+    
+    console.log(`🔊 Setting maximum sweep frequency: ${freq.toFixed(1)} Hz`);
+    this.maxSweepFreq = freq;
+    
+    // If already sweeping, restart with new range
+    if (this.isPlaying && this.isSweeping) {
+      this.stopSweep();
+      this.startSweep();
+    }
+  }
+
+  /**
+   * Get the current maximum sweep frequency
+   */
+  public getMaxSweepFreq(): number {
+    return this.maxSweepFreq;
+  }
+
+  /**
+   * Set whether frequency sweeping is enabled
+   */
+  public setSweeping(enabled: boolean): void {
+    if (enabled === this.isSweeping) return;
+    
+    console.log(`🔊 Setting peak filter sweep: ${enabled ? 'enabled' : 'disabled'}`);
+    this.isSweeping = enabled;
+    
+    if (this.isPlaying) {
+      if (enabled) {
+        this.startSweep();
+      } else {
+        this.stopSweep();
+        
+        // Reset peak filter to center frequency when sweep is disabled
+        if (this.audioNodes.peakFilter) {
+          const centerFreq = Math.sqrt(this.minSweepFreq * this.maxSweepFreq); // Geometric center
+          this.audioNodes.peakFilter.frequency.setValueAtTime(
+            centerFreq,
+            audioContext.getAudioContext().currentTime
+          );
+        }
+      }
+    }
+  }
+
+  /**
+   * Get whether sweeping is currently enabled
+   */
+  public isSweepEnabled(): boolean {
+    return this.isSweeping;
+  }
+
+  /**
+   * Set the peak filter gain in dB
+   */
+  public setPeakGain(gainDb: number): void {
+    // Limit to reasonable range: -20 to +20 dB
+    gainDb = Math.max(-20, Math.min(20, gainDb));
+    
+    if (gainDb === this.peakGain) return;
+    
+    console.log(`🔊 Setting peak filter gain: ${gainDb.toFixed(1)} dB`);
+    this.peakGain = gainDb;
+    
+    // Update peak filter if playing
+    if (this.isPlaying && this.audioNodes.peakFilter) {
+      this.audioNodes.peakFilter.gain.setTargetAtTime(
+        this.peakGain,
+        audioContext.getAudioContext().currentTime,
+        0.05
+      );
+    }
+  }
+
+  /**
+   * Get the current peak filter gain
+   */
+  public getPeakGain(): number {
+    return this.peakGain;
+  }
+
+  /**
+   * Set the peak filter Q factor (bandwidth)
+   * @param q Q factor value (0.1 to 10.0)
+   */
+  public setPeakQ(q: number): void {
+    // Limit to reasonable range: 0.1 to 10
+    q = Math.max(MIN_PEAK_Q, Math.min(MAX_PEAK_Q, q));
+    
+    if (q === this.peakQ) return;
+    
+    console.log(`🔊 Setting peak filter Q: ${q.toFixed(2)}`);
+    this.peakQ = q;
+    
+    // Update peak filter if playing
+    if (this.isPlaying && this.audioNodes.peakFilter) {
+      this.audioNodes.peakFilter.Q.setTargetAtTime(
+        this.peakQ,
+        audioContext.getAudioContext().currentTime,
+        0.05
+      );
+    }
+  }
+
+  /**
+   * Get the current peak filter Q factor
+   */
+  public getPeakQ(): number {
+    return this.peakQ;
+  }
+
+  /**
    * Calculate gain compensation to maintain constant power during panning
    * @param panValue The current pan value (-1 to 1)
    * @returns The compensation factor to maintain constant power
@@ -238,46 +410,256 @@ class PinkNoiseCalibrator {
     // Convert to absolute value since compensation is symmetric
     const absPan = Math.abs(panValue);
     
-    // Apply equal power panning compensation
-    let compensation = 1;
+    // Apply center-boosted panning law
+    // This will make the center (absPan=0) have the maximum volume (1.0)
+    // and attenuate as we move toward the sides
+    let compensation = 1.0;
     
     if (absPan > 0) {
-      // This compensates for the perceived volume loss at pan positions away from center
-      compensation = 1 / Math.cos(absPan * Math.PI / 4);
+      // Use cosine-based attenuation which creates a natural volume decrease as we pan
+      // Using Math.cos directly creates a more dramatic center boost than the equal-power formula
+      compensation = Math.cos(absPan * Math.PI / 2);
       
-      // Limit maximum compensation to avoid over-amplification at extreme pan positions
-      compensation = Math.min(compensation, 1.25);
+      // Ensure compensation doesn't get too quiet at extreme pan positions
+      // This applies a floor of 0.7 (-3dB) at full pan left/right
+      compensation = Math.max(compensation, 0.7);
     }
     
     return compensation;
   }
 
   /**
-   * Update which rows are playing based on selection
+   * Start auto-panning
    */
-  private updatePlayingRows(): void {
-    const allRows = Array.from(Array(this.rowCount).keys()); // [0, 1, 2, ...]
+  private startPanning(): void {
+    if (!this.audioNodes.panner) return;
     
-    // If no rows are selected, play all rows
-    const rowsToPlay = this.selectedRows.size === 0 ? allRows : Array.from(this.selectedRows);
+    // Clear any existing timeout to avoid multiple panning cycles
+    this.stopPanning();
     
-    // Set gain for each row
-    allRows.forEach(rowIndex => {
-      const nodes = this.audioNodes.get(rowIndex);
-      if (nodes) {
-        // Calculate gain compensation for constant power panning
-        const compensatedGain = this.calculatePanCompensation(this.panValue);
+    const ctx = audioContext.getAudioContext();
+    const panTime = this.panDuration / 2; // Half cycle time
+    
+    // Schedule the panning (runs continuously)
+    const scheduleNextPan = () => {
+      if (!this.audioNodes.panner || !this.isPlaying || !this.isPanning) {
+        return; // Exit if we're no longer playing or panning
+      }
+      
+      const startTime = ctx.currentTime;
+      
+      // Pan from left to right
+      this.audioNodes.panner.pan.setValueAtTime(-1, startTime);
+      this.audioNodes.panner.pan.linearRampToValueAtTime(1, startTime + panTime);
+      
+      // Pan from right to left
+      this.audioNodes.panner.pan.linearRampToValueAtTime(-1, startTime + panTime * 2);
+      
+      // Apply volume compensation during panning
+      if (this.audioNodes.gain) {
+        // Schedule gain compensation for left position (start)
+        const leftCompensation = this.calculatePanCompensation(-1);
+        this.audioNodes.gain.gain.setValueAtTime(
+          MASTER_GAIN * leftCompensation,
+          startTime
+        );
         
-        // Set gain based on whether this row should play
-        nodes.gain.gain.setTargetAtTime(
-          rowsToPlay.includes(rowIndex) ? MASTER_GAIN * compensatedGain : 0,
-          audioContext.getAudioContext().currentTime,
-          0.05 // Time constant
+        // Schedule gain compensation for center position (middle of first half)
+        const centerCompensation = this.calculatePanCompensation(0);
+        this.audioNodes.gain.gain.setValueAtTime(
+          MASTER_GAIN * centerCompensation,
+          startTime + panTime / 2
+        );
+        
+        // Schedule gain compensation for right position (middle)
+        const rightCompensation = this.calculatePanCompensation(1);
+        this.audioNodes.gain.gain.setValueAtTime(
+          MASTER_GAIN * rightCompensation,
+          startTime + panTime
+        );
+        
+        // Schedule gain compensation for center position again (middle of second half)
+        this.audioNodes.gain.gain.setValueAtTime(
+          MASTER_GAIN * centerCompensation,
+          startTime + panTime * 1.5
+        );
+        
+        // Schedule gain compensation for left position (end)
+        this.audioNodes.gain.gain.setValueAtTime(
+          MASTER_GAIN * leftCompensation,
+          startTime + panTime * 2
         );
       }
-    });
+      
+      // Schedule the next pan cycle
+      this.panTimeoutId = window.setTimeout(() => {
+        // Only proceed if we're still playing and panning
+        if (this.isPlaying && this.isPanning && this.audioNodes.panner) {
+          // Cancel scheduled automation first
+          this.audioNodes.panner.pan.cancelScheduledValues(ctx.currentTime);
+          if (this.audioNodes.gain) {
+            this.audioNodes.gain.gain.cancelScheduledValues(ctx.currentTime);
+          }
+          
+          // Set values to where they should be now to avoid jumps
+          this.audioNodes.panner.pan.setValueAtTime(
+            this.audioNodes.panner.pan.value,
+            ctx.currentTime
+          );
+          if (this.audioNodes.gain) {
+            this.audioNodes.gain.gain.setValueAtTime(
+              this.audioNodes.gain.gain.value,
+              ctx.currentTime
+            );
+          }
+          
+          // Schedule next pan cycle
+          scheduleNextPan();
+        }
+      }, panTime * 2 * 1000 - 50); // Schedule slightly before end to ensure smooth transition
+    };
     
-    console.log(`🔊 Updated playing rows. Active: ${rowsToPlay.join(', ')}`);
+    // Start the first pan cycle
+    scheduleNextPan();
+    
+    console.log(`🔊 Started auto-panning, duration: ${this.panDuration.toFixed(1)}s`);
+  }
+
+  /**
+   * Stop auto-panning
+   */
+  private stopPanning(): void {
+    // Clear the timeout if one exists
+    if (this.panTimeoutId !== null) {
+      window.clearTimeout(this.panTimeoutId);
+      this.panTimeoutId = null;
+    }
+    
+    // Cancel any scheduled parameter changes and reset to current manual pan value
+    if (this.audioNodes.panner) {
+      const ctx = audioContext.getAudioContext();
+      this.audioNodes.panner.pan.cancelScheduledValues(ctx.currentTime);
+      this.audioNodes.panner.pan.setValueAtTime(
+        this.panValue,
+        ctx.currentTime
+      );
+      
+      // Reset gain compensation based on manual pan value
+      if (this.audioNodes.gain) {
+        this.audioNodes.gain.gain.cancelScheduledValues(ctx.currentTime);
+        const compensatedGain = this.calculatePanCompensation(this.panValue);
+        this.audioNodes.gain.gain.setValueAtTime(
+          MASTER_GAIN * compensatedGain,
+          ctx.currentTime
+        );
+      }
+    }
+    
+    console.log('🔊 Stopped auto-panning');
+  }
+
+  /**
+   * Start frequency sweep
+   */
+  private startSweep(): void {
+    if (!this.audioNodes.peakFilter) return;
+    
+    // Clear any existing LFO or timeout to avoid multiple sweeps
+    this.stopSweep();
+    
+    const ctx = audioContext.getAudioContext();
+    
+    // Set up the frequency range in logarithmic scale
+    const minFreq = this.minSweepFreq;
+    const maxFreq = this.maxSweepFreq;
+    const centerFreq = Math.sqrt(minFreq * maxFreq); // Geometric center
+    
+    // Start with center frequency
+    this.audioNodes.peakFilter.frequency.value = centerFreq;
+    
+    // Set up automation for the frequency sweep
+    const now = ctx.currentTime;
+    const sweepTime = this.sweepDuration / 2; // Half cycle (up then down)
+    
+    // Schedule the sweep (runs continuously)
+    const scheduleNextSweep = () => {
+      if (!this.audioNodes.peakFilter || !this.isPlaying || !this.isSweeping) {
+        return; // Exit if we're no longer playing or sweeping
+      }
+      
+      const startTime = ctx.currentTime;
+      
+      // Sweep up (exponential ramp from min to max)
+      this.audioNodes.peakFilter.frequency.exponentialRampToValueAtTime(
+        maxFreq,
+        startTime + sweepTime
+      );
+      
+      // Sweep down (exponential ramp from max to min)
+      this.audioNodes.peakFilter.frequency.exponentialRampToValueAtTime(
+        minFreq,
+        startTime + sweepTime * 2
+      );
+      
+      // Schedule the next sweep cycle
+      this.sweepTimeoutId = window.setTimeout(() => {
+        // Only proceed if we're still playing and sweeping
+        if (this.isPlaying && this.isSweeping && this.audioNodes.peakFilter) {
+          // Cancel scheduled automation first
+          this.audioNodes.peakFilter.frequency.cancelScheduledValues(ctx.currentTime);
+          // Then set value to where it should be now to avoid jumps
+          this.audioNodes.peakFilter.frequency.setValueAtTime(
+            this.audioNodes.peakFilter.frequency.value,
+            ctx.currentTime
+          );
+          // Schedule next sweep
+          scheduleNextSweep();
+        }
+      }, sweepTime * 2 * 1000 - 50); // Schedule slightly before end to ensure smooth transition
+    };
+    
+    // Start the first sweep cycle
+    scheduleNextSweep();
+    
+    console.log(`🔊 Started frequency sweep: ${minFreq}Hz - ${maxFreq}Hz, duration: ${this.sweepDuration.toFixed(1)}s`);
+  }
+
+  /**
+   * Stop frequency sweep
+   */
+  private stopSweep(): void {
+    // Clear the timeout if one exists
+    if (this.sweepTimeoutId !== null) {
+      window.clearTimeout(this.sweepTimeoutId);
+      this.sweepTimeoutId = null;
+    }
+    
+    // Cancel any scheduled parameter changes if the peak filter exists
+    if (this.audioNodes.peakFilter) {
+      const ctx = audioContext.getAudioContext();
+      this.audioNodes.peakFilter.frequency.cancelScheduledValues(ctx.currentTime);
+      
+      // Reset to center frequency
+      const centerFreq = Math.sqrt(this.minSweepFreq * this.maxSweepFreq); // Geometric center
+      this.audioNodes.peakFilter.frequency.setValueAtTime(
+        centerFreq,
+        ctx.currentTime
+      );
+    }
+    
+    // Clean up oscillator if it exists and has been started
+    if (this.sweepLFO) {
+      try {
+        // Only call stop if it was actually started
+        // We'll just disconnect it safely, which won't throw errors
+        this.sweepLFO.disconnect();
+      } catch (e) {
+        console.error('Error cleaning up LFO:', e);
+      }
+      this.sweepLFO = null;
+    }
+    
+    console.log('🔊 Stopped frequency sweep');
   }
 
   /**
@@ -298,82 +680,97 @@ class PinkNoiseCalibrator {
       this.preEQGain as AudioNode : 
       eqProcessor.getEQProcessor().getInputNode();
     
-    // Set up audio nodes for each row
-    for (let i = 0; i < this.rowCount; i++) {
-      // Create audio source
-      const source = ctx.createBufferSource();
-      source.buffer = this.pinkNoiseBuffer;
-      source.loop = true;
-      
-      // Create filters
-      const highpassFilter = ctx.createBiquadFilter();
-      highpassFilter.type = 'highpass';
-      highpassFilter.Q.value = 0.7071; // Butterworth response
-      
-      const lowpassFilter = ctx.createBiquadFilter();
-      lowpassFilter.type = 'lowpass';
-      lowpassFilter.Q.value = 0.7071; // Butterworth response
-      
-      // Set filter frequencies based on row index
-      const [lowFreq, highFreq] = FREQUENCY_RANGES[this.rowCount as keyof typeof FREQUENCY_RANGES][i];
-      highpassFilter.frequency.value = lowFreq;
-      lowpassFilter.frequency.value = highFreq;
-      
-      // Create panner and gain nodes
-      const panner = ctx.createStereoPanner();
-      panner.pan.value = this.panValue; // Set initial pan position
-      
-      const gain = ctx.createGain();
-      
-      // Connect the chain
-      source.connect(highpassFilter);
-      highpassFilter.connect(lowpassFilter);
-      lowpassFilter.connect(panner);
-      panner.connect(gain);
-      gain.connect(destinationNode);
-      
-      // Set initial gain to 0
-      gain.gain.value = 0;
-      
-      // Start the source
-      source.start();
-      
-      // Store nodes
-      this.audioNodes.set(i, {
-        source,
-        highpassFilter,
-        lowpassFilter,
-        panner,
-        gain
-      });
-      
-      console.log(`🔊 Created pink noise source for row ${i} with range ${lowFreq}Hz - ${highFreq}Hz, pan=${this.panValue}`);
+    // Create audio source
+    const source = ctx.createBufferSource();
+    source.buffer = this.pinkNoiseBuffer;
+    source.loop = true;
+    
+    // Create peak filter
+    const peakFilter = ctx.createBiquadFilter();
+    peakFilter.type = 'peaking';
+    peakFilter.frequency.value = Math.sqrt(this.minSweepFreq * this.maxSweepFreq); // Geometric center frequency
+    peakFilter.Q.value = this.peakQ;
+    peakFilter.gain.value = this.peakGain;
+    
+    // Create panner and gain nodes
+    const panner = ctx.createStereoPanner();
+    panner.pan.value = this.panValue;
+    
+    const gain = ctx.createGain();
+    const compensatedGain = this.calculatePanCompensation(this.panValue);
+    gain.gain.value = MASTER_GAIN * compensatedGain;
+    
+    // Connect the chain
+    source.connect(peakFilter);
+    peakFilter.connect(panner);
+    panner.connect(gain);
+    gain.connect(destinationNode);
+    
+    // Start the source
+    source.start();
+    
+    // Store nodes
+    this.audioNodes = {
+      source,
+      peakFilter,
+      panner,
+      gain
+    };
+    
+    console.log(`🔊 Started pink noise playback with peak filter at ${peakFilter.frequency.value.toFixed(1)}Hz, gain: ${this.peakGain.toFixed(1)}dB, Q: ${this.peakQ.toFixed(2)}`);
+    
+    // Start sweep if enabled
+    if (this.isSweeping) {
+      this.startSweep();
     }
     
-    // Update which rows should be playing
-    this.updatePlayingRows();
+    // Start auto-panning if enabled
+    if (this.isPanning) {
+      this.startPanning();
+    }
   }
 
   /**
    * Stop playback of pink noise
    */
   private stopPlayback(): void {
-    // Stop and disconnect all audio nodes
-    this.audioNodes.forEach((nodes, rowIndex) => {
-      try {
-        nodes.source.stop();
-        nodes.source.disconnect();
-        nodes.gain.disconnect();
-        nodes.panner.disconnect();
-        nodes.lowpassFilter.disconnect();
-        nodes.highpassFilter.disconnect();
-      } catch (e) {
-        console.error(`Error stopping source for row ${rowIndex}:`, e);
-      }
-    });
+    // Stop the sweep first
+    this.stopSweep();
     
-    // Clear audio nodes
-    this.audioNodes.clear();
+    // Stop auto-panning
+    this.stopPanning();
+    
+    // Stop and disconnect all audio nodes
+    if (this.audioNodes.source) {
+      try {
+        this.audioNodes.source.stop();
+        this.audioNodes.source.disconnect();
+      } catch (e) {
+        console.error('Error stopping source:', e);
+      }
+    }
+    
+    if (this.audioNodes.gain) {
+      this.audioNodes.gain.disconnect();
+    }
+    
+    if (this.audioNodes.panner) {
+      this.audioNodes.panner.disconnect();
+    }
+    
+    if (this.audioNodes.peakFilter) {
+      this.audioNodes.peakFilter.disconnect();
+    }
+    
+    // Reset audio nodes
+    this.audioNodes = {
+      source: null,
+      peakFilter: null,
+      panner: null,
+      gain: null
+    };
+    
+    console.log('🔊 Stopped pink noise playback');
   }
 
   /**
