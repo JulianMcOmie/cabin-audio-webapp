@@ -7,13 +7,15 @@ type DotPosition = {
 };
 
 // Constants
-const COLUMNS = 5; // Always 5 panning positions - match the value in dot-grid.tsx
+const COLUMNS = 5; // Always 5 panning positions - match the value in dot-grid.tsx (odd number ensures a middle column)
 
 // Envelope settings
 const ENVELOPE_MIN_GAIN = 0.0; // Minimum gain during envelope cycle
 const ENVELOPE_MAX_GAIN = 1.0; // Maximum gain during envelope cycle
-const ENVELOPE_ATTACK = 0.001; // Faster attack time in seconds - for very punchy transients
-const ENVELOPE_RELEASE = 0.001; // Shorter release time in seconds
+const ENVELOPE_ATTACK = 0.01; // Faster attack time in seconds - for very punchy transients
+const ENVELOPE_RELEASE_DEFAULT = 0.2; // Default release time (for reference only)
+const ENVELOPE_RELEASE_LOW_FREQ = 0.3; // Release time for lowest frequencies (seconds)
+const ENVELOPE_RELEASE_HIGH_FREQ = 0.05; // Release time for highest frequencies (seconds)
 const MASTER_GAIN = 1.0; // Much louder master gain for calibration
 
 // Polyrhythm settings
@@ -34,6 +36,12 @@ export enum PlaybackMode {
   SEQUENTIAL = 'sequential'
 }
 
+// Filter mode enum
+export enum FilterMode {
+  BANDPASS = 'bandpass',
+  HIGHPASS_LOWPASS = 'highpass_lowpass'
+}
+
 class DotGridAudioPlayer {
   private static instance: DotGridAudioPlayer;
   private pinkNoiseBuffer: AudioBuffer | null = null;
@@ -44,6 +52,8 @@ class DotGridAudioPlayer {
     envelopeGain: GainNode;
     panner: StereoPannerNode;
     filter: BiquadFilterNode;
+    highpassFilter?: BiquadFilterNode; // Optional highpass filter
+    lowpassFilter?: BiquadFilterNode;  // Optional lowpass filter
     position: number; // Position for sorting
     rhythmInterval: number | null; // Rhythm interval ID
     subdivision: number; // Rhythm subdivision
@@ -59,6 +69,7 @@ class DotGridAudioPlayer {
   
   // Sequential playback properties
   private playbackMode: PlaybackMode = PlaybackMode.POLYRHYTHM; // Default to polyrhythm mode
+  private filterMode: FilterMode = FilterMode.BANDPASS; // Default to bandpass filter
   private sequenceTimer: number | null = null; // Timer for sequential playback
   private sequenceIndex: number = 0; // Current index in the sequence
   private orderedDots: string[] = []; // Dots ordered for sequential playback
@@ -563,10 +574,26 @@ class DotGridAudioPlayer {
         source.buffer = this.pinkNoiseBuffer;
         source.loop = true;
         
-        // Connect the audio chain
-        // source -> filter -> panner -> envelopeGain -> gain -> (preEQGain or EQ) -> destination
-        source.connect(nodes.filter);
-        nodes.filter.connect(nodes.panner);
+        // Connect the audio chain based on filter mode
+        if (this.filterMode === FilterMode.BANDPASS) {
+          // Bandpass approach
+          // source -> filter -> panner -> envelopeGain -> gain -> (preEQGain or EQ) -> destination
+          source.connect(nodes.filter);
+          nodes.filter.connect(nodes.panner);
+        } else {
+          // Highpass+Lowpass approach
+          // source -> highpass -> lowpass -> panner -> envelopeGain -> gain -> (preEQGain or EQ) -> destination
+          if (nodes.highpassFilter && nodes.lowpassFilter) {
+            source.connect(nodes.highpassFilter);
+            nodes.highpassFilter.connect(nodes.lowpassFilter);
+            nodes.lowpassFilter.connect(nodes.panner);
+          } else {
+            // Fallback to bandpass if the filters aren't available
+            source.connect(nodes.filter);
+            nodes.filter.connect(nodes.panner);
+          }
+        }
+        
         nodes.panner.connect(nodes.envelopeGain);
         nodes.envelopeGain.connect(nodes.gain);
         
@@ -617,6 +644,27 @@ class DotGridAudioPlayer {
     const ctx = audioContext.getAudioContext();
     const now = ctx.currentTime;
     
+    // Calculate release time based on frequency
+    // Get the center frequency from the filter
+    const centerFreq = nodes.filter.frequency.value;
+    
+    // Calculate normalized frequency position (0 to 1) on logarithmic scale
+    // Using 20Hz and 20kHz as reference points for human hearing range
+    const minFreqLog = Math.log2(20);
+    const maxFreqLog = Math.log2(20000);
+    const freqLog = Math.log2(centerFreq);
+    
+    // Normalized position between 0 (lowest freq) and 1 (highest freq)
+    const normalizedFreq = Math.max(0, Math.min(1, 
+      (freqLog - minFreqLog) / (maxFreqLog - minFreqLog)
+    ));
+    
+    // Interpolate release time based on frequency
+    // Low frequencies get longer release (ENVELOPE_RELEASE_LOW_FREQ)
+    // High frequencies get shorter release (ENVELOPE_RELEASE_HIGH_FREQ)
+    const releaseTime = ENVELOPE_RELEASE_LOW_FREQ + 
+      normalizedFreq * (ENVELOPE_RELEASE_HIGH_FREQ - ENVELOPE_RELEASE_LOW_FREQ);
+    
     // Reset to minimum gain
     nodes.envelopeGain.gain.cancelScheduledValues(now);
     nodes.envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, now);
@@ -627,17 +675,73 @@ class DotGridAudioPlayer {
       now + ENVELOPE_ATTACK
     );
     
-    // Release - short tail
+    // Release - frequency-dependent tail
     nodes.envelopeGain.gain.exponentialRampToValueAtTime(
       0.001, // Can't go to zero with exponentialRamp, use very small value
-      now + ENVELOPE_ATTACK + ENVELOPE_RELEASE
+      now + ENVELOPE_ATTACK + releaseTime
     );
     
     // Finally set to zero after the exponential ramp
-    nodes.envelopeGain.gain.setValueAtTime(0, now + ENVELOPE_ATTACK + ENVELOPE_RELEASE + 0.001);
+    nodes.envelopeGain.gain.setValueAtTime(0, now + ENVELOPE_ATTACK + releaseTime + 0.001);
     
     // Visual feedback via console
-    console.log(`🔊 Triggered dot ${dotKey} with subdivision ${nodes.subdivision}`);
+    console.log(`🔊 Triggered dot ${dotKey} with subdivision ${nodes.subdivision} and release time ${releaseTime.toFixed(3)}s (freq: ${centerFreq.toFixed(0)}Hz)`);
+  }
+
+  /**
+   * Set the filter mode
+   */
+  public setFilterMode(mode: FilterMode): void {
+    if (this.filterMode === mode) return;
+    
+    console.log(`🔊 Switching filter mode to: ${mode}`);
+    
+    // Store the previous playing state
+    const wasPlaying = this.isPlaying;
+    
+    // Stop current playback
+    if (wasPlaying) {
+      this.setPlaying(false);
+    }
+    
+    // Update mode
+    this.filterMode = mode;
+    
+    // Recreate all dots with the new filter mode
+    this.rebuildDots();
+    
+    // Resume playback if it was playing
+    if (wasPlaying) {
+      this.setPlaying(true);
+    }
+  }
+  
+  /**
+   * Get the current filter mode
+   */
+  public getFilterMode(): FilterMode {
+    return this.filterMode;
+  }
+  
+  /**
+   * Rebuild all dots with current filter mode
+   */
+  private rebuildDots(): void {
+    // Store the current dots
+    const currentDots = new Set(this.audioNodes.keys());
+    
+    // Clear all dots
+    this.audioNodes.clear();
+    
+    // Re-add all dots with the new filter mode
+    currentDots.forEach(dotKey => {
+      this.addDot(dotKey);
+    });
+    
+    // Recalculate row offsets
+    this.calculateRowOffsets();
+    
+    console.log(`🔊 Rebuilt all dots with filter mode: ${this.filterMode}`);
   }
 
   /**
@@ -655,56 +759,65 @@ class DotGridAudioPlayer {
     const normalizedY = 1 - (y / (this.gridSize - 1)); // Flip so higher y = higher position
     
     // Calculate the frequency for this position
-    const minFreq = 60;
-    const maxFreq = 15000;
+    const minFreq = 60;  // Lower minimum for better low-end
+    const maxFreq = 10000; // Lower maximum to avoid harsh high-end
     const logMinFreq = Math.log2(minFreq);
     const logMaxFreq = Math.log2(maxFreq);
     const logFreqRange = logMaxFreq - logMinFreq;
     const centerFreq = Math.pow(2, logMinFreq + normalizedY * logFreqRange);
     
-    // Create a gain node for volume with -3dB/octave slope compensation
+    // Create a gain node for volume
     const gain = ctx.createGain();
-    
-    // Simple -3dB/octave slope compensation
-    // Calculate how many octaves we are above minFreq
-    const octavesAboveMin = Math.log2(centerFreq / minFreq);
-    
-    // Each octave lower needs compensation based on our slope setting in dB/octave
-    // For example: -3dB/octave = 0.5, -6dB/octave = 1.0, -1.5dB/octave = 0.25
-    // The formula is: slopeFactor = |dBPerOctave| / 6
-    const DB_PER_OCTAVE = -1.5; // Can be adjusted to control the slope
-    const slopeFactor = Math.abs(DB_PER_OCTAVE) / 6;
-    const frequencyGainFactor = Math.pow(2, -octavesAboveMin * slopeFactor);
-    
-    // Apply gain with frequency compensation
-    gain.gain.value = MASTER_GAIN * frequencyGainFactor;
-    
-    // Create an envelope gain node for modulation
-    const envelopeGain = ctx.createGain();
-    envelopeGain.gain.value = ENVELOPE_MIN_GAIN;
+    gain.gain.value = MASTER_GAIN;
     
     // Create a panner node for stereo positioning
     const panner = ctx.createStereoPanner();
-    // Normalize x position based on columns (0 to columnCount-1)
-    const normalizedX = (x / (this.columnCount - 1)) * 2 - 1; // Convert to range -1 to 1
-    panner.pan.value = normalizedX;
     
-    // Create a bandpass filter
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.frequency.value = centerFreq;
+    // Simple panning calculation that evenly distributes columns from -1 to 1
+    // First column (x=0) will be -1 (full left), last column will be 1 (full right)
+    const panPosition = this.columnCount <= 1 ? 0 : (2 * (x / (this.columnCount - 1)) - 1);
+    
+    panner.pan.value = panPosition;
+    
+    console.log(`   Pan: ${panner.pan.value.toFixed(2)} (column ${x+1} of ${this.columnCount})`);
     
     // Calculate Q (bandwidth)
     const distFromCenter = Math.abs(normalizedY - 0.5) * 2;
+    const minQ = 1.0;
+    const maxQ = 4.0;
+    const qValue = 4.0;//minQ + (1 - distFromCenter) * (maxQ - minQ);
     
-    // Frequency-dependent Q adjustment - lower Q (wider bandwidth) for low frequencies
-    const baseQ = centerFreq < 300 ? 0.3 : centerFreq < 1000 ? 0.5 : 0.8;
-    // const minQ = baseQ * 3.0;  // Wide bandwidth at extremes
-    // const maxQ = (baseQ + 0.7) * 3.0;  // Narrower in the middle, but still reasonably wide
-    const minQ = 0.5;
-    const maxQ = 0.5;
-
-    filter.Q.value = maxQ;// - distFromCenter * (maxQ - minQ);
+    // Create filter(s) based on the filter mode
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = centerFreq;
+    filter.Q.value = qValue;
+    
+    // For highpass+lowpass mode, create additional filters
+    let highpassFilter: BiquadFilterNode | undefined = undefined;
+    let lowpassFilter: BiquadFilterNode | undefined = undefined;
+    
+    if (this.filterMode === FilterMode.HIGHPASS_LOWPASS) {
+      // Convert Q to bandwidth in octaves
+      // Approximate formula: BW = 2/Q
+      const bandwidthInOctaves = 2 / qValue;
+      
+      // Calculate cutoff frequencies (approximately centerFreq * 2^(±bw/2))
+      const lowCutoff = centerFreq * Math.pow(2, -bandwidthInOctaves/2);
+      const highCutoff = centerFreq * Math.pow(2, bandwidthInOctaves/2);
+      
+      // Create highpass filter
+      highpassFilter = ctx.createBiquadFilter();
+      highpassFilter.type = 'highpass';
+      highpassFilter.frequency.value = lowCutoff;
+      highpassFilter.Q.value = 0.7071; // Butterworth response
+      
+      // Create lowpass filter
+      lowpassFilter = ctx.createBiquadFilter();
+      lowpassFilter.type = 'lowpass';
+      lowpassFilter.frequency.value = highCutoff;
+      lowpassFilter.Q.value = 0.7071; // Butterworth response
+    }
     
     // Calculate position for sorting
     const position = y * this.columnCount + x;
@@ -716,9 +829,11 @@ class DotGridAudioPlayer {
     this.audioNodes.set(dotKey, {
       source: ctx.createBufferSource(), // Dummy source (will be replaced when playing)
       gain,
-      envelopeGain,
+      envelopeGain: ctx.createGain(),
       panner,
       filter,
+      highpassFilter,
+      lowpassFilter,
       position, // Store position for sorting
       rhythmInterval: null, // Rhythm interval ID
       subdivision, // Subdivision for this dot
@@ -726,11 +841,13 @@ class DotGridAudioPlayer {
       offset: 0 // Default offset, will be updated by calculateRowOffsets
     });
     
+    const filterDescription = this.filterMode === FilterMode.BANDPASS 
+      ? `Bandpass at ${centerFreq.toFixed(0)}Hz (Q=${qValue.toFixed(2)})`
+      : `Highpass at ${highpassFilter?.frequency.value.toFixed(0)}Hz + Lowpass at ${lowpassFilter?.frequency.value.toFixed(0)}Hz`;
+    
     console.log(`🔊 Added dot ${dotKey} at position (${x},${y})`);
-    console.log(`   Pan: ${normalizedX.toFixed(2)}`);
     console.log(`   Position: ${normalizedY.toFixed(2)}`);
-    console.log(`   Center frequency: ${centerFreq.toFixed(0)}Hz`);
-    console.log(`   Bandwidth (Q): ${filter.Q.value.toFixed(2)}`);
+    console.log(`   Filter: ${filterDescription}`);
     console.log(`   Subdivision: ${subdivision}`);
     console.log(`   Rhythm: ${(BASE_CYCLE_TIME / subdivision).toFixed(3)}s intervals`);
   }

@@ -131,10 +131,10 @@ interface MultiSelectionDotGridProps {
 }
 
 // Constants for the grid
-const DEFAULT_COLUMNS = 5; // Default panning positions
+const DEFAULT_COLUMNS = 5; // Default number of columns
 const DEFAULT_ROWS = 3; // Default number of rows
-const MIN_COLUMNS = 3; // Minimum columns
-const MAX_COLUMNS = 9; // Maximum columns
+const MIN_COLUMNS = 2; // Minimum columns
+const MAX_COLUMNS = 10; // Maximum columns
 const MIN_ROWS = 3; // Minimum rows
 const MAX_ROWS = 9; // Maximum rows
 const BASE_DOT_RADIUS = 6; // Base dot size, will be adjusted as needed
@@ -366,6 +366,9 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
   const [playbackMode, setPlaybackMode] = useState<dotGridAudio.PlaybackMode>(
     dotGridAudio.PlaybackMode.POLYRHYTHM
   );
+  const [filterMode, setFilterMode] = useState<dotGridAudio.FilterMode>(
+    dotGridAudio.FilterMode.BANDPASS
+  );
   
   // Initialize the audio player
   useEffect(() => {
@@ -395,6 +398,12 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
     audioPlayer.setPlaybackMode(playbackMode);
   }, [playbackMode]);
   
+  // Update audio player when filter mode changes
+  useEffect(() => {
+    const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
+    audioPlayer.setFilterMode(filterMode);
+  }, [filterMode]);
+  
   const handleDotToggle = (x: number, y: number) => {
     const dotKey = `${x},${y}`;
     const newSelectedDots = new Set(selectedDots);
@@ -413,6 +422,14 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
       prevMode === dotGridAudio.PlaybackMode.POLYRHYTHM
         ? dotGridAudio.PlaybackMode.SEQUENTIAL
         : dotGridAudio.PlaybackMode.POLYRHYTHM
+    );
+  };
+  
+  const toggleFilterMode = () => {
+    setFilterMode(prevMode =>
+      prevMode === dotGridAudio.FilterMode.BANDPASS
+        ? dotGridAudio.FilterMode.HIGHPASS_LOWPASS
+        : dotGridAudio.FilterMode.BANDPASS
     );
   };
   
@@ -441,23 +458,27 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
 
   const increaseColumns = () => {
     if (columnCount < MAX_COLUMNS) {
+      // Increment by 1 (no need to maintain odd numbers anymore)
       setColumnCount(columnCount + 1);
     }
   };
   
   const decreaseColumns = () => {
     if (columnCount > MIN_COLUMNS) {
+      // Decrement by 1 (no need to maintain odd numbers anymore)
+      const newColumnCount = columnCount - 1;
+      
       // Clean up any dots that would be outside the new grid dimensions
       const newSelectedDots = new Set<string>();
       
       selectedDots.forEach(dot => {
         const [x, y] = dot.split(',').map(Number);
-        if (x < columnCount - 1 && y < gridSize) {
+        if (x < newColumnCount && y < gridSize) {
           newSelectedDots.add(dot);
         }
       });
       
-      setColumnCount(columnCount - 1);
+      setColumnCount(newColumnCount);
       setSelectedDots(newSelectedDots);
     }
   };
@@ -498,6 +519,29 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
               id="mode-toggle"
               checked={playbackMode === dotGridAudio.PlaybackMode.SEQUENTIAL}
               onCheckedChange={togglePlaybackMode}
+              disabled={disabled}
+            />
+          </div>
+        </div>
+        
+        {/* Filter mode toggle */}
+        <div className="flex items-center justify-between space-x-2">
+          <div className="flex flex-col space-y-0.5">
+            <span className="text-xs font-medium">Filter Mode:</span>
+            <span className="text-xs text-muted-foreground">
+              {filterMode === dotGridAudio.FilterMode.BANDPASS 
+                ? "Bandpass (single filter)" 
+                : "Highpass+Lowpass (dual filters)"}
+            </span>
+          </div>
+          <div className="flex items-center space-x-2">
+            <Label htmlFor="filter-toggle" className="text-xs">
+              {filterMode === dotGridAudio.FilterMode.HIGHPASS_LOWPASS ? "HP+LP" : "Bandpass"}
+            </Label>
+            <Switch
+              id="filter-toggle"
+              checked={filterMode === dotGridAudio.FilterMode.HIGHPASS_LOWPASS}
+              onCheckedChange={toggleFilterMode}
               disabled={disabled}
             />
           </div>

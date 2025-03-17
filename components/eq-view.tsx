@@ -1,10 +1,11 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { HelpCircle, Play, Power, Volume2 } from "lucide-react"
+import { HelpCircle, Play, Power, Volume2, VolumeX, Gauge } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { FrequencyGraph } from "@/components/frequency-graph"
 import { DotCalibration } from "@/components/dot-grid"
+import { PinkNoiseCalibration } from "@/components/pink-noise-calibration"
 import { EQProfiles } from "@/components/eq-profiles"
 import { EQCalibrationModal } from "@/components/eq-calibration-modal"
 import { LoginModal } from "@/components/login-modal"
@@ -55,6 +56,9 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
   // State for the dot grid calibration audio
   const [dotGridPlaying, setDotGridPlaying] = useState(false)
   
+  // State for calibration type toggle
+  const [calibrationType, setCalibrationType] = useState<'dot-grid' | 'pink-noise'>('dot-grid')
+  
   // State for the spectrum analyzer
   const [preEQAnalyser, setPreEQAnalyser] = useState<AnalyserNode | null>(null)
   
@@ -97,15 +101,22 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
   // Handle creating/removing analyzer when dot grid playing state changes
   useEffect(() => {
     if (dotGridPlaying) {
-      // Create and connect the analyzer
-      const dotGridPlayer = getDotGridAudioPlayer();
-      const analyser = dotGridPlayer.createPreEQAnalyser();
-      setPreEQAnalyser(analyser);
+      // Create and connect the analyzer based on calibration type
+      if (calibrationType === 'dot-grid') {
+        const dotGridPlayer = getDotGridAudioPlayer();
+        const analyser = dotGridPlayer.createPreEQAnalyser();
+        setPreEQAnalyser(analyser);
+      } else {
+        // For pink noise calibration
+        const pinkNoisePlayer = require('@/lib/audio/pinkNoiseCalibration').getPinkNoiseCalibrator();
+        const analyser = pinkNoisePlayer.createPreEQAnalyser();
+        setPreEQAnalyser(analyser);
+      }
     } else {
       // Clean up when not playing
       setPreEQAnalyser(null);
     }
-  }, [dotGridPlaying]);
+  }, [dotGridPlaying, calibrationType]);
 
   // Initialize selected profile from the active profile and keep it synced
   useEffect(() => {
@@ -370,14 +381,39 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
 
             <div className="md:w-2/5 flex flex-col justify-start">
               <div className="bg-muted/50 p-4 rounded-lg">
-                <h4 className="font-medium mb-3 text-center">Calibration Controls</h4>
+                <div className="flex justify-between items-center mb-3">
+                  <h4 className="font-medium">Calibration Controls</h4>
+                  
+                  {/* Calibration type toggle */}
+                  <div className="flex items-center space-x-2 text-xs">
+                    <span className={calibrationType === 'dot-grid' ? 'font-medium' : 'text-muted-foreground'}>Dot Grid</span>
+                    <button 
+                      className="relative inline-flex h-5 w-10 items-center rounded-full bg-slate-300 dark:bg-slate-700 transition-colors focus:outline-none"
+                      onClick={() => setCalibrationType(calibrationType === 'dot-grid' ? 'pink-noise' : 'dot-grid')}
+                    >
+                      <span 
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          calibrationType === 'pink-noise' ? 'translate-x-5' : 'translate-x-1'
+                        }`} 
+                      />
+                    </button>
+                    <span className={calibrationType === 'pink-noise' ? 'font-medium' : 'text-muted-foreground'}>Pink Noise</span>
+                  </div>
+                </div>
 
-                {/* Dot Calibration component */}
+                {/* Conditional rendering of calibration component based on selected type */}
                 <div className="mb-3">
-                  <DotCalibration 
-                    isPlaying={dotGridPlaying}
-                    setIsPlaying={setDotGridPlaying}
-                  />
+                  {calibrationType === 'dot-grid' ? (
+                    <DotCalibration 
+                      isPlaying={dotGridPlaying}
+                      setIsPlaying={setDotGridPlaying}
+                    />
+                  ) : (
+                    <PinkNoiseCalibration
+                      isPlaying={dotGridPlaying}
+                      setIsPlaying={setDotGridPlaying}
+                    />
+                  )}
                 </div>
 
                 <Button
@@ -386,11 +422,13 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
                   onClick={() => setDotGridPlaying(!dotGridPlaying)}
                 >
                   <Play className="mr-2 h-4 w-4" />
-                  {dotGridPlaying ? "Stop Calibration Sound" : "Play Calibration Sound"}
+                  {dotGridPlaying ? `Stop ${calibrationType === 'dot-grid' ? 'Grid' : 'Pink Noise'}` : `Play ${calibrationType === 'dot-grid' ? 'Grid' : 'Pink Noise'}`}
                 </Button>
 
                 <p className="text-xs text-center text-muted-foreground">
-                  Select multiple dots on the grid to test different spatial positions
+                  {calibrationType === 'dot-grid' 
+                    ? "Select multiple dots on the grid to test different spatial positions"
+                    : "Select frequency bands to focus on specific parts of the spectrum"}
                 </p>
               </div>
             </div>
