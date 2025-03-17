@@ -2,12 +2,13 @@ import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
 
 // Constants
-const MASTER_GAIN = 0.5; // Default gain level
+const MASTER_GAIN = 0.5; // Default gain level for pink noise
+const SINE_GAIN_RATIO = 1.2; // How much louder the sine tone is vs pink noise
 const DEFAULT_PAN = 0; // Default pan position (center)
 const DEFAULT_MIN_FREQ = 20; // Default minimum frequency for sweep (Hz)
 const DEFAULT_MAX_FREQ = 20000; // Default maximum frequency for sweep (Hz)
-const DEFAULT_PEAK_GAIN = 6; // Default peak filter gain in dB
-const DEFAULT_PEAK_Q = 1.0; // Default peak filter Q factor
+const DEFAULT_SINE_GAIN = 0.4; // Default sine tone gain level
+const DEFAULT_PEAK_Q = 1.0; // Default Q factor (now controls sine tone bandwidth)
 const MIN_PEAK_Q = 0.1; // Minimum Q value (widest bandwidth)
 const MAX_PEAK_Q = 10.0; // Maximum Q value (narrowest bandwidth)
 const DEFAULT_SWEEP_DURATION = 8.0; // Default duration of one full sweep cycle in seconds
@@ -28,23 +29,26 @@ class PinkNoiseCalibrator {
   private isPanning: boolean = false; // Whether auto-panning is active
   private panDuration: number = DEFAULT_PAN_DURATION; // Duration of pan cycle in seconds
   private isSweeping: boolean = false; // Whether frequency sweep is active
-  private peakGain: number = DEFAULT_PEAK_GAIN; // Peak filter gain in dB
-  private peakQ: number = DEFAULT_PEAK_Q; // Peak filter Q factor
+  private sineGain: number = DEFAULT_SINE_GAIN; // Sine tone gain level
+  private peakQ: number = DEFAULT_PEAK_Q; // Q factor (now controls sine bandwidth)
   private sweepDuration: number = DEFAULT_SWEEP_DURATION; // Duration of sweep cycle in seconds
   private minSweepFreq: number = DEFAULT_MIN_FREQ; // Minimum frequency for sweep (Hz)
   private maxSweepFreq: number = DEFAULT_MAX_FREQ; // Maximum frequency for sweep (Hz)
   private sweepLFO: OscillatorNode | null = null; // LFO for frequency sweep
   private sweepTimeoutId: number | null = null; // To track and clear sweep timeout
   private panTimeoutId: number | null = null; // To track and clear pan timeout
+  private currentSweepFreq: number = 1000; // Current sweep frequency
   
   private audioNodes: {
     source: AudioBufferSourceNode | null;
-    peakFilter: BiquadFilterNode | null;
+    sineOsc: OscillatorNode | null;
+    sineGain: GainNode | null;
     panner: StereoPannerNode | null;
     gain: GainNode | null;
   } = {
     source: null,
-    peakFilter: null,
+    sineOsc: null,
+    sineGain: null,
     panner: null,
     gain: null
   };
@@ -55,6 +59,8 @@ class PinkNoiseCalibrator {
   private constructor() {
     // Generate pink noise buffer on initialization
     this.generatePinkNoiseBuffer();
+    // Set default current sweep frequency
+    this.currentSweepFreq = Math.sqrt(this.minSweepFreq * this.maxSweepFreq);
   }
 
   public static getInstance(): PinkNoiseCalibrator {
@@ -267,6 +273,12 @@ class PinkNoiseCalibrator {
     console.log(`🔊 Setting minimum sweep frequency: ${freq.toFixed(1)} Hz`);
     this.minSweepFreq = freq;
     
+    // If not sweeping, update the current frequency to the new center
+    if (!this.isSweeping) {
+      this.currentSweepFreq = Math.sqrt(this.minSweepFreq * this.maxSweepFreq);
+      this.updateSineFrequency();
+    }
+    
     // If already sweeping, restart with new range
     if (this.isPlaying && this.isSweeping) {
       this.stopSweep();
@@ -294,6 +306,12 @@ class PinkNoiseCalibrator {
     console.log(`🔊 Setting maximum sweep frequency: ${freq.toFixed(1)} Hz`);
     this.maxSweepFreq = freq;
     
+    // If not sweeping, update the current frequency to the new center
+    if (!this.isSweeping) {
+      this.currentSweepFreq = Math.sqrt(this.minSweepFreq * this.maxSweepFreq);
+      this.updateSineFrequency();
+    }
+    
     // If already sweeping, restart with new range
     if (this.isPlaying && this.isSweeping) {
       this.stopSweep();
@@ -309,12 +327,19 @@ class PinkNoiseCalibrator {
   }
 
   /**
+   * Get the current sweep frequency
+   */
+  public getCurrentSweepFreq(): number {
+    return this.currentSweepFreq;
+  }
+
+  /**
    * Set whether frequency sweeping is enabled
    */
   public setSweeping(enabled: boolean): void {
     if (enabled === this.isSweeping) return;
     
-    console.log(`🔊 Setting peak filter sweep: ${enabled ? 'enabled' : 'disabled'}`);
+    console.log(`🔊 Setting frequency sweep: ${enabled ? 'enabled' : 'disabled'}`);
     this.isSweeping = enabled;
     
     if (this.isPlaying) {
@@ -323,14 +348,9 @@ class PinkNoiseCalibrator {
       } else {
         this.stopSweep();
         
-        // Reset peak filter to center frequency when sweep is disabled
-        if (this.audioNodes.peakFilter) {
-          const centerFreq = Math.sqrt(this.minSweepFreq * this.maxSweepFreq); // Geometric center
-          this.audioNodes.peakFilter.frequency.setValueAtTime(
-            centerFreq,
-            audioContext.getAudioContext().currentTime
-          );
-        }
+        // Reset to center frequency when sweep is disabled
+        this.currentSweepFreq = Math.sqrt(this.minSweepFreq * this.maxSweepFreq); // Geometric center
+        this.updateSineFrequency();
       }
     }
   }
@@ -343,36 +363,41 @@ class PinkNoiseCalibrator {
   }
 
   /**
-   * Set the peak filter gain in dB
+   * Set the sine tone gain level
    */
-  public setPeakGain(gainDb: number): void {
-    // Limit to reasonable range: -20 to +20 dB
-    gainDb = Math.max(-20, Math.min(20, gainDb));
+  public setSineGain(gain: number): void {
+    // Limit to reasonable range: 0 to 1.0
+    gain = Math.max(0, Math.min(1.0, gain));
     
-    if (gainDb === this.peakGain) return;
+    if (gain === this.sineGain) return;
     
-    console.log(`🔊 Setting peak filter gain: ${gainDb.toFixed(1)} dB`);
-    this.peakGain = gainDb;
+    console.log(`🔊 Setting sine tone gain: ${gain.toFixed(2)}`);
+    this.sineGain = gain;
     
-    // Update peak filter if playing
-    if (this.isPlaying && this.audioNodes.peakFilter) {
-      this.audioNodes.peakFilter.gain.setTargetAtTime(
-        this.peakGain,
-        audioContext.getAudioContext().currentTime,
+    // Update sine gain if playing
+    if (this.isPlaying && this.audioNodes.sineGain) {
+      const ctx = audioContext.getAudioContext();
+      
+      // Apply pan compensation
+      const compensatedGain = this.calculatePanCompensation(this.panValue);
+      
+      this.audioNodes.sineGain.gain.setTargetAtTime(
+        this.sineGain * SINE_GAIN_RATIO * compensatedGain,
+        ctx.currentTime,
         0.05
       );
     }
   }
 
   /**
-   * Get the current peak filter gain
+   * Get the current sine tone gain
    */
-  public getPeakGain(): number {
-    return this.peakGain;
+  public getSineGain(): number {
+    return this.sineGain;
   }
 
   /**
-   * Set the peak filter Q factor (bandwidth)
+   * Set the Q factor (controls sine bandwidth)
    * @param q Q factor value (0.1 to 10.0)
    */
   public setPeakQ(q: number): void {
@@ -381,21 +406,14 @@ class PinkNoiseCalibrator {
     
     if (q === this.peakQ) return;
     
-    console.log(`🔊 Setting peak filter Q: ${q.toFixed(2)}`);
+    console.log(`🔊 Setting Q factor: ${q.toFixed(2)}`);
     this.peakQ = q;
     
-    // Update peak filter if playing
-    if (this.isPlaying && this.audioNodes.peakFilter) {
-      this.audioNodes.peakFilter.Q.setTargetAtTime(
-        this.peakQ,
-        audioContext.getAudioContext().currentTime,
-        0.05
-      );
-    }
+    // No direct update needed - Q is used in visualization only
   }
 
   /**
-   * Get the current peak filter Q factor
+   * Get the current Q factor
    */
   public getPeakQ(): number {
     return this.peakQ;
@@ -429,6 +447,22 @@ class PinkNoiseCalibrator {
   }
 
   /**
+   * Update the sine oscillator frequency
+   */
+  private updateSineFrequency(): void {
+    if (!this.audioNodes.sineOsc) return;
+    
+    const ctx = audioContext.getAudioContext();
+    this.audioNodes.sineOsc.frequency.setTargetAtTime(
+      this.currentSweepFreq,
+      ctx.currentTime,
+      0.05
+    );
+    
+    console.log(`🔊 Updated sine tone frequency: ${this.currentSweepFreq.toFixed(1)} Hz`);
+  }
+
+  /**
    * Start auto-panning
    */
   private startPanning(): void {
@@ -455,12 +489,16 @@ class PinkNoiseCalibrator {
       // Pan from right to left
       this.audioNodes.panner.pan.linearRampToValueAtTime(-1, startTime + panTime * 2);
       
-      // Apply volume compensation during panning
-      if (this.audioNodes.gain) {
+      // Apply volume compensation during panning for both pink noise and sine
+      if (this.audioNodes.gain && this.audioNodes.sineGain) {
         // Schedule gain compensation for left position (start)
         const leftCompensation = this.calculatePanCompensation(-1);
         this.audioNodes.gain.gain.setValueAtTime(
           MASTER_GAIN * leftCompensation,
+          startTime
+        );
+        this.audioNodes.sineGain.gain.setValueAtTime(
+          this.sineGain * SINE_GAIN_RATIO * leftCompensation,
           startTime
         );
         
@@ -470,11 +508,19 @@ class PinkNoiseCalibrator {
           MASTER_GAIN * centerCompensation,
           startTime + panTime / 2
         );
+        this.audioNodes.sineGain.gain.setValueAtTime(
+          this.sineGain * SINE_GAIN_RATIO * centerCompensation,
+          startTime + panTime / 2
+        );
         
         // Schedule gain compensation for right position (middle)
         const rightCompensation = this.calculatePanCompensation(1);
         this.audioNodes.gain.gain.setValueAtTime(
           MASTER_GAIN * rightCompensation,
+          startTime + panTime
+        );
+        this.audioNodes.sineGain.gain.setValueAtTime(
+          this.sineGain * SINE_GAIN_RATIO * rightCompensation,
           startTime + panTime
         );
         
@@ -483,10 +529,18 @@ class PinkNoiseCalibrator {
           MASTER_GAIN * centerCompensation,
           startTime + panTime * 1.5
         );
+        this.audioNodes.sineGain.gain.setValueAtTime(
+          this.sineGain * SINE_GAIN_RATIO * centerCompensation,
+          startTime + panTime * 1.5
+        );
         
         // Schedule gain compensation for left position (end)
         this.audioNodes.gain.gain.setValueAtTime(
           MASTER_GAIN * leftCompensation,
+          startTime + panTime * 2
+        );
+        this.audioNodes.sineGain.gain.setValueAtTime(
+          this.sineGain * SINE_GAIN_RATIO * leftCompensation,
           startTime + panTime * 2
         );
       }
@@ -500,6 +554,9 @@ class PinkNoiseCalibrator {
           if (this.audioNodes.gain) {
             this.audioNodes.gain.gain.cancelScheduledValues(ctx.currentTime);
           }
+          if (this.audioNodes.sineGain) {
+            this.audioNodes.sineGain.gain.cancelScheduledValues(ctx.currentTime);
+          }
           
           // Set values to where they should be now to avoid jumps
           this.audioNodes.panner.pan.setValueAtTime(
@@ -509,6 +566,12 @@ class PinkNoiseCalibrator {
           if (this.audioNodes.gain) {
             this.audioNodes.gain.gain.setValueAtTime(
               this.audioNodes.gain.gain.value,
+              ctx.currentTime
+            );
+          }
+          if (this.audioNodes.sineGain) {
+            this.audioNodes.sineGain.gain.setValueAtTime(
+              this.audioNodes.sineGain.gain.value,
               ctx.currentTime
             );
           }
@@ -545,11 +608,20 @@ class PinkNoiseCalibrator {
       );
       
       // Reset gain compensation based on manual pan value
+      const compensatedGain = this.calculatePanCompensation(this.panValue);
+      
       if (this.audioNodes.gain) {
         this.audioNodes.gain.gain.cancelScheduledValues(ctx.currentTime);
-        const compensatedGain = this.calculatePanCompensation(this.panValue);
         this.audioNodes.gain.gain.setValueAtTime(
           MASTER_GAIN * compensatedGain,
+          ctx.currentTime
+        );
+      }
+      
+      if (this.audioNodes.sineGain) {
+        this.audioNodes.sineGain.gain.cancelScheduledValues(ctx.currentTime);
+        this.audioNodes.sineGain.gain.setValueAtTime(
+          this.sineGain * SINE_GAIN_RATIO * compensatedGain,
           ctx.currentTime
         );
       }
@@ -562,9 +634,9 @@ class PinkNoiseCalibrator {
    * Start frequency sweep
    */
   private startSweep(): void {
-    if (!this.audioNodes.peakFilter) return;
+    if (!this.audioNodes.sineOsc) return;
     
-    // Clear any existing LFO or timeout to avoid multiple sweeps
+    // Clear any existing timeout to avoid multiple sweeps
     this.stopSweep();
     
     const ctx = audioContext.getAudioContext();
@@ -575,28 +647,28 @@ class PinkNoiseCalibrator {
     const centerFreq = Math.sqrt(minFreq * maxFreq); // Geometric center
     
     // Start with center frequency
-    this.audioNodes.peakFilter.frequency.value = centerFreq;
+    this.currentSweepFreq = centerFreq;
+    this.audioNodes.sineOsc.frequency.value = centerFreq;
     
     // Set up automation for the frequency sweep
-    const now = ctx.currentTime;
     const sweepTime = this.sweepDuration / 2; // Half cycle (up then down)
     
     // Schedule the sweep (runs continuously)
     const scheduleNextSweep = () => {
-      if (!this.audioNodes.peakFilter || !this.isPlaying || !this.isSweeping) {
+      if (!this.audioNodes.sineOsc || !this.isPlaying || !this.isSweeping) {
         return; // Exit if we're no longer playing or sweeping
       }
       
       const startTime = ctx.currentTime;
       
       // Sweep up (exponential ramp from min to max)
-      this.audioNodes.peakFilter.frequency.exponentialRampToValueAtTime(
+      this.audioNodes.sineOsc.frequency.exponentialRampToValueAtTime(
         maxFreq,
         startTime + sweepTime
       );
       
       // Sweep down (exponential ramp from max to min)
-      this.audioNodes.peakFilter.frequency.exponentialRampToValueAtTime(
+      this.audioNodes.sineOsc.frequency.exponentialRampToValueAtTime(
         minFreq,
         startTime + sweepTime * 2
       );
@@ -604,14 +676,16 @@ class PinkNoiseCalibrator {
       // Schedule the next sweep cycle
       this.sweepTimeoutId = window.setTimeout(() => {
         // Only proceed if we're still playing and sweeping
-        if (this.isPlaying && this.isSweeping && this.audioNodes.peakFilter) {
+        if (this.isPlaying && this.isSweeping && this.audioNodes.sineOsc) {
           // Cancel scheduled automation first
-          this.audioNodes.peakFilter.frequency.cancelScheduledValues(ctx.currentTime);
+          this.audioNodes.sineOsc.frequency.cancelScheduledValues(ctx.currentTime);
           // Then set value to where it should be now to avoid jumps
-          this.audioNodes.peakFilter.frequency.setValueAtTime(
-            this.audioNodes.peakFilter.frequency.value,
+          this.audioNodes.sineOsc.frequency.setValueAtTime(
+            this.audioNodes.sineOsc.frequency.value,
             ctx.currentTime
           );
+          // Update current frequency
+          this.currentSweepFreq = this.audioNodes.sineOsc.frequency.value;
           // Schedule next sweep
           scheduleNextSweep();
         }
@@ -621,7 +695,7 @@ class PinkNoiseCalibrator {
     // Start the first sweep cycle
     scheduleNextSweep();
     
-    console.log(`🔊 Started frequency sweep: ${minFreq}Hz - ${maxFreq}Hz, duration: ${this.sweepDuration.toFixed(1)}s`);
+    console.log(`🔊 Started sine tone frequency sweep: ${minFreq}Hz - ${maxFreq}Hz, duration: ${this.sweepDuration.toFixed(1)}s`);
   }
 
   /**
@@ -634,15 +708,15 @@ class PinkNoiseCalibrator {
       this.sweepTimeoutId = null;
     }
     
-    // Cancel any scheduled parameter changes if the peak filter exists
-    if (this.audioNodes.peakFilter) {
+    // Cancel any scheduled parameter changes if the sine oscillator exists
+    if (this.audioNodes.sineOsc) {
       const ctx = audioContext.getAudioContext();
-      this.audioNodes.peakFilter.frequency.cancelScheduledValues(ctx.currentTime);
+      this.audioNodes.sineOsc.frequency.cancelScheduledValues(ctx.currentTime);
       
       // Reset to center frequency
-      const centerFreq = Math.sqrt(this.minSweepFreq * this.maxSweepFreq); // Geometric center
-      this.audioNodes.peakFilter.frequency.setValueAtTime(
-        centerFreq,
+      this.currentSweepFreq = Math.sqrt(this.minSweepFreq * this.maxSweepFreq); // Geometric center
+      this.audioNodes.sineOsc.frequency.setValueAtTime(
+        this.currentSweepFreq,
         ctx.currentTime
       );
     }
@@ -680,44 +754,54 @@ class PinkNoiseCalibrator {
       this.preEQGain as AudioNode : 
       eqProcessor.getEQProcessor().getInputNode();
     
-    // Create audio source
+    // Create audio source for pink noise
     const source = ctx.createBufferSource();
     source.buffer = this.pinkNoiseBuffer;
     source.loop = true;
     
-    // Create peak filter
-    const peakFilter = ctx.createBiquadFilter();
-    peakFilter.type = 'peaking';
-    peakFilter.frequency.value = Math.sqrt(this.minSweepFreq * this.maxSweepFreq); // Geometric center frequency
-    peakFilter.Q.value = this.peakQ;
-    peakFilter.gain.value = this.peakGain;
+    // Create sine oscillator
+    const sineOsc = ctx.createOscillator();
+    sineOsc.type = 'sine';
+    sineOsc.frequency.value = this.currentSweepFreq;
     
-    // Create panner and gain nodes
+    // Create sine gain node
+    const sineGain = ctx.createGain();
+    const compensatedGain = this.calculatePanCompensation(this.panValue);
+    sineGain.gain.value = this.sineGain * SINE_GAIN_RATIO * compensatedGain;
+    
+    // Create panner and main gain nodes
     const panner = ctx.createStereoPanner();
     panner.pan.value = this.panValue;
     
     const gain = ctx.createGain();
-    const compensatedGain = this.calculatePanCompensation(this.panValue);
     gain.gain.value = MASTER_GAIN * compensatedGain;
     
-    // Connect the chain
-    source.connect(peakFilter);
-    peakFilter.connect(panner);
+    // Connect the chains
+    // Pink noise chain
+    source.connect(panner);
+    
+    // Sine oscillator chain
+    sineOsc.connect(sineGain);
+    sineGain.connect(panner);
+    
+    // Combine through panner
     panner.connect(gain);
     gain.connect(destinationNode);
     
-    // Start the source
+    // Start the sources
     source.start();
+    sineOsc.start();
     
     // Store nodes
     this.audioNodes = {
       source,
-      peakFilter,
+      sineOsc,
+      sineGain,
       panner,
       gain
     };
     
-    console.log(`🔊 Started pink noise playback with peak filter at ${peakFilter.frequency.value.toFixed(1)}Hz, gain: ${this.peakGain.toFixed(1)}dB, Q: ${this.peakQ.toFixed(2)}`);
+    console.log(`🔊 Started pink noise with sine tone at ${this.currentSweepFreq.toFixed(1)}Hz, gain: ${this.sineGain.toFixed(2)}`);
     
     // Start sweep if enabled
     if (this.isSweeping) {
@@ -746,8 +830,21 @@ class PinkNoiseCalibrator {
         this.audioNodes.source.stop();
         this.audioNodes.source.disconnect();
       } catch (e) {
-        console.error('Error stopping source:', e);
+        console.error('Error stopping pink noise source:', e);
       }
+    }
+    
+    if (this.audioNodes.sineOsc) {
+      try {
+        this.audioNodes.sineOsc.stop();
+        this.audioNodes.sineOsc.disconnect();
+      } catch (e) {
+        console.error('Error stopping sine oscillator:', e);
+      }
+    }
+    
+    if (this.audioNodes.sineGain) {
+      this.audioNodes.sineGain.disconnect();
     }
     
     if (this.audioNodes.gain) {
@@ -758,14 +855,11 @@ class PinkNoiseCalibrator {
       this.audioNodes.panner.disconnect();
     }
     
-    if (this.audioNodes.peakFilter) {
-      this.audioNodes.peakFilter.disconnect();
-    }
-    
     // Reset audio nodes
     this.audioNodes = {
       source: null,
-      peakFilter: null,
+      sineOsc: null,
+      sineGain: null,
       panner: null,
       gain: null
     };
