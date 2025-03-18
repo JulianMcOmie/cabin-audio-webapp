@@ -390,7 +390,7 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
 
       <ImportArea onImportClick={handleImportButtonClick} />
 
-      <div className="text-center py-4">
+      {/* <div className="text-center py-4">
         <p className="text-sm text-muted-foreground">
           <Button 
             variant="link" 
@@ -401,7 +401,7 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
           </Button>{" "}
           to save your music (so that it won't disappear when you refresh), create playlists, and listen on any device.
         </p>
-      </div>
+      </div> */}
 
       <FileImportOverlay
         isVisible={isImporting}

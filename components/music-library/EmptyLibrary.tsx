@@ -85,7 +85,7 @@ export function EmptyLibrary({
         </div>
       </div>
 
-      <div className="text-center py-4">
+      {/* <div className="text-center py-4">
         <p className="text-sm text-muted-foreground">
           <Button 
             variant="link" 
@@ -96,7 +96,7 @@ export function EmptyLibrary({
           </Button>{" "}
           to save your music (so that it won't disappear when you refresh), create playlists, and listen on any device.
         </p>
-      </div>
+      </div> */}
 
       {/* Import overlay */}
       <FileImportOverlay

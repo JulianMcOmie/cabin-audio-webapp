@@ -303,14 +303,14 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
                   </li>
                   <li>
                     Save your settings by{" "}
-                    <Button
+                    {/* <Button
                       variant="link"
                       className="text-electric-blue hover:text-electric-blue/80 font-medium p-0 h-auto"
                       onClick={() => setShowSignupModal(true)}
                     >
                       signing up
                     </Button>{" "}
-                    or{" "}
+                    or{" "} */}
                     <Button
                       variant="link"
                       className="text-electric-blue hover:text-electric-blue/80 font-medium p-0 h-auto"
