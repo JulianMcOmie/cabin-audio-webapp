@@ -345,7 +345,7 @@ class DotGridAudioPlayer {
         return xA - xB;
       });
       
-      // Assign evenly distributed offsets (0 to just under 1)
+      // Assign more pronounced staggered offsets
       dotsInRow.forEach((dotKey, index) => {
         const nodes = this.audioNodes.get(dotKey);
         if (nodes) {
@@ -353,13 +353,28 @@ class DotGridAudioPlayer {
           if (dotsInRow.length === 1) {
             nodes.offset = 0;
           } else {
-            // Distribute offsets evenly from 0 to 0.999...
-            nodes.offset = index / dotsInRow.length;
+            // Create more pronounced staggering with multiple approaches:
+            
+            // 1. Basic approach - distribute evenly but with full range (0 to 0.95)
+            const linearOffset = index / dotsInRow.length;
+            
+            // 2. Apply a pattern based on column position for more musical feel
+            // This creates a less predictable pattern across rows
+            const patternFactor = (index % 3 === 0) ? 1.1 : 0.9; // Every third dot gets slightly different offset
+            
+            // 3. Add slight randomization to prevent mechanical feel
+            // Use a predictable "random" based on position to keep it consistent
+            const pseudoRandom = Math.sin(index * 7919) * 0.05; // Using prime number for better distribution
+            
+            // Combine these factors and ensure we stay in the 0-0.99 range
+            const finalOffset = (linearOffset * 0.95 * patternFactor + pseudoRandom + 1) % 1.0;
+            
+            nodes.offset = finalOffset;
           }
         }
       });
       
-      console.log(`🔊 Row ${rowIndex}: assigned offsets to ${dotsInRow.length} dots`);
+      console.log(`🔊 Row ${rowIndex}: assigned staggered offsets to ${dotsInRow.length} dots`);
     });
   }
 
@@ -651,6 +666,8 @@ class DotGridAudioPlayer {
         
         // Start playback
         source.start();
+        // Mark the source as started
+        (source as any)._hasStarted = true;
         
         // Store the new source
         nodes.source = source;
@@ -669,7 +686,10 @@ class DotGridAudioPlayer {
     this.audioNodes.forEach((nodes, dotKey) => {
       try {
         if (nodes.source) {
-          nodes.source.stop();
+          // Add a property to track if the source has been started
+          if ((nodes.source as any)._hasStarted) {
+            nodes.source.stop();
+          }
           nodes.source.disconnect();
         }
       } catch (e) {
@@ -912,10 +932,14 @@ class DotGridAudioPlayer {
     // Stop and disconnect the source if it's playing
     if (this.isPlaying && nodes.source) {
       try {
-        nodes.source.stop();
+        // Only call stop if the source has been started
+        if ((nodes.source as any)._hasStarted) {
+          nodes.source.stop();
+        }
         nodes.source.disconnect();
       } catch (e) {
         // Ignore errors when stopping
+        console.warn(`Warning when stopping source for dot ${dotKey}:`, e);
       }
     }
     

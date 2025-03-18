@@ -149,8 +149,8 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
   const volumeToY = useCallback((volume: number, height: number) => {
     // Map volume from -18dB to +12dB to canvas height (top to bottom)
     // Center (0dB) is at height * 0.5
-    const maxDb = 12;
-    const minDb = -18;
+    const maxDb = 24;
+    const minDb = -24;
     const range = maxDb - minDb;
     
     // Invert y-axis because canvas y is top-down
