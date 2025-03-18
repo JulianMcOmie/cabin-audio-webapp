@@ -1,7 +1,7 @@
 import { Track } from '../../models/Track';
 import { useTrackStore } from '../../stores';
 import * as indexedDBManager from '../../storage/indexedDBManager';
-import * as apiClient from '../../api/apiClient';
+// import * as apiClient from '../../api/apiClient';
 import * as tracksApi from '../../api/endpoints/tracksApi';
 
 // Sync all tracks with the server
@@ -127,7 +127,7 @@ export const downloadNewTracks = async (): Promise<void> => {
 const addNewTrack = async (serverTrack: Track): Promise<void> => {
   try {
     // Download the audio file
-    const audioBlob = await tracksApi.downloadTrackAudio(serverTrack.id);
+    // const audioBlob = await tracksApi.downloadTrackAudio(serverTrack.id);
     
     // Store the audio file
     // Note: In a real implementation, we would use fileStorage.storeAudioFile
