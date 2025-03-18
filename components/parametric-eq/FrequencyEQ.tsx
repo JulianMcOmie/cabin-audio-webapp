@@ -1,7 +1,7 @@
 "use client"
 
 import { useRef, useEffect, useState, useCallback } from "react"
-import { useTheme } from "@/components/theme-provider"
+// import { useTheme } from "@/components/theme-provider"
 import { EQBandWithUI } from "./types"
 import { EQBandRenderer } from "./EQBandRenderer"
 import { EQCurveRenderer } from "./EQCurveRenderer"

@@ -380,7 +380,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 <div className="mb-3">
                   <DotCalibration 
                     isPlaying={dotGridPlaying}
-                    setIsPlaying={setDotGridPlaying}
+                    // setIsPlaying={setDotGridPlaying}
                   />
                 </div>
 

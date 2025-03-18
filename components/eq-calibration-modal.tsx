@@ -62,12 +62,12 @@ export function EQCalibrationModal({ open, onClose }: EQCalibrationModalProps) {
                 </p>
 
                 <p className="text-sm text-muted-foreground">
-                  You'll find our calibration tool below the EQ graph. It uses a dot grid system that plays test sounds
+                  You&apos;ll find our calibration tool below the EQ graph. It uses a dot grid system that plays test sounds
                   to help you fine-tune your EQ settings for optimal spatial separation and clarity.
                 </p>
 
                 <div className="bg-muted/50 p-3 rounded-md text-sm text-muted-foreground">
-                  Try it out! Close this tutorial and scroll down to see the "How to Calibrate Your EQ" section.
+                  Try it out! Close this tutorial and scroll down to see the &quot;How to Calibrate Your EQ&quot; section.
                 </div>
               </div>
             </TabsContent>

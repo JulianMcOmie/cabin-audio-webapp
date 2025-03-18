@@ -19,7 +19,7 @@ export function FFTVisualizer({
   const [animationId, setAnimationId] = useState<number | null>(null);
   
   // Set up frequency markers for the x-axis - matches FrequencyEQ scale
-  const frequencyMarkers = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+//   const frequencyMarkers = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
   
   // Handle canvas sizing and DPI scaling
   useEffect(() => {
@@ -80,13 +80,13 @@ export function FFTVisualizer({
         cancelAnimationFrame(animationId);
       }
     };
-  }, [analyser, width, height]);
+  }, [analyser, width, height, animationId]);
   
-  // Draw background grid
-  const drawGrid = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
-    // Don't draw a grid when used as a background layer - will be redundant with EQ grid
-    // Keep this function for potential standalone use
-  };
+//   // Draw background grid
+//   const drawGrid = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
+//     // Don't draw a grid when used as a background layer - will be redundant with EQ grid
+//     // Keep this function for potential standalone use
+//   };
   
   // Draw frequency spectrum
   const drawSpectrum = (ctx: CanvasRenderingContext2D, dataArray: Uint8Array, width: number, height: number) => {
@@ -156,15 +156,15 @@ export function FFTVisualizer({
     ctx.stroke();
   };
   
-  // Helper functions to convert between frequency and x position
-  const logFreqToX = (freq: number, width: number): number => {
-    const minFreq = 20;
-    const maxFreq = 20000;
-    const minLog = Math.log10(minFreq);
-    const maxLog = Math.log10(maxFreq);
-    const logPos = (Math.log10(freq) - minLog) / (maxLog - minLog);
-    return logPos * width;
-  };
+//   // Helper functions to convert between frequency and x position
+//   const logFreqToX = (freq: number, width: number): number => {
+//     const minFreq = 20;
+//     const maxFreq = 20000;
+//     const minLog = Math.log10(minFreq);
+//     const maxLog = Math.log10(maxFreq);
+//     const logPos = (Math.log10(freq) - minLog) / (maxLog - minLog);
+//     return logPos * width;
+//   };
   
   const xToLogFreq = (x: number, width: number): number => {
     const minFreq = 20;

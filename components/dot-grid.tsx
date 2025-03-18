@@ -5,7 +5,7 @@ import { useRef, useEffect, useState, useMemo } from "react"
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
-import { Waves, Clock } from "lucide-react"
+import { Waves } from "lucide-react"
 import { Slider } from "@/components/ui/slider"
 
 interface DotGridProps {
@@ -198,7 +198,7 @@ export function DotGrid({
     const cols = columnCount;
     
     // Determine proper spacing and dot size based on canvas dimensions
-    const size = Math.min(canvasSize.width, canvasSize.height);
+    // const size = Math.min(canvasSize.width, canvasSize.height);
     
     // We need to account for potentially different horizontal and vertical spacing
     const aspectRatio = canvasSize.width / canvasSize.height;
@@ -357,11 +357,11 @@ export function DotGrid({
 // Create a DotCalibration component that wraps DotGrid with state and controls
 interface DotCalibrationProps {
   isPlaying: boolean;
-  setIsPlaying: (isPlaying: boolean) => void;
+  // setIsPlaying: (isPlaying: boolean) => void;
   disabled?: boolean;
 }
 
-export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: DotCalibrationProps) {
+export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationProps) {
   const [gridSize, setGridSize] = useState(DEFAULT_ROWS);
   const [columnCount, setColumnCount] = useState(DEFAULT_COLUMNS);
   const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set());
@@ -373,7 +373,7 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
   // Change from fixed Hz offset to scalar multiplier
   const [freqMultiplier, setFreqMultiplier] = useState(1.0); // Default 1.0 (no change)
   const [isSweeping, setIsSweeping] = useState(false); // Default sweep off
-  const [sweepDuration, setSweepDuration] = useState(8); // Default 8 seconds per cycle
+  const [sweepDuration] = useState(8); // Default 8 seconds per cycle
   
   // Initialize with all dots selected
   useEffect(() => {
@@ -385,7 +385,7 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
       }
     }
     setSelectedDots(allDots);
-  }, []);
+  }, [columnCount, gridSize]);
   
   // Update audio player when grid dimensions change - reselect all dots
   useEffect(() => {
@@ -399,7 +399,7 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
       }
     }
     setSelectedDots(newSelectedDots);
-  }, [gridSize, columnCount]);
+  }, [gridSize, columnCount, selectedDots]);
   
   // Initialize the audio player
   useEffect(() => {

@@ -31,8 +31,8 @@ export default function Home() {
   }
 
   // Get isPlaying and setIsPlaying from playerStore for EQView
-  const isPlaying = usePlayerStore(state => state.isPlaying);
-  const setIsPlaying = usePlayerStore(state => state.setIsPlaying);
+//   const isPlaying = usePlayerStore(state => state.isPlaying);
+//   const setIsPlaying = usePlayerStore(state => state.setIsPlaying);
 
   return (
     <div className="flex flex-col h-screen bg-background">
