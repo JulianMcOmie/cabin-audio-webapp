@@ -132,7 +132,7 @@ interface MultiSelectionDotGridProps {
 
 // Constants for the grid
 const DEFAULT_COLUMNS = 5; // Default number of columns
-const DEFAULT_ROWS = 3; // Default number of rows
+const DEFAULT_ROWS = 5; // Changed from 3 to 5 as requested
 const MIN_COLUMNS = 2; // Minimum columns
 const MAX_COLUMNS = 10; // Maximum columns
 const MIN_ROWS = 3; // Minimum rows
@@ -366,9 +366,33 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
   const [playbackMode, setPlaybackMode] = useState<dotGridAudio.PlaybackMode>(
     dotGridAudio.PlaybackMode.POLYRHYTHM
   );
-  const [filterMode, setFilterMode] = useState<dotGridAudio.FilterMode>(
-    dotGridAudio.FilterMode.BANDPASS
-  );
+  const [selectMode, setSelectMode] = useState<'row' | 'individual'>('row'); // New state for selection mode
+  
+  // Initialize with all dots selected
+  useEffect(() => {
+    // Select all dots by default when component mounts
+    const allDots = new Set<string>();
+    for (let y = 0; y < gridSize; y++) {
+      for (let x = 0; x < columnCount; x++) {
+        allDots.add(`${x},${y}`);
+      }
+    }
+    setSelectedDots(allDots);
+  }, []);
+  
+  // Update audio player when grid dimensions change - reselect all dots
+  useEffect(() => {
+    // Update all dots when dimensions change
+    const newSelectedDots = new Set<string>();
+    for (let y = 0; y < gridSize; y++) {
+      for (let x = 0; x < columnCount; x++) {
+        if (selectedDots.has(`${x},${y}`) || selectedDots.size === 0) {
+          newSelectedDots.add(`${x},${y}`);
+        }
+      }
+    }
+    setSelectedDots(newSelectedDots);
+  }, [gridSize, columnCount]);
   
   // Initialize the audio player
   useEffect(() => {
@@ -398,20 +422,40 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
     audioPlayer.setPlaybackMode(playbackMode);
   }, [playbackMode]);
   
-  // Update audio player when filter mode changes
-  useEffect(() => {
-    const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
-    audioPlayer.setFilterMode(filterMode);
-  }, [filterMode]);
-  
   const handleDotToggle = (x: number, y: number) => {
-    const dotKey = `${x},${y}`;
     const newSelectedDots = new Set(selectedDots);
     
-    if (newSelectedDots.has(dotKey)) {
-      newSelectedDots.delete(dotKey);
+    // Different behavior based on selection mode
+    if (selectMode === 'row') {
+      // Get all dots in the row
+      const rowDots = [];
+      let rowSelected = true;
+      
+      // Check if all dots in this row are already selected
+      for (let col = 0; col < columnCount; col++) {
+        const dotKey = `${col},${y}`;
+        rowDots.push(dotKey);
+        if (!newSelectedDots.has(dotKey)) {
+          rowSelected = false;
+        }
+      }
+      
+      // Toggle all dots in the row
+      for (const dotKey of rowDots) {
+        if (rowSelected) {
+          newSelectedDots.delete(dotKey);
+        } else {
+          newSelectedDots.add(dotKey);
+        }
+      }
     } else {
-      newSelectedDots.add(dotKey);
+      // Individual dot selection mode
+      const dotKey = `${x},${y}`;
+      if (newSelectedDots.has(dotKey)) {
+        newSelectedDots.delete(dotKey);
+      } else {
+        newSelectedDots.add(dotKey);
+      }
     }
     
     setSelectedDots(newSelectedDots);
@@ -425,12 +469,8 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
     );
   };
   
-  const toggleFilterMode = () => {
-    setFilterMode(prevMode =>
-      prevMode === dotGridAudio.FilterMode.BANDPASS
-        ? dotGridAudio.FilterMode.HIGHPASS_LOWPASS
-        : dotGridAudio.FilterMode.BANDPASS
-    );
+  const toggleSelectionMode = () => {
+    setSelectMode(prev => prev === 'row' ? 'individual' : 'row');
   };
   
   const increaseRows = () => {
@@ -524,24 +564,24 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
           </div>
         </div>
         
-        {/* Filter mode toggle */}
+        {/* Selection mode toggle - new */}
         <div className="flex items-center justify-between space-x-2">
           <div className="flex flex-col space-y-0.5">
-            <span className="text-xs font-medium">Filter Mode:</span>
+            <span className="text-xs font-medium">Selection Mode:</span>
             <span className="text-xs text-muted-foreground">
-              {filterMode === dotGridAudio.FilterMode.BANDPASS 
-                ? "Bandpass (single filter)" 
-                : "Highpass+Lowpass (dual filters)"}
+              {selectMode === 'row' 
+                ? "Row (click any dot to toggle entire row)" 
+                : "Individual (select dots one by one)"}
             </span>
           </div>
           <div className="flex items-center space-x-2">
-            <Label htmlFor="filter-toggle" className="text-xs">
-              {filterMode === dotGridAudio.FilterMode.HIGHPASS_LOWPASS ? "HP+LP" : "Bandpass"}
+            <Label htmlFor="select-mode-toggle" className="text-xs">
+              {selectMode === 'individual' ? "Individual" : "Row"}
             </Label>
             <Switch
-              id="filter-toggle"
-              checked={filterMode === dotGridAudio.FilterMode.HIGHPASS_LOWPASS}
-              onCheckedChange={toggleFilterMode}
+              id="select-mode-toggle"
+              checked={selectMode === 'individual'}
+              onCheckedChange={toggleSelectionMode}
               disabled={disabled}
             />
           </div>

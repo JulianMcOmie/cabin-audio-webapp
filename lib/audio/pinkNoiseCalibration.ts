@@ -755,10 +755,10 @@ class PinkNoiseCalibrator {
       eqProcessor.getEQProcessor().getInputNode();
     
     // Create audio source for pink noise
-    const source = ctx.createBufferSource();
-    source.buffer = this.pinkNoiseBuffer;
-    source.loop = true;
-    
+      const source = ctx.createBufferSource();
+      source.buffer = this.pinkNoiseBuffer;
+      source.loop = true;
+      
     // Create sine oscillator
     const sineOsc = ctx.createOscillator();
     sineOsc.type = 'sine';
@@ -773,7 +773,7 @@ class PinkNoiseCalibrator {
     const panner = ctx.createStereoPanner();
     panner.pan.value = this.panValue;
     
-    const gain = ctx.createGain();
+      const gain = ctx.createGain();
     gain.gain.value = MASTER_GAIN * compensatedGain;
     
     // Connect the chains
@@ -785,20 +785,20 @@ class PinkNoiseCalibrator {
     sineGain.connect(panner);
     
     // Combine through panner
-    panner.connect(gain);
-    gain.connect(destinationNode);
-    
+      panner.connect(gain);
+      gain.connect(destinationNode);
+      
     // Start the sources
-    source.start();
+      source.start();
     sineOsc.start();
-    
-    // Store nodes
+      
+      // Store nodes
     this.audioNodes = {
-      source,
+        source,
       sineOsc,
       sineGain,
-      panner,
-      gain
+        panner,
+        gain
     };
     
     console.log(`🔊 Started pink noise with sine tone at ${this.currentSweepFreq.toFixed(1)}Hz, gain: ${this.sineGain.toFixed(2)}`);

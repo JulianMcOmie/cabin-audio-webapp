@@ -143,13 +143,13 @@ export function PinkNoiseCalibration({ isPlaying, setIsPlaying, disabled = false
 
     // Function to draw the canvas
     const drawCanvas = (time: number) => {
-      // Clear canvas
-      ctx.clearRect(0, 0, rect.width, rect.height)
+    // Clear canvas
+    ctx.clearRect(0, 0, rect.width, rect.height)
 
-      // Add semi-transparent background
-      ctx.fillStyle = isDarkMode ? "rgba(24, 24, 36, 0.4)" : "rgba(255, 255, 255, 0.4)"
-      ctx.fillRect(0, 0, rect.width, rect.height)
-      
+    // Add semi-transparent background
+    ctx.fillStyle = isDarkMode ? "rgba(24, 24, 36, 0.4)" : "rgba(255, 255, 255, 0.4)"
+    ctx.fillRect(0, 0, rect.width, rect.height)
+
       // Draw frequency response visualization
       ctx.strokeStyle = isDarkMode ? "#38bdf8" : "#0284c7" // sky-400 or sky-600
       ctx.lineWidth = 2
@@ -172,10 +172,10 @@ export function PinkNoiseCalibration({ isPlaying, setIsPlaying, disabled = false
             const logFreq = Math.log10(freq)
             const x = rect.width * (logFreq - logMinFreq) / logRange
             
-            ctx.beginPath()
+      ctx.beginPath()
             ctx.moveTo(x, 0)
             ctx.lineTo(x, rect.height)
-            ctx.stroke()
+      ctx.stroke()
             
             // Draw frequency label
             ctx.fillStyle = isDarkMode ? "rgba(255, 255, 255, 0.5)" : "rgba(0, 0, 0, 0.5)"
@@ -445,7 +445,7 @@ export function PinkNoiseCalibration({ isPlaying, setIsPlaying, disabled = false
         
         {/* Pan slider control */}
         <div className="flex flex-col space-y-1">
-          <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between">
             <span className="text-xs text-muted-foreground">Pan Position:</span>
             <div className="text-xs text-muted-foreground">
               {isPanning ? "Auto-panning" : panValue === 0 
@@ -634,8 +634,8 @@ export function PinkNoiseCalibration({ isPlaying, setIsPlaying, disabled = false
             <span>Silent</span>
             <span>Loud</span>
           </div>
-        </div>
-        
+      </div>
+      
         {/* Peak bandwidth (Q) control */}
         <div className="flex flex-col space-y-1">
           <div className="flex items-center justify-between">
