@@ -12,7 +12,7 @@ import { PricingModal } from "@/components/pricing-modal"
 import { MobileView } from "@/components/mobile-view"
 import { ProfilePage } from "@/components/profile-page"
 import { SignupModal } from "@/components/signup-modal"
-import { usePlayerStore } from "@/lib/stores"
+// import { usePlayerStore } from "@/lib/stores"
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<"eq" | "library" | "export" | "desktop" | "mobile" | "profile">("library")

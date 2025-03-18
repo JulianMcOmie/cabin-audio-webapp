@@ -98,8 +98,16 @@ export function queueAudioUpdate(
       pendingUpdates.bands[bandId] = {};
     }
     
-    // Queue the parameter update
-    pendingUpdates.bands[bandId][paramType as keyof Record<string, Record<string, number | BiquadFilterType>>] = value;
+    // Queue the parameter update with the correct type assertion for each parameter
+    if (paramType === 'frequency') {
+      pendingUpdates.bands[bandId].frequency = value as number;
+    } else if (paramType === 'gain') {
+      pendingUpdates.bands[bandId].gain = value as number;
+    } else if (paramType === 'q') {
+      pendingUpdates.bands[bandId].q = value as number;
+    } else if (paramType === 'type') {
+      pendingUpdates.bands[bandId].type = value as BiquadFilterType;
+    }
   }
 }
 

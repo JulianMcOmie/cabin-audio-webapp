@@ -6,8 +6,8 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 
 interface SidebarProps {
-  activeTab: "eq" | "library" | "export" | "desktop" | "mobile"
-  setActiveTab: (tab: "eq" | "library" | "export" | "desktop" | "mobile") => void
+  activeTab: "eq" | "library" | "export" | "desktop" | "mobile" | "profile"
+  setActiveTab: (tab: "eq" | "library" | "export" | "desktop" | "mobile" | "profile") => void
   onUpgradeClick: () => void
 }
 
