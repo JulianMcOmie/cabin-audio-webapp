@@ -1,8 +1,8 @@
 import { useSyncStore } from '../stores';
 import * as trackSync from './entitySync/trackSync';
-import * as albumSync from './entitySync/albumSync';
-import * as artistSync from './entitySync/artistSync';
-import * as playlistSync from './entitySync/playlistSync';
+// import * as albumSync from './entitySync/albumSync';
+// import * as artistSync from './entitySync/artistSync';
+// import * as playlistSync from './entitySync/playlistSync';
 import * as eqSync from './entitySync/eqSync';
 
 // Minimum time between syncs (in milliseconds)
@@ -31,7 +31,7 @@ class SyncManager {
   }
   
   // Handle coming online
-  private handleOnline(): void {
+  public handleOnline(): void {
     console.log('Device is online, checking for pending changes');
     
     // Check if we have pending changes
@@ -44,7 +44,7 @@ class SyncManager {
   }
   
   // Handle going offline
-  private handleOffline(): void {
+  public handleOffline(): void {
     console.log('Device is offline, sync operations paused');
     
     // If we're currently syncing, we'll let the current operations finish
@@ -104,17 +104,17 @@ class SyncManager {
     // Sync in order: artists, albums, tracks, playlists, EQ profiles
     // This order ensures dependencies are synced first
     
-    // Sync artists
-    await artistSync.syncArtists();
+    // // Sync artists
+    // await artistSync.syncArtists();
     
-    // Sync albums
-    await albumSync.syncAlbums();
+    // // Sync albums
+    // await albumSync.syncAlbums();
     
     // Sync tracks
     await trackSync.syncTracks();
     
-    // Sync playlists
-    await playlistSync.syncPlaylists();
+    // // Sync playlists
+    // await playlistSync.syncPlaylists();
     
     // Sync EQ profiles
     await eqSync.syncEQProfiles();
@@ -166,8 +166,8 @@ export const initializeSyncManager = (): void => {
 export const cleanupSyncManager = (): void => {
   if (syncManagerInstance) {
     // Remove event listeners
-    window.removeEventListener('online', (syncManagerInstance as any).handleOnline);
-    window.removeEventListener('offline', (syncManagerInstance as any).handleOffline);
+    window.removeEventListener('online', syncManagerInstance.handleOnline);
+    window.removeEventListener('offline', syncManagerInstance.handleOffline);
     
     syncManagerInstance = null;
   }

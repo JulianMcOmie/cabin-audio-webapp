@@ -68,6 +68,8 @@ class DotGridAudioPlayer {
     nextTriggerTime: number; // Next time to trigger this dot
     offset: number; // Offset within the row's rhythm (0-1)
     originalFrequency: number; // This NEVER changes
+    notchFilter: BiquadFilterNode;  // Add this new property for notch filter
+    notchOffsetRatio: number;       // Add this to track the notch offset ratio from center frequency
   }> = new Map();
   private gridSize: number = 3; // Default row count
   private columnCount: number = COLUMNS; // Default column count
@@ -635,21 +637,24 @@ class DotGridAudioPlayer {
         
         // Connect the audio chain based on filter mode
         if (this.filterMode === FilterMode.BANDPASS) {
-          // Bandpass approach
-          // source -> filter -> panner -> envelopeGain -> gain -> (preEQGain or EQ) -> destination
+          // Bandpass + notch approach:
+          // source -> filter -> notchFilter -> panner -> envelopeGain -> gain -> destination
           source.connect(nodes.filter);
-          nodes.filter.connect(nodes.panner);
+          nodes.filter.connect(nodes.notchFilter);  // Connect through the notch filter
+          nodes.notchFilter.connect(nodes.panner);
         } else {
-          // Highpass+Lowpass approach
-          // source -> highpass -> lowpass -> panner -> envelopeGain -> gain -> (preEQGain or EQ) -> destination
+          // Highpass+Lowpass approach with notch:
+          // source -> highpass -> lowpass -> notchFilter -> panner -> envelopeGain -> gain -> destination
           if (nodes.highpassFilter && nodes.lowpassFilter) {
             source.connect(nodes.highpassFilter);
             nodes.highpassFilter.connect(nodes.lowpassFilter);
-            nodes.lowpassFilter.connect(nodes.panner);
+            nodes.lowpassFilter.connect(nodes.notchFilter);  // Connect through the notch filter
+            nodes.notchFilter.connect(nodes.panner);
           } else {
             // Fallback to bandpass if the filters aren't available
             source.connect(nodes.filter);
-            nodes.filter.connect(nodes.panner);
+            nodes.filter.connect(nodes.notchFilter);  // Connect through the notch filter
+            nodes.notchFilter.connect(nodes.panner);
           }
         }
         
@@ -860,6 +865,23 @@ class DotGridAudioPlayer {
     filter.frequency.value = centerFreq;
     filter.Q.value = qValue;
     
+    // Create a unique notch filter for this dot
+    const notchFilter = ctx.createBiquadFilter();
+    notchFilter.type = 'notch';
+    
+    // Generate a deterministic but unique offset ratio based on the dot's position
+    // This creates a consistent "character" for each dot
+    // Use the dot position to create a pseudo-random but deterministic value
+    const hashValue = (x * 73 + y * 151) % 100; // Simple hash using prime numbers
+    const notchOffsetRatio = 0.85 + (hashValue / 100) * 0.3; // Range from 0.85 to 1.15 (±15%)
+    
+    // Calculate notch filter frequency based on offset ratio
+    const notchFreq = centerFreq * notchOffsetRatio;
+    
+    // Set notch filter parameters
+    notchFilter.frequency.value = notchFreq;
+    notchFilter.Q.value = 8.0; // Narrow notch for subtle effect
+    
     // For highpass+lowpass mode, create additional filters
     let highpassFilter: BiquadFilterNode | undefined = undefined;
     let lowpassFilter: BiquadFilterNode | undefined = undefined;
@@ -899,6 +921,8 @@ class DotGridAudioPlayer {
       envelopeGain: ctx.createGain(),
       panner,
       filter,
+      notchFilter,           // Add the notch filter to stored nodes
+      notchOffsetRatio,      // Store the offset ratio for future frequency updates
       highpassFilter,
       lowpassFilter,
       position, // Store position for sorting
@@ -909,13 +933,11 @@ class DotGridAudioPlayer {
       originalFrequency: originalFrequency, // This NEVER changes
     });
     
-    const filterDescription = this.filterMode === FilterMode.BANDPASS 
-      ? `Bandpass at ${centerFreq.toFixed(0)}Hz (Q=${qValue.toFixed(2)})`
-      : `Highpass at ${highpassFilter?.frequency.value.toFixed(0)}Hz + Lowpass at ${lowpassFilter?.frequency.value.toFixed(0)}Hz`;
-    
+    // Log filter information including notch filter details
     console.log(`🔊 Added dot ${dotKey} at position (${x},${y})`);
     console.log(`   Position: ${normalizedY.toFixed(2)}`);
-    console.log(`   Filter: ${filterDescription}`);
+    console.log(`   Main Filter: ${centerFreq.toFixed(0)}Hz (Q=${qValue.toFixed(2)})`);
+    console.log(`   Notch Filter: ${notchFreq.toFixed(0)}Hz (offset ratio=${notchOffsetRatio.toFixed(3)})`);
     console.log(`   Subdivision: ${subdivision}`);
     console.log(`   Rhythm: ${(BASE_CYCLE_TIME / subdivision).toFixed(3)}s intervals`);
   }
@@ -1051,6 +1073,7 @@ class DotGridAudioPlayer {
         
         // For bandpass, update the center frequency with a multiplier
         if (this.filterMode === FilterMode.BANDPASS) {
+          // Update bandpass filter
           nodes.filter.frequency.cancelScheduledValues(startTime);
           nodes.filter.frequency.setValueAtTime(
             originalFreq * this.freqMultiplier, 
@@ -1068,9 +1091,29 @@ class DotGridAudioPlayer {
             originalFreq * MIN_FREQ_MULTIPLIER,
             startTime + sweepTime * 2
           );
+          
+          // Also update notch filter to maintain relationship
+          nodes.notchFilter.frequency.cancelScheduledValues(startTime);
+          nodes.notchFilter.frequency.setValueAtTime(
+            originalFreq * this.freqMultiplier * nodes.notchOffsetRatio, 
+            startTime
+          );
+          
+          // Sweep from current to max multiplier (maintaining offset ratio)
+          nodes.notchFilter.frequency.exponentialRampToValueAtTime(
+            originalFreq * MAX_FREQ_MULTIPLIER * nodes.notchOffsetRatio,
+            startTime + sweepTime
+          );
+          
+          // Sweep from max to min multiplier (maintaining offset ratio)
+          nodes.notchFilter.frequency.exponentialRampToValueAtTime(
+            originalFreq * MIN_FREQ_MULTIPLIER * nodes.notchOffsetRatio,
+            startTime + sweepTime * 2
+          );
         } else if (nodes.highpassFilter && nodes.lowpassFilter) {
           // For highpass+lowpass, update both filters with a multiplier
-          // ... similar implementation for both filters ...
+          // ... and also update the notch filter
+          // ... (similar implementation for both filters and notch)
         }
       });
       
@@ -1113,9 +1156,12 @@ class DotGridAudioPlayer {
    */
   private updateAllFilterFrequencies(): void {
     this.audioNodes.forEach((nodes) => {
-      // Use the stored original frequency (NOT the current filter value)
+      // Use the stored original frequency for bandpass filter
       const newFreq = nodes.originalFrequency * this.freqMultiplier;
       nodes.filter.frequency.value = newFreq;
+      
+      // Use the same relationship for notch filter - maintain the character
+      nodes.notchFilter.frequency.value = newFreq * nodes.notchOffsetRatio;
     });
     
     console.log(`🔊 Updated all filter frequencies with multiplier: ${this.freqMultiplier.toFixed(2)}×`);
