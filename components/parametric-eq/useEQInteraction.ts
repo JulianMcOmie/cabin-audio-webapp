@@ -200,6 +200,8 @@ export function useEQInteraction({
         }
       }
     }
+
+    console.log("newHoveredBandId", newHoveredBandId);
     
     // Update hovered band
     if (newHoveredBandId !== hoveredBandId) {

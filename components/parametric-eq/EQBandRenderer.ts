@@ -21,7 +21,7 @@ export class EQBandRenderer {
     if (band.frequency < freqRange.min || band.frequency > freqRange.max) return;
     
     // Adjust opacity based on isHovered state
-    const baseOpacity = isHovered ? 0.6 : 0.4; // More opaque when highlighted, but more vibrant by default
+    const baseOpacity = isHovered ? 0.7 : 0.4; // More opaque when highlighted, but more vibrant by default
     
     const bandColor = isEnabled 
       ? EQCoordinateUtils.getBandColor(band.frequency, baseOpacity, isDarkMode)

@@ -89,6 +89,9 @@ class DotGridAudioPlayer {
   private sweepDuration: number = DEFAULT_SWEEP_DURATION;
   private sweepTimeoutId: number | null = null;
   
+  // Animation frame properties
+  private animationFrameId: number | null = null;
+  
   private constructor() {
     // Initialize pink noise buffer
     this.generatePinkNoiseBuffer();
@@ -507,16 +510,15 @@ class DotGridAudioPlayer {
   }
 
   /**
-   * Start all rhythm timers
+   * Start all rhythm timers - using requestAnimationFrame instead of setInterval
    */
   private startAllRhythms(): void {
-    // Start the master timer that checks all dots
-    this.masterTimerId = window.setInterval(() => {
-      this.checkAndTriggerDots();
-    }, 10); // Check every 10ms for precision
+    // Initialize animation frame properties
+    this.animationFrameId = null;
     
     // Initialize next trigger times with proper offsets
-    const now = Date.now() / 1000; // Current time in seconds
+    const now = performance.now() / 1000; // Current time in seconds (more precise than Date.now)
+    
     this.audioNodes.forEach((nodes, dotKey) => {
       const baseInterval = BASE_CYCLE_TIME / nodes.subdivision;
       // Apply the offset to stagger dots in the same row
@@ -524,15 +526,32 @@ class DotGridAudioPlayer {
       nodes.nextTriggerTime = now + offsetTime;
     });
     
-    console.log(`🔊 Started polyrhythm system with cycle time: ${BASE_CYCLE_TIME}s`);
+    // Start the animation frame loop
+    this.animationFrameId = requestAnimationFrame(this.animationFrameLoop.bind(this));
+    
+    console.log(`🔊 Started polyrhythm system with cycle time: ${BASE_CYCLE_TIME}s using requestAnimationFrame`);
+  }
+  
+  /**
+   * Animation frame loop for rhythm timing
+   */
+  private animationFrameLoop(timestamp: number): void {
+    if (!this.isPlaying) return;
+    
+    // Convert to seconds for consistency with our timing system
+    const now = timestamp / 1000;
+    
+    // Check and trigger dots
+    this.checkAndTriggerDots(now);
+    
+    // Schedule next frame
+    this.animationFrameId = requestAnimationFrame(this.animationFrameLoop.bind(this));
   }
   
   /**
    * Check all dots and trigger them if it's their time
    */
-  private checkAndTriggerDots(): void {
-    const now = Date.now() / 1000; // Current time in seconds
-    
+  private checkAndTriggerDots(now: number): void {
     this.audioNodes.forEach((nodes, dotKey) => {
       if (now >= nodes.nextTriggerTime) {
         // Trigger the dot
@@ -554,9 +573,9 @@ class DotGridAudioPlayer {
    * Stop all rhythm timers
    */
   private stopAllRhythms(): void {
-    if (this.masterTimerId !== null) {
-      window.clearInterval(this.masterTimerId);
-      this.masterTimerId = null;
+    if (this.animationFrameId !== null) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
     }
   }
 
@@ -1089,6 +1108,12 @@ class DotGridAudioPlayer {
     this.stopSequence();
     this.stopSweep();
     this.stopAllSources();
+    
+    // Ensure animation frames are cancelled
+    if (this.animationFrameId !== null) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
     
     // Clean up analyzer nodes
     if (this.preEQGain) {
