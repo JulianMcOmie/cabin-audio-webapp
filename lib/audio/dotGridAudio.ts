@@ -67,6 +67,7 @@ class DotGridAudioPlayer {
     subdivision: number; // Rhythm subdivision
     nextTriggerTime: number; // Next time to trigger this dot
     offset: number; // Offset within the row's rhythm (0-1)
+    originalFrequency: number; // This NEVER changes
   }> = new Map();
   private gridSize: number = 3; // Default row count
   private columnCount: number = COLUMNS; // Default column count
@@ -790,6 +791,9 @@ class DotGridAudioPlayer {
     const logFreqRange = logMaxFreq - logMinFreq;
     const centerFreq = Math.pow(2, logMinFreq + normalizedY * logFreqRange);
     
+    // Calculate the original frequency once
+    const originalFrequency = Math.pow(2, logMinFreq + normalizedY * logFreqRange);
+    
     // Create a gain node for volume
     const gain = ctx.createGain();
     gain.gain.value = MASTER_GAIN;
@@ -862,7 +866,8 @@ class DotGridAudioPlayer {
       rhythmInterval: null, // Rhythm interval ID
       subdivision, // Subdivision for this dot
       nextTriggerTime: 0, // Will be set when playback starts
-      offset: 0 // Default offset, will be updated by calculateRowOffsets
+      offset: 0, // Default offset, will be updated by calculateRowOffsets
+      originalFrequency: originalFrequency, // This NEVER changes
     });
     
     const filterDescription = this.filterMode === FilterMode.BANDPASS 
@@ -998,25 +1003,26 @@ class DotGridAudioPlayer {
       
       // Animate the frequency multiplier from minimum to maximum and back
       this.audioNodes.forEach((nodes) => {
-        const baseFreq = this.calculateBaseFrequency(nodes);
+        // Always use the stored original frequency as our baseline
+        const originalFreq = nodes.originalFrequency;
         
         // For bandpass, update the center frequency with a multiplier
         if (this.filterMode === FilterMode.BANDPASS) {
           nodes.filter.frequency.cancelScheduledValues(startTime);
           nodes.filter.frequency.setValueAtTime(
-            baseFreq * this.freqMultiplier, 
+            originalFreq * this.freqMultiplier, 
             startTime
           );
           
           // Sweep from current to max multiplier
           nodes.filter.frequency.exponentialRampToValueAtTime(
-            baseFreq * MAX_FREQ_MULTIPLIER,
+            originalFreq * MAX_FREQ_MULTIPLIER,
             startTime + sweepTime
           );
           
           // Sweep from max to min multiplier
           nodes.filter.frequency.exponentialRampToValueAtTime(
-            baseFreq * MIN_FREQ_MULTIPLIER,
+            originalFreq * MIN_FREQ_MULTIPLIER,
             startTime + sweepTime * 2
           );
         } else if (nodes.highpassFilter && nodes.lowpassFilter) {
@@ -1059,32 +1065,14 @@ class DotGridAudioPlayer {
   }
   
   /**
-   * Calculate the base frequency for a dot (without multiplier)
-   */
-  private calculateBaseFrequency(nodes: any): number {
-    // Since we're using a multiplier now, we need to get the original base frequency
-    return nodes.filter.frequency.value / this.freqMultiplier;
-  }
-  
-  /**
    * Update all filter frequencies based on the current multiplier
    * This is called any time the frequency multiplier changes
    */
   private updateAllFilterFrequencies(): void {
-    const ctx = audioContext.getAudioContext();
-    
     this.audioNodes.forEach((nodes) => {
-      const baseFreq = this.calculateBaseFrequency(nodes);
-      const newFreq = baseFreq * this.freqMultiplier;
-      
-      if (this.filterMode === FilterMode.BANDPASS) {
-        // For bandpass, update the center frequency with multiplier
-        nodes.filter.frequency.cancelScheduledValues(ctx.currentTime);
-        nodes.filter.frequency.setValueAtTime(newFreq, ctx.currentTime);
-      } else if (nodes.highpassFilter && nodes.lowpassFilter) {
-        // For highpass+lowpass, update both filters
-        // ... implementation for both filters ...
-      }
+      // Use the stored original frequency (NOT the current filter value)
+      const newFreq = nodes.originalFrequency * this.freqMultiplier;
+      nodes.filter.frequency.value = newFreq;
     });
     
     console.log(`🔊 Updated all filter frequencies with multiplier: ${this.freqMultiplier.toFixed(2)}×`);

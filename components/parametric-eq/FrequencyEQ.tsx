@@ -198,7 +198,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
   
   // Custom mouse handlers to support volume control
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (disabled || !profile) {
+    if (!profile) {
       return;
     }
     
