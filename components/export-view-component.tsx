@@ -7,7 +7,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
-import { EQBand } from "@/lib/models/EQBand"
+// import { EQBand } from "@/lib/models/EQBand"
 import { useToast } from "@/components/common/ToastManager"
 import { EQProfile } from "@/lib/models/EQProfile"
 
@@ -15,6 +15,8 @@ import { EQProfile } from "@/lib/models/EQProfile"
 interface EQFormats {
   "15-band": Record<string, string>;
   "10-band": Record<string, string>;
+  "Wavelet": Record<string, string>;
+  "PowerAmp": Record<string, string>;
 }
 
 export default function ExportView() {
@@ -28,7 +30,9 @@ export default function ExportView() {
   // Export format state
   const [exportFormats, setExportFormats] = useState<EQFormats>({
     "15-band": {},
-    "10-band": {}
+    "10-band": {},
+    "Wavelet": {},
+    "PowerAmp": {}
   })
   const [hasTooManyBands, setHasTooManyBands] = useState({
     "10-band": false,
@@ -57,7 +61,9 @@ export default function ExportView() {
     // Create simple 10-band and 15-band exports by taking the first N bands
     const formats: EQFormats = {
       "15-band": {},
-      "10-band": {}
+      "10-band": {},
+      "Wavelet": {},
+      "PowerAmp": {}
     }
     
     const bands = profile.bands || []
@@ -274,8 +280,8 @@ export default function ExportView() {
         </Card>
       </div>
           
-          {/* Additional export formats - commented out for now
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          {/* Additional export formats - commented out for now*/}
+      {false && <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         <Button
           variant="outline"
               onClick={() => handleDownload("Wavelet")}
@@ -293,8 +299,7 @@ export default function ExportView() {
           <FileDown className="h-6 w-6 mb-2" />
           <span>PowerAmp</span>
         </Button>
-          </div>
-          */}
+          </div>}
         </>
       )}
       
@@ -348,8 +353,8 @@ export default function ExportView() {
                   <ol className="list-decimal pl-5 space-y-1">
                     <li>Install eqMac from the official website</li>
                     <li>Open the app and go to the Advanced EQ section</li>
-                    <li>Click on "Import" and paste the 15-band EQ settings</li>
-                    <li>Click "Apply" to save your changes</li>
+                    <li>Click on &quot;Import&quot; and paste the 15-band EQ settings</li>
+                    <li>Click &quot;Apply&quot; to save your changes</li>
                   </ol>
                 </div>
 

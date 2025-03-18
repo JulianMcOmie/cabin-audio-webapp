@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Upload, PlusCircle } from "lucide-react"
+import { Upload } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/common/ToastManager"
 import { useFileImport } from "@/lib/hooks/useFileImport"
@@ -390,7 +390,7 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
 
       <ImportArea onImportClick={handleImportButtonClick} />
 
-      {/* <div className="text-center py-4">
+      {false && <div className="text-center py-4">
         <p className="text-sm text-muted-foreground">
           <Button 
             variant="link" 
@@ -401,7 +401,7 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
           </Button>{" "}
           to save your music (so that it won't disappear when you refresh), create playlists, and listen on any device.
         </p>
-      </div> */}
+      </div>}
 
       <FileImportOverlay
         isVisible={isImporting}

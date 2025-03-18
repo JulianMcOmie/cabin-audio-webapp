@@ -12,7 +12,7 @@ interface FrequencyGraphProps {
 }
 
 export function FrequencyGraph({ 
-  selectedDot = null, 
+//   selectedDot = null, 
   disabled = false, 
   className, 
   onInstructionChange,

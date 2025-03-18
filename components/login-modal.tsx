@@ -128,7 +128,7 @@ export function LoginModal({ open, onClose }: LoginModalProps) {
 
           <div className="text-center text-sm">
             <p className="text-muted-foreground">
-              Don't have an account?{" "}
+              Don&apos;t have an account?{" "}
               <Button variant="link" className="text-teal-600 hover:text-teal-700 p-0 h-auto">
                 Sign up
               </Button>

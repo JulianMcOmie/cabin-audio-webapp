@@ -10,7 +10,7 @@ interface EQStatusAlertProps {
 
 export function EQStatusAlert({ isEnabled: isEnabledProp, onSettingsClick }: EQStatusAlertProps) {
   // Connect to the store directly if no prop is provided
-  const { isEQEnabled, setEQEnabled } = useEQProfileStore()
+  const { isEQEnabled } = useEQProfileStore()
   
   // Use the prop if provided, otherwise use the store state
   const isEnabled = isEnabledProp !== undefined ? isEnabledProp : isEQEnabled
