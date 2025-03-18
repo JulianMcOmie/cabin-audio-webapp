@@ -57,8 +57,10 @@ class AudioRouting {
     try {
       // This requires the Audio Output Devices API which is not fully supported
       // in all browsers. For browsers that support it:
-      if ((audioContext.getAudioContext() as any).setSinkId) {
-        await (audioContext.getAudioContext() as any).setSinkId(deviceId);
+      const ctx = audioContext.getAudioContext();
+      // Check if the setSinkId method exists on the AudioContext
+      if ('setSinkId' in ctx) {
+        await (ctx as AudioContext & { setSinkId(deviceId: string): Promise<void> }).setSinkId(deviceId);
         return true;
       }
       

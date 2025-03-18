@@ -671,8 +671,6 @@ class DotGridAudioPlayer {
         
         // Start playback
         source.start();
-        // Mark the source as started
-        (source as any)._hasStarted = true;
         
         // Store the new source
         nodes.source = source;
@@ -692,9 +690,7 @@ class DotGridAudioPlayer {
       try {
         if (nodes.source) {
           // Add a property to track if the source has been started
-          if ((nodes.source as any)._hasStarted) {
-            nodes.source.stop();
-          }
+          nodes.source.stop();
           nodes.source.disconnect();
         }
       } catch (e) {
@@ -954,10 +950,7 @@ class DotGridAudioPlayer {
     // Stop and disconnect the source if it's playing
     if (this.isPlaying && nodes.source) {
       try {
-        // Only call stop if the source has been started
-        if ((nodes.source as any)._hasStarted) {
-          nodes.source.stop();
-        }
+        nodes.source.stop();
         nodes.source.disconnect();
       } catch (e) {
         // Ignore errors when stopping
