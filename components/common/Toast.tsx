@@ -29,7 +29,7 @@ export interface ToastProps extends VariantProps<typeof toastVariants> {
   onDismiss?: () => void
 }
 
-export function Toast({ id, message, variant, duration = 1000, onDismiss }: ToastProps) {
+export function Toast({ message, variant, duration = 1000, onDismiss }: ToastProps) {
   useEffect(() => {
     if (duration === Number.POSITIVE_INFINITY) return
 

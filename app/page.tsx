@@ -50,11 +50,11 @@ export default function Home() {
             <main className="h-full p-6 pb-0">
               {activeTab === "eq" ? (
                 <EQView
-                  isPlaying={isPlaying}
-                  setIsPlaying={setIsPlaying}
-                  eqEnabled={eqEnabled}
+                //   isPlaying={isPlaying}
+                //   setIsPlaying={setIsPlaying}
+                //   eqEnabled={eqEnabled}
                   setEqEnabled={setEqEnabled}
-                  onSignupClick={handleShowSignup}
+                //   onSignupClick={handleShowSignup}
                 />
               ) : activeTab === "library" ? (
                 <MusicLibrary 

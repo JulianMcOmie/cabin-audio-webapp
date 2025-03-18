@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { HelpCircle, Play, Power, Volume2, VolumeX, Gauge } from "lucide-react"
+import { HelpCircle, Play, Power, Volume2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { FrequencyGraph } from "@/components/frequency-graph"
 import { DotCalibration } from "@/components/dot-grid"
@@ -20,14 +20,14 @@ import { FFTVisualizer } from "@/components/audio/FFTVisualizer"
 import { getDotGridAudioPlayer } from "@/lib/audio/dotGridAudio"
 
 interface EQViewProps {
-  isPlaying: boolean
-  setIsPlaying: (isPlaying: boolean) => void
-  eqEnabled: boolean
+//   isPlaying: boolean
+//   setIsPlaying: (isPlaying: boolean) => void
+//   eqEnabled: boolean
   setEqEnabled: (enabled: boolean) => void
-  onSignupClick: () => void
+//   onSignupClick: () => void
 }
 
-export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSignupClick }: EQViewProps) {
+export function EQView({ setEqEnabled }: EQViewProps) {
   const [selectedDot, setSelectedDot] = useState<[number, number] | null>(null)
   const [instruction, setInstruction] = useState("Click + drag on the center line to add a band")
   const { 
@@ -48,7 +48,7 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
   // Track the selected profile ID
   const [selectedProfileId, setSelectedProfileId] = useState<string>("")
   
-  const [activeTab, setActiveTab] = useState("eq")
+//   const [activeTab, setActiveTab] = useState("eq")
   const [showLoginModal, setShowLoginModal] = useState(false)
   const [showSignupModal, setShowSignupModal] = useState(false)
   

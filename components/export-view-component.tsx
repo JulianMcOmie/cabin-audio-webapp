@@ -79,7 +79,7 @@ export default function ExportView() {
     })
     
     // Generate APO-compatible format for 10-band EQ
-    let format10 = [`Preamp: ${profile.volume || 0} dB`]
+    const format10 = [`Preamp: ${profile.volume || 0} dB`]
     
     // Add bands in standard APO format
     const bandsFor10 = sortedBands.slice(0, 10)
@@ -98,7 +98,7 @@ export default function ExportView() {
     }
     
     // Generate APO-compatible format for 15-band EQ
-    let format15 = [`Preamp: ${profile.volume || 0} dB`]
+    const format15 = [`Preamp: ${profile.volume || 0} dB`]
     
     // Add bands in standard APO format
     const bandsFor15 = sortedBands.slice(0, 15)
@@ -466,98 +466,98 @@ export default function ExportView() {
   )
 }
 
-// EQ Curve Preview Component
-function EQCurvePreview({ data }: { data: number[] }) {
-  // Draw a simple EQ curve based on the data
-  return (
-    <svg className="w-full h-full" viewBox="0 0 300 100" preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="curve-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stopColor="#0ea5e9" />
-          <stop offset="50%" stopColor="#14b8a6" />
-          <stop offset="100%" stopColor="#06b6d4" />
-        </linearGradient>
-      </defs>
+// // EQ Curve Preview Component
+// function EQCurvePreview({ data }: { data: number[] }) {
+//   // Draw a simple EQ curve based on the data
+//   return (
+//     <svg className="w-full h-full" viewBox="0 0 300 100" preserveAspectRatio="none">
+//       <defs>
+//         <linearGradient id="curve-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+//           <stop offset="0%" stopColor="#0ea5e9" />
+//           <stop offset="50%" stopColor="#14b8a6" />
+//           <stop offset="100%" stopColor="#06b6d4" />
+//         </linearGradient>
+//       </defs>
 
-      {/* Center line (0dB) */}
-      <line
-        x1="0"
-        y1="50"
-        x2="300"
-        y2="50"
-        stroke="currentColor"
-        className="text-muted-foreground/30"
-        strokeWidth="1"
-        strokeDasharray="4,4"
-      />
+//       {/* Center line (0dB) */}
+//       <line
+//         x1="0"
+//         y1="50"
+//         x2="300"
+//         y2="50"
+//         stroke="currentColor"
+//         className="text-muted-foreground/30"
+//         strokeWidth="1"
+//         strokeDasharray="4,4"
+//       />
 
-      {/* +6dB and -6dB lines */}
-      <line
-        x1="0"
-        y1="25"
-        x2="300"
-        y2="25"
-        stroke="currentColor"
-        className="text-muted-foreground/30"
-        strokeWidth="0.5"
-        strokeDasharray="2,2"
-      />
-      <line
-        x1="0"
-        y1="75"
-        x2="300"
-        y2="75"
-        stroke="currentColor"
-        className="text-muted-foreground/30"
-        strokeWidth="0.5"
-        strokeDasharray="2,2"
-      />
+//       {/* +6dB and -6dB lines */}
+//       <line
+//         x1="0"
+//         y1="25"
+//         x2="300"
+//         y2="25"
+//         stroke="currentColor"
+//         className="text-muted-foreground/30"
+//         strokeWidth="0.5"
+//         strokeDasharray="2,2"
+//       />
+//       <line
+//         x1="0"
+//         y1="75"
+//         x2="300"
+//         y2="75"
+//         stroke="currentColor"
+//         className="text-muted-foreground/30"
+//         strokeWidth="0.5"
+//         strokeDasharray="2,2"
+//       />
 
-      {/* EQ curve */}
-      <polyline
-        points={data
-          .map((value, index) => {
-            const x = (index / (data.length - 1)) * 300
-            // Convert dB value to y position (50 is center, -12dB to +12dB range)
-            const y = 50 - (value / 12) * 25
-            return `${x},${y}`
-          })
-          .join(" ")}
-        fill="none"
-        stroke="url(#curve-gradient)"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+//       {/* EQ curve */}
+//       <polyline
+//         points={data
+//           .map((value, index) => {
+//             const x = (index / (data.length - 1)) * 300
+//             // Convert dB value to y position (50 is center, -12dB to +12dB range)
+//             const y = 50 - (value / 12) * 25
+//             return `${x},${y}`
+//           })
+//           .join(" ")}
+//         fill="none"
+//         stroke="url(#curve-gradient)"
+//         strokeWidth="2"
+//         strokeLinecap="round"
+//         strokeLinejoin="round"
+//       />
 
-      {/* Frequency labels */}
-      <text x="0" y="95" className="text-xs fill-current text-muted-foreground" fontSize="8">
-        20Hz
-      </text>
-      <text x="75" y="95" className="text-xs fill-current text-muted-foreground" fontSize="8">
-        100Hz
-      </text>
-      <text x="150" y="95" className="text-xs fill-current text-muted-foreground" fontSize="8">
-        1kHz
-      </text>
-      <text x="225" y="95" className="text-xs fill-current text-muted-foreground" fontSize="8">
-        10kHz
-      </text>
-      <text x="290" y="95" className="text-xs fill-current text-muted-foreground" fontSize="8">
-        20kHz
-      </text>
+//       {/* Frequency labels */}
+//       <text x="0" y="95" className="text-xs fill-current text-muted-foreground" fontSize="8">
+//         20Hz
+//       </text>
+//       <text x="75" y="95" className="text-xs fill-current text-muted-foreground" fontSize="8">
+//         100Hz
+//       </text>
+//       <text x="150" y="95" className="text-xs fill-current text-muted-foreground" fontSize="8">
+//         1kHz
+//       </text>
+//       <text x="225" y="95" className="text-xs fill-current text-muted-foreground" fontSize="8">
+//         10kHz
+//       </text>
+//       <text x="290" y="95" className="text-xs fill-current text-muted-foreground" fontSize="8">
+//         20kHz
+//       </text>
 
-      {/* dB labels */}
-      <text x="5" y="25" className="text-xs fill-current text-muted-foreground" fontSize="8">
-        +6dB
-      </text>
-      <text x="5" y="50" className="text-xs fill-current text-muted-foreground" fontSize="8">
-        0dB
-      </text>
-      <text x="5" y="75" className="text-xs fill-current text-muted-foreground" fontSize="8">
-        -6dB
-      </text>
-    </svg>
-  )
-}
+//       {/* dB labels */}
+//       <text x="5" y="25" className="text-xs fill-current text-muted-foreground" fontSize="8">
+//         +6dB
+//       </text>
+//       <text x="5" y="50" className="text-xs fill-current text-muted-foreground" fontSize="8">
+//         0dB
+//       </text>
+//       <text x="5" y="75" className="text-xs fill-current text-muted-foreground" fontSize="8">
+//         -6dB
+//       </text>
+//     </svg>
+//   )
+// }
 

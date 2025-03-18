@@ -94,7 +94,7 @@ export function EmptyLibrary({
           >
             Sign up
           </Button>{" "}
-          to save your music (so that it won't disappear when you refresh), create playlists, and listen on any device.
+          to save your music (so that it won&apos;t disappear when you refresh), create playlists, and listen on any device.
         </p>
       </div>}
 
