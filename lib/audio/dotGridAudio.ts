@@ -30,6 +30,14 @@ const DOT_TIMING = 0.2; // Time between dots in sequential mode (seconds)
 const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
 const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
 
+// Additional constants for frequency offset
+const DEFAULT_FREQ_OFFSET = 0; // Default frequency offset in Hz
+const MIN_FREQ_OFFSET = -1000; // Minimum frequency offset in Hz
+const MAX_FREQ_OFFSET = 1000; // Maximum frequency offset in Hz
+const DEFAULT_SWEEP_DURATION = 8.0; // Default sweep cycle duration in seconds
+const MIN_SWEEP_DURATION = 2.0; // Minimum sweep cycle duration
+const MAX_SWEEP_DURATION = 30.0; // Maximum sweep cycle duration
+
 // Playback mode enum
 export enum PlaybackMode {
   POLYRHYTHM = 'polyrhythm',
@@ -73,6 +81,12 @@ class DotGridAudioPlayer {
   private sequenceTimer: number | null = null; // Timer for sequential playback
   private sequenceIndex: number = 0; // Current index in the sequence
   private orderedDots: string[] = []; // Dots ordered for sequential playback
+  
+  // New properties for frequency offset
+  private freqOffset: number = DEFAULT_FREQ_OFFSET;
+  private isSweeping: boolean = false;
+  private sweepDuration: number = DEFAULT_SWEEP_DURATION;
+  private sweepTimeoutId: number | null = null;
   
   private constructor() {
     // Initialize pink noise buffer
@@ -419,12 +433,22 @@ class DotGridAudioPlayer {
       } else {
         this.startSequence();
       }
+      
+      // Start frequency sweep if enabled
+      if (this.isSweeping) {
+        this.startSweep();
+      }
     } else {
       // Stop the appropriate playback based on mode
       if (this.playbackMode === PlaybackMode.POLYRHYTHM) {
         this.stopAllRhythms();
       } else {
         this.stopSequence();
+      }
+      
+      // Stop frequency sweep if enabled
+      if (this.isSweeping) {
+        this.stopSweep();
       }
       
       this.stopAllSources();
@@ -878,6 +902,218 @@ class DotGridAudioPlayer {
   }
   
   /**
+   * Set frequency offset for all dots
+   * @param offset Frequency offset in Hz
+   */
+  public setFrequencyOffset(offset: number): void {
+    // Limit to range
+    offset = Math.max(MIN_FREQ_OFFSET, Math.min(MAX_FREQ_OFFSET, offset));
+    
+    if (offset === this.freqOffset) return;
+    
+    console.log(`🔊 Setting frequency offset: ${offset.toFixed(1)} Hz`);
+    this.freqOffset = offset;
+    
+    // Update filters if playing
+    if (this.isPlaying) {
+      this.updateAllFilterFrequencies();
+    }
+  }
+  
+  /**
+   * Get the current frequency offset
+   */
+  public getFrequencyOffset(): number {
+    return this.freqOffset;
+  }
+  
+  /**
+   * Set whether frequency offset is sweeping
+   */
+  public setSweeping(enabled: boolean): void {
+    if (enabled === this.isSweeping) return;
+    
+    console.log(`🔊 Setting frequency sweep: ${enabled ? 'enabled' : 'disabled'}`);
+    this.isSweeping = enabled;
+    
+    if (this.isPlaying) {
+      if (enabled) {
+        this.startSweep();
+      } else {
+        this.stopSweep();
+      }
+    }
+  }
+  
+  /**
+   * Get whether frequency offset is sweeping
+   */
+  public isSweepEnabled(): boolean {
+    return this.isSweeping;
+  }
+  
+  /**
+   * Set sweep duration (time for a complete cycle)
+   */
+  public setSweepDuration(duration: number): void {
+    // Limit to range
+    duration = Math.max(MIN_SWEEP_DURATION, Math.min(MAX_SWEEP_DURATION, duration));
+    
+    if (duration === this.sweepDuration) return;
+    
+    console.log(`🔊 Setting sweep duration: ${duration.toFixed(1)}s`);
+    this.sweepDuration = duration;
+    
+    // Restart sweep if already sweeping
+    if (this.isPlaying && this.isSweeping) {
+      this.stopSweep();
+      this.startSweep();
+    }
+  }
+  
+  /**
+   * Get the current sweep duration
+   */
+  public getSweepDuration(): number {
+    return this.sweepDuration;
+  }
+  
+  /**
+   * Start frequency sweep
+   */
+  private startSweep(): void {
+    // Clear any existing sweep
+    this.stopSweep();
+    
+    const ctx = audioContext.getAudioContext();
+    const sweepTime = this.sweepDuration / 2; // Half cycle time
+    
+    // Schedule the sweep (runs continuously)
+    const scheduleNextSweep = () => {
+      if (!this.isPlaying || !this.isSweeping) {
+        return; // Exit if we're no longer playing or sweeping
+      }
+      
+      const startTime = ctx.currentTime;
+      
+      // Animate the frequency offset from minimum to maximum and back
+      // We'll use the audio parameter automation for smooth changes
+      // First loop through all dots and update their filter frequencies in a smooth cycle
+      this.audioNodes.forEach((nodes) => {
+        const baseFreq = this.calculateBaseFrequency(nodes);
+        
+        // Schedule a cycle from min to max offset
+        const minFreq = baseFreq + MIN_FREQ_OFFSET;
+        const maxFreq = baseFreq + MAX_FREQ_OFFSET;
+        
+        if (this.filterMode === FilterMode.BANDPASS) {
+          // For bandpass, just update the center frequency
+          nodes.filter.frequency.cancelScheduledValues(startTime);
+          nodes.filter.frequency.setValueAtTime(baseFreq + this.freqOffset, startTime);
+          nodes.filter.frequency.linearRampToValueAtTime(maxFreq, startTime + sweepTime);
+          nodes.filter.frequency.linearRampToValueAtTime(minFreq, startTime + sweepTime * 2);
+        } else if (nodes.highpassFilter && nodes.lowpassFilter) {
+          // For highpass+lowpass, update both filters
+          // Calculate the bandwidth
+          const bandwidthInOctaves = 2 / nodes.filter.Q.value;
+          
+          // Update the highpass filter
+          nodes.highpassFilter.frequency.cancelScheduledValues(startTime);
+          const lowCutoff = (baseFreq + this.freqOffset) * Math.pow(2, -bandwidthInOctaves/2);
+          const minLowCutoff = minFreq * Math.pow(2, -bandwidthInOctaves/2);
+          const maxLowCutoff = maxFreq * Math.pow(2, -bandwidthInOctaves/2);
+          
+          nodes.highpassFilter.frequency.setValueAtTime(lowCutoff, startTime);
+          nodes.highpassFilter.frequency.linearRampToValueAtTime(maxLowCutoff, startTime + sweepTime);
+          nodes.highpassFilter.frequency.linearRampToValueAtTime(minLowCutoff, startTime + sweepTime * 2);
+          
+          // Update the lowpass filter
+          nodes.lowpassFilter.frequency.cancelScheduledValues(startTime);
+          const highCutoff = (baseFreq + this.freqOffset) * Math.pow(2, bandwidthInOctaves/2);
+          const minHighCutoff = minFreq * Math.pow(2, bandwidthInOctaves/2);
+          const maxHighCutoff = maxFreq * Math.pow(2, bandwidthInOctaves/2);
+          
+          nodes.lowpassFilter.frequency.setValueAtTime(highCutoff, startTime);
+          nodes.lowpassFilter.frequency.linearRampToValueAtTime(maxHighCutoff, startTime + sweepTime);
+          nodes.lowpassFilter.frequency.linearRampToValueAtTime(minHighCutoff, startTime + sweepTime * 2);
+        }
+      });
+      
+      // Schedule the next sweep cycle
+      this.sweepTimeoutId = window.setTimeout(() => {
+        // Only proceed if we're still playing and sweeping
+        if (this.isPlaying && this.isSweeping) {
+          scheduleNextSweep();
+        }
+      }, sweepTime * 2 * 1000 - 50); // Schedule slightly before end to ensure smooth transition
+    };
+    
+    // Start the first sweep cycle
+    scheduleNextSweep();
+    
+    console.log(`🔊 Started frequency offset sweep: ${MIN_FREQ_OFFSET}Hz - ${MAX_FREQ_OFFSET}Hz, duration: ${this.sweepDuration.toFixed(1)}s`);
+  }
+  
+  /**
+   * Stop frequency sweep
+   */
+  private stopSweep(): void {
+    // Clear the timeout if one exists
+    if (this.sweepTimeoutId !== null) {
+      window.clearTimeout(this.sweepTimeoutId);
+      this.sweepTimeoutId = null;
+    }
+    
+    // Reset all filter frequencies to base + current offset
+    if (this.isPlaying) {
+      this.updateAllFilterFrequencies();
+    }
+    
+    console.log('🔊 Stopped frequency sweep');
+  }
+  
+  /**
+   * Calculate the base frequency for a dot (without offset)
+   */
+  private calculateBaseFrequency(nodes: any): number {
+    return nodes.filter.frequency.value - this.freqOffset;
+  }
+  
+  /**
+   * Update all filter frequencies based on the current offset
+   */
+  private updateAllFilterFrequencies(): void {
+    const ctx = audioContext.getAudioContext();
+    
+    this.audioNodes.forEach((nodes) => {
+      const baseFreq = this.calculateBaseFrequency(nodes);
+      const newFreq = baseFreq + this.freqOffset;
+      
+      if (this.filterMode === FilterMode.BANDPASS) {
+        // For bandpass, just update the center frequency
+        nodes.filter.frequency.cancelScheduledValues(ctx.currentTime);
+        nodes.filter.frequency.setValueAtTime(newFreq, ctx.currentTime);
+      } else if (nodes.highpassFilter && nodes.lowpassFilter) {
+        // For highpass+lowpass, update both filters
+        // Calculate the bandwidth
+        const bandwidthInOctaves = 2 / nodes.filter.Q.value;
+        
+        // Update the highpass filter
+        nodes.highpassFilter.frequency.cancelScheduledValues(ctx.currentTime);
+        const lowCutoff = newFreq * Math.pow(2, -bandwidthInOctaves/2);
+        nodes.highpassFilter.frequency.setValueAtTime(lowCutoff, ctx.currentTime);
+        
+        // Update the lowpass filter
+        nodes.lowpassFilter.frequency.cancelScheduledValues(ctx.currentTime);
+        const highCutoff = newFreq * Math.pow(2, bandwidthInOctaves/2);
+        nodes.lowpassFilter.frequency.setValueAtTime(highCutoff, ctx.currentTime);
+      }
+    });
+    
+    console.log(`🔊 Updated all filter frequencies with offset: ${this.freqOffset.toFixed(1)} Hz`);
+  }
+  
+  /**
    * Clean up resources
    */
   public dispose(): void {
@@ -886,6 +1122,7 @@ class DotGridAudioPlayer {
     this.setPlaying(false);
     this.stopAllRhythms();
     this.stopSequence();
+    this.stopSweep();
     this.stopAllSources();
     
     // Clean up analyzer nodes

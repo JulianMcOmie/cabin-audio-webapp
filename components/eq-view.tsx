@@ -57,9 +57,6 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
   // State for the dot grid calibration audio
   const [dotGridPlaying, setDotGridPlaying] = useState(false)
   
-  // State for calibration type toggle
-  const [calibrationType, setCalibrationType] = useState<'dot-grid' | 'pink-noise' | 'image-noise'>('dot-grid')
-  
   // State for the spectrum analyzer
   const [preEQAnalyser, setPreEQAnalyser] = useState<AnalyserNode | null>(null)
   
@@ -102,27 +99,15 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
   // Handle creating/removing analyzer when dot grid playing state changes
   useEffect(() => {
     if (dotGridPlaying) {
-      // Create and connect the analyzer based on calibration type
-      if (calibrationType === 'dot-grid') {
-        const dotGridPlayer = getDotGridAudioPlayer();
-        const analyser = dotGridPlayer.createPreEQAnalyser();
-        setPreEQAnalyser(analyser);
-      } else if (calibrationType === 'pink-noise') {
-        // For pink noise calibration
-        const pinkNoisePlayer = require('@/lib/audio/pinkNoiseCalibration').getPinkNoiseCalibrator();
-        const analyser = pinkNoisePlayer.createPreEQAnalyser();
-        setPreEQAnalyser(analyser);
-      } else {
-        // For image noise calibration
-        const imageNoisePlayer = require('@/lib/audio/imageNoiseCalibration').getImageNoiseCalibrator();
-        const analyser = imageNoisePlayer.createPreEQAnalyser();
-        setPreEQAnalyser(analyser);
-      }
+      // Create and connect the analyzer for dot grid only
+      const dotGridPlayer = getDotGridAudioPlayer();
+      const analyser = dotGridPlayer.createPreEQAnalyser();
+      setPreEQAnalyser(analyser);
     } else {
       // Clean up when not playing
       setPreEQAnalyser(null);
     }
-  }, [dotGridPlaying, calibrationType]);
+  }, [dotGridPlaying]);
 
   // Initialize selected profile from the active profile and keep it synced
   useEffect(() => {
@@ -390,50 +375,15 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
                 <div className="flex justify-between items-center mb-3">
                   <h4 className="font-medium">Calibration Controls</h4>
                   
-                  {/* Calibration type toggle */}
-                  <div className="flex items-center space-x-2 text-xs">
-                    <span className={calibrationType === 'dot-grid' ? 'font-medium' : 'text-muted-foreground'}>Dot Grid</span>
-                    <div className="relative inline-flex h-5 w-16 items-center rounded-full bg-slate-300 dark:bg-slate-700 transition-colors focus:outline-none">
-                      <button 
-                        className="w-full h-full rounded-full focus:outline-none"
-                        onClick={() => {
-                          if (calibrationType === 'dot-grid') setCalibrationType('pink-noise');
-                          else if (calibrationType === 'pink-noise') setCalibrationType('image-noise');
-                          else setCalibrationType('dot-grid');
-                        }}
-                        aria-label="Toggle calibration type"
-                      >
-                        <span 
-                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                            calibrationType === 'dot-grid' ? 'translate-x-1' : 
-                            calibrationType === 'pink-noise' ? 'translate-x-7' : 'translate-x-11'
-                          }`} 
-                        />
-                      </button>
-                    </div>
-                    <span className={calibrationType === 'pink-noise' ? 'font-medium' : 'text-muted-foreground'}>Pink Noise</span>
-                    <span className={calibrationType === 'image-noise' ? 'font-medium' : 'text-muted-foreground'}>Image</span>
-                  </div>
+                  {/* Remove the calibration type toggle */}
                 </div>
 
-                {/* Conditional rendering of calibration component based on selected type */}
+                {/* Always render the DotCalibration component */}
                 <div className="mb-3">
-                  {calibrationType === 'dot-grid' ? (
-                    <DotCalibration 
-                      isPlaying={dotGridPlaying}
-                      setIsPlaying={setDotGridPlaying}
-                    />
-                  ) : calibrationType === 'pink-noise' ? (
-                    <PinkNoiseCalibration
-                      isPlaying={dotGridPlaying}
-                      setIsPlaying={setDotGridPlaying}
-                    />
-                  ) : (
-                    <ImageNoiseCalibration
-                      isPlaying={dotGridPlaying}
-                      setIsPlaying={setDotGridPlaying}
-                    />
-                  )}
+                  <DotCalibration 
+                    isPlaying={dotGridPlaying}
+                    setIsPlaying={setDotGridPlaying}
+                  />
                 </div>
 
                 <Button
@@ -442,21 +392,11 @@ export function EQView({ isPlaying, setIsPlaying, eqEnabled, setEqEnabled, onSig
                   onClick={() => setDotGridPlaying(!dotGridPlaying)}
                 >
                   <Play className="mr-2 h-4 w-4" />
-                  {dotGridPlaying ? `Stop ${
-                    calibrationType === 'dot-grid' ? 'Grid' : 
-                    calibrationType === 'pink-noise' ? 'Pink Noise' : 'Image Pattern'
-                  }` : `Play ${
-                    calibrationType === 'dot-grid' ? 'Grid' : 
-                    calibrationType === 'pink-noise' ? 'Pink Noise' : 'Image Pattern'
-                  }`}
+                  {dotGridPlaying ? "Stop Grid" : "Play Grid"}
                 </Button>
 
                 <p className="text-xs text-center text-muted-foreground">
-                  {calibrationType === 'dot-grid' 
-                    ? "Select multiple dots on the grid to test different spatial positions"
-                    : calibrationType === 'pink-noise'
-                    ? "Select frequency bands to focus on specific parts of the spectrum"
-                    : "Select an image pattern to test spatial imaging with recognizable shapes"}
+                  Select multiple dots on the grid to test different spatial positions
                 </p>
               </div>
             </div>

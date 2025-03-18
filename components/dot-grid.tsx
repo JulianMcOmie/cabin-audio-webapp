@@ -5,6 +5,8 @@ import { useRef, useEffect, useState, useMemo } from "react"
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
+import { Waves, Clock } from "lucide-react"
+import { Slider } from "@/components/ui/slider"
 
 interface DotGridProps {
   selectedDot: [number, number] | null
@@ -366,7 +368,12 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
   const [playbackMode, setPlaybackMode] = useState<dotGridAudio.PlaybackMode>(
     dotGridAudio.PlaybackMode.POLYRHYTHM
   );
-  const [selectMode, setSelectMode] = useState<'row' | 'individual'>('row'); // New state for selection mode
+  const [selectMode, setSelectMode] = useState<'row' | 'individual'>('row'); // Selection mode
+  
+  // Add state for frequency offset features
+  const [freqOffset, setFreqOffset] = useState(0); // Default 0 Hz offset
+  const [isSweeping, setIsSweeping] = useState(false); // Default sweep off
+  const [sweepDuration, setSweepDuration] = useState(8); // Default 8 seconds per cycle
   
   // Initialize with all dots selected
   useEffect(() => {
@@ -421,6 +428,26 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
     const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
     audioPlayer.setPlaybackMode(playbackMode);
   }, [playbackMode]);
+  
+  // Add new effect hooks for frequency offset features
+  
+  // Update audio player when frequency offset changes
+  useEffect(() => {
+    const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
+    audioPlayer.setFrequencyOffset(freqOffset);
+  }, [freqOffset]);
+  
+  // Update audio player when frequency sweep state changes
+  useEffect(() => {
+    const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
+    audioPlayer.setSweeping(isSweeping);
+  }, [isSweeping]);
+  
+  // Update audio player when sweep duration changes
+  useEffect(() => {
+    const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
+    audioPlayer.setSweepDuration(sweepDuration);
+  }, [sweepDuration]);
   
   const handleDotToggle = (x: number, y: number) => {
     const newSelectedDots = new Set(selectedDots);
@@ -527,6 +554,33 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
     setSelectedDots(new Set());
   };
   
+  // Add new handler functions for frequency offset features
+  
+  const handleFreqOffsetChange = (value: number[]) => {
+    setFreqOffset(value[0]);
+  };
+  
+  const handleSweepDurationChange = (value: number[]) => {
+    setSweepDuration(value[0]);
+  };
+  
+  // Format sweep speed for display
+  const formatSweepSpeed = (duration: number) => {
+    if (duration <= 3) return "Very Fast";
+    if (duration <= 7) return "Fast";
+    if (duration <= 12) return "Medium";
+    if (duration <= 20) return "Slow";
+    return "Very Slow";
+  };
+  
+  // Format frequency for display
+  const formatFrequency = (freq: number) => {
+    if (Math.abs(freq) >= 1000) {
+      return `${(freq / 1000).toFixed(1)}kHz`;
+    }
+    return `${Math.round(freq)}Hz`;
+  };
+  
   return (
     <div className="space-y-4">
       <div className="relative bg-background/50 rounded-lg p-3">
@@ -541,6 +595,76 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
       </div>
       
       <div className="flex flex-col space-y-2">
+        {/* Add Frequency Offset Slider - NEW */}
+        <div className="flex flex-col space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">Frequency Offset:</span>
+            <span className="text-xs text-muted-foreground">
+              {freqOffset === 0 ? "None" : freqOffset > 0 ? `+${formatFrequency(freqOffset)}` : formatFrequency(freqOffset)}
+            </span>
+          </div>
+          <Slider
+            disabled={disabled || isSweeping}
+            min={-1000}
+            max={1000}
+            step={10}
+            value={[freqOffset]}
+            onValueChange={handleFreqOffsetChange}
+            className={disabled || isSweeping ? "opacity-70" : ""}
+          />
+          <div className="flex justify-between text-[10px] text-muted-foreground">
+            <span>-1kHz</span>
+            <span>0</span>
+            <span>+1kHz</span>
+          </div>
+        </div>
+        
+        {/* Add Frequency Sweep Toggle - NEW */}
+        <div className="flex items-center justify-between">
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-2">
+              <Waves className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm">Frequency Sweep</span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Automatically sweep the frequency offset up and down
+            </p>
+          </div>
+          <Switch 
+            checked={isSweeping}
+            onCheckedChange={setIsSweeping}
+            disabled={disabled}
+          />
+        </div>
+        
+        {/* Add Sweep Speed Control - NEW - only show when sweep is enabled */}
+        {isSweeping && (
+          <div className="flex flex-col space-y-1 pl-6 -mt-1">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Clock className="h-3 w-3 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">Sweep Speed:</span>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {formatSweepSpeed(sweepDuration)} ({sweepDuration.toFixed(1)}s)
+              </div>
+            </div>
+            <Slider
+              disabled={disabled}
+              min={2}
+              max={30}
+              step={0.5}
+              value={[sweepDuration]}
+              onValueChange={handleSweepDurationChange}
+              className={disabled ? "opacity-70" : ""}
+            />
+            <div className="flex justify-between text-[10px] text-muted-foreground">
+              <span>Fast</span>
+              <span>Slow</span>
+            </div>
+          </div>
+        )}
+        
         {/* Playback mode toggle */}
         <div className="flex items-center justify-between space-x-2">
           <div className="flex flex-col space-y-0.5">
@@ -564,7 +688,7 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false }: Do
           </div>
         </div>
         
-        {/* Selection mode toggle - new */}
+        {/* Selection mode toggle */}
         <div className="flex items-center justify-between space-x-2">
           <div className="flex flex-col space-y-0.5">
             <span className="text-xs font-medium">Selection Mode:</span>
