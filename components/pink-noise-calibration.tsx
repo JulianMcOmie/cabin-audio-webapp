@@ -1,7 +1,7 @@
 "use client"
 
 import { useRef, useEffect, useState } from "react"
-import { Play, Plus, Minus, Waves, Clock, MoveHorizontal } from "lucide-react"
+import { Play, Plus, Minus, Waves, Clock, MoveHorizontal, Volume2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
@@ -20,7 +20,7 @@ export function PinkNoiseCalibration({ isPlaying, setIsPlaying, disabled = false
   const [isPanning, setIsPanning] = useState(false) // Default auto-pan off
   const [panDuration, setPanDuration] = useState(6) // Default 6 seconds per pan cycle
   const [isSweeping, setIsSweeping] = useState(false) // Default sweep off
-  const [peakGain, setPeakGain] = useState(6) // Default 6dB
+  const [sineGain, setSineGain] = useState(0.4) // Default sine gain 0.4
   const [peakQ, setPeakQ] = useState(1.0) // Default Q of 1.0
   const [sweepDuration, setSweepDuration] = useState(8) // Default 8 seconds per cycle
   const [minSweepFreq, setMinSweepFreq] = useState(20) // Default min 20Hz
@@ -75,11 +75,11 @@ export function PinkNoiseCalibration({ isPlaying, setIsPlaying, disabled = false
     calibrator.setSweeping(isSweeping);
   }, [isSweeping]);
   
-  // Update when peak gain changes
+  // Update when sine gain changes
   useEffect(() => {
     const calibrator = pinkNoiseCalibration.getPinkNoiseCalibrator();
-    calibrator.setPeakGain(peakGain);
-  }, [peakGain]);
+    calibrator.setSineGain(sineGain);
+  }, [sineGain]);
   
   // Update when peak Q changes
   useEffect(() => {
@@ -155,61 +155,41 @@ export function PinkNoiseCalibration({ isPlaying, setIsPlaying, disabled = false
       ctx.lineWidth = 2
       ctx.beginPath()
       
-      // Draw a frequency response curve
-      const drawFrequencyResponse = () => {
-        // Use actual min/max frequencies for visualization
-        const logMinFreq = Math.log10(minSweepFreq)
-        const logMaxFreq = Math.log10(maxSweepFreq)
-        const logRange = logMaxFreq - logMinFreq
+      // Draw frequency markers
+      const drawFrequencyMarkers = () => {
+        ctx.strokeStyle = isDarkMode ? "rgba(255, 255, 255, 0.2)" : "rgba(0, 0, 0, 0.1)"
+        ctx.lineWidth = 1
         
-        // Peak parameters - for sweep animation
-        let peakFreq = Math.sqrt(minSweepFreq * maxSweepFreq) // Default center frequency if not sweeping
+        // Draw frequency markers
+        const frequencyMarkers = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]
         
-        // Animate the peak moving if sweeping is enabled
-        if (isSweeping) {
-          // Calculate peak position based on time, adjusted for sweep duration
-          const cyclePosition = (time / (sweepDuration * 1000)) % 1 // Use actual sweep duration
-          const cyclePhase = Math.sin(cyclePosition * Math.PI * 2)
-          
-          // Map from -1,1 to log frequency scale
-          const logPosition = logMinFreq + (logRange * 0.5) + (cyclePhase * logRange * 0.5)
-          peakFreq = Math.pow(10, logPosition)
-        }
-        
-        // Draw the EQ curve
-        ctx.beginPath()
-        for (let x = 0; x < rect.width; x++) {
-          // Convert x position to frequency (logarithmic)
-          const xRatio = x / rect.width
-          const logFreq = logMinFreq + (xRatio * logRange)
-          const freq = Math.pow(10, logFreq)
-          
-          // Calculate basic response (flat)
-          let response = 0
-          
-          // Add peak if gain is not zero
-          if (peakGain !== 0) {
-            // Use the actual Q factor for visualization
-            const q = peakQ
+        for (const freq of frequencyMarkers) {
+          if (freq >= minSweepFreq && freq <= maxSweepFreq) {
+            const logMinFreq = Math.log10(minSweepFreq)
+            const logMaxFreq = Math.log10(maxSweepFreq)
+            const logRange = logMaxFreq - logMinFreq
             
-            // Calculate peak response at this frequency
-            const freqRatio = freq / peakFreq
-            const logResponse = Math.log10(freqRatio) / Math.log10(2) // Convert to octaves
+            const logFreq = Math.log10(freq)
+            const x = rect.width * (logFreq - logMinFreq) / logRange
             
-            // Apply peak filter formula (simplified for visualization)
-            response = peakGain * Math.exp(-logResponse * logResponse * q)
-          }
-          
-          // Convert response to y position (inverted, since +dB goes up)
-          const y = rect.height * 0.5 - (response * rect.height / 40)
-          
-          if (x === 0) {
-            ctx.moveTo(x, y)
-          } else {
-            ctx.lineTo(x, y)
+            ctx.beginPath()
+            ctx.moveTo(x, 0)
+            ctx.lineTo(x, rect.height)
+            ctx.stroke()
+            
+            // Draw frequency label
+            ctx.fillStyle = isDarkMode ? "rgba(255, 255, 255, 0.5)" : "rgba(0, 0, 0, 0.5)"
+            ctx.font = "10px sans-serif"
+            ctx.textAlign = "center"
+            
+            let label = freq.toString()
+            if (freq >= 1000) {
+              label = `${freq / 1000}k`
+            }
+            
+            ctx.fillText(label, x, rect.height - 5)
           }
         }
-        ctx.stroke()
       }
       
       // Draw the pink noise spectrum
@@ -245,9 +225,72 @@ export function PinkNoiseCalibration({ isPlaying, setIsPlaying, disabled = false
         ctx.fill()
       }
       
+      // Calculate the current sine tone frequency based on sweep state
+      const getCurrentSineFreq = () => {
+        // Get current frequency - if sweeping, calculate it based on time
+        let currentFreq = Math.sqrt(minSweepFreq * maxSweepFreq); // Default to center frequency
+        
+        if (isSweeping && isPlaying) {
+          // Calculate frequency position based on time and sweep duration
+          const cyclePosition = (time / (sweepDuration * 1000)) % 1
+          const cyclePhase = Math.sin(cyclePosition * Math.PI * 2)
+          
+          // Map from -1,1 to logarithmic frequency scale
+          const logMinFreq = Math.log10(minSweepFreq)
+          const logMaxFreq = Math.log10(maxSweepFreq)
+          const logRange = logMaxFreq - logMinFreq
+          
+          const logPosition = logMinFreq + (logRange * 0.5) + (cyclePhase * logRange * 0.5)
+          currentFreq = Math.pow(10, logPosition)
+        }
+        
+        return currentFreq;
+      }
+      
+      // Draw the sine tone visualization
+      const drawSineTone = () => {
+        if (sineGain <= 0) return; // Don't draw if gain is 0
+        
+        // Get current frequency
+        const currentFreq = getCurrentSineFreq();
+        
+        // Calculate x position
+        const logMinFreq = Math.log10(minSweepFreq)
+        const logMaxFreq = Math.log10(maxSweepFreq)
+        const logRange = logMaxFreq - logMinFreq
+        const logFreq = Math.log10(currentFreq)
+        const freqX = rect.width * (logFreq - logMinFreq) / logRange
+        
+        // Draw vertical line at current frequency
+        ctx.strokeStyle = isDarkMode ? "rgba(250, 204, 21, 0.8)" : "rgba(234, 179, 8, 0.8)" // yellow-400
+        ctx.lineWidth = 2 
+        ctx.beginPath()
+        ctx.moveTo(freqX, rect.height * 0.2)
+        ctx.lineTo(freqX, rect.height * 0.8)
+        ctx.stroke()
+        
+        // Draw dot at frequency position
+        const dotSize = 6 + (sineGain * 4); // Size based on gain
+        ctx.fillStyle = isDarkMode ? "rgba(250, 204, 21, 0.9)" : "rgba(234, 179, 8, 0.9)" // yellow-400
+        ctx.beginPath()
+        ctx.arc(freqX, rect.height * 0.5, dotSize, 0, Math.PI * 2)
+        ctx.fill()
+        
+        // Draw frequency label
+        ctx.fillStyle = isDarkMode ? "#ffffff" : "#000000"
+        ctx.font = "10px sans-serif"
+        ctx.textAlign = "center"
+        ctx.fillText(
+          `${formatFrequency(currentFreq)}`, 
+          freqX, 
+          rect.height * 0.2 - 5
+        )
+      }
+      
       // Draw visualization elements
+      drawFrequencyMarkers()
       drawNoiseSpectrum()
-      drawFrequencyResponse()
+      drawSineTone()
       
       // Draw panning indicator
       const drawPanningIndicator = () => {
@@ -313,7 +356,7 @@ export function PinkNoiseCalibration({ isPlaying, setIsPlaying, disabled = false
         cancelAnimationFrame(animationRef.current)
       }
     }
-  }, [isDarkMode, isPlaying, isSweeping, isPanning, peakGain, peakQ, panValue, panDuration, sweepDuration, minSweepFreq, maxSweepFreq])
+  }, [isDarkMode, isPlaying, isSweeping, isPanning, sineGain, peakQ, panValue, panDuration, sweepDuration, minSweepFreq, maxSweepFreq])
   
   const handlePanChange = (value: number[]) => {
     setPanValue(value[0])
@@ -323,8 +366,8 @@ export function PinkNoiseCalibration({ isPlaying, setIsPlaying, disabled = false
     setPanDuration(value[0])
   }
   
-  const handlePeakGainChange = (value: number[]) => {
-    setPeakGain(value[0])
+  const handleSineGainChange = (value: number[]) => {
+    setSineGain(value[0])
   }
   
   const handlePeakQChange = (value: number[]) => {
@@ -393,7 +436,7 @@ export function PinkNoiseCalibration({ isPlaying, setIsPlaying, disabled = false
         {/* Display info about pink noise calibration */}
         <div className="text-xs text-muted-foreground">
           <p>
-            Pink noise calibration tool with movable peak filter to help identify room modes and resonances.
+            Pink noise calibration tool with sine tone generator to help identify room modes and resonances.
           </p>
           <p className="mt-1">
             Use the pan control to position the sound in the stereo field.
@@ -481,7 +524,7 @@ export function PinkNoiseCalibration({ isPlaying, setIsPlaying, disabled = false
               <span className="text-sm">Frequency Sweep</span>
             </div>
             <p className="text-xs text-muted-foreground">
-              Automatically sweep the peak filter across the frequency spectrum
+              Automatically sweep the sine tone across the frequency spectrum
             </p>
           </div>
           <Switch 
@@ -531,7 +574,7 @@ export function PinkNoiseCalibration({ isPlaying, setIsPlaying, disabled = false
               <Slider
                 disabled={disabled}
                 min={20}
-                max={2000}
+                max={20000}
                 step={1}
                 value={[minSweepFreq]}
                 onValueChange={handleMinFreqChange}
@@ -552,7 +595,7 @@ export function PinkNoiseCalibration({ isPlaying, setIsPlaying, disabled = false
               </div>
               <Slider
                 disabled={disabled}
-                min={2000}
+                min={20}
                 max={20000}
                 step={100}
                 value={[maxSweepFreq]}
@@ -567,29 +610,36 @@ export function PinkNoiseCalibration({ isPlaying, setIsPlaying, disabled = false
           </div>
         )}
         
-        {/* Peak filter controls */}
+        {/* Sine tone level control */}
         <div className="flex flex-col space-y-1">
           <div className="flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">Peak Filter Gain:</span>
+            <div className="flex items-center gap-2">
+              <Volume2 className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">Sine Tone Level:</span>
+            </div>
             <div className="text-xs text-muted-foreground">
-              {peakGain > 0 ? "+" : ""}{peakGain.toFixed(1)} dB
+              {Math.round(sineGain * 100)}%
             </div>
           </div>
           <Slider
             disabled={disabled}
-            min={-12}
-            max={12}
-            step={0.5}
-            value={[peakGain]}
-            onValueChange={handlePeakGainChange}
+            min={0}
+            max={1}
+            step={0.01}
+            value={[sineGain]}
+            onValueChange={handleSineGainChange}
             className={disabled ? "opacity-70" : ""}
           />
+          <div className="flex justify-between text-[10px] text-muted-foreground">
+            <span>Silent</span>
+            <span>Loud</span>
+          </div>
         </div>
         
         {/* Peak bandwidth (Q) control */}
         <div className="flex flex-col space-y-1">
           <div className="flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">Peak Bandwidth:</span>
+            <span className="text-xs text-muted-foreground">Tone Bandwidth:</span>
             <div className="text-xs text-muted-foreground">
               {formatQ(peakQ)} (Q: {peakQ.toFixed(1)})
             </div>
