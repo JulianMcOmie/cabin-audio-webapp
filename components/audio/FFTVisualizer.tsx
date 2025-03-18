@@ -80,7 +80,7 @@ export function FFTVisualizer({
         cancelAnimationFrame(animationId);
       }
     };
-  }, [analyser, width, height, animationId]);
+  }, [analyser, width, height]);
   
 //   // Draw background grid
 //   const drawGrid = (ctx: CanvasRenderingContext2D, width: number, height: number) => {

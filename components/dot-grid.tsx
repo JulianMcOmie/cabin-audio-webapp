@@ -399,7 +399,7 @@ export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationPr
       }
     }
     setSelectedDots(newSelectedDots);
-  }, [gridSize, columnCount, selectedDots]);
+  }, [gridSize]);
   
   // Initialize the audio player
   useEffect(() => {
