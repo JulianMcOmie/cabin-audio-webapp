@@ -1,7 +1,7 @@
 import { EQProfile } from '../../models/EQProfile';
 import { useEQProfileStore } from '../../stores';
 import * as indexedDBManager from '../../storage/indexedDBManager';
-import * as apiClient from '../../api/apiClient';
+// import * as apiClient from '../../api/apiClient';
 import * as eqApi from '../../api/endpoints/eqApi';
 
 // Sync all EQ profiles with the server
@@ -175,7 +175,7 @@ const updateExistingEQProfile = async (serverProfile: EQProfile): Promise<void> 
 };
 
 // Handle conflict between server and local EQ profile
-const handleEQProfileConflict = async (serverProfile: EQProfile, localProfile: EQProfile): Promise<void> => {
+const handleEQProfileConflict = async (serverProfile: EQProfile): Promise<void> => {
   try {
     // For EQ profiles, we'll create a new version with a conflict suffix
     // This allows the user to choose which version to keep

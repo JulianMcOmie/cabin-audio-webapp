@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect } from 'react';
 import { usePlayerStore, useTrackStore } from '../stores';
 import * as audioPlayer from '../audio/audioPlayer';
 import * as fileStorage from '../storage/fileStorage';

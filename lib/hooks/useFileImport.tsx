@@ -63,17 +63,6 @@ export function useFileImport({ onComplete, onError }: UseFileImportOptions = {}
     e.stopPropagation()
   }, [])
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setDragActive(false)
-    setDragCounter(0)
-
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      handleFileSelect(e.dataTransfer.files)
-    }
-  }, [])
-
   const cancelImport = useCallback(() => {
     if (isImporting) {
       importCancelRef.current = true
@@ -210,6 +199,17 @@ export function useFileImport({ onComplete, onError }: UseFileImportOptions = {}
     },
     [onComplete, onError, processFile, addTrack],
   )
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragActive(false)
+    setDragCounter(0)
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFileSelect(e.dataTransfer.files)
+    }
+  }, [handleFileSelect])
 
   return {
     // State
