@@ -28,7 +28,7 @@ interface EQViewProps {
 }
 
 export function EQView({ setEqEnabled }: EQViewProps) {
-  const [selectedDot, setSelectedDot] = useState<[number, number] | null>(null)
+  const [selectedDot] = useState<[number, number] | null>(null)
   const [instruction, setInstruction] = useState("Click + drag on the center line to add a band")
   const { 
     isEQEnabled, 
@@ -290,7 +290,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
               <div>
                 <h4 className="font-medium mb-2">Calibration Steps</h4>
                 <ol className="list-decimal pl-5 space-y-2 text-sm text-muted-foreground">
-                  <li>Select dots on the grid by clicking them (it's easiest to select one dot per row)</li>
+                  <li>Select dots on the grid by clicking them (it&apos;s easiest to select one dot per row)</li>
                   <li>Press Play to hear pink noise bursts at the selected positions</li>
                   <li>
                     Adjust the EQ settings until:

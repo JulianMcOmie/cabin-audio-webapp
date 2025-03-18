@@ -39,7 +39,7 @@ interface MusicLibraryProps {
 export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupClick }: MusicLibraryProps) {
   const { showToast } = useToast()
   // Connect to trackStore
-  const { getTracks, getTrackById, addTrack, deleteTrack, isLoading: isTrackStoreLoading } = useTrackStore()
+  const { getTracks, addTrack, deleteTrack, isLoading: isTrackStoreLoading } = useTrackStore()
   // Connect to playerStore
   const { currentTrackId, isPlaying, setCurrentTrack, setIsPlaying } = usePlayerStore()
   // Connect to eqProfileStore for the actual EQ enabled state
@@ -399,7 +399,7 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
           >
             Sign up
           </Button>{" "}
-          to save your music (so that it won't disappear when you refresh), create playlists, and listen on any device.
+          to save your music (so that it won&apos;t disappear when you refresh), create playlists, and listen on any device.
         </p>
       </div>}
 

@@ -37,9 +37,18 @@ let pendingUpdates: PendingUpdates = {
   lastBatchTime: 0
 };
 
+// Define a type for the audio processor
+interface AudioProcessor {
+  setVolume: (volume: number) => void;
+  setBandFrequency: (bandId: string, frequency: number) => void;
+  setBandGain: (bandId: string, gain: number) => void;
+  setBandQ: (bandId: string, q: number) => void;
+  setBandType: (bandId: string, type: BiquadFilterType) => void;
+}
+
 // Audio parameters update - throttled to run at most every 50ms
 export const scheduleAudioUpdate = throttle((
-  audioProcessor: any, // Type this properly based on your EQ processor
+  audioProcessor: AudioProcessor,
   profileId: string,
   updateCallback?: () => void
 ) => {
@@ -79,10 +88,10 @@ export const scheduleAudioUpdate = throttle((
 export function queueAudioUpdate(
   bandId: string | null, 
   paramType: 'frequency' | 'gain' | 'q' | 'type' | 'volume',
-  value: any
+  value: number | BiquadFilterType
 ) {
   if (paramType === 'volume') {
-    pendingUpdates.volume = value;
+    pendingUpdates.volume = value as number;
   } else if (bandId) {
     // Initialize this band's updates if it doesn't exist
     if (!pendingUpdates.bands[bandId]) {
@@ -90,13 +99,12 @@ export function queueAudioUpdate(
     }
     
     // Queue the parameter update
-    pendingUpdates.bands[bandId][paramType] = value;
+    pendingUpdates.bands[bandId][paramType as keyof Record<string, Record<string, number | BiquadFilterType>>] = value;
   }
 }
 
 export function FrequencyEQ({ profileId, disabled = false, className, onInstructionChange, onRequestEnable }: FrequencyEQProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const { theme } = useTheme()
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [selectedBandId, setSelectedBandId] = useState<string | null>(null)
   
