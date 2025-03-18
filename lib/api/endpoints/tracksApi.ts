@@ -123,11 +123,11 @@ export const uploadTrackAudio = async (
   formData.append('file', audioFile);
   
   // Upload file
-  await apiClient.request(
+  await apiClient.request<void>(
     `${TRACKS_ENDPOINT}/${trackId}/audio`,
     {
       method: 'POST',
-      body: formData,
+      body: formData as unknown as Record<string, unknown>,
       headers: {
         // Don't set Content-Type, it will be set automatically with boundary
       }
@@ -166,11 +166,11 @@ export const uploadTrackCover = async (
   formData.append('file', imageFile);
   
   // Upload file
-  await apiClient.request(
+  await apiClient.request<void>(
     `${TRACKS_ENDPOINT}/${trackId}/cover`,
     {
       method: 'POST',
-      body: formData,
+      body: formData as unknown as Record<string, unknown>,
       headers: {
         // Don't set Content-Type, it will be set automatically with boundary
       }

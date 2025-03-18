@@ -1,5 +1,5 @@
 // Base URL for API requests
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.cabinmusic.app/v1';
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.cabinmusic.app/v1';
 
 // Default request timeout in milliseconds
 const DEFAULT_TIMEOUT = 30000;
