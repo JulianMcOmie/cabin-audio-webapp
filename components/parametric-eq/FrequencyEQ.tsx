@@ -10,6 +10,7 @@ import { useEQInteraction } from "./useEQInteraction"
 import { useEQProcessor, calculateBandResponse } from "./useEQProcessor"
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
 import { EQBand } from "@/lib/models/EQBand"
+import { throttle } from 'lodash';
 
 interface FrequencyEQProps {
   profileId?: string
@@ -17,6 +18,80 @@ interface FrequencyEQProps {
   className?: string
   onInstructionChange?: (instruction: string) => void
   onRequestEnable?: () => void
+}
+
+// Cache for pending updates to avoid redundant processing
+interface PendingUpdates {
+  bands: Record<string, {
+    frequency?: number;
+    gain?: number;
+    q?: number;
+    type?: BiquadFilterType;
+  }>;
+  volume?: number;
+  lastBatchTime: number;
+}
+
+let pendingUpdates: PendingUpdates = {
+  bands: {},
+  lastBatchTime: 0
+};
+
+// Audio parameters update - throttled to run at most every 50ms
+export const scheduleAudioUpdate = throttle((
+  audioProcessor: any, // Type this properly based on your EQ processor
+  profileId: string,
+  updateCallback?: () => void
+) => {
+  // Apply the pending changes to audio nodes
+  if (pendingUpdates.volume !== undefined) {
+    audioProcessor.setVolume(pendingUpdates.volume);
+  }
+  
+  // Apply band updates
+  Object.entries(pendingUpdates.bands).forEach(([bandId, updates]) => {
+    // Apply each parameter that has changed
+    if (updates.frequency !== undefined) {
+      audioProcessor.setBandFrequency(bandId, updates.frequency);
+    }
+    if (updates.gain !== undefined) {
+      audioProcessor.setBandGain(bandId, updates.gain);
+    }
+    if (updates.q !== undefined) {
+      audioProcessor.setBandQ(bandId, updates.q);
+    }
+    if (updates.type !== undefined) {
+      audioProcessor.setBandType(bandId, updates.type);
+    }
+  });
+  
+  // Clear pending updates
+  pendingUpdates = {
+    bands: {},
+    lastBatchTime: Date.now()
+  };
+  
+  // Optional callback for when updates are complete
+  if (updateCallback) updateCallback();
+}, 50);
+
+// Queue updates to be applied in the next batch
+export function queueAudioUpdate(
+  bandId: string | null, 
+  paramType: 'frequency' | 'gain' | 'q' | 'type' | 'volume',
+  value: any
+) {
+  if (paramType === 'volume') {
+    pendingUpdates.volume = value;
+  } else if (bandId) {
+    // Initialize this band's updates if it doesn't exist
+    if (!pendingUpdates.bands[bandId]) {
+      pendingUpdates.bands[bandId] = {};
+    }
+    
+    // Queue the parameter update
+    pendingUpdates.bands[bandId][paramType] = value;
+  }
 }
 
 export function FrequencyEQ({ profileId, disabled = false, className, onInstructionChange, onRequestEnable }: FrequencyEQProps) {
