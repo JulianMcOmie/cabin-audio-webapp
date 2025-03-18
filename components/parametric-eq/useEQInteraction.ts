@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, RefObject } from 'react';
-import { v4 as uuidv4 } from 'uuid';
+// import { v4 as uuidv4 } from 'uuid';
 import { EQBandWithUI } from './types';
 import { EQCoordinateUtils } from './EQCoordinateUtils';
 
@@ -32,7 +32,7 @@ export function useEQInteraction({
   const [isShiftPressed, setIsShiftPressed] = useState(false);
   const [hoveredBandId, setHoveredBandId] = useState<string | null>(null);
   const [shiftOffset, setShiftOffset] = useState<ShiftOffset>({ x: 0, y: 0 });
-  const [qOffset, setQOffset] = useState(0);
+//   const [qOffset, setQOffset] = useState(0);
   const [ghostNode, setGhostNode] = useState<{ x: number; y: number; visible: boolean }>({
     x: 0,
     y: 0,
@@ -97,7 +97,7 @@ export function useEQInteraction({
         const band = bands.find(b => b.id === draggingBand);
         if (band) {
           // Track Q adjustment with qOffset
-          setQOffset(prev => prev + e.movementY);
+        //   setQOffset(prev => prev + e.movementY);
           
           // Only update shiftOffset if mouse is inside canvas
           if (isInsideCanvas) {
@@ -247,7 +247,7 @@ export function useEQInteraction({
     
     // Reset both offsets when starting a new drag
     setShiftOffset({ x: 0, y: 0 });
-    setQOffset(0);
+    // setQOffset(0);
     
     // Check if clicking on a band
     let clickedBandId: string | null = null;

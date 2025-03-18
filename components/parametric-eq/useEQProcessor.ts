@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { EQBandWithUI, FrequencyResponse } from './types';
 import * as audioContext from '@/lib/audio/audioContext';
 

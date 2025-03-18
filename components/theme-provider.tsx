@@ -30,9 +30,9 @@ export function ThemeProvider({
   children,
   defaultTheme = "system",
   storageKey = "cabin-audio-theme",
-  attribute = "class",
+//   attribute = "class",
   enableSystem = true,
-  disableTransitionOnChange = false,
+//   disableTransitionOnChange = false,
   ...props
 }: ThemeProviderProps) {
   const [theme, setTheme] = useState<Theme>(defaultTheme)

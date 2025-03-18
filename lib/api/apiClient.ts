@@ -7,9 +7,9 @@ const DEFAULT_TIMEOUT = 30000;
 // Error class for API errors
 export class ApiError extends Error {
   status: number;
-  data: any;
+  data: unknown;
   
-  constructor(message: string, status: number, data?: any) {
+  constructor(message: string, status: number, data?: unknown) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
@@ -19,7 +19,7 @@ export class ApiError extends Error {
 
 // Error class for conflict errors
 export class ConflictError extends ApiError {
-  constructor(message: string, data?: any) {
+  constructor(message: string, data?: unknown) {
     super(message, 409, data);
     this.name = 'ConflictError';
   }
@@ -29,7 +29,7 @@ export class ConflictError extends ApiError {
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
   headers?: Record<string, string>;
-  body?: any;
+  body?: Record<string, unknown>;
   timeout?: number;
   requiresAuth?: boolean;
 }
@@ -134,7 +134,7 @@ export const request = async <T>(
     
     // Convert other errors to ApiErrors
     throw new ApiError(
-      error.message || 'Network error',
+      (error as Error).message || 'Network error',
       0
     );
   }
@@ -150,7 +150,7 @@ export const get = <T>(
 
 export const post = <T>(
   endpoint: string,
-  body: any,
+  body: Record<string, unknown>,
   options: Omit<RequestOptions, 'method'> = {}
 ): Promise<T> => {
   return request<T>(endpoint, { ...options, method: 'POST', body });
@@ -158,7 +158,7 @@ export const post = <T>(
 
 export const put = <T>(
   endpoint: string,
-  body: any,
+  body: Record<string, unknown>,
   options: Omit<RequestOptions, 'method'> = {}
 ): Promise<T> => {
   return request<T>(endpoint, { ...options, method: 'PUT', body });
@@ -166,7 +166,7 @@ export const put = <T>(
 
 export const patch = <T>(
   endpoint: string,
-  body: any,
+  body: Record<string, unknown>,
   options: Omit<RequestOptions, 'method'> = {}
 ): Promise<T> => {
   return request<T>(endpoint, { ...options, method: 'PATCH', body });

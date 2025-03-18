@@ -109,7 +109,7 @@ export function PricingView() {
           <div>
             <h3 className="font-medium">Will I lose my data if I downgrade?</h3>
             <p className="text-muted-foreground mt-1">
-              If you downgrade to the Basic plan, you'll keep your primary EQ profile, but additional profiles will be
+              If you downgrade to the Basic plan, you&apos;ll keep your primary EQ profile, but additional profiles will be
               archived until you upgrade again.
             </p>
           </div>

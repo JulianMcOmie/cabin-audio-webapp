@@ -9,16 +9,16 @@ import { usePlayerStore, useTrackStore } from "@/lib/stores"
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
 import { cn } from "@/lib/utils"
 
-// Dummy track interface
-interface Track {
-  id: string
-  title: string
-  artist: string
-  album: string
-  duration: number
-  coverUrl: string
-  currentTime?: number
-}
+// // Dummy track interface
+// interface Track {
+//   id: string
+//   title: string
+//   artist: string
+//   album: string
+//   duration: number
+//   coverUrl: string
+//   currentTime?: number
+// }
 
 // Custom EQ icon component
 const EQIcon = ({ className }: { className?: string }) => (
@@ -59,7 +59,7 @@ export function PlayerBar() {
     loadingState,
     loadingProgress,
     error,
-    setCurrentTrack,
+    // setCurrentTrack,
     setIsPlaying,
     setVolume,
     setIsMuted,

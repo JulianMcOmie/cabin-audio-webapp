@@ -5,7 +5,7 @@ let audioContext: AudioContext | null = null;
 export const getAudioContext = (): AudioContext => {
   if (!audioContext) {
     // Create a new AudioContext
-    audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    audioContext = new (window.AudioContext || (window as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
   }
   
   return audioContext;
@@ -42,7 +42,7 @@ export const getAudioContextState = (): AudioContextState | null => {
 
 // Check if the browser supports the Web Audio API
 export const isWebAudioSupported = (): boolean => {
-  return !!(window.AudioContext || (window as any).webkitAudioContext);
+  return !!(window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext);
 };
 
 // Get the current sample rate of the AudioContext

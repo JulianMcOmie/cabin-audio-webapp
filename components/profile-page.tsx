@@ -10,7 +10,7 @@ import { Eye, EyeOff, Save } from "lucide-react"
 import { Progress } from "@/components/ui/progress"
 
 export function ProfilePage() {
-  const { user, signOut } = useAuth()
+  const { user } = useAuth()
   const [showPassword, setShowPassword] = useState(false)
   const [showCurrentPassword, setShowCurrentPassword] = useState(false)
 
