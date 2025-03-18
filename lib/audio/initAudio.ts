@@ -7,7 +7,7 @@
 
 import * as audioContext from './audioContext';
 import * as audioPlayer from './audioPlayer';
-import * as eqProcessor from './eqProcessor';
+// import * as eqProcessor from './eqProcessor';
 import * as audioRouting from './audioRouting';
 
 // Flag to track initialization state

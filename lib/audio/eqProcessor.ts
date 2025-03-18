@@ -1,6 +1,6 @@
 import * as audioContext from './audioContext';
 import { EQProfile } from '../models/EQProfile';
-import { EQBand } from '../models/EQBand';
+// import { EQBand } from '../models/EQBand';
 import { useEQProfileStore } from '../stores';
 
 // Class to manage EQ processing

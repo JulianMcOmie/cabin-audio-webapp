@@ -1,10 +1,10 @@
 import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
 
-type DotPosition = {
-  x: number;
-  y: number;
-};
+// type DotPosition = {
+//   x: number;
+//   y: number;
+// };
 
 // Constants
 const COLUMNS = 5; // Always 5 panning positions - match the value in dot-grid.tsx (odd number ensures a middle column)
@@ -13,7 +13,7 @@ const COLUMNS = 5; // Always 5 panning positions - match the value in dot-grid.t
 const ENVELOPE_MIN_GAIN = 0.0; // Minimum gain during envelope cycle
 const ENVELOPE_MAX_GAIN = 1.0; // Maximum gain during envelope cycle
 const ENVELOPE_ATTACK = 0.01; // Faster attack time in seconds - for very punchy transients
-const ENVELOPE_RELEASE_DEFAULT = 0.2; // Default release time (for reference only)
+// const ENVELOPE_RELEASE_DEFAULT = 0.2; // Default release time (for reference only)
 const ENVELOPE_RELEASE_LOW_FREQ = 0.3; // Release time for lowest frequencies (seconds)
 const ENVELOPE_RELEASE_HIGH_FREQ = 0.05; // Release time for highest frequencies (seconds)
 const MASTER_GAIN = 1.0; // Much louder master gain for calibration
@@ -73,8 +73,8 @@ class DotGridAudioPlayer {
   }> = new Map();
   private gridSize: number = 3; // Default row count
   private columnCount: number = COLUMNS; // Default column count
-  private masterTimerId: number | null = null;
-  private startTime: number = 0; // When playback started
+//   private masterTimerId: number | null = null;
+//   private startTime: number = 0; // When playback started
   private preEQAnalyser: AnalyserNode | null = null; // Pre-EQ analyzer node
   private preEQGain: GainNode | null = null; // Gain node for connecting all sources to analyzer
   
@@ -331,7 +331,7 @@ class DotGridAudioPlayer {
     
     // Collect all dots by row
     this.audioNodes.forEach((_, dotKey) => {
-      const [x, y] = dotKey.split(',').map(Number);
+      const y = dotKey.split(',').map(Number)[1];
       if (!dotsByRow.has(y)) {
         dotsByRow.set(y, []);
       }
@@ -445,7 +445,7 @@ class DotGridAudioPlayer {
     this.isPlaying = playing;
     
     if (playing) {
-      this.startTime = Date.now() / 1000; // Start time in seconds
+    //   this.startTime = Date.now() / 1000; // Start time in seconds
       this.startAllSources();
       
       // Start the appropriate playback based on mode
@@ -536,7 +536,7 @@ class DotGridAudioPlayer {
     // Initialize next trigger times with proper offsets
     const now = performance.now() / 1000; // Current time in seconds (more precise than Date.now)
     
-    this.audioNodes.forEach((nodes, dotKey) => {
+    this.audioNodes.forEach((nodes) => {
       const baseInterval = BASE_CYCLE_TIME / nodes.subdivision;
       // Apply the offset to stagger dots in the same row
       const offsetTime = baseInterval * nodes.offset;
@@ -854,9 +854,9 @@ class DotGridAudioPlayer {
     console.log(`   Pan: ${panner.pan.value.toFixed(2)} (column ${x+1} of ${this.columnCount})`);
     
     // Calculate Q (bandwidth)
-    const distFromCenter = Math.abs(normalizedY - 0.5) * 2;
-    const minQ = 1.0;
-    const maxQ = 4.0;
+    // const distFromCenter = Math.abs(normalizedY - 0.5) * 2;
+    // const minQ = 1.0;
+    // const maxQ = 4.0;
     const qValue = 4.0;//minQ + (1 - distFromCenter) * (maxQ - minQ);
     
     // Create filter(s) based on the filter mode
