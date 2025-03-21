@@ -1,8 +1,6 @@
 import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
-// import * as audioRouting from './audioRouting';
 import * as fileStorage from '../storage/fileStorage';
-// import * as metadataStorage from '../storage/metadataStorage';
 import { useEQProfileStore } from '../stores';
 
 // Define callback types
@@ -102,6 +100,11 @@ class AudioPlayer {
         this.timeUpdateCallback(currentTime);
       }
     }, 100);
+  }
+  
+  // Get the progress interval ID
+  public getProgressInterval(): number | null {
+    return this.progressInterval;
   }
   
   // Set a callback for time updates
@@ -357,11 +360,11 @@ export const cleanupAudioPlayer = (): void => {
     // Stop playback
     audioPlayerInstance.stop();
     
-    // Could cause problems but we shouldn't be messing with private properties
-    // // Clear any intervals
-    // if ((audioPlayerInstance as any).progressInterval) {
-    //   window.clearInterval((audioPlayerInstance as any).progressInterval);
-    // }
+    // Clear any intervals
+    const progressInterval = audioPlayerInstance.getProgressInterval();
+    if (progressInterval) {
+      window.clearInterval(progressInterval);
+    }
     
     audioPlayerInstance = null;
   }

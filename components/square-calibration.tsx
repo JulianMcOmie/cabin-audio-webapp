@@ -24,6 +24,10 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
   // State for dragging and resizing
   const [isDragging, setIsDragging] = useState(false);
   const [dragStartPos, setDragStartPos] = useState({ x: 0, y: 0 });
+  const [initialSquareState, setInitialSquareState] = useState<{
+    position: [number, number];
+    size: [number, number];
+  } | null>(null);
   const [currentHandle, setCurrentHandle] = useState<string | null>(null);
   
   // State for tracking the active corner
@@ -200,6 +204,22 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
     
   }, [canvasSize, isDarkMode, squarePosition, squareSize, activeCorner, isDragging, currentHandle]);
   
+  // Convert screen Y coordinates to our bottom-left origin system
+  const convertScreenYToNormalizedY = (screenY: number, height: number): number => {
+    if (!canvasRef.current) return 0;
+    const rect = canvasRef.current.getBoundingClientRect();
+    // Convert screen Y (where top is 0) to our normalized Y (where bottom is 0)
+    return 1 - ((screenY - rect.top) / rect.height) - height;
+  };
+
+  // Convert normalized Y (bottom origin) to screen Y (top origin)
+  const convertNormalizedYToScreenY = (normalizedY: number, height: number): number => {
+    if (!canvasRef.current) return 0;
+    const rect = canvasRef.current.getBoundingClientRect();
+    // Convert normalized Y (where bottom is 0) to screen Y (where top is 0)
+    return rect.top + (1 - normalizedY - height) * rect.height;
+  };
+  
   // Handle mouse/touch interactions
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (disabled) return;
@@ -211,17 +231,23 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
     
-    // Convert to normalized coordinates for position
-    setDragStartPos({
-      x: mouseX / rect.width,
-      y: mouseY / rect.height
-    });
-    
     // Calculate inner square position in pixels
     const innerX = squarePosition[0] * rect.width;
     const innerY = (1 - squarePosition[1] - squareSize[1]) * rect.height; // Convert from bottom-left to top-left origin
     const innerWidth = squareSize[0] * rect.width;
     const innerHeight = squareSize[1] * rect.height;
+    
+    // Store the initial mouse position
+    setDragStartPos({
+      x: mouseX,
+      y: mouseY
+    });
+    
+    // Store the initial square state
+    setInitialSquareState({
+      position: [...squarePosition],
+      size: [...squareSize]
+    });
     
     // Check if clicking on a handle (with larger touch area)
     const handlePositions = [
@@ -259,7 +285,7 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
   };
   
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDragging || disabled) return;
+    if (!isDragging || disabled || !initialSquareState) return;
     
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -268,78 +294,144 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
     
-    // Convert to normalized coordinates
-    const normalizedX = mouseX / rect.width;
-    const normalizedY = mouseY / rect.height;
+    // Calculate delta from start position in pixels
+    const deltaX = mouseX - dragStartPos.x;
+    const deltaY = mouseY - dragStartPos.y;
     
-    // Calculate delta from start position
-    const deltaX = normalizedX - dragStartPos.x;
-    const deltaY = normalizedY - dragStartPos.y;
+    // Convert deltas to normalized coordinates
+    const normalizedDeltaX = deltaX / rect.width;
+    const normalizedDeltaY = deltaY / rect.height;
     
-    // Get current values
-    let [posX, posY] = squarePosition;
-    let [width, height] = squareSize;
+    // Get initial position and size
+    const [initialX, initialY] = initialSquareState.position;
+    const [initialWidth, initialHeight] = initialSquareState.size;
     
-    if (currentHandle) {
-      // Handling resize
-      if (currentHandle.includes('n')) {
-        // Top edge - need to adjust y position and height
-        const newHeight = height + deltaY;
-        if (newHeight > 0.1) {
-          // Convert from top-left to bottom-left origin for Y
-          posY = posY - deltaY; 
-          height = newHeight;
-        }
-      }
+    let newX = initialX;
+    let newY = initialY; 
+    let newWidth = initialWidth;
+    let newHeight = initialHeight;
+    
+    if (!currentHandle) {
+      // Dragging the whole square
+      newX = initialX + normalizedDeltaX;
+      newY = initialY - normalizedDeltaY; // Invert Y delta because our Y origin is at bottom
       
-      if (currentHandle.includes('e')) {
-        // Right edge
-        const newWidth = width + deltaX;
-        if (newWidth > 0.1) {
-          width = newWidth;
+      // Clamp to keep within bounds
+      newX = Math.max(0, Math.min(1 - initialWidth, newX));
+      newY = Math.max(0, Math.min(1 - initialHeight, newY));
+    } else {
+      // Resizing
+      const aspectRatio = initialWidth / initialHeight;
+      
+      if (currentHandle.includes('n')) {
+        // Top edge - move the top edge
+        const newScreenTop = Math.min(
+          convertNormalizedYToScreenY(initialY, initialHeight) + deltaY,
+          convertNormalizedYToScreenY(initialY, 0) - HANDLE_SIZE // Don't let height become negative
+        );
+        
+        // Calculate how much the height changed
+        const newScreenHeight = convertNormalizedYToScreenY(initialY, 0) - newScreenTop;
+        newHeight = newScreenHeight / rect.height;
+        
+        // Update Y position (bottom) to account for top edge moving
+        newY = initialY + initialHeight - newHeight;
+        
+        // If corner handle, maintain aspect ratio
+        if (currentHandle === 'nw' || currentHandle === 'ne') {
+          const heightChange = newHeight - initialHeight;
+          const widthChange = heightChange * aspectRatio;
+          
+          if (currentHandle === 'nw') {
+            newWidth = initialWidth + widthChange;
+            newX = initialX - widthChange;
+          } else {
+            newWidth = initialWidth + widthChange;
+          }
         }
       }
       
       if (currentHandle.includes('s')) {
-        // Bottom edge
-        const newHeight = height - deltaY;
-        if (newHeight > 0.1) {
-          height = newHeight;
+        // Bottom edge - just adjust height
+        const pixelHeight = Math.max(HANDLE_SIZE, initialHeight * rect.height - deltaY);
+        newHeight = pixelHeight / rect.height;
+        
+        // If corner handle, maintain aspect ratio
+        if (currentHandle === 'sw' || currentHandle === 'se') {
+          const heightChange = newHeight - initialHeight;
+          const widthChange = heightChange * aspectRatio;
+          
+          if (currentHandle === 'sw') {
+            newWidth = initialWidth + widthChange;
+            newX = initialX - widthChange;
+          } else {
+            newWidth = initialWidth + widthChange;
+          }
+        }
+      }
+      
+      if (currentHandle.includes('e')) {
+        // Right edge - just adjust width
+        const pixelWidth = Math.max(HANDLE_SIZE, initialWidth * rect.width + deltaX);
+        newWidth = pixelWidth / rect.width;
+        
+        // If corner handle and not already handled by 'n' or 's', maintain aspect ratio
+        if ((currentHandle === 'ne' || currentHandle === 'se') && 
+            !currentHandle.includes('n') && !currentHandle.includes('s')) {
+          const widthChange = newWidth - initialWidth;
+          const heightChange = widthChange / aspectRatio;
+          
+          if (currentHandle === 'ne') {
+            newHeight = initialHeight + heightChange;
+            newY = initialY - heightChange;
+          } else {
+            newHeight = initialHeight + heightChange;
+          }
         }
       }
       
       if (currentHandle.includes('w')) {
-        // Left edge - need to adjust x position and width
-        const newWidth = width - deltaX;
-        if (newWidth > 0.1) {
-          posX = posX + deltaX;
-          width = newWidth;
+        // Left edge - adjust x position and width
+        const newLeft = Math.min(
+          initialX * rect.width + deltaX, 
+          (initialX + initialWidth) * rect.width - HANDLE_SIZE // Don't let width become negative
+        );
+        
+        const widthReduction = newLeft / rect.width - initialX;
+        newX = initialX + widthReduction;
+        newWidth = initialWidth - widthReduction;
+        
+        // If corner handle and not already handled by 'n' or 's', maintain aspect ratio
+        if ((currentHandle === 'nw' || currentHandle === 'sw') && 
+            !currentHandle.includes('n') && !currentHandle.includes('s')) {
+          const widthChange = newWidth - initialWidth;
+          const heightChange = widthChange / aspectRatio;
+          
+          if (currentHandle === 'nw') {
+            newHeight = initialHeight + heightChange;
+            newY = initialY - heightChange;
+          } else {
+            newHeight = initialHeight + heightChange;
+          }
         }
       }
-    } else {
-      // Dragging the whole square
-      posX = Math.max(0, Math.min(1 - width, posX + deltaX));
-      
-      // For Y, remember we're converting between top-left (for display) and bottom-left (for data)
-      const newPosY = posY - deltaY;
-      posY = Math.max(0, Math.min(1 - height, newPosY));
     }
     
     // Clamp values to keep square within bounds
-    posX = Math.max(0, Math.min(1 - width, posX));
-    posY = Math.max(0, Math.min(1 - height, posY));
-    width = Math.max(0.1, Math.min(1 - posX, width));
-    height = Math.max(0.1, Math.min(1 - posY, height));
+    newX = Math.max(0, Math.min(1 - 0.05, newX));
+    newY = Math.max(0, Math.min(1 - 0.05, newY));
+    newWidth = Math.max(0.05, Math.min(1 - newX, newWidth));
+    newHeight = Math.max(0.05, Math.min(1 - newY, newHeight));
     
     // Update state
-    setSquarePosition([posX, posY]);
-    setSquareSize([width, height]);
-    setDragStartPos({ x: normalizedX, y: normalizedY });
+    setSquarePosition([newX, newY]);
+    setSquareSize([newWidth, newHeight]);
   };
   
   const handleMouseUp = () => {
     setIsDragging(false);
     setCurrentHandle(null);
+    setInitialSquareState(null);
   };
   
   // Apply cursor styles based on current handle

@@ -8,4 +8,4 @@ export interface Album {
   coverStorageKey?: string;
   lastModified: number;
   syncStatus: SyncStatus;
-} 
+}

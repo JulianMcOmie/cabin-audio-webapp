@@ -10,12 +10,16 @@ const MASTER_GAIN = 0.8;
 const ENVELOPE_ATTACK = 0.01; // seconds
 const ENVELOPE_DECAY = 0.02; // seconds
 const ENVELOPE_SUSTAIN = 0.8; // level
-const ENVELOPE_RELEASE = 0.2; // seconds
+const ENVELOPE_RELEASE = 0.6; // seconds
 const BURST_LENGTH = 0.15; // seconds
 
 // Pattern timing
-const BURST_INTERVAL = 0.2; // seconds between bursts (reduced from 0.3 to make it faster)
-const GROUP_PAUSE = 0.25; // pause between groups (reduced from 0.5)
+const BURST_INTERVAL = 0.3; // seconds between bursts (reduced from 0.3 to make it faster)
+const GROUP_PAUSE = 0.3; // pause between groups (reduced from 0.5)
+
+// Filter settings
+const MIN_Q = 2.0;   // Minimum Q value (wider bandwidth)
+const MAX_Q = 4.0;  // Maximum Q value (narrower bandwidth)
 
 // Corner indices
 enum Corner {
@@ -308,9 +312,13 @@ class SquareCalibrationAudio {
     
     filter.frequency.value = centerFreq;
     
-    // Bandwidth is proportional to square height
-    // Smaller height = narrower bandwidth
-    const Q = 2.0 + (1.0 - this.squareSize[1]) * 8.0; // Q from 2.0 to 10.0
+    // Bandwidth is inversely proportional to square height
+    // Smaller height = much higher Q (narrower bandwidth)
+    // Use exponential scaling for more dramatic effect at small heights
+    const normalizedHeight = this.squareSize[1]; // 0 to 1
+    const heightFactor = Math.pow(1 - normalizedHeight, 2); // Square it for more dramatic effect at smaller heights
+    const Q = MIN_Q + heightFactor * (MAX_Q - MIN_Q);
+    
     filter.Q.value = Q;
     
     // Create a panner

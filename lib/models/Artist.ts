@@ -5,4 +5,4 @@ export interface Artist {
   name: string;
   lastModified: number;
   syncStatus: SyncStatus;
-} 
+}
