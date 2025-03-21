@@ -14,8 +14,8 @@ const ENVELOPE_RELEASE = 0.2; // seconds
 const BURST_LENGTH = 0.15; // seconds
 
 // Pattern timing
-const BURST_INTERVAL = 0.3; // seconds between bursts
-const GROUP_PAUSE = 0.5; // pause between groups
+const BURST_INTERVAL = 0.2; // seconds between bursts (reduced from 0.3 to make it faster)
+const GROUP_PAUSE = 0.25; // pause between groups (reduced from 0.5)
 
 // Corner indices
 enum Corner {
@@ -56,7 +56,8 @@ class SquareCalibrationAudio {
   }
 
   /**
-   * Generate white noise buffer
+   * Generate pink noise buffer
+   * Uses Paul Kellet's refined method for generating pink noise
    */
   private async generateNoiseBuffer(): Promise<void> {
     const ctx = audioContext.getAudioContext();
@@ -64,12 +65,43 @@ class SquareCalibrationAudio {
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
     const data = buffer.getChannelData(0);
 
-    // Generate white noise
+    // Pink noise generation using Paul Kellet's refined method
+    // This produces a true -3dB/octave spectrum characteristic of pink noise
+    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+    
     for (let i = 0; i < bufferSize; i++) {
-      data[i] = Math.random() * 2 - 1;
+      // Generate white noise sample
+      const white = Math.random() * 2 - 1;
+      
+      // Pink noise filtering - refined coefficients for accurate spectral slope
+      b0 = 0.99886 * b0 + white * 0.0555179;
+      b1 = 0.99332 * b1 + white * 0.0750759;
+      b2 = 0.96900 * b2 + white * 0.1538520;
+      b3 = 0.86650 * b3 + white * 0.3104856;
+      b4 = 0.55000 * b4 + white * 0.5329522;
+      b5 = -0.7616 * b5 - white * 0.0168980;
+      b6 = white * 0.5362;
+      
+      // Combine with proper scaling to maintain pink noise characteristics
+      // The sum is multiplied by 0.11 to normalize the output
+      data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6) * 0.11;
+    }
+    
+    // Apply a second-pass normalization to ensure consistent volume
+    // Find the peak amplitude
+    let peak = 0;
+    for (let i = 0; i < bufferSize; i++) {
+      const abs = Math.abs(data[i]);
+      if (abs > peak) peak = abs;
+    }
+    
+    // Normalize to avoid clipping but maintain energy
+    const normalizationFactor = peak > 0.8 ? 0.8 / peak : 1.0;
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] *= normalizationFactor;
     }
 
-    console.log(`🔊 Generated noise buffer: ${bufferSize} samples`);
+    console.log(`🔊 Generated pink noise buffer: ${bufferSize} samples, normalized by ${normalizationFactor.toFixed(4)}`);
     this.noiseBuffer = buffer;
   }
 
@@ -193,18 +225,18 @@ class SquareCalibrationAudio {
     // Update for next burst
     this.cornerCount++;
     
-    // Determine next corner in pattern: 
-    // (bottom-left, top-right) x4, (bottom-right, top-left) x4, repeat
-    if (this.cornerCount % 8 < 4) {
-      // First group: alternate between bottom-left and top-right
+    // Modified pattern logic: repeat each diagonal 4 times (8 total hits per diagonal)
+    // (bottom-left, top-right) x8, (bottom-right, top-left) x8, repeat
+    if (this.cornerCount % 16 < 8) {
+      // First diagonal: alternate between bottom-left and top-right
       this.currentCorner = this.cornerCount % 2 === 0 ? Corner.BOTTOM_LEFT : Corner.TOP_RIGHT;
     } else {
-      // Second group: alternate between bottom-right and top-left
+      // Second diagonal: alternate between bottom-right and top-left
       this.currentCorner = this.cornerCount % 2 === 0 ? Corner.BOTTOM_RIGHT : Corner.TOP_LEFT;
     }
     
-    // Add a pause between groups
-    const nextInterval = this.cornerCount % 4 === 0 && this.cornerCount > 0 ? 
+    // Only add a pause between diagonal groups
+    const nextInterval = this.cornerCount % 8 === 0 && this.cornerCount > 0 ? 
       GROUP_PAUSE : BURST_INTERVAL;
     
     // Schedule next burst
