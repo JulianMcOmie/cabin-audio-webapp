@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react"
 import { HelpCircle, Play, Power, Volume2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { FrequencyGraph } from "@/components/frequency-graph"
-import { DotCalibration } from "@/components/dot-grid"
+import { SquareCalibration } from "@/components/square-calibration"
 import { EQProfiles } from "@/components/eq-profiles"
 import { EQCalibrationModal } from "@/components/eq-calibration-modal"
 import { LoginModal } from "@/components/login-modal"
@@ -17,7 +17,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { v4 as uuidv4 } from 'uuid'
 import { SyncStatus } from "@/lib/models/SyncStatus"
 import { FFTVisualizer } from "@/components/audio/FFTVisualizer"
-import { getDotGridAudioPlayer } from "@/lib/audio/dotGridAudio"
+import { getSquareCalibrationAudio } from "@/lib/audio/squareCalibrationAudio"
 
 interface EQViewProps {
 //   isPlaying: boolean
@@ -52,8 +52,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const [showLoginModal, setShowLoginModal] = useState(false)
   const [showSignupModal, setShowSignupModal] = useState(false)
   
-  // State for the dot grid calibration audio
-  const [dotGridPlaying, setDotGridPlaying] = useState(false)
+  // State for the square calibration audio
+  const [squareCalibrationPlaying, setSquareCalibrationPlaying] = useState(false)
   
   // State for the spectrum analyzer
   const [preEQAnalyser, setPreEQAnalyser] = useState<AnalyserNode | null>(null)
@@ -94,18 +94,18 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     setEqEnabled(isEQEnabled);
   }, [isEQEnabled, setEqEnabled]);
 
-  // Handle creating/removing analyzer when dot grid playing state changes
+  // Handle creating/removing analyzer when square calibration playing state changes
   useEffect(() => {
-    if (dotGridPlaying) {
-      // Create and connect the analyzer for dot grid only
-      const dotGridPlayer = getDotGridAudioPlayer();
-      const analyser = dotGridPlayer.createPreEQAnalyser();
+    if (squareCalibrationPlaying) {
+      // Create and connect the analyzer for square calibration
+      const squareCalibration = getSquareCalibrationAudio();
+      const analyser = squareCalibration.createPreEQAnalyser();
       setPreEQAnalyser(analyser);
     } else {
       // Clean up when not playing
       setPreEQAnalyser(null);
     }
-  }, [dotGridPlaying]);
+  }, [squareCalibrationPlaying]);
 
   // Initialize selected profile from the active profile and keep it synced
   useEffect(() => {
@@ -190,7 +190,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
         {/* Frequency Graph (on top) */}
         <div className="relative" ref={eqContainerRef}>
           {/* FFT Visualizer as background layer */}
-          {dotGridPlaying && preEQAnalyser && (
+          {squareCalibrationPlaying && preEQAnalyser && (
             <div className="absolute inset-0 z-0 w-full aspect-[2/1]">
               <FFTVisualizer 
                 analyser={preEQAnalyser} 
@@ -272,17 +272,19 @@ export function EQView({ setEqEnabled }: EQViewProps) {
           <div className="flex flex-col md:flex-row gap-6">
             <div className="md:w-3/5 space-y-5">
               <div>
-                <h4 className="font-medium mb-2">Understanding the Grid</h4>
+                <h4 className="font-medium mb-2">Understanding the Square Calibration</h4>
                 <p className="text-muted-foreground">
-                  The dot grid lets you play noise bursts with different sound characteristics:
+                  The square calibration tool helps you test your sound stage with precisely positioned noise bursts:
                 </p>
                 <ul className="list-disc pl-5 space-y-1 mt-2 text-sm text-muted-foreground">
                   <li>
-                    <strong>Horizontal position</strong> (left-right): Controls stereo balance
+                    <strong>The outer square</strong> represents your entire sound stage - from left to right and low to high frequency
                   </li>
                   <li>
-                    <strong>Vertical position</strong> (up-down): Adjusts frequency content - higher points have more
-                    treble, lower points have more bass
+                    <strong>The inner square</strong> represents the area where test tones will play at the corners
+                  </li>
+                  <li>
+                    <strong>Noise bursts</strong> play at the corners in a specific pattern to help you identify how well you can perceive spatial positioning
                   </li>
                 </ul>
               </div>
@@ -290,25 +292,16 @@ export function EQView({ setEqEnabled }: EQViewProps) {
               <div>
                 <h4 className="font-medium mb-2">Calibration Steps</h4>
                 <ol className="list-decimal pl-5 space-y-2 text-sm text-muted-foreground">
-                  <li>Select dots on the grid by clicking them (it&apos;s easiest to select one dot per row)</li>
-                  <li>Press Play to hear pink noise bursts at the selected positions</li>
+                  <li>Press Play to start the calibration pattern</li>
+                  <li>Listen to the corner pattern - it plays in diagonals (bottom-left/top-right then bottom-right/top-left)</li>
                   <li>
-                    Adjust the EQ settings until:
-                    <ul className="list-disc pl-5 mt-1 space-y-1">
-                      <li>Bursts on different rows sound like they come from different heights</li>
-                      <li>Bursts sound evenly spaced in a grid-like pattern in your soundstage</li>
-                    </ul>
+                    Move and resize the inner square to test different areas of your sound stage
+                  </li>
+                  <li>
+                    Adjust your EQ until you can clearly perceive the spatial differences between each corner
                   </li>
                   <li>
                     Save your settings by{" "}
-                    {/* <Button
-                      variant="link"
-                      className="text-electric-blue hover:text-electric-blue/80 font-medium p-0 h-auto"
-                      onClick={() => setShowSignupModal(true)}
-                    >
-                      signing up
-                    </Button>{" "}
-                    or{" "} */}
                     <Button
                       variant="link"
                       className="text-electric-blue hover:text-electric-blue/80 font-medium p-0 h-auto"
@@ -344,19 +337,19 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   </summary>
                   <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground mt-2">
                     <li>
-                      <strong>Try different dot combinations</strong> - select dots in a pattern to test spatial imaging
+                      <strong>Make the square tall and narrow</strong> - to focus on frequency discrimination
                     </li>
                     <li>
-                      <strong>Select dots on the same row</strong> - to test stereo imaging across left-right axis
+                      <strong>Make the square wide and short</strong> - to focus on stereo imaging
                     </li>
                     <li>
-                      <strong>Select dots on the same column</strong> - to test frequency separation top-to-bottom
+                      <strong>Move the square to the corners</strong> - to test different areas of your sound stage
                     </li>
                     <li>
                       <strong>Toggle EQ on/off</strong> - compare with and without EQ to verify improvements
                     </li>
                     <li>
-                      <strong>Increase grid size</strong> - for more detailed spatial testing with more points
+                      <strong>Listen for clear diagonal patterns</strong> - each corner should sound distinct
                     </li>
                   </ul>
                 </details>
@@ -372,29 +365,27 @@ export function EQView({ setEqEnabled }: EQViewProps) {
               <div className="bg-muted/50 p-4 rounded-lg">
                 <div className="flex justify-between items-center mb-3">
                   <h4 className="font-medium">Calibration Controls</h4>
-                  
-                  {/* Remove the calibration type toggle */}
                 </div>
 
-                {/* Always render the DotCalibration component */}
+                {/* Square Calibration Component */}
                 <div className="mb-3">
-                  <DotCalibration 
-                    isPlaying={dotGridPlaying}
-                    // setIsPlaying={setDotGridPlaying}
+                  <SquareCalibration 
+                    isPlaying={squareCalibrationPlaying}
+                    disabled={false}
                   />
                 </div>
 
                 <Button
                   size="sm"
                   className="w-full bg-electric-blue hover:bg-electric-blue/90 text-white mb-2"
-                  onClick={() => setDotGridPlaying(!dotGridPlaying)}
+                  onClick={() => setSquareCalibrationPlaying(!squareCalibrationPlaying)}
                 >
                   <Play className="mr-2 h-4 w-4" />
-                  {dotGridPlaying ? "Stop Grid" : "Play Grid"}
+                  {squareCalibrationPlaying ? "Stop Calibration" : "Start Calibration"}
                 </Button>
 
                 <p className="text-xs text-center text-muted-foreground">
-                  Select multiple dots on the grid to test different spatial positions
+                  Drag to move or resize the square to test different areas of your sound stage
                 </p>
               </div>
             </div>

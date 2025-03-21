@@ -62,9 +62,19 @@ export function EQCalibrationModal({ open, onClose }: EQCalibrationModalProps) {
                 </p>
 
                 <p className="text-sm text-muted-foreground">
-                  You&apos;ll find our calibration tool below the EQ graph. It uses a dot grid system that plays test sounds
-                  to help you fine-tune your EQ settings for optimal spatial separation and clarity.
+                  You&apos;ll find our calibration tool below the EQ graph. It uses a square calibration system that plays test sounds
+                  at precise locations in your soundstage to help you fine-tune your EQ settings for optimal spatial separation and clarity.
                 </p>
+
+                <div className="space-y-2">
+                  <h3 className="font-medium text-sm">How the Square Calibration Works:</h3>
+                  <ul className="space-y-1 text-sm text-muted-foreground">
+                    <li>• The outer square represents your entire sound stage</li>
+                    <li>• The inner square defines the test area</li>
+                    <li>• Test sounds play at the corners in a pattern</li>
+                    <li>• You can move and resize the inner square to test different areas</li>
+                  </ul>
+                </div>
 
                 <div className="bg-muted/50 p-3 rounded-md text-sm text-muted-foreground">
                   Try it out! Close this tutorial and scroll down to see the &quot;How to Calibrate Your EQ&quot; section.
