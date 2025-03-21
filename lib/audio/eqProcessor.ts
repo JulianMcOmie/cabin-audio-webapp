@@ -18,8 +18,6 @@ class EQProcessor {
   
   // Initialize the EQ processor
   private initialize(): void {
-    console.log('🎮 EQProcessor.initialize called');
-    
     // Create input and output nodes
     this.inputNode = audioContext.createGain();
     this.outputNode = audioContext.createGain();
@@ -47,18 +45,14 @@ class EQProcessor {
   
   // Create the filter chain based on profile bands
   private createFilterChain(profile: EQProfile): void {
-    console.log('🎮 EQProcessor.createFilterChain called with', profile.bands?.length || 0, 'bands');
-    
     // If there are no bands, just ensure input is connected to volume node
     if (!profile.bands || profile.bands.length === 0) {
       // If we already have a direct connection, keep it
       if (this.filters.length === 0) {
-        console.log('🎮 No bands in profile, maintaining direct connection');
         return;
       }
       
       // Otherwise, disconnect filters and create direct connection
-      console.log('🎮 No bands in profile, creating direct connection');
       this.disconnectFilters();
       this.filters = [];
       this.inputNode!.connect(this.volumeNode!);
@@ -89,9 +83,7 @@ class EQProcessor {
         
         // Set gain with immediate value but prepare for ramping in future changes
         filter.gain.value = this.isEnabled ? band.gain : 0;
-        
         this.filters.push(filter);
-        console.log(`🎮 Created filter ${index}: freq=${band.frequency}, gain=${band.gain}, Q=${band.q}`);
       });
       
       // Connect the filter chain
@@ -107,11 +99,9 @@ class EQProcessor {
         // Last filter to volume node
         this.filters[this.filters.length - 1].connect(this.volumeNode!);
         
-        console.log('🎮 New filter chain connected');
       }
     } else {
       // Same number of bands, we can update existing filters
-      console.log('🎮 Updating existing filters with smooth transitions');
       
       profile.bands.forEach((band, index) => {
         const filter = this.filters[index];
@@ -125,16 +115,12 @@ class EQProcessor {
         // Smoothly transition to new gain (respecting enabled state)
         const targetGain = this.isEnabled ? band.gain : 0;
         filter.gain.linearRampToValueAtTime(targetGain, currentTime + TRANSITION_TIME);
-        
-        console.log(`🎮 Updated filter ${index} with smooth transition`);
       });
     }
   }
   
   // Disconnect all filters from the chain
   private disconnectFilters(): void {
-    console.log('🎮 EQProcessor.disconnectFilters called');
-    
     // Disconnect input from first filter or volume node
     this.inputNode!.disconnect();
     
@@ -143,12 +129,10 @@ class EQProcessor {
       filter.disconnect();
     });
     
-    console.log('🎮 All filters disconnected');
   }
   
   // Apply an EQ profile to the filters
   public applyProfile(profile: EQProfile): void {
-    console.log('🎮 EQProcessor.applyProfile called with profile:', profile.name);
     this.currentProfile = profile;
     
     // Create or update the filter chain with this profile's bands
@@ -168,18 +152,14 @@ class EQProcessor {
         volumeGain, 
         audioCtx.currentTime + TRANSITION_TIME
       );
-      
-      console.log('🎮 Volume smoothly transitioning to', volumeGain, '(', profile.volume, 'dB)');
     }
   }
   
   // Enable or disable the EQ with smooth transition
   public setEnabled(enabled: boolean): void {
-    console.log('🎮 EQProcessor.setEnabled called:', enabled);
-    
+
     // Only process if there's an actual change
     if (this.isEnabled === enabled) {
-      console.log('🎮 EQ already in requested state, no change needed');
       return;
     }
     
@@ -191,7 +171,6 @@ class EQProcessor {
       const currentTime = audioCtx.currentTime;
       const TRANSITION_TIME = 0.01; // 100ms for enable/disable
       
-      console.log('🎮 Smoothly transitioning filters to', enabled ? 'enabled' : 'disabled', 'state');
       
       // For each filter, smoothly transition its gain to the target value
       this.currentProfile.bands.forEach((band, index) => {
@@ -250,7 +229,6 @@ class EQProcessor {
         filter.Q.linearRampToValueAtTime(q, currentTime + TRANSITION_TIME);
       }
       
-      console.log(`🎮 Smoothly updating filter ${index}: gain=${gain}${frequency ? ', freq='+frequency : ''}${q ? ', Q='+q : ''}`);
       
       // Update the profile in memory
       const updatedBands = [...this.currentProfile.bands];
@@ -286,8 +264,7 @@ class EQProcessor {
         currentTime + TRANSITION_TIME
       );
       
-      console.log('🎮 Volume smoothly transitioning to', volumeGain, '(', volume, 'dB)');
-      
+    
       // Update the profile in memory
       this.currentProfile = {
         ...this.currentProfile,
@@ -316,7 +293,6 @@ let eqProcessorInstance: EQProcessor | null = null;
 // Get or create the EQ processor instance
 export const getEQProcessor = (): EQProcessor => {
   if (!eqProcessorInstance) {
-    console.log('🎮 Creating new EQProcessor instance');
     eqProcessorInstance = new EQProcessor();
     
     // Initialize with the active profile from the store
@@ -324,11 +300,9 @@ export const getEQProcessor = (): EQProcessor => {
     const activeProfile = eqStore.getActiveProfile();
     
     if (activeProfile) {
-      console.log('🎮 Applying active profile from store');
       eqProcessorInstance.applyProfile(activeProfile);
     } else {
       // Create and apply a default profile
-      console.log('🎮 No active profile, using default');
       const defaultProfile = eqProcessorInstance.createDefaultProfile();
       eqProcessorInstance.applyProfile(defaultProfile);
       
@@ -347,7 +321,6 @@ export const getEQProcessor = (): EQProcessor => {
         
         // Handle EQ enabled state changes
         if (eqProcessorInstance.isEQEnabled() !== state.isEQEnabled) {
-          console.log('🎮 EQ enabled state changed:', state.isEQEnabled);
           eqProcessorInstance.setEnabled(state.isEQEnabled);
         }
         
@@ -360,7 +333,6 @@ export const getEQProcessor = (): EQProcessor => {
           if (!currentProfile || 
               currentProfile.id !== activeProfile.id || 
               currentProfile.lastModified !== activeProfile.lastModified) {
-            console.log('🎮 Active profile changed or updated, applying new profile');
             eqProcessorInstance.applyProfile(activeProfile);
           }
         }
