@@ -127,7 +127,7 @@ export const uploadTrackAudio = async (
     `${TRACKS_ENDPOINT}/${trackId}/audio`,
     {
       method: 'POST',
-      body: formData as unknown as Record<string, unknown>,
+      body: formData,
       headers: {
         // Don't set Content-Type, it will be set automatically with boundary
       }
@@ -170,7 +170,7 @@ export const uploadTrackCover = async (
     `${TRACKS_ENDPOINT}/${trackId}/cover`,
     {
       method: 'POST',
-      body: formData as unknown as Record<string, unknown>,
+      body: formData,
       headers: {
         // Don't set Content-Type, it will be set automatically with boundary
       }

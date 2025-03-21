@@ -29,7 +29,7 @@ export class ConflictError extends ApiError {
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
   headers?: Record<string, string>;
-  body?: Record<string, unknown>;
+  body?: Record<string, unknown> | FormData;
   timeout?: number;
   requiresAuth?: boolean;
 }
@@ -93,7 +93,14 @@ export const request = async <T>(
   
   // Add body if provided
   if (body) {
-    requestOptions.body = JSON.stringify(body);
+    if (body instanceof FormData) {
+      // For FormData, don't stringify and remove auto Content-Type
+      requestOptions.body = body;
+      // Remove Content-Type so browser can set it with proper boundary
+      delete requestHeaders['Content-Type'];
+    } else {
+      requestOptions.body = JSON.stringify(body);
+    }
   }
   
   try {

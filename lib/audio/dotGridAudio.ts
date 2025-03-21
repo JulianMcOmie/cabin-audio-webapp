@@ -70,6 +70,7 @@ class DotGridAudioPlayer {
     originalFrequency: number; // This NEVER changes
     notchFilter: BiquadFilterNode;  // Add this new property for notch filter
     notchOffsetRatio: number;       // Add this to track the notch offset ratio from center frequency
+    additionOrder: number;          // Track the order in which dots are added
   }> = new Map();
   private gridSize: number = 3; // Default row count
   private columnCount: number = COLUMNS; // Default column count
@@ -93,6 +94,13 @@ class DotGridAudioPlayer {
   
   // Animation frame properties
   private animationFrameId: number | null = null;
+  
+  // Add a counter to track dot addition order
+  private dotAdditionCounter: number = 0;
+  
+  // Sequence repetition tracking
+  private sequenceRepeatCount: number = 0;
+  private sequenceGroupStart: number = 0;
   
   private constructor() {
     // Initialize pink noise buffer
@@ -387,22 +395,22 @@ class DotGridAudioPlayer {
     // Get all dot keys
     const dotKeys = Array.from(this.audioNodes.keys());
     
-    // Parse the keys into x,y coordinates for sorting
+    // Sort by addition order instead of spatial position
     const dots = dotKeys.map(key => {
-      const [x, y] = key.split(',').map(Number);
-      return { key, x, y };
+      const node = this.audioNodes.get(key);
+      return { 
+        key, 
+        additionOrder: node ? node.additionOrder : 0 
+      };
     });
     
-    // Sort in reading order (top-to-bottom, left-to-right)
-    dots.sort((a, b) => {
-      if (a.y !== b.y) return a.y - b.y; // Sort by row first
-      return a.x - b.x; // Then by column
-    });
+    // Sort by addition order (lowest to highest)
+    dots.sort((a, b) => a.additionOrder - b.additionOrder);
     
     // Extract the sorted keys
     this.orderedDots = dots.map(dot => dot.key);
     
-    console.log(`🔊 Updated ordered dots for sequential playback: ${this.orderedDots.length} dots`);
+    console.log(`🔊 Updated ordered dots for sequential playback: ${this.orderedDots.length} dots (sorted by addition order)`);
   }
 
   /**
@@ -480,8 +488,10 @@ class DotGridAudioPlayer {
    * Start sequential playback
    */
   private startSequence(): void {
-    // Reset sequence index
+    // Reset sequence index and repetition tracking
     this.sequenceIndex = 0;
+    this.sequenceRepeatCount = 0;
+    this.sequenceGroupStart = 0;
     
     // If no dots, do nothing
     if (this.orderedDots.length === 0) return;
@@ -510,8 +520,29 @@ class DotGridAudioPlayer {
     // Trigger the envelope for this dot
     this.triggerDotEnvelope(dotKey);
     
-    // Advance to the next dot
-    this.sequenceIndex = (this.sequenceIndex + 1) % this.orderedDots.length;
+    // Advance sequence with the 2-burst repetition logic
+    this.sequenceIndex++;
+    
+    // If we've played 2 bursts (0,1)
+    if (this.sequenceIndex % 2 === 0 || this.sequenceIndex >= this.orderedDots.length) {
+      // Check if we need to repeat this group of 2
+      if (this.sequenceRepeatCount < 1) { // We've done it once, need to do it twice total
+        // Start the group over, but increment repeat count
+        this.sequenceIndex = this.sequenceGroupStart;
+        this.sequenceRepeatCount++;
+      } else {
+        // We've repeated twice, move to next group of 2
+        this.sequenceGroupStart = this.sequenceIndex;
+        this.sequenceRepeatCount = 0;
+      }
+    }
+    
+    // If we reach the end, wrap around
+    if (this.sequenceIndex >= this.orderedDots.length) {
+      this.sequenceIndex = 0;
+      this.sequenceGroupStart = 0;
+      this.sequenceRepeatCount = 0;
+    }
   }
   
   /**
@@ -637,24 +668,21 @@ class DotGridAudioPlayer {
         
         // Connect the audio chain based on filter mode
         if (this.filterMode === FilterMode.BANDPASS) {
-          // Bandpass + notch approach:
-          // source -> filter -> notchFilter -> panner -> envelopeGain -> gain -> destination
+          // Bandpass approach (without notch filter):
+          // source -> filter -> panner -> envelopeGain -> gain -> destination
           source.connect(nodes.filter);
-          nodes.filter.connect(nodes.notchFilter);  // Connect through the notch filter
-          nodes.notchFilter.connect(nodes.panner);
+          nodes.filter.connect(nodes.panner);
         } else {
-          // Highpass+Lowpass approach with notch:
-          // source -> highpass -> lowpass -> notchFilter -> panner -> envelopeGain -> gain -> destination
+          // Highpass+Lowpass approach (without notch filter):
+          // source -> highpass -> lowpass -> panner -> envelopeGain -> gain -> destination
           if (nodes.highpassFilter && nodes.lowpassFilter) {
             source.connect(nodes.highpassFilter);
             nodes.highpassFilter.connect(nodes.lowpassFilter);
-            nodes.lowpassFilter.connect(nodes.notchFilter);  // Connect through the notch filter
-            nodes.notchFilter.connect(nodes.panner);
+            nodes.lowpassFilter.connect(nodes.panner);
           } else {
             // Fallback to bandpass if the filters aren't available
             source.connect(nodes.filter);
-            nodes.filter.connect(nodes.notchFilter);  // Connect through the notch filter
-            nodes.notchFilter.connect(nodes.panner);
+            nodes.filter.connect(nodes.panner);
           }
         }
         
@@ -910,15 +938,15 @@ class DotGridAudioPlayer {
     // Calculate subdivision based on vertical position
     const subdivision = this.calculateSubdivision(y);
     
-    // Store the nodes
+    // Store the nodes with addition order
     this.audioNodes.set(dotKey, {
       source: ctx.createBufferSource(), // Dummy source (will be replaced when playing)
       gain,
       envelopeGain: ctx.createGain(),
       panner,
       filter,
-      notchFilter,           // Add the notch filter to stored nodes
-      notchOffsetRatio,      // Store the offset ratio for future frequency updates
+      notchFilter,
+      notchOffsetRatio,
       highpassFilter,
       lowpassFilter,
       position, // Store position for sorting
@@ -927,6 +955,7 @@ class DotGridAudioPlayer {
       nextTriggerTime: 0, // Will be set when playback starts
       offset: 0, // Default offset, will be updated by calculateRowOffsets
       originalFrequency: originalFrequency, // This NEVER changes
+      additionOrder: this.dotAdditionCounter++ // Assign and increment counter
     });
     
     // Log filter information including notch filter details
@@ -1153,8 +1182,7 @@ class DotGridAudioPlayer {
       const newFreq = nodes.originalFrequency * this.freqMultiplier;
       nodes.filter.frequency.value = newFreq;
       
-      // Use the same relationship for notch filter - maintain the character
-      nodes.notchFilter.frequency.value = newFreq * nodes.notchOffsetRatio;
+      // No longer updating notch filter as it's been removed from the chain
     });
     
     console.log(`🔊 Updated all filter frequencies with multiplier: ${this.freqMultiplier.toFixed(2)}×`);
