@@ -12,16 +12,16 @@ const MASTER_GAIN = 0.8;
 const ENVELOPE_ATTACK = 0.01; // seconds
 const ENVELOPE_DECAY = 0.02; // seconds
 const ENVELOPE_SUSTAIN = 0.8; // level
-const ENVELOPE_RELEASE = 0.5; // seconds
+const ENVELOPE_RELEASE = 0.3; // seconds
 const BURST_LENGTH = 0.15; // seconds
 
 // Pattern timing
-const BURST_INTERVAL = 0.3; // seconds between bursts
+const BURST_INTERVAL = 0.4; // seconds between bursts
 const ROW_PAUSE = 0.5; // pause between rows
 
 // Filter settings
 const DEFAULT_Q = 3.0; // Q for bandwidth
-const BANDWIDTH_OCTAVE = 0.1; // Width of the band in octaves (0.5 = half octave)
+const BANDWIDTH_OCTAVE = 0.5; // Width of the band in octaves (0.5 = half octave)
 const FILTER_SLOPE = 24; // Filter slope in dB/octave (24 = steep filter)
 
 // Panning positions
@@ -338,25 +338,25 @@ class ReferenceCalibrationAudio {
     const highpassFilter = ctx.createBiquadFilter();
     highpassFilter.type = 'highpass';
     highpassFilter.frequency.value = lowFreq;
-    highpassFilter.Q.value = 1.0; // Q affects resonance at cutoff
+    highpassFilter.Q.value = 3.0; // Q affects resonance at cutoff
     
     // Create a second highpass filter for steeper slope
     const highpassFilter2 = ctx.createBiquadFilter();
     highpassFilter2.type = 'highpass';
     highpassFilter2.frequency.value = lowFreq;
-    highpassFilter2.Q.value = 0.7; // Slightly different Q for natural response
+    highpassFilter2.Q.value = 3.0; // Slightly different Q for natural response
     
     // Create a lowpass filter (blocks frequencies above the cutoff)
     const lowpassFilter = ctx.createBiquadFilter();
     lowpassFilter.type = 'lowpass';
     lowpassFilter.frequency.value = highFreq;
-    lowpassFilter.Q.value = 1.0;
+    lowpassFilter.Q.value = 3.0;
     
     // Create a second lowpass filter for steeper slope
     const lowpassFilter2 = ctx.createBiquadFilter();
     lowpassFilter2.type = 'lowpass';
     lowpassFilter2.frequency.value = highFreq;
-    lowpassFilter2.Q.value = 0.7;
+    lowpassFilter2.Q.value = 3.0;
     
     // Create a panner
     const panner = ctx.createStereoPanner();

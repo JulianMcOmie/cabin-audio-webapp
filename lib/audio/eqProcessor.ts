@@ -205,14 +205,55 @@ class EQProcessor {
   }
   
   // Update a single band with smooth transition
-  public updateBand(index: number, gain: number, frequency?: number, q?: number): void {
+  public updateBand(indexOrBand: number | import('../models/EQBand').EQBand, gain?: number, frequency?: number, q?: number): void {
+    // If we're passed an EQBand object
+    if (typeof indexOrBand === 'object') {
+      const band = indexOrBand;
+      
+      // First, check if we already have a filter at this frequency
+      const existingFilterIndex = this.findBandIndexByFrequency(band.frequency);
+      
+      if (existingFilterIndex !== -1) {
+        // Update existing filter
+        this.updateBand(existingFilterIndex, band.gain, band.frequency, band.q);
+      } else {
+        // Create a new filter for this frequency
+        if (this.inputNode && this.volumeNode) {
+          const audioCtx = audioContext.getAudioContext();
+          const filter = audioCtx.createBiquadFilter();
+          filter.type = band.type || 'peaking';
+          filter.frequency.value = band.frequency;
+          filter.gain.value = this.isEnabled ? band.gain : 0;
+          filter.Q.value = band.q;
+          
+          // Add to filters array
+          this.filters.push(filter);
+          
+          // Reconstruct the filter chain
+          this.disconnectFilters();
+          
+          // Connect everything in sequence
+          let prevNode: AudioNode = this.inputNode;
+          for (const filter of this.filters) {
+            prevNode.connect(filter);
+            prevNode = filter;
+          }
+          prevNode.connect(this.volumeNode);
+        }
+      }
+      
+      return;
+    }
+    
+    // Regular index-based update (original implementation)
+    const index = indexOrBand as number;
     if (index < this.filters.length && this.currentProfile) {
       const audioCtx = audioContext.getAudioContext();
       const currentTime = audioCtx.currentTime;
-      const TRANSITION_TIME = 0.01; // 50ms
+      const TRANSITION_TIME = 0.01; // 10ms
       
       const filter = this.filters[index];
-      const targetGain = this.isEnabled ? gain : 0;
+      const targetGain = this.isEnabled ? gain! : 0;
       
       // Smoothly transition to new gain
       filter.gain.linearRampToValueAtTime(targetGain, currentTime + TRANSITION_TIME);
@@ -227,22 +268,64 @@ class EQProcessor {
         filter.Q.linearRampToValueAtTime(q, currentTime + TRANSITION_TIME);
       }
       
-      
       // Update the profile in memory
-      const updatedBands = [...this.currentProfile.bands];
-      updatedBands[index] = {
-        ...updatedBands[index],
-        gain,
-        ...(frequency !== undefined && { frequency }),
-        ...(q !== undefined && { q })
-      };
-      
-      this.currentProfile = {
-        ...this.currentProfile,
-        bands: updatedBands,
-        lastModified: Date.now()
-      };
+      if (this.currentProfile && this.currentProfile.bands) {
+        const updatedBands = [...this.currentProfile.bands];
+        if (updatedBands[index]) {
+          updatedBands[index] = {
+            ...updatedBands[index],
+            gain: gain!,
+            ...(frequency !== undefined && { frequency }),
+            ...(q !== undefined && { q })
+          };
+          
+          this.currentProfile = {
+            ...this.currentProfile,
+            bands: updatedBands,
+            lastModified: Date.now()
+          };
+        }
+      }
     }
+  }
+  
+  // Find the index of a filter by frequency
+  public findBandIndexByFrequency(frequency: number, tolerance: number = 0.001): number {
+    for (let i = 0; i < this.filters.length; i++) {
+      // Compare with some tolerance for floating point
+      if (Math.abs(this.filters[i].frequency.value - frequency) <= tolerance) {
+        return i;
+      }
+    }
+    return -1;
+  }
+  
+  // Remove a filter by frequency
+  public removeBandByFrequency(frequency: number): boolean {
+    const index = this.findBandIndexByFrequency(frequency);
+    if (index !== -1) {
+      // Remove from the filters array
+      this.filters.splice(index, 1);
+      
+      // Reconstruct the filter chain
+      this.disconnectFilters();
+      
+      // If we still have filters, reconnect them
+      if (this.filters.length > 0 && this.inputNode && this.volumeNode) {
+        let prevNode: AudioNode = this.inputNode;
+        for (const filter of this.filters) {
+          prevNode.connect(filter);
+          prevNode = filter;
+        }
+        prevNode.connect(this.volumeNode);
+      } else if (this.inputNode && this.volumeNode) {
+        // Direct connection if no filters
+        this.inputNode.connect(this.volumeNode);
+      }
+      
+      return true;
+    }
+    return false;
   }
   
   // Update volume with smooth transition

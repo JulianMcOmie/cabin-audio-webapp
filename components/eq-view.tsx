@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { HelpCircle, Play, Power, Volume2 } from "lucide-react"
+import { HelpCircle, Play, Power, Volume2, Sliders } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { FrequencyGraph } from "@/components/frequency-graph"
 import { ReferenceCalibration } from "@/components/reference-calibration"
@@ -18,6 +18,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { SyncStatus } from "@/lib/models/SyncStatus"
 import { FFTVisualizer } from "@/components/audio/FFTVisualizer"
 import { getReferenceCalibrationAudio } from "@/lib/audio/referenceCalibrationAudio"
+import { EQCalibrationProcess } from "@/components/eq-calibration-process"
 
 interface EQViewProps {
 //   isPlaying: boolean
@@ -168,6 +169,29 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     setEQEnabled(!isEQEnabled);
   };
 
+  const [showCalibrationProcess, setShowCalibrationProcess] = useState(false)
+
+  // Handle completing the calibration process
+  const handleCalibrationComplete = () => {
+    setShowCalibrationProcess(false)
+    // Stop the calibration audio when the process is complete
+    setCalibrationPlaying(false)
+  }
+  
+  // Handle canceling the calibration process
+  const handleCalibrationCancel = () => {
+    setShowCalibrationProcess(false)
+    // Stop the calibration audio when the process is canceled
+    setCalibrationPlaying(false)
+  }
+  
+  // Start the automated calibration process
+  const startCalibration = () => {
+    setShowCalibrationProcess(true)
+    // Automatically start the calibration audio
+    setCalibrationPlaying(true)
+  }
+
   return (
     <div className="mx-auto space-y-8 pb-24">
       <div className="flex justify-between items-center mb-2">
@@ -179,10 +203,19 @@ export function EQView({ setEqEnabled }: EQViewProps) {
             <span className="text-xs text-muted-foreground">EQ is currently {isEQEnabled ? "enabled" : "disabled"}</span>
           </div>
         </div>
-        <Button variant="outline" onClick={() => setShowCalibrationModal(true)}>
-          <HelpCircle className="mr-2 h-5 w-5" />
-          Tutorial
-        </Button>
+        <div className="flex gap-2">
+          <Button 
+            className="bg-electric-blue hover:bg-electric-blue/90 text-white" 
+            onClick={startCalibration}
+          >
+            <Sliders className="mr-2 h-5 w-5" />
+            Auto-Calibrate EQ
+          </Button>
+          <Button variant="outline" onClick={() => setShowCalibrationModal(true)}>
+            <HelpCircle className="mr-2 h-5 w-5" />
+            Tutorial
+          </Button>
+        </div>
       </div>
 
       {/* Main EQ View */}
@@ -390,6 +423,18 @@ export function EQView({ setEqEnabled }: EQViewProps) {
           onSelectProfile={handleSelectProfile}
         />
       </div>
+
+      {/* EQ Automatic Calibration Process Dialog */}
+      {showCalibrationProcess && (
+        <Dialog open={showCalibrationProcess} onOpenChange={setShowCalibrationProcess}>
+          <DialogContent className="sm:max-w-[850px] p-0">
+            <EQCalibrationProcess 
+              onComplete={handleCalibrationComplete} 
+              onCancel={handleCalibrationCancel} 
+            />
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* Create New Profile Dialog */}
       <Dialog open={showCreateNewDialog} onOpenChange={setShowCreateNewDialog}>
