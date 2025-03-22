@@ -21,6 +21,8 @@ const ROW_PAUSE = 0.5; // pause between rows
 
 // Filter settings
 const DEFAULT_Q = 3.0; // Q for bandwidth
+const BANDWIDTH_OCTAVE = 0.1; // Width of the band in octaves (0.5 = half octave)
+const FILTER_SLOPE = 24; // Filter slope in dB/octave (24 = steep filter)
 
 // Panning positions
 const PANNING_POSITIONS = [-1.0, -0.33, 0.33, 1.0]; // Full left to full right
@@ -326,13 +328,35 @@ class ReferenceCalibrationAudio {
     const source = ctx.createBufferSource();
     source.buffer = this.noiseBuffer;
     
-    // Create a bandpass filter
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'bandpass';
+    // Calculate frequency range for the band
+    // Using equal temperament formula: f * 2^(n/12) where n is semitones
+    const octaveRatio = Math.pow(2, BANDWIDTH_OCTAVE);
+    const lowFreq = frequency / octaveRatio;
+    const highFreq = frequency * octaveRatio;
     
-    // Set filter parameters
-    filter.frequency.value = frequency;
-    filter.Q.value = DEFAULT_Q;
+    // Create a highpass filter (blocks frequencies below the cutoff)
+    const highpassFilter = ctx.createBiquadFilter();
+    highpassFilter.type = 'highpass';
+    highpassFilter.frequency.value = lowFreq;
+    highpassFilter.Q.value = 1.0; // Q affects resonance at cutoff
+    
+    // Create a second highpass filter for steeper slope
+    const highpassFilter2 = ctx.createBiquadFilter();
+    highpassFilter2.type = 'highpass';
+    highpassFilter2.frequency.value = lowFreq;
+    highpassFilter2.Q.value = 0.7; // Slightly different Q for natural response
+    
+    // Create a lowpass filter (blocks frequencies above the cutoff)
+    const lowpassFilter = ctx.createBiquadFilter();
+    lowpassFilter.type = 'lowpass';
+    lowpassFilter.frequency.value = highFreq;
+    lowpassFilter.Q.value = 1.0;
+    
+    // Create a second lowpass filter for steeper slope
+    const lowpassFilter2 = ctx.createBiquadFilter();
+    lowpassFilter2.type = 'lowpass';
+    lowpassFilter2.frequency.value = highFreq;
+    lowpassFilter2.Q.value = 0.7;
     
     // Create a panner
     const panner = ctx.createStereoPanner();
@@ -353,9 +377,12 @@ class ReferenceCalibrationAudio {
     envelopeGain.gain.setValueAtTime(ENVELOPE_SUSTAIN, now + BURST_LENGTH);
     envelopeGain.gain.linearRampToValueAtTime(0, now + BURST_LENGTH + ENVELOPE_RELEASE);
     
-    // Connect the audio chain
-    source.connect(filter);
-    filter.connect(panner);
+    // Connect the audio chain - chaining filters for steeper slopes
+    source.connect(highpassFilter);
+    highpassFilter.connect(highpassFilter2);
+    highpassFilter2.connect(lowpassFilter);
+    lowpassFilter.connect(lowpassFilter2);
+    lowpassFilter2.connect(panner);
     panner.connect(envelopeGain);
     envelopeGain.connect(gainNode);
     
@@ -387,7 +414,7 @@ class ReferenceCalibrationAudio {
     source.stop(now + BURST_LENGTH + ENVELOPE_RELEASE + 0.1);
     
     // Log the noise burst details
-    console.log(`🔊 Noise burst: freq=${frequency.toFixed(0)}Hz, pan=${pan.toFixed(2)}, reference=${isReference}`);
+    console.log(`🔊 Noise burst: freq=${frequency.toFixed(0)}Hz (band: ${lowFreq.toFixed(0)}-${highFreq.toFixed(0)}Hz), pan=${pan.toFixed(2)}, reference=${isReference}`);
   }
 
   /**
