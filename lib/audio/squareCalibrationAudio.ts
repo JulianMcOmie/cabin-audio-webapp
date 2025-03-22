@@ -17,6 +17,10 @@ const BURST_LENGTH = 0.15; // seconds
 const BURST_INTERVAL = 0.3; // seconds between bursts (reduced from 0.3 to make it faster)
 const GROUP_PAUSE = 0.3; // pause between groups (reduced from 0.5)
 
+// Drum pattern timing (based on 120 BPM)
+const BEAT_DURATION = 0.5; // duration of one beat in seconds (120 BPM = 0.5s per beat)
+const SIXTEENTH_NOTE = BEAT_DURATION / 4; // duration of a sixteenth note
+
 // Filter settings
 const MIN_Q = 2.0;   // Minimum Q value (wider bandwidth)
 const MAX_Q = 4.0;  // Maximum Q value (narrower bandwidth)
@@ -29,8 +33,25 @@ enum Corner {
   TOP_LEFT = 3
 }
 
+// Extended grid positions for 3x3 pattern
+enum GridPosition {
+  TOP_LEFT = 0,
+  TOP_CENTER = 1,
+  TOP_RIGHT = 2,
+  MIDDLE_LEFT = 3,
+  CENTER = 4,
+  MIDDLE_RIGHT = 5,
+  BOTTOM_LEFT = 6,
+  BOTTOM_CENTER = 7,
+  BOTTOM_RIGHT = 8
+}
+
 // Observer pattern for corner activation
 type CornerListener = (corner: Corner) => void;
+// Observer for grid position activation
+type GridPositionListener = (position: GridPosition) => void;
+// Pattern mode
+type PatternMode = 'diagonal' | 'drumGrid';
 
 class SquareCalibrationAudio {
   private static instance: SquareCalibrationAudio;
@@ -40,8 +61,17 @@ class SquareCalibrationAudio {
   private cornerCount: number = 0;
   private timeoutId: number | null = null;
   private cornerListeners: CornerListener[] = [];
+  private gridPositionListeners: GridPositionListener[] = [];
   private preEQAnalyser: AnalyserNode | null = null;
   private preEQGain: GainNode | null = null;
+  
+  // Pattern mode toggle
+  private patternMode: PatternMode = 'diagonal';
+  
+  // Drum pattern variables
+  private beatCount: number = 0;
+  private measureCount: number = 0;
+  private sixteenthCount: number = 0;
   
   // Square position and size (normalized 0-1)
   private squarePosition: [number, number] = [0.2, 0.2]; // [left, bottom]
@@ -203,22 +233,70 @@ class SquareCalibrationAudio {
   }
 
   /**
-   * Start the noise burst pattern
+   * Toggle between pattern modes
+   * @param mode The pattern mode to set ('diagonal' or 'drumGrid')
    */
-  private startPattern(): void {
-    // Reset counter and start with first corner
-    this.currentCorner = Corner.BOTTOM_LEFT;
-    this.cornerCount = 0;
-    
-    // Schedule first burst
-    this.scheduleNextBurst();
+  public setPatternMode(mode: PatternMode): void {
+    if (this.patternMode !== mode) {
+      this.patternMode = mode;
+      console.log(`🔊 Pattern mode changed to: ${mode}`);
+      
+      // If currently playing, restart with new pattern
+      if (this.isPlaying) {
+        this.stopPattern();
+        this.startPattern();
+      }
+    }
+  }
+  
+  /**
+   * Get current pattern mode
+   */
+  public getPatternMode(): PatternMode {
+    return this.patternMode;
   }
 
   /**
-   * Schedule the next noise burst
+   * Add a listener for grid position activations
+   */
+  public addGridPositionListener(listener: GridPositionListener): void {
+    this.gridPositionListeners.push(listener);
+  }
+  
+  /**
+   * Remove a grid position listener
+   */
+  public removeGridPositionListener(listener: GridPositionListener): void {
+    this.gridPositionListeners = this.gridPositionListeners.filter(l => l !== listener);
+  }
+
+  /**
+   * Start the noise burst pattern
+   */
+  private startPattern(): void {
+    if (this.patternMode === 'diagonal') {
+      // Reset counter and start with first corner for diagonal mode
+      this.currentCorner = Corner.BOTTOM_LEFT;
+      this.cornerCount = 0;
+      
+      // Schedule first burst
+      this.scheduleNextBurst();
+    } else {
+      // Reset counters for drum grid mode
+      this.beatCount = 0;
+      this.measureCount = 0;
+      this.sixteenthCount = 0;
+      
+      // Schedule first drum pattern
+      this.scheduleDrumPattern();
+    }
+  }
+
+  /**
+   * Schedule the next noise burst for diagonal pattern
    */
   private scheduleNextBurst(): void {
-    if (!this.isPlaying) return;
+    if (!this.isPlaying || this.patternMode !== 'diagonal') return;
     
     // Play current burst
     this.playNoiseAtCorner(this.currentCorner);
@@ -229,14 +307,21 @@ class SquareCalibrationAudio {
     // Update for next burst
     this.cornerCount++;
     
-    // Modified pattern logic: repeat each diagonal 4 times (8 total hits per diagonal)
-    // (bottom-left, top-right) x8, (bottom-right, top-left) x8, repeat
+    // Modified pattern logic: make one corner in each diagonal play twice as often
     if (this.cornerCount % 16 < 8) {
-      // First diagonal: alternate between bottom-left and top-right
-      this.currentCorner = this.cornerCount % 2 === 0 ? Corner.BOTTOM_LEFT : Corner.TOP_RIGHT;
+      // First diagonal: make BOTTOM_LEFT the primary corner (plays 2/3 of the time)
+      if (this.cornerCount % 3 === 0 || this.cornerCount % 3 === 1) {
+        this.currentCorner = Corner.BOTTOM_LEFT;
+      } else {
+        this.currentCorner = Corner.TOP_RIGHT;
+      }
     } else {
-      // Second diagonal: alternate between bottom-right and top-left
-      this.currentCorner = this.cornerCount % 2 === 0 ? Corner.BOTTOM_RIGHT : Corner.TOP_LEFT;
+      // Second diagonal: make BOTTOM_RIGHT the primary corner (plays 2/3 of the time)
+      if (this.cornerCount % 3 === 0 || this.cornerCount % 3 === 1) {
+        this.currentCorner = Corner.BOTTOM_RIGHT;
+      } else {
+        this.currentCorner = Corner.TOP_LEFT;
+      }
     }
     
     // Only add a pause between diagonal groups
@@ -248,9 +333,105 @@ class SquareCalibrationAudio {
       this.scheduleNextBurst();
     }, nextInterval * 1000);
   }
+  
+  /**
+   * Schedule the drum pattern (3x3 grid)
+   */
+  private scheduleDrumPattern(): void {
+    if (!this.isPlaying || this.patternMode !== 'drumGrid') return;
+    
+    // Calculate which positions should play on this sixteenth note
+    const positionsToPlay = this.getPositionsForCurrentBeat();
+    
+    // Play sounds for all active positions
+    for (const position of positionsToPlay) {
+      this.playNoiseAtGridPosition(position);
+      
+      // Notify listeners
+      this.gridPositionListeners.forEach(listener => listener(position));
+    }
+    
+    // Update counters
+    this.sixteenthCount++;
+    if (this.sixteenthCount % 4 === 0) {
+      // Every quarter note
+      this.beatCount++;
+      if (this.beatCount % 4 === 0) {
+        // Every measure (4 beats)
+        this.measureCount++;
+        this.beatCount = 0;
+      }
+    }
+    if (this.sixteenthCount === 16) {
+      // Reset sixteenth counter after each measure
+      this.sixteenthCount = 0;
+    }
+    
+    // Schedule next sixteenth note
+    this.timeoutId = window.setTimeout(() => {
+      this.scheduleDrumPattern();
+    }, SIXTEENTH_NOTE * 1000);
+  }
+  
+  /**
+   * Get which grid positions should play on the current beat
+   */
+  private getPositionsForCurrentBeat(): GridPosition[] {
+    const positions: GridPosition[] = [];
+    const beat = Math.floor(this.sixteenthCount / 4) + 1; // 1-based beat number (1, 2, 3, 4)
+    const isAnd = this.sixteenthCount % 4 === 2; // is this an "and" (offbeat)
+    const isSecondMeasure = this.measureCount % 2 === 1;
+    
+    // Center top: Every quarter note (beats 1, 2, 3, 4)
+    if (this.sixteenthCount % 4 === 0) {
+      positions.push(GridPosition.TOP_CENTER);
+    }
+    
+    // Center bottom: Every beat 1
+    if (beat === 1 && !isAnd) {
+      positions.push(GridPosition.BOTTOM_CENTER);
+    }
+    
+    // Center (snare): Every beat 3
+    if (beat === 3 && !isAnd) {
+      positions.push(GridPosition.CENTER);
+    }
+    
+    // Top left: Beats 1-and and 3-and
+    if ((beat === 1 || beat === 3) && isAnd) {
+      positions.push(GridPosition.TOP_LEFT);
+    }
+    
+    // Top right: Beats 2-and and 4-and
+    if ((beat === 2 || beat === 4) && isAnd) {
+      positions.push(GridPosition.TOP_RIGHT);
+    }
+    
+    // Middle left: Beat 2
+    if (beat === 2 && !isAnd) {
+      positions.push(GridPosition.MIDDLE_LEFT);
+    }
+    
+    // Middle right: Beat 4
+    if (beat === 4 && !isAnd) {
+      positions.push(GridPosition.MIDDLE_RIGHT);
+    }
+    
+    // Bottom left: Beat 4 (every second measure)
+    if (isSecondMeasure && beat === 4 && !isAnd) {
+      positions.push(GridPosition.BOTTOM_LEFT);
+    }
+    
+    // Bottom right: Beat 4-and (every second measure)
+    if (isSecondMeasure && beat === 4 && isAnd) {
+      positions.push(GridPosition.BOTTOM_RIGHT);
+    }
+    
+    return positions;
+  }
 
   /**
-   * Stop the noise burst pattern
+   * Stop the pattern
    */
   private stopPattern(): void {
     if (this.timeoutId !== null) {
@@ -258,7 +439,77 @@ class SquareCalibrationAudio {
       this.timeoutId = null;
     }
   }
-
+  
+  /**
+   * Play a noise burst at a grid position (3x3)
+   */
+  private playNoiseAtGridPosition(position: GridPosition): void {
+    if (!this.noiseBuffer) {
+      console.warn('Noise buffer not ready');
+      return;
+    }
+    
+    const ctx = audioContext.getAudioContext();
+    
+    // Calculate position within the square for the 3x3 grid
+    let xPos: number, yPos: number;
+    
+    // Map grid position to normalized coordinates
+    // We divide the square into a 3x3 grid
+    const left = this.squarePosition[0];
+    const bottom = this.squarePosition[1];
+    const width = this.squareSize[0];
+    const height = this.squareSize[1];
+    
+    const xStep = width / 2;  // Three columns
+    const yStep = height / 2; // Three rows
+    
+    switch (position) {
+      case GridPosition.TOP_LEFT:
+        xPos = left;
+        yPos = bottom + height;
+        break;
+      case GridPosition.TOP_CENTER:
+        xPos = left + xStep;
+        yPos = bottom + height;
+        break;
+      case GridPosition.TOP_RIGHT:
+        xPos = left + width;
+        yPos = bottom + height;
+        break;
+      case GridPosition.MIDDLE_LEFT:
+        xPos = left;
+        yPos = bottom + yStep;
+        break;
+      case GridPosition.CENTER:
+        xPos = left + xStep;
+        yPos = bottom + yStep;
+        break;
+      case GridPosition.MIDDLE_RIGHT:
+        xPos = left + width;
+        yPos = bottom + yStep;
+        break;
+      case GridPosition.BOTTOM_LEFT:
+        xPos = left;
+        yPos = bottom;
+        break;
+      case GridPosition.BOTTOM_CENTER:
+        xPos = left + xStep;
+        yPos = bottom;
+        break;
+      case GridPosition.BOTTOM_RIGHT:
+        xPos = left + width;
+        yPos = bottom;
+        break;
+    }
+    
+    // Play the sound with the same audio chain as the corner sound
+    this.playNoiseAtPosition(xPos, yPos);
+    
+    // Log the grid position noise burst
+    console.log(`🔊 Grid noise burst at position ${GridPosition[position]}: x=${xPos.toFixed(2)}, y=${yPos.toFixed(2)}`);
+  }
+  
   /**
    * Play a noise burst at the specified corner
    */
@@ -267,8 +518,6 @@ class SquareCalibrationAudio {
       console.warn('Noise buffer not ready');
       return;
     }
-    
-    const ctx = audioContext.getAudioContext();
     
     // Calculate position based on corner
     let xPos = 0, yPos = 0;
@@ -292,6 +541,24 @@ class SquareCalibrationAudio {
         break;
     }
     
+    // Play the sound
+    this.playNoiseAtPosition(xPos, yPos);
+    
+    // Log the noise burst details
+    console.log(`🔊 Noise burst at corner ${Corner[corner]}: x=${xPos.toFixed(2)}, y=${yPos.toFixed(2)}`);
+  }
+  
+  /**
+   * Common method to play noise at a specific position
+   */
+  private playNoiseAtPosition(xPos: number, yPos: number): void {
+    if (!this.noiseBuffer) {
+      console.warn('Noise buffer not ready');
+      return;
+    }
+    
+    const ctx = audioContext.getAudioContext();
+    
     // Clamp values to 0-1 range just in case
     xPos = Math.max(0, Math.min(1, xPos));
     yPos = Math.max(0, Math.min(1, yPos));
@@ -300,16 +567,15 @@ class SquareCalibrationAudio {
     const source = ctx.createBufferSource();
     source.buffer = this.noiseBuffer;
     
-    // Create a bandpass filter
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    
     // Map y position to frequency (logarithmic)
     const logMinFreq = Math.log2(MIN_FREQ);
     const logMaxFreq = Math.log2(MAX_FREQ);
     const logFreqRange = logMaxFreq - logMinFreq;
     const centerFreq = Math.pow(2, logMinFreq + yPos * logFreqRange);
     
+    // Create a bandpass filter
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
     filter.frequency.value = centerFreq;
     
     // Bandwidth is inversely proportional to square height
@@ -361,9 +627,6 @@ class SquareCalibrationAudio {
     // Start and automatically stop
     source.start();
     source.stop(now + BURST_LENGTH + ENVELOPE_RELEASE + 0.1);
-    
-    // Log the noise burst details
-    console.log(`🔊 Noise burst at corner ${Corner[corner]}: x=${xPos.toFixed(2)}, y=${yPos.toFixed(2)}, freq=${centerFreq.toFixed(0)}Hz, Q=${Q.toFixed(1)}, pan=${pan.toFixed(2)}`);
   }
 
   /**
@@ -372,6 +635,7 @@ class SquareCalibrationAudio {
   public dispose(): void {
     this.setPlaying(false);
     this.cornerListeners = [];
+    this.gridPositionListeners = [];
     
     if (this.preEQGain) {
       this.preEQGain.disconnect();

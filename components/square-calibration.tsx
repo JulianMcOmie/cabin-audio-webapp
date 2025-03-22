@@ -4,7 +4,9 @@ import { useRef, useEffect, useState } from "react"
 import * as squareCalibrationAudio from '@/lib/audio/squareCalibrationAudio'
 import { Corner } from '@/lib/audio/squareCalibrationAudio'
 import { Button } from "@/components/ui/button"
-import { Play } from "lucide-react"
+import { Play, Grid3X3, Smartphone } from "lucide-react"
+import { Switch } from "@/components/ui/switch"
+import { Label } from "@/components/ui/label"
 
 // Handle size
 const HANDLE_SIZE = 8; // Size of resize handles in pixels
@@ -20,6 +22,9 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+  
+  // State for pattern mode
+  const [patternMode, setPatternMode] = useState<'diagonal' | 'drumGrid'>('diagonal');
   
   // State for dragging and resizing
   const [isDragging, setIsDragging] = useState(false);
@@ -83,6 +88,12 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
     setSquarePosition(position);
     setSquareSize(size);
   }, []);
+  
+  // Update pattern mode when toggle changes
+  useEffect(() => {
+    const audioPlayer = squareCalibrationAudio.getSquareCalibrationAudio();
+    audioPlayer.setPatternMode(patternMode);
+  }, [patternMode]);
   
   // Connect to audio module for corner activation events
   useEffect(() => {
@@ -463,8 +474,28 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
         />
       </div>
       
-      <div className="text-xs text-center text-muted-foreground">
-        Drag the square to move, drag corners or edges to resize
+      <div className="flex justify-between items-center">
+        <div className="text-xs text-muted-foreground">
+          Drag the square to move, drag corners or edges to resize
+        </div>
+        <div className="flex items-center space-x-2">
+          <Label htmlFor="pattern-mode" className="text-xs text-muted-foreground cursor-pointer">
+            {patternMode === 'diagonal' ? (
+              <Smartphone className="h-4 w-4" />
+            ) : (
+              <Grid3X3 className="h-4 w-4" />
+            )}
+          </Label>
+          <Switch
+            id="pattern-mode"
+            checked={patternMode === 'drumGrid'}
+            onCheckedChange={(checked) => setPatternMode(checked ? 'drumGrid' : 'diagonal')}
+            aria-label="Toggle pattern mode"
+          />
+          <div className="text-xs text-muted-foreground">
+            {patternMode === 'diagonal' ? 'Diagonal' : '3x3 Rhythm'}
+          </div>
+        </div>
       </div>
     </div>
   );
