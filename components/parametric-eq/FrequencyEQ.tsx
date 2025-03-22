@@ -46,67 +46,25 @@ interface AudioProcessor {
   setBandType: (bandId: string, type: BiquadFilterType) => void;
 }
 
-// Audio parameters update - throttled to run at most every 50ms
-export const scheduleAudioUpdate = throttle((
+// Direct audio update function without throttling
+export function updateAudio(
   audioProcessor: AudioProcessor,
-  profileId: string,
-  updateCallback?: () => void
-) => {
-  // Apply the pending changes to audio nodes
-  if (pendingUpdates.volume !== undefined) {
-    audioProcessor.setVolume(pendingUpdates.volume);
-  }
-  
-  // Apply band updates
-  Object.entries(pendingUpdates.bands).forEach(([bandId, updates]) => {
-    // Apply each parameter that has changed
-    if (updates.frequency !== undefined) {
-      audioProcessor.setBandFrequency(bandId, updates.frequency);
-    }
-    if (updates.gain !== undefined) {
-      audioProcessor.setBandGain(bandId, updates.gain);
-    }
-    if (updates.q !== undefined) {
-      audioProcessor.setBandQ(bandId, updates.q);
-    }
-    if (updates.type !== undefined) {
-      audioProcessor.setBandType(bandId, updates.type);
-    }
-  });
-  
-  // Clear pending updates
-  pendingUpdates = {
-    bands: {},
-    lastBatchTime: Date.now()
-  };
-  
-  // Optional callback for when updates are complete
-  if (updateCallback) updateCallback();
-}, 50);
-
-// Queue updates to be applied in the next batch
-export function queueAudioUpdate(
-  bandId: string | null, 
   paramType: 'frequency' | 'gain' | 'q' | 'type' | 'volume',
+  bandId: string | null, 
   value: number | BiquadFilterType
 ) {
   if (paramType === 'volume') {
-    pendingUpdates.volume = value as number;
+    audioProcessor.setVolume(value as number);
   } else if (bandId) {
-    // Initialize this band's updates if it doesn't exist
-    if (!pendingUpdates.bands[bandId]) {
-      pendingUpdates.bands[bandId] = {};
-    }
-    
-    // Queue the parameter update with the correct type assertion for each parameter
+    // Update the appropriate parameter directly
     if (paramType === 'frequency') {
-      pendingUpdates.bands[bandId].frequency = value as number;
+      audioProcessor.setBandFrequency(bandId, value as number);
     } else if (paramType === 'gain') {
-      pendingUpdates.bands[bandId].gain = value as number;
+      audioProcessor.setBandGain(bandId, value as number);
     } else if (paramType === 'q') {
-      pendingUpdates.bands[bandId].q = value as number;
+      audioProcessor.setBandQ(bandId, value as number);
     } else if (paramType === 'type') {
-      pendingUpdates.bands[bandId].type = value as BiquadFilterType;
+      audioProcessor.setBandType(bandId, value as BiquadFilterType);
     }
   }
 }
