@@ -1,11 +1,6 @@
 import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
 
-// type DotPosition = {
-//   x: number;
-//   y: number;
-// };
-
 // Constants
 const COLUMNS = 5; // Always 5 panning positions - match the value in dot-grid.tsx (odd number ensures a middle column)
 

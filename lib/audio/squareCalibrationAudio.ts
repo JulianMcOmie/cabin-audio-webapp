@@ -10,7 +10,7 @@ const MASTER_GAIN = 0.8;
 const ENVELOPE_ATTACK = 0.01; // seconds
 const ENVELOPE_DECAY = 0.02; // seconds
 const ENVELOPE_SUSTAIN = 0.8; // level
-const ENVELOPE_RELEASE = 0.6; // seconds
+const ENVELOPE_RELEASE = 0.4; // seconds
 const BURST_LENGTH = 0.15; // seconds
 
 // Pattern timing
@@ -29,8 +29,16 @@ enum Corner {
   TOP_LEFT = 3
 }
 
+// Position along a diagonal
+interface DiagonalPosition {
+  x: number;
+  y: number;
+}
+
 // Observer pattern for corner activation
 type CornerListener = (corner: Corner) => void;
+// Observer for intermediate position activation
+type PositionListener = (position: DiagonalPosition, isCorner: boolean, diagonalIndex: number) => void;
 
 class SquareCalibrationAudio {
   private static instance: SquareCalibrationAudio;
@@ -40,12 +48,22 @@ class SquareCalibrationAudio {
   private cornerCount: number = 0;
   private timeoutId: number | null = null;
   private cornerListeners: CornerListener[] = [];
+  private positionListeners: PositionListener[] = [];
   private preEQAnalyser: AnalyserNode | null = null;
   private preEQGain: GainNode | null = null;
   
   // Square position and size (normalized 0-1)
   private squarePosition: [number, number] = [0.2, 0.2]; // [left, bottom]
   private squareSize: [number, number] = [0.6, 0.6]; // [width, height]
+  
+  // Dot density - number of dots per diagonal (2 = corners only, 3-5 = additional intermediate points)
+  private dotDensity: number = 2;
+  
+  // Current position index along the diagonal
+  private currentPositionIndex: number = 0;
+  
+  // Current diagonal index (0 = bottom-left to top-right, 1 = bottom-right to top-left)
+  private currentDiagonalIndex: number = 0;
 
   private constructor() {
     // Initialize noise buffer
@@ -164,6 +182,26 @@ class SquareCalibrationAudio {
       size: this.squareSize
     };
   }
+  
+  /**
+   * Set the dot density (number of dots per diagonal)
+   * @param density Number between 2-5 
+   */
+  public setDotDensity(density: number): void {
+    // Ensure density is between 2-5
+    const validDensity = Math.max(2, Math.min(5, Math.floor(density)));
+    if (this.dotDensity !== validDensity) {
+      this.dotDensity = validDensity;
+      console.log(`🔊 Dot density set to ${this.dotDensity}`);
+    }
+  }
+  
+  /**
+   * Get the current dot density
+   */
+  public getDotDensity(): number {
+    return this.dotDensity;
+  }
 
   /**
    * Set playing state
@@ -201,13 +239,28 @@ class SquareCalibrationAudio {
   public removeCornerListener(listener: CornerListener): void {
     this.cornerListeners = this.cornerListeners.filter(l => l !== listener);
   }
+  
+  /**
+   * Add a listener for position activations (including intermediate points)
+   */
+  public addPositionListener(listener: PositionListener): void {
+    this.positionListeners.push(listener);
+  }
+  
+  /**
+   * Remove a position listener
+   */
+  public removePositionListener(listener: PositionListener): void {
+    this.positionListeners = this.positionListeners.filter(l => l !== listener);
+  }
 
   /**
    * Start the noise burst pattern
    */
   private startPattern(): void {
-    // Reset counter and start with first corner
-    this.currentCorner = Corner.BOTTOM_LEFT;
+    // Reset counters and start with first diagonal
+    this.currentDiagonalIndex = 0;
+    this.currentPositionIndex = 0;
     this.cornerCount = 0;
     
     // Schedule first burst
@@ -220,33 +273,106 @@ class SquareCalibrationAudio {
   private scheduleNextBurst(): void {
     if (!this.isPlaying) return;
     
-    // Play current burst
-    this.playNoiseAtCorner(this.currentCorner);
+    // Calculate the current position along the diagonal
+    const position = this.getPositionAlongDiagonal(
+      this.currentDiagonalIndex, 
+      this.currentPositionIndex, 
+      this.dotDensity
+    );
     
-    // Notify listeners
-    this.cornerListeners.forEach(listener => listener(this.currentCorner));
+    // Play noise at the calculated position
+    this.playNoiseAtPosition(position);
     
-    // Update for next burst
-    this.cornerCount++;
+    // If this is a corner position, notify corner listeners too
+    const isCornerPosition = this.currentPositionIndex === 0 || 
+                            this.currentPositionIndex === this.dotDensity - 1;
     
-    // Modified pattern logic: repeat each diagonal 4 times (8 total hits per diagonal)
-    // (bottom-left, top-right) x8, (bottom-right, top-left) x8, repeat
-    if (this.cornerCount % 16 < 8) {
-      // First diagonal: alternate between bottom-left and top-right
-      this.currentCorner = this.cornerCount % 2 === 0 ? Corner.BOTTOM_LEFT : Corner.TOP_RIGHT;
-    } else {
-      // Second diagonal: alternate between bottom-right and top-left
-      this.currentCorner = this.cornerCount % 2 === 0 ? Corner.BOTTOM_RIGHT : Corner.TOP_LEFT;
+    if (isCornerPosition) {
+      // Determine which corner this is
+      let corner: Corner;
+      if (this.currentDiagonalIndex === 0) {
+        // First diagonal (bottom-left to top-right)
+        corner = this.currentPositionIndex === 0 ? Corner.BOTTOM_LEFT : Corner.TOP_RIGHT;
+      } else {
+        // Second diagonal (bottom-right to top-left)
+        corner = this.currentPositionIndex === 0 ? Corner.BOTTOM_RIGHT : Corner.TOP_LEFT;
+      }
+      
+      // Notify corner listeners
+      this.cornerListeners.forEach(listener => listener(corner));
     }
     
-    // Only add a pause between diagonal groups
-    const nextInterval = this.cornerCount % 8 === 0 && this.cornerCount > 0 ? 
-      GROUP_PAUSE : BURST_INTERVAL;
+    // Notify position listeners
+    this.positionListeners.forEach(listener => 
+      listener(position, isCornerPosition, this.currentDiagonalIndex)
+    );
+    
+    // Increment position index
+    this.currentPositionIndex++;
+    
+    // If we've reached the end of the current diagonal
+    if (this.currentPositionIndex >= this.dotDensity) {
+      this.currentPositionIndex = 0;
+      
+      // Increment corner count - used to track repeats of the pattern
+      this.cornerCount++;
+      
+      // After 4 complete cycles of a diagonal, switch to the other diagonal
+      if (this.cornerCount % 4 === 0) {
+        this.currentDiagonalIndex = (this.currentDiagonalIndex + 1) % 2;
+      }
+    }
+    
+    // Determine the next interval
+    // Add a small pause between diagonals
+    const isDigaonalTransition = this.currentPositionIndex === 0 && this.cornerCount % 4 === 0 && this.cornerCount > 0;
+    const nextInterval = isDigaonalTransition ? GROUP_PAUSE : BURST_INTERVAL;
     
     // Schedule next burst
     this.timeoutId = window.setTimeout(() => {
       this.scheduleNextBurst();
     }, nextInterval * 1000);
+  }
+  
+  /**
+   * Calculate a position along a diagonal
+   * @param diagonalIndex 0 for bottom-left to top-right, 1 for bottom-right to top-left
+   * @param positionIndex Position along the diagonal (0 to density-1)
+   * @param density Number of points along the diagonal
+   */
+  private getPositionAlongDiagonal(
+    diagonalIndex: number, 
+    positionIndex: number, 
+    density: number
+  ): DiagonalPosition {
+    // Corners of the square
+    const corners = [
+      { x: this.squarePosition[0], y: this.squarePosition[1] },                               // Bottom-left
+      { x: this.squarePosition[0] + this.squareSize[0], y: this.squarePosition[1] + this.squareSize[1] }, // Top-right
+      { x: this.squarePosition[0] + this.squareSize[0], y: this.squarePosition[1] },                     // Bottom-right
+      { x: this.squarePosition[0], y: this.squarePosition[1] + this.squareSize[1] }                      // Top-left
+    ];
+    
+    // Calculate the interpolation factor
+    const t = density > 1 ? positionIndex / (density - 1) : 0;
+    
+    // Get the start and end corners for the current diagonal
+    let startCorner, endCorner;
+    if (diagonalIndex === 0) {
+      // First diagonal: bottom-left to top-right
+      startCorner = corners[0]; // Bottom-left
+      endCorner = corners[1];   // Top-right
+    } else {
+      // Second diagonal: bottom-right to top-left
+      startCorner = corners[2]; // Bottom-right
+      endCorner = corners[3];   // Top-left
+    }
+    
+    // Interpolate between start and end corners
+    return {
+      x: startCorner.x + t * (endCorner.x - startCorner.x),
+      y: startCorner.y + t * (endCorner.y - startCorner.y)
+    };
   }
 
   /**
@@ -258,11 +384,11 @@ class SquareCalibrationAudio {
       this.timeoutId = null;
     }
   }
-
+  
   /**
-   * Play a noise burst at the specified corner
+   * Play a noise burst at a specific position
    */
-  private playNoiseAtCorner(corner: Corner): void {
+  private playNoiseAtPosition(position: DiagonalPosition): void {
     if (!this.noiseBuffer) {
       console.warn('Noise buffer not ready');
       return;
@@ -270,31 +396,9 @@ class SquareCalibrationAudio {
     
     const ctx = audioContext.getAudioContext();
     
-    // Calculate position based on corner
-    let xPos = 0, yPos = 0;
-    
-    switch (corner) {
-      case Corner.BOTTOM_LEFT:
-        xPos = this.squarePosition[0];
-        yPos = this.squarePosition[1];
-        break;
-      case Corner.TOP_RIGHT:
-        xPos = this.squarePosition[0] + this.squareSize[0];
-        yPos = this.squarePosition[1] + this.squareSize[1];
-        break;
-      case Corner.BOTTOM_RIGHT:
-        xPos = this.squarePosition[0] + this.squareSize[0];
-        yPos = this.squarePosition[1];
-        break;
-      case Corner.TOP_LEFT:
-        xPos = this.squarePosition[0];
-        yPos = this.squarePosition[1] + this.squareSize[1];
-        break;
-    }
-    
     // Clamp values to 0-1 range just in case
-    xPos = Math.max(0, Math.min(1, xPos));
-    yPos = Math.max(0, Math.min(1, yPos));
+    const xPos = Math.max(0, Math.min(1, position.x));
+    const yPos = Math.max(0, Math.min(1, position.y));
     
     // Create nodes
     const source = ctx.createBufferSource();
@@ -363,7 +467,36 @@ class SquareCalibrationAudio {
     source.stop(now + BURST_LENGTH + ENVELOPE_RELEASE + 0.1);
     
     // Log the noise burst details
-    console.log(`🔊 Noise burst at corner ${Corner[corner]}: x=${xPos.toFixed(2)}, y=${yPos.toFixed(2)}, freq=${centerFreq.toFixed(0)}Hz, Q=${Q.toFixed(1)}, pan=${pan.toFixed(2)}`);
+    console.log(`🔊 Noise burst at position: x=${xPos.toFixed(2)}, y=${yPos.toFixed(2)}, freq=${centerFreq.toFixed(0)}Hz, Q=${Q.toFixed(1)}, pan=${pan.toFixed(2)}`);
+  }
+  
+  /**
+   * Play a noise burst at the specified corner
+   * NOTE: Kept for backward compatibility
+   */
+  private playNoiseAtCorner(corner: Corner): void {
+    let xPos = 0, yPos = 0;
+    
+    switch (corner) {
+      case Corner.BOTTOM_LEFT:
+        xPos = this.squarePosition[0];
+        yPos = this.squarePosition[1];
+        break;
+      case Corner.TOP_RIGHT:
+        xPos = this.squarePosition[0] + this.squareSize[0];
+        yPos = this.squarePosition[1] + this.squareSize[1];
+        break;
+      case Corner.BOTTOM_RIGHT:
+        xPos = this.squarePosition[0] + this.squareSize[0];
+        yPos = this.squarePosition[1];
+        break;
+      case Corner.TOP_LEFT:
+        xPos = this.squarePosition[0];
+        yPos = this.squarePosition[1] + this.squareSize[1];
+        break;
+    }
+    
+    this.playNoiseAtPosition({ x: xPos, y: yPos });
   }
 
   /**
@@ -372,6 +505,7 @@ class SquareCalibrationAudio {
   public dispose(): void {
     this.setPlaying(false);
     this.cornerListeners = [];
+    this.positionListeners = [];
     
     if (this.preEQGain) {
       this.preEQGain.disconnect();
@@ -389,6 +523,7 @@ class SquareCalibrationAudio {
 
 // Export Corner enum
 export { Corner };
+export type { DiagonalPosition };
 
 /**
  * Get the singleton instance of the SquareCalibrationAudio

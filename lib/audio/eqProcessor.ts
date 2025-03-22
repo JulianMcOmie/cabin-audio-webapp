@@ -29,8 +29,6 @@ class EQProcessor {
     // Simple pass-through connection - input to volume to output
     this.inputNode.connect(this.volumeNode);
     this.volumeNode.connect(this.outputNode);
-    
-    console.log('🎮 EQProcessor initialized with pass-through connection');
   }
   
   // Get the input node for connecting audio sources

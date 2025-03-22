@@ -2,9 +2,11 @@
 
 import { useRef, useEffect, useState } from "react"
 import * as squareCalibrationAudio from '@/lib/audio/squareCalibrationAudio'
-import { Corner } from '@/lib/audio/squareCalibrationAudio'
+import { Corner, DiagonalPosition } from '@/lib/audio/squareCalibrationAudio'
 import { Button } from "@/components/ui/button"
 import { Play } from "lucide-react"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { Label } from "@/components/ui/label"
 
 // Handle size
 const HANDLE_SIZE = 8; // Size of resize handles in pixels
@@ -32,6 +34,12 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
   
   // State for tracking the active corner
   const [activeCorner, setActiveCorner] = useState<Corner | null>(null);
+  
+  // State for tracking active intermediate positions
+  const [activePosition, setActivePosition] = useState<DiagonalPosition | null>(null);
+  
+  // State for dot density
+  const [dotDensity, setDotDensity] = useState<number>(2);
   
   // Initialize square position and size with default values from audio module
   const [squarePosition, setSquarePosition] = useState<[number, number]>([0.2, 0.2]);
@@ -82,6 +90,9 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
     
     setSquarePosition(position);
     setSquareSize(size);
+    
+    // Get initial dot density
+    setDotDensity(audioPlayer.getDotDensity());
   }, []);
   
   // Connect to audio module for corner activation events
@@ -104,6 +115,29 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
     };
   }, []);
   
+  // Connect to audio module for intermediate position activations
+  useEffect(() => {
+    const audioPlayer = squareCalibrationAudio.getSquareCalibrationAudio();
+    
+    const handlePositionActivation = (position: DiagonalPosition, isCorner: boolean, diagonalIndex: number) => {
+      // Only highlight intermediate positions (corners are handled by the corner listener)
+      if (!isCorner) {
+        setActivePosition(position);
+        
+        // Reset active position after animation time
+        setTimeout(() => {
+          setActivePosition(null);
+        }, 200);
+      }
+    };
+    
+    audioPlayer.addPositionListener(handlePositionActivation);
+    
+    return () => {
+      audioPlayer.removePositionListener(handlePositionActivation);
+    };
+  }, []);
+  
   // Update audio module when square position/size changes
   useEffect(() => {
     const audioPlayer = squareCalibrationAudio.getSquareCalibrationAudio();
@@ -115,6 +149,12 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
     const audioPlayer = squareCalibrationAudio.getSquareCalibrationAudio();
     audioPlayer.setPlaying(isPlaying);
   }, [isPlaying]);
+  
+  // Update dot density in audio player when it changes
+  useEffect(() => {
+    const audioPlayer = squareCalibrationAudio.getSquareCalibrationAudio();
+    audioPlayer.setDotDensity(dotDensity);
+  }, [dotDensity]);
   
   // Draw the canvas
   useEffect(() => {
@@ -176,6 +216,59 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
       ctx.fill();
     });
     
+    // Draw intermediate dots along diagonals if density > 2
+    if (dotDensity > 2) {
+      const intermediateDotRadius = 3;
+      
+      // Draw dots on first diagonal (bottom-left to top-right)
+      for (let i = 1; i < dotDensity - 1; i++) {
+        const t = i / (dotDensity - 1);
+        const x = innerX + t * innerWidth;
+        const y = innerY + innerHeight - t * innerHeight;
+        
+        ctx.beginPath();
+        
+        // Highlight active dot
+        const isActive = activePosition && 
+          Math.abs(activePosition.x * canvasSize.width - x) < 5 && 
+          Math.abs((1 - activePosition.y - squareSize[1]) * canvasSize.height - y) < 5;
+        
+        if (isActive) {
+          ctx.fillStyle = isDarkMode ? '#38bdf8' : '#0284c7'; // sky-400 or sky-600
+          ctx.arc(x, y, intermediateDotRadius * 1.5, 0, Math.PI * 2);
+        } else {
+          ctx.fillStyle = isDarkMode ? '#71717a' : '#94a3b8'; // zinc-500 or slate-400
+          ctx.arc(x, y, intermediateDotRadius, 0, Math.PI * 2);
+        }
+        
+        ctx.fill();
+      }
+      
+      // Draw dots on second diagonal (bottom-right to top-left)
+      for (let i = 1; i < dotDensity - 1; i++) {
+        const t = i / (dotDensity - 1);
+        const x = innerX + innerWidth - t * innerWidth;
+        const y = innerY + innerHeight - t * innerHeight;
+        
+        ctx.beginPath();
+        
+        // Highlight active dot
+        const isActive = activePosition && 
+          Math.abs(activePosition.x * canvasSize.width - x) < 5 && 
+          Math.abs((1 - activePosition.y - squareSize[1]) * canvasSize.height - y) < 5;
+        
+        if (isActive) {
+          ctx.fillStyle = isDarkMode ? '#38bdf8' : '#0284c7'; // sky-400 or sky-600
+          ctx.arc(x, y, intermediateDotRadius * 1.5, 0, Math.PI * 2);
+        } else {
+          ctx.fillStyle = isDarkMode ? '#71717a' : '#94a3b8'; // zinc-500 or slate-400
+          ctx.arc(x, y, intermediateDotRadius, 0, Math.PI * 2);
+        }
+        
+        ctx.fill();
+      }
+    }
+    
     // Draw corner handles
     const handlePositions = [
       { x: innerX, y: innerY, type: 'nw' },                       // Top-left
@@ -202,7 +295,7 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
       ctx.fill();
     }
     
-  }, [canvasSize, isDarkMode, squarePosition, squareSize, activeCorner, isDragging, currentHandle]);
+  }, [canvasSize, isDarkMode, squarePosition, squareSize, activeCorner, activePosition, isDragging, currentHandle, dotDensity]);
   
   // Convert screen Y coordinates to our bottom-left origin system
   const convertScreenYToNormalizedY = (screenY: number, height: number): number => {
@@ -449,6 +542,12 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
     }
   };
 
+  // Handle changes to dot density
+  const handleDotDensityChange = (value: string) => {
+    const density = parseInt(value, 10);
+    setDotDensity(density);
+  };
+
   return (
     <div className={`space-y-4 ${className}`}>
       <div className="relative bg-background/50 rounded-lg p-3">
@@ -463,8 +562,38 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
         />
       </div>
       
-      <div className="text-xs text-center text-muted-foreground">
+      <div className="text-xs text-center text-muted-foreground mb-2">
         Drag the square to move, drag corners or edges to resize
+      </div>
+      
+      <div className="flex flex-col space-y-2">
+        <div className="text-sm font-medium">Dot Density</div>
+        <RadioGroup 
+          value={dotDensity.toString()} 
+          onValueChange={handleDotDensityChange}
+          className="flex space-x-2"
+          disabled={disabled || isPlaying}
+        >
+          <div className="flex items-center space-x-1">
+            <RadioGroupItem value="2" id="density-2" />
+            <Label htmlFor="density-2">2</Label>
+          </div>
+          <div className="flex items-center space-x-1">
+            <RadioGroupItem value="3" id="density-3" />
+            <Label htmlFor="density-3">3</Label>
+          </div>
+          <div className="flex items-center space-x-1">
+            <RadioGroupItem value="4" id="density-4" />
+            <Label htmlFor="density-4">4</Label>
+          </div>
+          <div className="flex items-center space-x-1">
+            <RadioGroupItem value="5" id="density-5" />
+            <Label htmlFor="density-5">5</Label>
+          </div>
+        </RadioGroup>
+        <div className="text-xs text-muted-foreground">
+          Higher density plays additional points along diagonals
+        </div>
       </div>
     </div>
   );

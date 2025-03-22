@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react"
 import { HelpCircle, Play, Power, Volume2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { FrequencyGraph } from "@/components/frequency-graph"
-import { SquareCalibration } from "@/components/square-calibration"
+import { ReferenceCalibration } from "@/components/reference-calibration"
 import { EQProfiles } from "@/components/eq-profiles"
 import { EQCalibrationModal } from "@/components/eq-calibration-modal"
 import { LoginModal } from "@/components/login-modal"
@@ -17,7 +17,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { v4 as uuidv4 } from 'uuid'
 import { SyncStatus } from "@/lib/models/SyncStatus"
 import { FFTVisualizer } from "@/components/audio/FFTVisualizer"
-import { getSquareCalibrationAudio } from "@/lib/audio/squareCalibrationAudio"
+import { getReferenceCalibrationAudio } from "@/lib/audio/referenceCalibrationAudio"
 
 interface EQViewProps {
 //   isPlaying: boolean
@@ -52,8 +52,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const [showLoginModal, setShowLoginModal] = useState(false)
   const [showSignupModal, setShowSignupModal] = useState(false)
   
-  // State for the square calibration audio
-  const [squareCalibrationPlaying, setSquareCalibrationPlaying] = useState(false)
+  // State for the reference calibration audio
+  const [calibrationPlaying, setCalibrationPlaying] = useState(false)
   
   // State for the spectrum analyzer
   const [preEQAnalyser, setPreEQAnalyser] = useState<AnalyserNode | null>(null)
@@ -94,18 +94,18 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     setEqEnabled(isEQEnabled);
   }, [isEQEnabled, setEqEnabled]);
 
-  // Handle creating/removing analyzer when square calibration playing state changes
+  // Handle creating/removing analyzer when calibration playing state changes
   useEffect(() => {
-    if (squareCalibrationPlaying) {
-      // Create and connect the analyzer for square calibration
-      const squareCalibration = getSquareCalibrationAudio();
-      const analyser = squareCalibration.createPreEQAnalyser();
+    if (calibrationPlaying) {
+      // Create and connect the analyzer for reference calibration
+      const calibration = getReferenceCalibrationAudio();
+      const analyser = calibration.createPreEQAnalyser();
       setPreEQAnalyser(analyser);
     } else {
       // Clean up when not playing
       setPreEQAnalyser(null);
     }
-  }, [squareCalibrationPlaying]);
+  }, [calibrationPlaying]);
 
   // Initialize selected profile from the active profile and keep it synced
   useEffect(() => {
@@ -190,7 +190,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
         {/* Frequency Graph (on top) */}
         <div className="relative" ref={eqContainerRef}>
           {/* FFT Visualizer as background layer */}
-          {squareCalibrationPlaying && preEQAnalyser && (
+          {calibrationPlaying && preEQAnalyser && (
             <div className="absolute inset-0 z-0 w-full aspect-[2/1]">
               <FFTVisualizer 
                 analyser={preEQAnalyser} 
@@ -268,23 +268,23 @@ export function EQView({ setEqEnabled }: EQViewProps) {
 
         {/* Calibration Section */}
         <div className="mt-8 border rounded-lg p-6 bg-card">
-          <h3 className="text-lg font-medium mb-4">How to Calibrate Your EQ</h3>
+          <h3 className="text-lg font-medium mb-4">Reference Frequency Calibration</h3>
           <div className="flex flex-col md:flex-row gap-6">
             <div className="md:w-3/5 space-y-5">
               <div>
-                <h4 className="font-medium mb-2">Understanding the Square Calibration</h4>
+                <h4 className="font-medium mb-2">Understanding the Reference Calibration</h4>
                 <p className="text-muted-foreground">
-                  The square calibration tool helps you test your sound stage with precisely positioned noise bursts:
+                  The reference calibration tool helps you compare how your EQ affects different frequencies:
                 </p>
                 <ul className="list-disc pl-5 space-y-1 mt-2 text-sm text-muted-foreground">
                   <li>
-                    <strong>The outer square</strong> represents your entire sound stage - from left to right and low to high frequency
+                    <strong>Reference row (dashed line)</strong> plays fixed 800Hz sounds at different pan positions - NOT affected by EQ
                   </li>
                   <li>
-                    <strong>The inner square</strong> represents the area where test tones will play at the corners
+                    <strong>Calibration row (solid line)</strong> plays at your chosen frequency - IS affected by your EQ settings
                   </li>
                   <li>
-                    <strong>Noise bursts</strong> play at the corners in a specific pattern to help you identify how well you can perceive spatial positioning
+                    <strong>Compare the two</strong> to hear how your EQ enhances or reduces specific frequencies
                   </li>
                 </ul>
               </div>
@@ -293,27 +293,15 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 <h4 className="font-medium mb-2">Calibration Steps</h4>
                 <ol className="list-decimal pl-5 space-y-2 text-sm text-muted-foreground">
                   <li>Press Play to start the calibration pattern</li>
-                  <li>Listen to the corner pattern - it plays in diagonals (bottom-left/top-right then bottom-right/top-left)</li>
+                  <li>Listen to how the reference (800Hz) row sounds across the stereo field</li>
                   <li>
-                    Move and resize the inner square to test different areas of your sound stage
+                    Compare with the calibration row at your chosen frequency
                   </li>
                   <li>
-                    Adjust your EQ until you can clearly perceive the spatial differences between each corner
+                    Drag the handle up/down to change the calibration frequency
                   </li>
                   <li>
-                    Save your settings by{" "}
-                    <Button
-                      variant="link"
-                      className="text-electric-blue hover:text-electric-blue/80 font-medium p-0 h-auto"
-                      onClick={() => {
-                        const exportTab = document.querySelector('[data-tab="export"]')
-                        if (exportTab) {
-                          ;(exportTab as HTMLElement).click()
-                        }
-                      }}
-                    >
-                      exporting them
-                    </Button>
+                    Adjust your EQ until different frequencies are properly balanced against the reference
                   </li>
                 </ol>
               </div>
@@ -337,19 +325,19 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   </summary>
                   <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground mt-2">
                     <li>
-                      <strong>Make the square tall and narrow</strong> - to focus on frequency discrimination
+                      <strong>Check low frequencies</strong> - Often these need boosting (move the line to bottom area)
                     </li>
                     <li>
-                      <strong>Make the square wide and short</strong> - to focus on stereo imaging
+                      <strong>Check high frequencies</strong> - These may need reduction (move the line to top area)
                     </li>
                     <li>
-                      <strong>Move the square to the corners</strong> - to test different areas of your sound stage
+                      <strong>Listen for panning differences</strong> - Both rows should have similar stereo imaging
                     </li>
                     <li>
-                      <strong>Toggle EQ on/off</strong> - compare with and without EQ to verify improvements
+                      <strong>Toggle EQ on/off</strong> - Compare with and without EQ to verify improvements
                     </li>
                     <li>
-                      <strong>Listen for clear diagonal patterns</strong> - each corner should sound distinct
+                      <strong>Test speech frequencies</strong> - Around 1kHz-4kHz for clarity
                     </li>
                   </ul>
                 </details>
@@ -357,7 +345,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
 
               <InfoCircle>
                 This calibration creates a personalized EQ tailored to your unique hearing and audio equipment,
-                improving spatial separation and clarity for all your music.
+                ensuring balanced frequency response across your entire audio spectrum.
               </InfoCircle>
             </div>
 
@@ -367,10 +355,10 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   <h4 className="font-medium">Calibration Controls</h4>
                 </div>
 
-                {/* Square Calibration Component */}
+                {/* Reference Calibration Component */}
                 <div className="mb-3">
-                  <SquareCalibration 
-                    isPlaying={squareCalibrationPlaying}
+                  <ReferenceCalibration 
+                    isPlaying={calibrationPlaying}
                     disabled={false}
                   />
                 </div>
@@ -378,14 +366,14 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 <Button
                   size="sm"
                   className="w-full bg-electric-blue hover:bg-electric-blue/90 text-white mb-2"
-                  onClick={() => setSquareCalibrationPlaying(!squareCalibrationPlaying)}
+                  onClick={() => setCalibrationPlaying(!calibrationPlaying)}
                 >
                   <Play className="mr-2 h-4 w-4" />
-                  {squareCalibrationPlaying ? "Stop Calibration" : "Start Calibration"}
+                  {calibrationPlaying ? "Stop Calibration" : "Start Calibration"}
                 </Button>
 
                 <p className="text-xs text-center text-muted-foreground">
-                  Drag to move or resize the square to test different areas of your sound stage
+                  Drag the handle up/down to change the calibration frequency
                 </p>
               </div>
             </div>
