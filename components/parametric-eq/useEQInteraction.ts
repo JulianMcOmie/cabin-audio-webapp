@@ -264,6 +264,7 @@ export function useEQInteraction({
     
     // Clean up
     return () => {
+      // Remove event listeners
       window.removeEventListener('mousemove', handleGlobalMouseMove);
       window.removeEventListener('mouseup', handleGlobalMouseUp);
       

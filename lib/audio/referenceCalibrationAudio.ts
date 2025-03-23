@@ -342,9 +342,9 @@ class ReferenceCalibrationAudio {
     // Only reset counters if we don't already have a scheduled pattern
     // (i.e., timeoutId is null)
     if (this.timeoutId === null) {
-      // Reset counters and start with reference row
+      // Reset counters and start with calibration (not reference)
       this.currentPosition = 0;
-      this.isPlayingReference = true;
+      this.isPlayingReference = false; // Start with calibration
       
       // Schedule first burst
       this.scheduleNextBurst();
@@ -358,36 +358,42 @@ class ReferenceCalibrationAudio {
   private scheduleNextBurst(): void {
     if (!this.isPlaying) return;
     
-    // Get current pan position
+    // Get current pan position from the array
     const panPosition = PANNING_POSITIONS[this.currentPosition];
     
-    // Play the burst - reference or calibrated
+    // In the new pattern, we alternate between calibration and reference for each position
+    // Calibration pans across positions, reference stays centered
     if (this.isPlayingReference) {
-      this.playNoiseAtFrequency(REFERENCE_FREQ, panPosition, true);
+      // Play reference always at center (pan = 0)
+      this.playNoiseAtFrequency(REFERENCE_FREQ, 0, true);
     } else {
+      // Play calibration at the current pan position
       this.playNoiseAtFrequency(this.calibrationFrequency, panPosition, false);
     }
     
     // Notify position listeners
     this.positionListeners.forEach(listener => 
-      listener(panPosition, this.isPlayingReference)
+      listener(this.isPlayingReference ? 0 : panPosition, this.isPlayingReference)
     );
     
-    // Increment position
-    this.currentPosition++;
+    // Toggle between reference and calibration for EACH position
+    this.isPlayingReference = !this.isPlayingReference;
     
-    // If we've reached the end of a row
-    if (this.currentPosition >= PANNING_POSITIONS.length) {
-      this.currentPosition = 0;
+    // Only increment position after playing both reference and calibration at current position
+    if (!this.isPlayingReference) {
+      // We just played calibration, so next will be reference at a new position
+      this.currentPosition++;
       
-      // Toggle between reference and calibration
-      this.isPlayingReference = !this.isPlayingReference;
+      // Reset position when we've gone through all positions
+      if (this.currentPosition >= PANNING_POSITIONS.length) {
+        this.currentPosition = 0;
+      }
     }
     
     // Determine the next interval
-    // Add a longer pause between rows
-    const isRowTransition = this.currentPosition === 0;
-    const nextInterval = isRowTransition ? ROW_PAUSE : BURST_INTERVAL;
+    // Add a longer pause between rows only when we complete a full cycle
+    const isFullCycleComplete = this.currentPosition === 0 && this.isPlayingReference;
+    const nextInterval = isFullCycleComplete ? ROW_PAUSE : BURST_INTERVAL;
     
     // Schedule next burst
     this.timeoutId = window.setTimeout(() => {
@@ -439,23 +445,24 @@ class ReferenceCalibrationAudio {
     source.buffer = this.noiseBuffer;
     
     // Calculate frequency range for the band based on current bandwidth
+    // Same bandwidth is now used for both reference and calibration
     const octaveRatio = Math.pow(2, this.currentBandwidth / 2); // Half bandwidth on each side
-    const lowFreq = isReference ? frequency / octaveRatio : this.calibrationFrequency / octaveRatio;
-    const highFreq = isReference ? frequency * octaveRatio : this.calibrationFrequency * octaveRatio;
+    const lowFreq = frequency / octaveRatio;
+    const highFreq = frequency * octaveRatio;
     
     let bandpassFilter1, bandpassFilter2;
     
     if (isReference) {
-      // Reference always uses newly created filters (constant frequency)
+      // Reference now uses the same bandwidth as calibration
       bandpassFilter1 = ctx.createBiquadFilter();
       bandpassFilter1.type = 'bandpass';
       bandpassFilter1.frequency.value = frequency;
-      bandpassFilter1.Q.value = 1.0 / BANDWIDTH_OCTAVE; // Fixed Q for reference
+      bandpassFilter1.Q.value = 1.0 / this.currentBandwidth; // Use current bandwidth
       
       bandpassFilter2 = ctx.createBiquadFilter();
       bandpassFilter2.type = 'bandpass';
       bandpassFilter2.frequency.value = frequency;
-      bandpassFilter2.Q.value = 1.0 / BANDWIDTH_OCTAVE * 0.9; // Slight variation
+      bandpassFilter2.Q.value = 1.0 / this.currentBandwidth * 0.9; // Slight variation
     } else {
       // For calibration, use the active filters or create new ones
       if (!this.activeCalibrationFilters.bandpass1) {
