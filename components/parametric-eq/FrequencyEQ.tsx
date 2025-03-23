@@ -202,7 +202,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     updateProfile(profile.id, { bands: updatedBands })
   }, [profile, updateProfile])
   
-  // Set up EQ interaction
+  // Use EQ interaction
   const { 
     handleMouseMove: handleBandMouseMove, 
     handleMouseDown: handleBandMouseDown, 
@@ -228,19 +228,46 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     if (!canvas) return;
     
     const rect = canvas.getBoundingClientRect();
+    const margin = (canvas as any).margin || 30;
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
-    // Check if we're hovering over the volume control
+    // Check if within the inner EQ area
+    const isWithinInnerArea = 
+      x >= margin && x <= rect.width - margin &&
+      y >= margin && y <= rect.height - margin;
+    
+    // Adjust coordinates to inner coordinate system
+    const innerWidth = rect.width - margin * 2;
+    const innerHeight = rect.height - margin * 2;
+    
+    // Check if we're hovering over the volume control using raw coordinates
     const isOverVolume = EQBandRenderer.isInVolumeControl(
-      x, y, rect.width, rect.height, profile.volume || 0
+      x, y, innerWidth, innerHeight, profile.volume || 0, margin, margin
     );
     
     setIsHoveringVolume(isOverVolume);
     
-    // Only pass mouse move to band interaction if not hovering over volume
-    if (!isOverVolume) {
-      handleBandMouseMove(e);
+    // Only pass mouse move to band interaction if not hovering over volume and within inner area
+    if (!isOverVolume && isWithinInnerArea) {
+      // Create a synthetic event with adjusted coordinates
+      const syntheticEvent = {
+        ...e,
+        clientX: e.clientX,
+        clientY: e.clientY,
+        currentTarget: {
+          ...e.currentTarget,
+          getBoundingClientRect: () => ({
+            ...rect,
+            width: innerWidth,
+            height: innerHeight,
+            left: rect.left + margin,
+            top: rect.top + margin
+          })
+        }
+      };
+      
+      handleBandMouseMove(syntheticEvent as any);
     }
   }, [profile, handleBandMouseMove, isDraggingVolume]);
   
@@ -254,19 +281,30 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     if (!canvas) return;
     
     const rect = canvas.getBoundingClientRect();
+    const margin = (canvas as any).margin || 30;
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
-    // Check if we're clicking on the volume control
+    // Check if within the inner EQ area
+    const isWithinInnerArea = 
+      x >= margin && x <= rect.width - margin &&
+      y >= margin && y <= rect.height - margin;
+    
+    // Adjust coordinates to inner coordinate system
+    const innerY = y - margin;
+    const innerWidth = rect.width - margin * 2;
+    const innerHeight = rect.height - margin * 2;
+    
+    // Check if we're clicking on the volume control using raw coordinates
     const isOverVolume = EQBandRenderer.isInVolumeControl(
-      x, y, rect.width, rect.height, profile.volume || 0
+      x, y, innerWidth, innerHeight, profile.volume || 0, margin, margin
     );
     
     if (isOverVolume) {
       setIsDraggingVolume(true);
       
       // Initial volume adjustment based on click position
-      const newVolume = EQCoordinateUtils.yToGain(y, rect.height);
+      const newVolume = EQCoordinateUtils.yToGain(innerY, innerHeight);
       updateProfile(profile.id, { volume: newVolume });
       
       // Add event listeners for mouse move and mouse up
@@ -274,8 +312,14 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
         if (!canvas || !profile) return;
         
         const rect = canvas.getBoundingClientRect();
+        const margin = (canvas as any).margin || 30;
         const y = e.clientY - rect.top;
-        const newVolume = EQCoordinateUtils.yToGain(y, rect.height);
+        
+        // Calculate position within the inner area
+        const innerY = Math.max(margin, Math.min(rect.height - margin, y)) - margin;
+        const innerHeight = rect.height - margin * 2;
+        
+        const newVolume = EQCoordinateUtils.yToGain(innerY, innerHeight);
         
         // Update profile volume
         updateProfile(profile.id, { volume: newVolume });
@@ -293,8 +337,27 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       return;
     }
     
-    // If not clicking on volume control, delegate to the band mouse handler
-    handleBandMouseDown(e);
+    // If not clicking on volume control and within inner area, delegate to the band mouse handler
+    if (isWithinInnerArea) {
+      // Create a synthetic event with adjusted coordinates
+      const syntheticEvent = {
+        ...e,
+        clientX: e.clientX,
+        clientY: e.clientY,
+        currentTarget: {
+          ...e.currentTarget,
+          getBoundingClientRect: () => ({
+            ...rect,
+            width: innerWidth,
+            height: innerHeight,
+            left: rect.left + margin,
+            top: rect.top + margin
+          })
+        }
+      };
+      
+      handleBandMouseDown(syntheticEvent as any);
+    }
   }, [disabled, handleBandMouseDown, profile, updateProfile]);
   
   // Update instruction text based on interaction state
@@ -356,59 +419,117 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     // Get canvas dimensions
     const rect = canvas.getBoundingClientRect();
 
+    // Define equal margins for all sides
+    const margin = 30; // Equal margin on all sides
+    
+    // Store margins in a ref to access in other functions
+    if (!canvasRef.current) return;
+    (canvasRef.current as any).margin = margin;
+
     // Clear canvas
     ctx.clearRect(0, 0, rect.width, rect.height);
 
-    // Add semi-transparent background with reduced opacity
-    ctx.fillStyle = isDarkMode ? "rgba(24, 24, 36, 0.4)" : "rgba(255, 255, 255, 0.4)";
+    // Add semi-transparent background with darker opacity
+    ctx.fillStyle = isDarkMode ? "rgba(20, 20, 30, 0.6)" : "rgba(240, 240, 240, 0.6)";
     ctx.fillRect(0, 0, rect.width, rect.height);
+    
+    // Draw a subtle border around the content area
+    ctx.strokeStyle = isDarkMode ? "rgba(80, 80, 100, 0.3)" : "rgba(200, 200, 200, 0.5)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(margin, margin, rect.width - margin * 2, rect.height - margin * 2);
 
     // Draw background grid
     ctx.strokeStyle = isDarkMode ? "#3f3f5c" : "#e2e8f0"; // Darker grid lines for dark mode
     ctx.lineWidth = 1;
 
-    // Vertical grid lines (frequency bands)
-    const numBands = 10;
-    for (let i = 0; i <= numBands; i++) {
-      const x = (i / numBands) * rect.width;
+    // Define frequency points for logarithmic grid (in Hz)
+    const freqPoints = [20, 30, 50, 70, 100, 200, 300, 500, 700, 1000, 2000, 3000, 5000, 7000, 10000, 20000];
+    
+    // Vertical grid lines (logarithmic frequency bands)
+    for (let freq of freqPoints) {
+      const x = margin + EQCoordinateUtils.freqToX(freq, rect.width - margin * 2, freqRange);
       ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, rect.height);
+      ctx.moveTo(x, margin);
+      ctx.lineTo(x, rect.height - margin);
       ctx.stroke();
     }
 
+    // Define dB points for grid (matching actual EQ range, with more values, extending to +24dB)
+    const dbPoints = [24, 21, 18, 15, 12, 9, 6, 3, 0, -3, -6, -9, -12, -15, -18, -21, -24];
+    
     // Horizontal grid lines (dB levels)
-    const levels = 6;
-    for (let i = 0; i <= levels; i++) {
-      const y = (i / levels) * rect.height;
+    for (let db of dbPoints) {
+      const y = margin + EQCoordinateUtils.gainToY(db, rect.height - margin * 2);
       ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(rect.width, y);
+      ctx.moveTo(margin, y);
+      ctx.lineTo(rect.width - margin, y);
       ctx.stroke();
     }
 
     // Draw frequency labels
-    ctx.fillStyle = isDarkMode ? "#a1a1aa" : "#64748b"; // Brighter text for dark mode
-    ctx.font = "10px sans-serif";
     ctx.textAlign = "center";
-
-    const freqLabels = ["20Hz", "50Hz", "100Hz", "200Hz", "500Hz", "1kHz", "2kHz", "5kHz", "10kHz", "20kHz"];
-    for (let i = 0; i < freqLabels.length; i++) {
-      const x = ((i + 0.5) / numBands) * rect.width;
-      ctx.fillText(freqLabels[i], x, rect.height - 5);
+    ctx.textBaseline = "top";
+    ctx.font = "10px sans-serif";
+    ctx.fillStyle = isDarkMode ? "#a1a1aa" : "#64748b";
+    
+    // Only show a subset of frequencies for labels to avoid crowding
+    const freqLabels = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+    const labelY = rect.height - margin + 5; // Position labels below the bottom margin
+    
+    for (let freq of freqLabels) {
+      const x = margin + EQCoordinateUtils.freqToX(freq, rect.width - margin * 2, freqRange);
+      let label = freq >= 1000 ? `${freq/1000}k` : `${freq}`;
+      
+      // Calculate text dimensions for background
+      const textWidth = ctx.measureText(label).width;
+      const textHeight = 12;
+      
+      // Draw label background
+      ctx.fillStyle = isDarkMode ? "rgba(15, 15, 25, 0.9)" : "rgba(245, 245, 245, 0.9)";
+      ctx.fillRect(
+        x - textWidth/2 - 2, 
+        labelY - 2, 
+        textWidth + 4, 
+        textHeight + 4
+      );
+      
+      // Draw label text
+      ctx.fillStyle = isDarkMode ? "#a1a1aa" : "#64748b";
+      ctx.fillText(label, x, labelY);
     }
 
-    // Draw dB labels
-    ctx.textAlign = "right";
-    const dbLabels = ["+12dB", "+6dB", "0dB", "-6dB", "-12dB", "-18dB"];
-    for (let i = 0; i < dbLabels.length; i++) {
-      const y = (i / (levels - 1)) * (rect.height - 30) + 15;
-      ctx.fillText(dbLabels[i], rect.width - 10, y);
+    // Draw dB labels with background
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    
+    for (let db of dbPoints) {
+      // Only show a subset of dB labels to avoid crowding
+      if (db % 3 === 0) {  // Show every 3dB label
+        const y = margin + EQCoordinateUtils.gainToY(db, rect.height - margin * 2);
+        const label = `${db > 0 ? '+' : ''}${db}dB`;
+        
+        // Calculate text dimensions
+        const textWidth = ctx.measureText(label).width;
+        const textHeight = 12;
+        
+        // Draw label background
+        ctx.fillStyle = isDarkMode ? "rgba(15, 15, 25, 0.9)" : "rgba(245, 245, 245, 0.9)";
+        ctx.fillRect(
+          rect.width - margin + 5, 
+          y - textHeight/2 - 2, 
+          textWidth + 4, 
+          textHeight + 4
+        );
+        
+        // Draw label text
+        ctx.fillStyle = isDarkMode ? "#a1a1aa" : "#64748b";
+        ctx.fillText(label, rect.width - margin + 7, y);
+      }
     }
 
     // Mark background as drawn
     backgroundDrawnRef.current = true;
-  }, [isDarkMode]);
+  }, [isDarkMode, freqRange]);
 
   // Main canvas rendering function to be called by requestAnimationFrame
   const renderCanvas = useCallback(() => {
@@ -423,8 +544,9 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       canvasContextRef.current = ctx;
     }
 
-    // Get canvas dimensions
+    // Get canvas dimensions and margin
     const rect = canvas.getBoundingClientRect();
+    const margin = (canvas as any).margin || 30; // Get margin from canvas or use default
 
     // Clear canvas
     ctx.clearRect(0, 0, rect.width, rect.height);
@@ -444,16 +566,19 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       const isHovered = band.id === hoveredBandId || band.id === draggingBandId;
       const isDragging = band.id === draggingBandId;
       
+      // Add margin to rendering
       EQBandRenderer.drawBand(
         ctx,
         band,
-        rect.width,
-        rect.height,
+        rect.width - margin * 2, // Adjust width for margins
+        rect.height - margin * 2, // Adjust height for margins
         freqRange,
         isDarkMode,
         isHovered,
         isDragging,
-        isEnabled
+        isEnabled,
+        margin, // Pass margin for coordinate adjustments
+        margin  // Pass margin for coordinate adjustments
       );
       
       // Draw Q indicator if shift is pressed and band is selected, hovered, or being dragged
@@ -461,11 +586,13 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
         EQBandRenderer.drawQIndicator(
           ctx,
           band,
-          rect.width,
-          rect.height,
+          rect.width - margin * 2, // Adjust width for margins
+          rect.height - margin * 2, // Adjust height for margins
           freqRange,
           isDarkMode,
-          isEnabled
+          isEnabled,
+          margin, // Pass margin for x coordinate adjustment
+          margin  // Pass margin for y coordinate adjustment
         );
       }
     });
@@ -475,27 +602,31 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       EQCurveRenderer.drawFrequencyResponse(
         ctx,
         frequencyResponse,
-        rect.width,
-        rect.height,
+        rect.width - margin * 2, // Adjust width for margins
+        rect.height - margin * 2, // Adjust height for margins
         freqRange,
         isDarkMode,
         3, // lineWidth
         0.8, // alpha
-        isEnabled // Pass isEnabled parameter
+        isEnabled, // Pass isEnabled parameter
+        margin, // Pass margin for x coordinate adjustment
+        margin  // Pass margin for y coordinate adjustment
       );
     }
     
     // Draw ghost node if visible, not disabled, and not hovering over volume
     if (ghostNode.visible && !disabled && !isHoveringVolume && !isDraggingVolume) {
       // Calculate color based on location (frequency)
-      const ghostFreq = EQCoordinateUtils.xToFreq(ghostNode.x, rect.width, freqRange);
+      const innerX = ghostNode.x - margin; // Adjust for margin
+      const innerY = ghostNode.y - margin; // Adjust for margin
+      const ghostFreq = EQCoordinateUtils.xToFreq(innerX, rect.width - margin * 2, freqRange);
       const ghostColor = EQCoordinateUtils.getBandColor(ghostFreq, 1.0, isDarkMode);
       
-      // Draw ghost node handle
+      // Draw ghost node handle inside margins
       EQBandRenderer.drawBandHandle(
         ctx,
-        ghostNode.x,
-        ghostNode.y,
+        margin + innerX, // Adjust to render within margins
+        margin + innerY, // Adjust to render within margins
         ghostColor,
         true,
         false,
@@ -508,12 +639,14 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       EQBandRenderer.drawVolumeControl(
         ctx,
         profile.volume || 0,
-        rect.width,
-        rect.height,
+        rect.width - margin * 2, // Adjust width for margins
+        rect.height - margin * 2, // Adjust height for margins
         isDarkMode,
         isEnabled,
         isDraggingVolume,
-        isHoveringVolume
+        isHoveringVolume,
+        margin, // Pass margin for x coordinate adjustment
+        margin  // Pass margin for y coordinate adjustment
       );
     }
 

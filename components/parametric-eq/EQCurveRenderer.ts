@@ -18,7 +18,9 @@ export class EQCurveRenderer {
     isDarkMode: boolean,
     lineWidth: number = 3,
     alpha: number = 0.8,
-    isEnabled: boolean = true
+    isEnabled: boolean = true,
+    xOffset: number = 0,
+    yOffset: number = 0
   ): void {
     if (frequencyResponse.length === 0) return;
     
@@ -47,13 +49,18 @@ export class EQCurveRenderer {
         // Only draw points that create a visible difference on screen
         if (Math.abs(x - lastDrawnX) >= minPixelDiff) {
           if (isFirstPoint) {
-            ctx.moveTo(x, y);
+            ctx.moveTo(x + xOffset, y + yOffset);
             isFirstPoint = false;
           } else {
             // Use quadratic curves for smoother lines
             const cpX = (prevX + x) / 2;
-            ctx.quadraticCurveTo(prevX, prevY, cpX, (prevY + y) / 2);
-            ctx.lineTo(x, y);
+            ctx.quadraticCurveTo(
+              prevX + xOffset, 
+              prevY + yOffset, 
+              cpX + xOffset, 
+              (prevY + y) / 2 + yOffset
+            );
+            ctx.lineTo(x + xOffset, y + yOffset);
           }
           
           prevX = x;
@@ -64,7 +71,7 @@ export class EQCurveRenderer {
     }
     
     // Create gradient for the curve
-    const gradient = ctx.createLinearGradient(0, 0, width, 0);
+    const gradient = ctx.createLinearGradient(xOffset, yOffset, width + xOffset, yOffset);
     
     // Add color stops based on visible frequency range
     const logMin = Math.log10(freqRange.min);
@@ -109,6 +116,8 @@ export class EQCurveRenderer {
     freqRange: { min: number, max: number },
     fillColor: string,
     isHovered: boolean = false,
+    xOffset: number = 0,
+    yOffset: number = 0
   ): void {
     if (frequencyResponse.length === 0) return;
     
@@ -118,7 +127,7 @@ export class EQCurveRenderer {
     ctx.beginPath();
     
     // Start at the left edge at center line
-    ctx.moveTo(0, centerY);
+    ctx.moveTo(xOffset, centerY + yOffset);
     
     // Use high precision rendering with bezier curves
     let isFirstPoint = true;
@@ -138,12 +147,17 @@ export class EQCurveRenderer {
         // Only draw points that create a visible difference on screen
         if (Math.abs(x - lastDrawnX) >= minPixelDiff) {
           if (isFirstPoint) {
-            ctx.lineTo(x, y);
+            ctx.lineTo(x + xOffset, y + yOffset);
             isFirstPoint = false;
           } else {
             // Use quadratic curves for smoother lines
             const cpX = (prevX + x) / 2;
-            ctx.quadraticCurveTo(prevX, prevY, cpX, (prevY + y) / 2);
+            ctx.quadraticCurveTo(
+              prevX + xOffset, 
+              prevY + yOffset, 
+              cpX + xOffset, 
+              (prevY + y) / 2 + yOffset
+            );
           }
           
           prevX = x;
@@ -154,8 +168,8 @@ export class EQCurveRenderer {
     }
     
     // Complete the path back to the center line
-    ctx.lineTo(width, centerY);
-    ctx.lineTo(0, centerY);
+    ctx.lineTo(width + xOffset, centerY + yOffset);
+    ctx.lineTo(xOffset, centerY + yOffset);
     
     // Fill the path
     ctx.fillStyle = ColorUtils.setOpacity(fillColor, isHovered ? 0.5 : 0.2);

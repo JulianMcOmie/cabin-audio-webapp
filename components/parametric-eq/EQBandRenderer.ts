@@ -17,7 +17,9 @@ export class EQBandRenderer {
     isDarkMode: boolean,
     isHovered: boolean,
     isDragging: boolean,
-    isEnabled: boolean = true
+    isEnabled: boolean = true,
+    xOffset: number = 0,
+    yOffset: number = 0
   ) {
     // Skip if band is outside visible range
     if (band.frequency < freqRange.min || band.frequency > freqRange.max) return;
@@ -38,15 +40,30 @@ export class EQBandRenderer {
     const response = calculateBandResponse(band);
     
     // Draw band response curve using the exact frequency response
-    EQCurveRenderer.drawFilledFrequencyResponse(
-      ctx,
-      response,
-      width,
-      height,
-      freqRange,
-      bandColor,
-      isHovered
-    );
+    try {
+      EQCurveRenderer.drawFilledFrequencyResponse(
+        ctx,
+        response,
+        width,
+        height,
+        freqRange,
+        bandColor,
+        isHovered,
+        xOffset,
+        yOffset
+      );
+    } catch (e) {
+      // Fall back to original method if the updated one isn't available
+      (EQCurveRenderer.drawFilledFrequencyResponse as any)(
+        ctx,
+        response,
+        width,
+        height,
+        freqRange,
+        bandColor,
+        isHovered
+      );
+    }
     
     // Draw the band handle
     const x = EQCoordinateUtils.freqToX(band.frequency, width, freqRange);
@@ -56,7 +73,7 @@ export class EQBandRenderer {
     // const handleOpacity = band.isHovered || isHovered ? 0.9 : 0.8; // More vibrant by default
     const handleColor = EQCoordinateUtils.getBandColor(band.frequency, 1.0, isDarkMode)
     
-    this.drawBandHandle(ctx, x, y, handleColor, band.isHovered || isHovered, isDragging, isEnabled);
+    this.drawBandHandle(ctx, x + xOffset, y + yOffset, handleColor, band.isHovered || isHovered, isDragging, isEnabled);
   }
   
   /**
@@ -109,7 +126,9 @@ export class EQBandRenderer {
     height: number,
     freqRange: { min: number; max: number },
     isDarkMode: boolean,
-    isEnabled: boolean = true
+    isEnabled: boolean = true,
+    xOffset: number = 0,
+    yOffset: number = 0
   ): void {
     const x = EQCoordinateUtils.freqToX(band.frequency, width, freqRange);
     const y = EQCoordinateUtils.gainToY(band.gain, height);
@@ -117,8 +136,8 @@ export class EQBandRenderer {
     // Draw Q indicator as a horizontal line
     const qWidth = 100 / band.q;
     ctx.beginPath();
-    ctx.moveTo(x - qWidth / 2, y);
-    ctx.lineTo(x + qWidth / 2, y);
+    ctx.moveTo(x + xOffset - qWidth / 2, y + yOffset);
+    ctx.lineTo(x + xOffset + qWidth / 2, y + yOffset);
     ctx.strokeStyle = isEnabled 
       ? (isDarkMode ? '#fff' : '#000')
       : (isDarkMode ? '#aaa' : '#777');
@@ -132,7 +151,7 @@ export class EQBandRenderer {
       : (isDarkMode ? '#aaa' : '#777');
     ctx.font = '10px Arial';
     ctx.textAlign = 'center';
-    ctx.fillText(`Q: ${band.q.toFixed(1)}`, x, y + 20);
+    ctx.fillText(`Q: ${band.q.toFixed(1)}`, x + xOffset, y + yOffset + 20);
     
     // Draw a background for the text to improve readability
     const textWidth = ctx.measureText(`Q: ${band.q.toFixed(1)}`).width;
@@ -140,13 +159,13 @@ export class EQBandRenderer {
     ctx.fillStyle = isEnabled
       ? (isDarkMode ? 'rgba(0, 0, 0, 0.5)' : 'rgba(255, 255, 255, 0.5)')
       : 'rgba(128, 128, 128, 0.3)';
-    ctx.fillRect(x - textWidth / 2 - 2, y + 20 - textHeight / 2 - 2, textWidth + 4, textHeight);
+    ctx.fillRect(x + xOffset - textWidth / 2 - 2, y + yOffset + 20 - textHeight / 2 - 2, textWidth + 4, textHeight);
     
     // Re-draw text over background
     ctx.fillStyle = isEnabled 
       ? (isDarkMode ? '#fff' : '#000')
       : (isDarkMode ? '#aaa' : '#777');
-    ctx.fillText(`Q: ${band.q.toFixed(1)}`, x, y + 20);
+    ctx.fillText(`Q: ${band.q.toFixed(1)}`, x + xOffset, y + yOffset + 20);
   }
 
   /**
@@ -160,7 +179,9 @@ export class EQBandRenderer {
     isDarkMode: boolean,
     isEnabled: boolean = true,
     isDragging: boolean = false,
-    isHovered: boolean = false
+    isHovered: boolean = false,
+    xOffset: number = 0,
+    yOffset: number = 0
   ): void {
     // Center line y-position (0dB)
     const centerY = height * 0.5;
@@ -169,14 +190,6 @@ export class EQBandRenderer {
     
     // Calculate volume dot position (using same calculation as gainToY)
     const volumeY = EQCoordinateUtils.gainToY(volume, height);
-    
-    // Draw a horizontal line across the full width
-    ctx.beginPath();
-    ctx.strokeStyle = isDarkMode ? "#a1a1aa" : "#64748b";
-    ctx.lineWidth = 1;
-    ctx.moveTo(startPos, centerY);
-    ctx.lineTo(endPos, centerY);
-    ctx.stroke();
     
     // Draw filled rectangle between center line and volume line
     ctx.beginPath();
@@ -187,8 +200,8 @@ export class EQBandRenderer {
     
     // Draw the full-width rectangle
     ctx.rect(
-      startPos, // Start from left edge
-      Math.min(centerY, volumeY), // Top of rectangle (either center or volume line)
+      xOffset + startPos, // Start from left edge + offset
+      yOffset + Math.min(centerY, volumeY), // Top of rectangle (either center or volume line)
       endPos, // Full width
       Math.abs(centerY - volumeY) // Height - absolute difference between center and volume
     );
@@ -198,12 +211,14 @@ export class EQBandRenderer {
     ctx.beginPath();
     
     // Brighter/more visible when hovered
-    const lineOpacity = isHovered || isDragging ? 1.0 : (isEnabled ? 0.8 : 0.5);
+    let lineOpacity = isHovered || isDragging ? 0.0 : (isEnabled ? 0.0 : 0.0);
     ctx.strokeStyle = `rgba(255, 255, 255, ${lineOpacity})`; // White with opacity
     ctx.lineWidth = isHovered || isDragging ? 2 : 1;
-    ctx.moveTo(startPos, volumeY);
-    ctx.lineTo(endPos, volumeY);
+    ctx.moveTo(xOffset + startPos, yOffset + volumeY);
+    ctx.lineTo(xOffset + endPos, yOffset + volumeY);
     ctx.stroke();
+
+    const dotOpacity = isHovered || isDragging ? 1.0 : (isEnabled ? 0.8 : 0.5);
     
     // Only draw the dot indicator on the right side
     const dotX = width - 20; // 20px from right edge
@@ -211,12 +226,12 @@ export class EQBandRenderer {
     // Draw volume dot
     ctx.beginPath();
     ctx.fillStyle = isEnabled 
-      ? `rgba(255, 255, 255, ${lineOpacity})` 
-      : `rgba(255, 255, 255, ${lineOpacity * 0.7})`;
+      ? `rgba(255, 255, 255, ${dotOpacity})` 
+      : `rgba(255, 255, 255, ${dotOpacity * 0.7})`;
     
     // Larger dot when hovered
     const dotRadius = isHovered || isDragging ? 8 : 6;
-    ctx.arc(dotX, volumeY, dotRadius, 0, Math.PI * 2);
+    ctx.arc(xOffset + dotX, yOffset + volumeY, dotRadius, 0, Math.PI * 2);
     ctx.fill();
     
     // Draw a subtle ring around dot when hovered
@@ -226,7 +241,7 @@ export class EQBandRenderer {
         ? "rgba(200, 200, 200, 0.4)" 
         : "rgba(150, 150, 150, 0.3)";
       ctx.lineWidth = 1.5;
-      ctx.arc(dotX, volumeY, dotRadius + 3, 0, Math.PI * 2);
+      ctx.arc(xOffset + dotX, yOffset + volumeY, dotRadius + 3, 0, Math.PI * 2);
       ctx.stroke();
     }
     
@@ -236,18 +251,22 @@ export class EQBandRenderer {
       ctx.textAlign = "left";
       ctx.font = `${isHovered || isDragging ? "bold " : ""}12px sans-serif`;
       const volumeText = `${volume.toFixed(1)} dB`;
-      ctx.fillText(volumeText, dotX + 15, volumeY + 5);
+      ctx.fillText(volumeText, xOffset + dotX + 15, yOffset + volumeY + 5);
     }
   }
 
   /**
    * Check if point is inside the volume control dot
    */
-  static isInVolumeControl(x: number, y: number, width: number, height: number, volume: number): boolean {
+  static isInVolumeControl(x: number, y: number, width: number, height: number, volume: number, xOffset: number = 0, yOffset: number = 0): boolean {
     const dotX = width - 20; // 20px from right edge
     const volumeY = EQCoordinateUtils.gainToY(volume, height);
     const dotRadius = 10; // Slightly larger hit area for better UX
     
-    return Math.sqrt(Math.pow(x - dotX, 2) + Math.pow(y - volumeY, 2)) <= dotRadius;
+    // Adjust for margins by subtracting offsets from incoming coordinates
+    const adjustedX = x - xOffset;
+    const adjustedY = y - yOffset;
+    
+    return Math.sqrt(Math.pow(adjustedX - dotX, 2) + Math.pow(adjustedY - volumeY, 2)) <= dotRadius;
   }
 } 
