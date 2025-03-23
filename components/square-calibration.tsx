@@ -5,6 +5,8 @@ import * as squareCalibrationAudio from '@/lib/audio/squareCalibrationAudio'
 import { Corner } from '@/lib/audio/squareCalibrationAudio'
 import { Button } from "@/components/ui/button"
 import { Play } from "lucide-react"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { Label } from "@/components/ui/label"
 
 // Handle size
 const HANDLE_SIZE = 8; // Size of resize handles in pixels
@@ -32,6 +34,12 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
   
   // State for tracking the active corner
   const [activeCorner, setActiveCorner] = useState<Corner | null>(null);
+  
+  // State for tracking active intermediate positions
+  const [activePosition, setActivePosition] = useState<DiagonalPosition | null>(null);
+  
+  // State for dot density
+  const [dotDensity, setDotDensity] = useState<number>(2);
   
   // Initialize square position and size with default values from audio module
   const [squarePosition, setSquarePosition] = useState<[number, number]>([0.2, 0.2]);
@@ -82,6 +90,9 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
     
     setSquarePosition(position);
     setSquareSize(size);
+    
+    // Get initial dot density
+    setDotDensity(audioPlayer.getDotDensity());
   }, []);
   
   // Connect to audio module for corner activation events
@@ -104,6 +115,29 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
     };
   }, []);
   
+  // Connect to audio module for intermediate position activations
+  useEffect(() => {
+    const audioPlayer = squareCalibrationAudio.getSquareCalibrationAudio();
+    
+    const handlePositionActivation = (position: DiagonalPosition, isCorner: boolean, diagonalIndex: number) => {
+      // Only highlight intermediate positions (corners are handled by the corner listener)
+      if (!isCorner) {
+        setActivePosition(position);
+        
+        // Reset active position after animation time
+        setTimeout(() => {
+          setActivePosition(null);
+        }, 200);
+      }
+    };
+    
+    audioPlayer.addPositionListener(handlePositionActivation);
+    
+    return () => {
+      audioPlayer.removePositionListener(handlePositionActivation);
+    };
+  }, []);
+  
   // Update audio module when square position/size changes
   useEffect(() => {
     const audioPlayer = squareCalibrationAudio.getSquareCalibrationAudio();
@@ -120,6 +154,12 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
     // Set playing state
     audioPlayer.setPlaying(isPlaying);
   }, [isPlaying]);
+  
+  // Update dot density in audio player when it changes
+  useEffect(() => {
+    const audioPlayer = squareCalibrationAudio.getSquareCalibrationAudio();
+    audioPlayer.setDotDensity(dotDensity);
+  }, [dotDensity]);
   
   // Draw the canvas
   useEffect(() => {
@@ -203,7 +243,7 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
       ctx.fill();
     }
     
-  }, [canvasSize, isDarkMode, squarePosition, squareSize, activeCorner, isDragging, currentHandle]);
+  }, [canvasSize, isDarkMode, squarePosition, squareSize, activeCorner, activePosition, isDragging, currentHandle, dotDensity]);
   
   // Convert screen Y coordinates to our bottom-left origin system
   const convertScreenYToNormalizedY = (screenY: number, height: number): number => {
@@ -450,6 +490,12 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
     }
   };
 
+  // Handle changes to dot density
+  const handleDotDensityChange = (value: string) => {
+    const density = parseInt(value, 10);
+    setDotDensity(density);
+  };
+
   return (
     <div className={`space-y-2 ${className}`}>
       <div className="relative bg-background/50 rounded-lg p-3">
@@ -467,6 +513,36 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
       <div className="flex justify-between items-center">
         <div className="text-xs text-muted-foreground">
           Drag to move, resize from edges
+        </div>
+      </div>
+      
+      <div className="flex flex-col space-y-2">
+        <div className="text-sm font-medium">Dot Density</div>
+        <RadioGroup 
+          value={dotDensity.toString()} 
+          onValueChange={handleDotDensityChange}
+          className="flex space-x-2"
+          disabled={disabled || isPlaying}
+        >
+          <div className="flex items-center space-x-1">
+            <RadioGroupItem value="2" id="density-2" />
+            <Label htmlFor="density-2">2</Label>
+          </div>
+          <div className="flex items-center space-x-1">
+            <RadioGroupItem value="3" id="density-3" />
+            <Label htmlFor="density-3">3</Label>
+          </div>
+          <div className="flex items-center space-x-1">
+            <RadioGroupItem value="4" id="density-4" />
+            <Label htmlFor="density-4">4</Label>
+          </div>
+          <div className="flex items-center space-x-1">
+            <RadioGroupItem value="5" id="density-5" />
+            <Label htmlFor="density-5">5</Label>
+          </div>
+        </RadioGroup>
+        <div className="text-xs text-muted-foreground">
+          Higher density plays additional points along diagonals
         </div>
       </div>
     </div>

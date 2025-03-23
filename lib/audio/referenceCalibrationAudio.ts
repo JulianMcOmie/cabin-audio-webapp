@@ -12,7 +12,7 @@ const MASTER_GAIN = 0.8;
 const ENVELOPE_ATTACK = 0.01; // seconds
 const ENVELOPE_DECAY = 0.02; // seconds
 const ENVELOPE_SUSTAIN = 0.8; // level
-const ENVELOPE_RELEASE = 0.1; // seconds
+const ENVELOPE_RELEASE = 0.3; // seconds
 const BURST_LENGTH = 0.15; // seconds
 
 // Pattern timing
