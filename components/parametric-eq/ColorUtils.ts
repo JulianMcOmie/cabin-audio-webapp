@@ -1,7 +1,6 @@
 /**
  * Utility functions for color manipulation in EQ visualization
  */
-import { EQCoordinateUtils } from './EQCoordinateUtils';
 
 // Color parsing and conversion functions
 export class ColorUtils {
@@ -251,27 +250,5 @@ export class ColorUtils {
   static debugColor(color: string): void {
     const hsla = this.parseColor(color);
     console.log(`Color: ${color} → HSLA(${hsla.h}, ${hsla.s}%, ${hsla.l}%, ${hsla.a})`);
-  }
-  
-  /**
-   * Convert a color to grayscale while preserving alpha
-   * @param color Any supported color format
-   * @param preserveOpacity Whether to keep the original opacity (true) or adjust for luminance (false)
-   * @returns HSLA string representing the grayscale version
-   */
-  static asGrayscale(color: string, preserveOpacity: boolean = true): string {
-    const hsla = this.parseColor(color);
-    
-    // Calculate relative luminance based on HSL values
-    // This preserves brightness perception better than a simple average
-    const luminance = hsla.l;
-    
-    // Set saturation to 0 to make it grayscale
-    const newS = 0;
-    
-    // Keep original opacity or adjust based on luminance
-    const opacity = preserveOpacity ? hsla.a : hsla.a * (luminance / 100);
-    
-    return this.toHsla(0, newS, luminance, opacity);
   }
 } 

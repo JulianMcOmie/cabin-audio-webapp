@@ -16,6 +16,7 @@ export class EQBandRenderer {
     freqRange: { min: number; max: number },
     isDarkMode: boolean,
     isHovered: boolean,
+    isDragging: boolean,
     isEnabled: boolean = true
   ) {
     // Skip if band is outside visible range
@@ -40,7 +41,7 @@ export class EQBandRenderer {
       height,
       freqRange,
       bandColor,
-      band.isHovered || isHovered
+      isHovered
     );
     
     // Draw the band handle
@@ -51,7 +52,7 @@ export class EQBandRenderer {
     // const handleOpacity = band.isHovered || isHovered ? 0.9 : 0.8; // More vibrant by default
     const handleColor = EQCoordinateUtils.getBandColor(band.frequency, 1.0, isDarkMode)
     
-    this.drawBandHandle(ctx, x, y, handleColor, band.isHovered || isHovered, isEnabled);
+    this.drawBandHandle(ctx, x, y, handleColor, band.isHovered || isHovered, isDragging, isEnabled);
   }
   
   /**
@@ -63,21 +64,19 @@ export class EQBandRenderer {
     y: number,
     color: string,
     isHovered: boolean,
+    isDragging: boolean,
     isEnabled: boolean = true
   ) {
     const handleRadius = 8;
-    const innerRadius = handleRadius / 2;//isHovered ? handleRadius : handleRadius / 2;
+    const innerRadius = isDragging ? handleRadius : handleRadius / 2;
 
-    let outerColor = color;
-    let innerColor = color;
+    let outerColor = ColorUtils.setOpacity(color, 0.5);
+    let innerColor = ColorUtils.setOpacity(color, 1.0);
 
     if (!isEnabled) {
-      outerColor = ColorUtils.asGrayscale(color);
-      innerColor = ColorUtils.asGrayscale(color);
+      outerColor = ColorUtils.makeMuted(color, 0.2);
+      innerColor = ColorUtils.makeMuted(color, 0.5);
     }
-
-    outerColor = ColorUtils.setOpacity(outerColor, 0.5);
-    innerColor = ColorUtils.setOpacity(innerColor, 1.0);
     
     // Draw the outer circle
     ctx.beginPath();

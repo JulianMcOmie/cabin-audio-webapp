@@ -403,7 +403,8 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     // Draw individual band responses
     renderableBands.forEach((band) => {
         // Consider a band "hovered" if it's the selected band or if it's being dragged
-        const isHovered = band.id === selectedBandId || band.id === draggingBandId;
+        const isHovered = band.id === hoveredBandId;
+        const isDragging = band.id === draggingBandId;
         
         EQBandRenderer.drawBand(
           ctx,
@@ -413,6 +414,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
           freqRange,
           isDarkMode,
           isHovered,
+          isDragging,
           isEnabled
         )
         
