@@ -395,8 +395,8 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     // Clear canvas
     ctx.clearRect(0, 0, rect.width, rect.height);
 
-    // Add semi-transparent background with darker opacity
-    ctx.fillStyle = isDarkMode ? "rgba(20, 20, 30, 0.6)" : "rgba(240, 240, 240, 0.6)";
+    // Add semi-transparent background with even darker opacity
+    ctx.fillStyle = isDarkMode ? "rgba(5, 5, 8, 0.95)" : "rgba(230, 230, 230, 0.7)";
     ctx.fillRect(0, 0, rect.width, rect.height);
     
     // Draw a subtle border around the content area
@@ -404,18 +404,36 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     ctx.lineWidth = 1;
     ctx.strokeRect(margin, margin, rect.width - margin * 2, rect.height - margin * 2);
 
-    // Draw background grid
-    ctx.strokeStyle = isDarkMode ? "#3f3f5c" : "#e2e8f0"; // Darker grid lines for dark mode
+    // Draw background grid (more faint)
+    ctx.strokeStyle = isDarkMode ? "rgba(63, 63, 92, 0.4)" : "rgba(226, 232, 240, 0.5)";
     ctx.lineWidth = 1;
 
     // Define frequency points for logarithmic grid (in Hz)
-    // More frequent grid lines with logarithmic spacing
-    const freqPoints = [
-      20, 25, 31.5, 40, 50, 63, 80, 100,
-      125, 160, 200, 250, 315, 400, 500, 630, 800, 1000,
-      1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000,
-      12500, 16000, 20000
+    // Calculate logarithmically spaced frequency points
+    // We want 9 lines between each decade (10x factor)
+    const freqPoints: number[] = [];
+    const decades = [
+      [20, 200], // First decade: 20Hz to 200Hz
+      [200, 2000], // Second decade: 200Hz to 2kHz
+      [2000, 20000], // Third decade: 2kHz to 20kHz
     ];
+    
+    // Generate 9 points between each decade boundary (plus the boundary itself)
+    decades.forEach(([startFreq, endFreq]) => {
+      const startLog = Math.log10(startFreq);
+      const endLog = Math.log10(endFreq);
+      const step = (endLog - startLog) / 10;
+      
+      // Add points for this decade
+      for (let i = 0; i < 10; i++) {
+        const logFreq = startLog + i * step;
+        const freq = Math.pow(10, logFreq);
+        freqPoints.push(Math.round(freq));
+      }
+    });
+    
+    // Add the final point (20kHz)
+    freqPoints.push(20000);
     
     // Vertical grid lines (logarithmic frequency bands)
     for (let freq of freqPoints) {
@@ -444,8 +462,8 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     ctx.font = "10px sans-serif";
     ctx.fillStyle = isDarkMode ? "#a1a1aa" : "#64748b";
     
-    // Only show a subset of frequencies for labels to avoid crowding
-    const freqLabels = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+    // Show only the decade boundaries for labels
+    const freqLabels = [20, 200, 2000, 20000];
     const labelY = rect.height - margin + 5; // Position labels below the bottom margin
     
     for (let freq of freqLabels) {
@@ -476,9 +494,9 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     
     for (let db of dbPoints) {
       // Only show every 4dB label
-      if (db % 4 === 0) {  // Changed from 3 to 4
+      if (db % 4 === 0) {
         const y = margin + EQCoordinateUtils.gainToY(db, rect.height - margin * 2);
-        const label = `${db > 0 ? '+' : ''}${db}dB`;
+        const label = `${db > 0 ? '+' : ''}${db}`; // Removed the "dB" suffix
         
         // Calculate text dimensions
         const textWidth = ctx.measureText(label).width;
@@ -569,8 +587,45 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       }
     });
 
-    // Draw the combined EQ curve
+    // Draw the combined EQ curve (brighter with glow effect)
     if (frequencyResponse.length > 0) {
+      // Create clipping path for the inner area to ensure curve doesn't exceed boundaries
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(margin, margin, rect.width - margin * 2, rect.height - margin * 2);
+      ctx.clip();
+      
+    //   // First draw a wider, more transparent version for the glow effect
+    //   EQCurveRenderer.drawFrequencyResponse(
+    //     ctx,
+    //     frequencyResponse,
+    //     rect.width - margin * 2, // Adjust width for margins
+    //     rect.height - margin * 2, // Adjust height for margins
+    //     freqRange,
+    //     isDarkMode,
+    //     8, // Even wider lineWidth for stronger glow
+    //     0.4, // lower alpha for glow
+    //     isEnabled, // Pass isEnabled parameter
+    //     margin, // Pass margin for x coordinate adjustment
+    //     margin  // Pass margin for y coordinate adjustment
+    //   );
+      
+    //   // Second glow layer (medium width)
+    //   EQCurveRenderer.drawFrequencyResponse(
+    //     ctx,
+    //     frequencyResponse,
+    //     rect.width - margin * 2,
+    //     rect.height - margin * 2,
+    //     freqRange,
+    //     isDarkMode,
+    //     5, // medium lineWidth
+    //     0.6, // medium alpha
+    //     isEnabled,
+    //     margin,
+    //     margin
+    //   );
+      
+      // Then draw the main curve with higher brightness
       EQCurveRenderer.drawFrequencyResponse(
         ctx,
         frequencyResponse,
@@ -578,12 +633,15 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
         rect.height - margin * 2, // Adjust height for margins
         freqRange,
         isDarkMode,
-        3, // lineWidth
-        0.8, // alpha
+        2.5, // slightly thinner for sharper appearance
+        1.0, // full alpha for maximum brightness
         isEnabled, // Pass isEnabled parameter
         margin, // Pass margin for x coordinate adjustment
         margin  // Pass margin for y coordinate adjustment
       );
+      
+      // Restore context to remove clipping
+      ctx.restore();
     }
     
     // Draw ghost node if visible, not disabled, and not hovering over volume

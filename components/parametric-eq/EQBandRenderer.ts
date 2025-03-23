@@ -220,8 +220,8 @@ export class EQBandRenderer {
 
     const dotOpacity = isHovered || isDragging ? 1.0 : (isEnabled ? 0.8 : 0.5);
     
-    // Only draw the dot indicator on the right side
-    const dotX = width - 20; // 20px from right edge
+    // Place dot directly on the right edge of the inner area
+    const dotX = width; // Right along inner edge
     
     // Draw volume dot
     ctx.beginPath();
@@ -244,22 +244,13 @@ export class EQBandRenderer {
       ctx.arc(xOffset + dotX, yOffset + volumeY, dotRadius + 3, 0, Math.PI * 2);
       ctx.stroke();
     }
-    
-    // Draw volume value if being dragged or hovered
-    if (isDragging || isHovered || Math.abs(volume) > 0.1) {
-      ctx.fillStyle = isDarkMode ? "#ffffff" : "#000000";
-      ctx.textAlign = "left";
-      ctx.font = `${isHovered || isDragging ? "bold " : ""}12px sans-serif`;
-      const volumeText = `${volume.toFixed(1)} dB`;
-      ctx.fillText(volumeText, xOffset + dotX + 15, yOffset + volumeY + 5);
-    }
   }
 
   /**
    * Check if point is inside the volume control dot
    */
   static isInVolumeControl(x: number, y: number, width: number, height: number, volume: number, xOffset: number = 0, yOffset: number = 0): boolean {
-    const dotX = width - 20; // 20px from right edge
+    const dotX = width; // Update to match new position (right along inner edge)
     const volumeY = EQCoordinateUtils.gainToY(volume, height);
     const dotRadius = 10; // Slightly larger hit area for better UX
     

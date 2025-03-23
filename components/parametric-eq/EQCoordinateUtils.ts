@@ -58,17 +58,25 @@ export class EQCoordinateUtils {
     alpha: number = 1,
     isDarkMode: boolean = false
   ): string {
-    // Map frequency to hue (blue for low, red for high)
+    // Map frequency to hue (teal for low, pink for high)
     const minFreq = Math.log10(20);
     const maxFreq = Math.log10(20000);
     const normalizedFreq = (Math.log10(frequency) - minFreq) / (maxFreq - minFreq);
     
-    // Use HSL color space for a nice gradient
-    const offset = 220;
-    const range = 120;
-    const hue = (offset - normalizedFreq * range) % 360; // 240 (blue) to 0 (red)
-    const saturation = 255; // Increased from 80 to make colors more vibrant
-    const lightness = isDarkMode ? 50 : 80; // Brighter in both modes for more vibrancy
+    // Use HSL color space for a teal-pink gradient
+    // Using a direct teal-to-pink transition without going through dark blue/violet
+    const hue = normalizedFreq < 0.5 
+      ? 180 - normalizedFreq * 60 // Teal to cyan/light blue (180 to 120)
+      : 120 + (normalizedFreq - 0.5) * 400; // Light blue to pink (120 to 320)
+    
+    // Increase saturation and lightness for more vibrant colors
+    const saturation = 85;
+    // Adjust lightness based on position in spectrum to ensure even brightness perception
+    const baseLightness = isDarkMode ? 60 : 70;
+    // Slightly boost lightness in the middle range to avoid dark spots
+    const lightnessAdjust = Math.sin(normalizedFreq * Math.PI) * 10;
+    const lightness = baseLightness + lightnessAdjust;
+    
     return `hsla(${hue}, ${saturation}%, ${lightness}%, ${alpha})`;
   }
 } 
