@@ -39,7 +39,8 @@ export class EQBandRenderer {
       width,
       height,
       freqRange,
-      bandColor
+      bandColor,
+      band.isHovered || isHovered
     );
     
     // Draw the band handle
@@ -65,7 +66,7 @@ export class EQBandRenderer {
     isEnabled: boolean = true
   ) {
     const handleRadius = 8;
-    const innerRadius = isHovered ? handleRadius : handleRadius / 2;
+    const innerRadius = handleRadius / 2;//isHovered ? handleRadius : handleRadius / 2;
 
     let outerColor = color;
     let innerColor = color;

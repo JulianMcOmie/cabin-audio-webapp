@@ -1,5 +1,6 @@
 import { FrequencyResponse } from './types';
 import { EQCoordinateUtils } from './EQCoordinateUtils';
+import { ColorUtils } from './ColorUtils';
 
 /**
  * Utility class for rendering EQ frequency response curves
@@ -107,6 +108,7 @@ export class EQCurveRenderer {
     height: number,
     freqRange: { min: number, max: number },
     fillColor: string,
+    isHovered: boolean = false,
   ): void {
     if (frequencyResponse.length === 0) return;
     
@@ -156,7 +158,7 @@ export class EQCurveRenderer {
     ctx.lineTo(0, centerY);
     
     // Fill the path
-    ctx.fillStyle = fillColor;
+    ctx.fillStyle = ColorUtils.setOpacity(fillColor, isHovered ? 0.5 : 0.2);
     ctx.fill();
   }
 } 
