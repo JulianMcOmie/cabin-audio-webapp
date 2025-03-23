@@ -12,32 +12,36 @@ import { EQBand } from "@/lib/models/EQBand"
 import { AlertCircle, ArrowLeft, ArrowRight, Check, Play, RefreshCw, ThumbsUp } from "lucide-react"
 import * as eqProcessor from "@/lib/audio/eqProcessor"
 
-// Generate the calibration frequency steps
-// Start at 1000Hz, go up to 20000Hz, then go down from 1000Hz to 20Hz
-function generateCalibrationSteps(): number[] {
-  const steps: number[] = [];
+// Define stages with frequency counts
+const CALIBRATION_STAGES = [
+  { count: 4, name: "Coarse Tuning", bandwidth: 1.0 },
+  { count: 8, name: "Fine Tuning", bandwidth: 0.5 },
+  { count: 16, name: "Precision Tuning", bandwidth: 0.25 }
+];
+
+// Generate frequencies for a specific stage
+function generateFrequenciesForStage(stage: number): number[] {
+  const { count } = CALIBRATION_STAGES[stage];
+  const frequencies: number[] = [];
   
-  // Starting point
-  steps.push(1000);
+  // Logarithmically space frequencies between 20 Hz and 20 kHz
+  const logMin = Math.log10(20);
+  const logMax = Math.log10(20000);
+  const logStep = (logMax - logMin) / (count + 1); // +1 to exclude endpoints
   
-  // Go up from 1000Hz to 20000Hz
-  // Use logarithmic spacing for perceptual accuracy
-  const upSteps = [
-    1500, 2000, 3000, 4000, 6000, 8000, 12000, 16000, 20000
-  ];
-  steps.push(...upSteps);
+  for (let i = 1; i <= count; i++) {
+    // Calculate log-spaced frequency, excluding exact endpoints
+    const logFreq = logMin + (i * logStep);
+    const freq = Math.round(Math.pow(10, logFreq));
+    frequencies.push(freq);
+  }
   
-  // Go down from 1000Hz to 20Hz
-  const downSteps = [
-    750, 500, 350, 250, 175, 125, 80, 60, 40, 30, 20
-  ];
-  steps.push(...downSteps);
-  
-  return steps;
+  return frequencies;
 }
 
-const CALIBRATION_STEPS = generateCalibrationSteps();
-const DEFAULT_Q = 2.0; // Q factor for each band
+// Updated Q values - much wider bands (lower Q values)
+const BASE_Q = 0.1; // Default Q factor (lower = wider bandwidth)
+
 const DEFAULT_GAIN = 0; // Default gain in dB (0 = neutral)
 
 interface EQCalibrationProcessProps {
@@ -49,8 +53,14 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
   // Get access to the EQ profile store
   const { getActiveProfile, updateProfile } = useEQProfileStore();
   
-  // Current step in the calibration process
+  // Current stage in the calibration process
+  const [currentStage, setCurrentStage] = useState(0);
+  
+  // Current step within the stage
   const [currentStep, setCurrentStep] = useState(0);
+  
+  // Frequencies for the current stage
+  const [stageFrequencies, setStageFrequencies] = useState<number[]>([]);
   
   // Current gain for the band being adjusted
   const [currentGain, setCurrentGain] = useState(DEFAULT_GAIN);
@@ -64,17 +74,48 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
   // Reference to the current active profile
   const [activeProfile, setActiveProfile] = useState(getActiveProfile());
   
-  // Calculate progress percentage
-  const progress = Math.round((currentStep / CALIBRATION_STEPS.length) * 100);
-  
-  // Get the current frequency to calibrate
-  const currentFrequency = CALIBRATION_STEPS[currentStep];
-  
   // Track if the calibration is complete
   const [isComplete, setIsComplete] = useState(false);
   
   // Track how many bands were created
   const [bandCount, setBandCount] = useState(0);
+  
+  // Initialize stage frequencies when stage changes
+  useEffect(() => {
+    const frequencies = generateFrequenciesForStage(currentStage);
+    setStageFrequencies(frequencies);
+    setCurrentStep(0); // Reset step when changing stage
+    
+    // Update bandwidth in the audio player
+    const audioPlayer = getReferenceCalibrationAudio();
+    audioPlayer.setBandwidth(CALIBRATION_STAGES[currentStage].bandwidth);
+    
+    console.log(`Stage ${currentStage + 1}: ${CALIBRATION_STAGES[currentStage].name} - Frequencies:`, frequencies);
+  }, [currentStage]);
+  
+  // Get the current frequency to calibrate
+  const currentFrequency = stageFrequencies[currentStep] || 1000;
+  
+  // Calculate overall progress percentage
+  const calculateProgress = () => {
+    // Calculate total steps in all stages
+    const totalSteps = CALIBRATION_STAGES.reduce((sum, stage) => sum + stage.count, 0);
+    
+    // Calculate completed steps
+    let completedSteps = 0;
+    for (let i = 0; i < currentStage; i++) {
+      completedSteps += CALIBRATION_STAGES[i].count;
+    }
+    completedSteps += currentStep;
+    
+    return Math.round((completedSteps / totalSteps) * 100);
+  };
+  
+  // Calculate stage progress percentage
+  const calculateStageProgress = () => {
+    const stageCount = CALIBRATION_STAGES[currentStage].count;
+    return Math.round((currentStep / stageCount) * 100);
+  };
   
   // Update the reference calibration audio when the current frequency changes
   useEffect(() => {
@@ -98,18 +139,24 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
     setActiveProfile(getActiveProfile());
   }, [getActiveProfile]);
   
-  // Create a new band for the current frequency
+  // Create a new band for the current frequency with bandwidth proportional to stage
   const createBandForCurrentFrequency = useCallback(() => {
+    // Calculate Q based on stage bandwidth
+    // The Q is inversely proportional to bandwidth
+    // Lower Q = wider bandwidth
+    const stageWidthFactor = CALIBRATION_STAGES[currentStage].bandwidth;
+    const bandQ = BASE_Q / stageWidthFactor; // Wider bands = lower Q value
+    
     const newBand: EQBand = {
       id: uuidv4(),
       frequency: currentFrequency,
       gain: currentGain,
-      q: DEFAULT_Q,
+      q: bandQ, // Dynamic Q based on stage
       type: 'peaking'
     };
     
     return newBand;
-  }, [currentFrequency, currentGain]);
+  }, [currentFrequency, currentGain, currentStage]);
   
   // Apply EQ changes immediately when slider changes
   useEffect(() => {
@@ -131,7 +178,7 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
     };
   }, [createBandForCurrentFrequency, currentFrequency, currentGain]);
   
-  // Update the accumulated bands and move to the next step
+  // Move to the next step or stage
   const handleNextStep = () => {
     // Create a band for the current frequency
     const newBand = createBandForCurrentFrequency();
@@ -140,20 +187,29 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
     const updatedBands = [...calibratedBands, newBand];
     setCalibratedBands(updatedBands);
     
-    // If we're at the last step, complete the calibration
-    if (currentStep === CALIBRATION_STEPS.length - 1) {
-      completeCalibration(updatedBands);
-    } else {
-      // Move to the next step
+    // Check if we're at the end of this stage
+    if (currentStep < stageFrequencies.length - 1) {
+      // Move to the next step in this stage
       setCurrentStep(currentStep + 1);
-      // Reset gain to default
-      setCurrentGain(DEFAULT_GAIN);
+      setCurrentGain(DEFAULT_GAIN); // Reset gain for new frequency
+    } else {
+      // We've completed this stage
+      if (currentStage < CALIBRATION_STAGES.length - 1) {
+        // Move to the next stage
+        setCurrentStage(currentStage + 1);
+        // setCurrentStep will be reset to 0 in the useEffect
+        setCurrentGain(DEFAULT_GAIN);
+      } else {
+        // We've completed all stages - calibration is done
+        completeCalibration(updatedBands);
+      }
     }
   };
   
-  // Move to the previous step
+  // Move to the previous step or stage
   const handlePrevStep = () => {
     if (currentStep > 0) {
+      // We can go back within this stage
       // Remove the last band
       const updatedBands = [...calibratedBands];
       updatedBands.pop();
@@ -163,6 +219,28 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
       setCurrentStep(currentStep - 1);
       
       // Set the gain to match the previous band's gain
+      if (updatedBands.length > 0) {
+        const prevBand = updatedBands[updatedBands.length - 1];
+        setCurrentGain(prevBand.gain);
+      } else {
+        setCurrentGain(DEFAULT_GAIN);
+      }
+    } else if (currentStage > 0) {
+      // We need to go back to the previous stage
+      // Remove the bands from this stage
+      const bandsInCurrentStage = CALIBRATION_STAGES[currentStage].count;
+      const updatedBands = [...calibratedBands];
+      updatedBands.splice(-bandsInCurrentStage);
+      setCalibratedBands(updatedBands);
+      
+      // Move to the previous stage
+      setCurrentStage(currentStage - 1);
+      
+      // Set step to the last step of the previous stage
+      const prevStageSteps = CALIBRATION_STAGES[currentStage - 1].count;
+      setCurrentStep(prevStageSteps - 1);
+      
+      // Set gain to match the previous band
       if (updatedBands.length > 0) {
         const prevBand = updatedBands[updatedBands.length - 1];
         setCurrentGain(prevBand.gain);
@@ -268,7 +346,7 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
   return (
     <div className="space-y-6 p-4 max-w-3xl mx-auto">
       <div className="space-y-2">
-        <h3 className="text-lg font-medium">EQ Calibration Process</h3>
+        <h3 className="text-lg font-medium">EQ Calibration - Stage {currentStage + 1}: {CALIBRATION_STAGES[currentStage].name}</h3>
         <p className="text-sm text-muted-foreground">
           Adjust the volume slider until the sound at this frequency matches your desired level.
         </p>
@@ -279,12 +357,22 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
           <div className="text-center">
             <h4 className="text-xl font-semibold">{formatFrequency(currentFrequency)}</h4>
             <p className="text-sm text-muted-foreground">
-              {currentStep + 1} of {CALIBRATION_STEPS.length}
+              Step {currentStep + 1} of {stageFrequencies.length} in Stage {currentStage + 1}
             </p>
           </div>
           
-          <div className="py-4">
-            <Progress value={progress} className="h-2" />
+          <div className="space-y-2">
+            <div className="flex justify-between text-xs">
+              <span>Stage {currentStage + 1} Progress</span>
+              <span>{calculateStageProgress()}%</span>
+            </div>
+            <Progress value={calculateStageProgress()} className="h-2" />
+            
+            <div className="flex justify-between text-xs">
+              <span>Overall Progress</span>
+              <span>{calculateProgress()}%</span>
+            </div>
+            <Progress value={calculateProgress()} className="h-2" />
           </div>
           
           <div className="space-y-6">
@@ -334,7 +422,7 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
                 <Button
                   variant="outline"
                   onClick={handlePrevStep}
-                  disabled={currentStep === 0 || isPlaying}
+                  disabled={(currentStage === 0 && currentStep === 0) || isPlaying}
                 >
                   <ArrowLeft className="h-4 w-4 mr-2" />
                   Back
@@ -343,7 +431,7 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
                 <Button
                   onClick={handleNextStep}
                 >
-                  {currentStep === CALIBRATION_STEPS.length - 1 ? (
+                  {currentStage === CALIBRATION_STAGES.length - 1 && currentStep === stageFrequencies.length - 1 ? (
                     <>
                       <Check className="h-4 w-4 mr-2" />
                       Complete
@@ -379,8 +467,9 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
             <div className="mt-4 text-sm bg-amber-100 dark:bg-amber-950/30 text-amber-800 dark:text-amber-200 p-3 rounded-md flex items-start">
               <AlertCircle className="h-5 w-5 mr-2 flex-shrink-0 mt-0.5" />
               <div>
-                <strong>Tip:</strong> The reference row (dashed line) plays at 800Hz without EQ.
-                Compare it to your current frequency ({formatFrequency(currentFrequency)}) to ensure balanced sound.
+                <strong>Stage {currentStage + 1} Info:</strong> {CALIBRATION_STAGES[currentStage].name} uses 
+                {CALIBRATION_STAGES[currentStage].bandwidth} octave bandwidth to {currentStage === 0 ? "broadly shape" : 
+                  currentStage === 1 ? "refine" : "precisely adjust"} your EQ curve.
               </div>
             </div>
           </div>

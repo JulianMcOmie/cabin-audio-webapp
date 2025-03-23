@@ -3,6 +3,7 @@ import { throttle } from 'lodash';
 // import { v4 as uuidv4 } from 'uuid';
 import { EQBandWithUI } from './types';
 import { EQCoordinateUtils } from './EQCoordinateUtils';
+import { getReferenceCalibrationAudio } from '@/lib/audio/referenceCalibrationAudio';
 
 interface UseEQInteractionProps {
   canvasRef: RefObject<HTMLCanvasElement | null>;
@@ -45,6 +46,34 @@ export function useEQInteraction({
 
   // Distance threshold for showing ghost node near center line
   const CENTER_LINE_THRESHOLD = 15;
+
+  // Function to play calibration audio based on current band
+  const playCalibrationAudio = useCallback((bandId: string | null, play: boolean) => {
+    const audioPlayer = getReferenceCalibrationAudio();
+
+    // console.log(`🔊 playCalibrationAudio: bandId=${bandId}, play=${play}`);
+    
+    if (play && bandId) {
+      // Find the band being dragged
+      const band = bands.find(b => b.id === bandId);
+      
+      if (band) {
+        // Calculate bandwidth from Q
+        const bandwidth = band.q ? 1.0 / band.q : 1.0;
+        
+        // Set initial parameters with combined method to avoid pattern restarts
+        audioPlayer.updateCalibrationParameters(band.frequency, bandwidth);
+        
+        // Only start playing if not already playing
+        if (!audioPlayer.isActive()) {
+          audioPlayer.setPlaying(true);
+        }
+      }
+    } else {
+      // Stop playing when released
+      audioPlayer.setPlaying(false);
+    }
+  }, [bands]);
 
   // Create throttled band update function to improve performance
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -129,6 +158,9 @@ export function useEQInteraction({
       const frequency = EQCoordinateUtils.xToFreq(x, innerWidth, freqRange);
       const clampedFrequency = Math.max(20, Math.min(20000, frequency));
       
+      // Get the audio player to update parameters
+      const audioPlayer = getReferenceCalibrationAudio();
+      
       if (isShiftPressed) {
         // Shift + drag adjusts Q
         const band = bands.find(b => b.id === draggingBand);
@@ -146,12 +178,21 @@ export function useEQInteraction({
           const scaleFactor = 0.02;
           const newQ = Math.max(0.1, Math.min(10, currentQ * Math.exp(-deltaY * scaleFactor)));
           
+          // Update the calibration audio bandwidth (inverse of Q)
+          const newBandwidth = 1.0 / newQ;
+          
+          // Use the combined update method to avoid pattern restart
+          audioPlayer.updateCalibrationParameters(undefined, newBandwidth);
+          
           throttledBandUpdate(draggingBand, { q: newQ });
         }
       } else {
         // Normal drag adjusts frequency and gain
         const gain = EQCoordinateUtils.yToGain(y, innerHeight);
         const clampedGain = Math.max(-24, Math.min(24, gain));
+        
+        // Use the combined update method to avoid pattern restart
+        audioPlayer.updateCalibrationParameters(clampedFrequency);
 
         // If we're outside of the canvas, but we move towards the canvas, we can reduce shiftOffset
         if (!isInsideCanvas) {
@@ -196,12 +237,18 @@ export function useEQInteraction({
   useEffect(() => {
     if (!isDragging || !draggingBand) return;
     
+    // Start playing calibration audio when dragging begins
+    playCalibrationAudio(draggingBand, true);
+    
     const handleGlobalMouseMove = (e: MouseEvent) => {
       // Use the throttled handler
       handleGlobalMouseMoveThrottled(e);
     };
     
     const handleGlobalMouseUp = () => {
+      // Stop playing calibration audio when dragging ends
+      playCalibrationAudio(null, false);
+      
       setDraggingBand(null);
       setIsDragging(false);
       prevMousePositionRef.current = null; // Reset position tracking
@@ -224,7 +271,7 @@ export function useEQInteraction({
       handleGlobalMouseMoveThrottled.cancel();
       throttledBandUpdate.cancel();
     };
-  }, [isDragging, draggingBand, handleGlobalMouseMoveThrottled, throttledBandUpdate]);
+  }, [isDragging, draggingBand, handleGlobalMouseMoveThrottled, throttledBandUpdate, playCalibrationAudio]);
 
   // Throttled mouse move handler for hover effects
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -385,6 +432,9 @@ export function useEQInteraction({
         setDraggingBand(clickedBandId);
         setIsDragging(true);
         onBandSelect(clickedBandId);
+        
+        // We don't start playing audio here - the useEffect will handle it
+        // when draggingBand and isDragging are updated
       } else {
         // Check if click is near center line
         const centerY = margin + innerHeight / 2;
@@ -393,10 +443,11 @@ export function useEQInteraction({
         if (distanceToCenter <= CENTER_LINE_THRESHOLD) {
           // Add new band at center line
           const frequency = EQCoordinateUtils.xToFreq(innerX, innerWidth, freqRange);
+          const clampedFrequency = Math.max(20, Math.min(20000, frequency));
           
           // Create a new band (gain is 0 since it's on center line)
           const newBand = {
-            frequency: Math.max(20, Math.min(20000, frequency)),
+            frequency: clampedFrequency,
             gain: 0,
             q: 1.0,
             type: 'peaking' as BiquadFilterType
@@ -416,6 +467,14 @@ export function useEQInteraction({
             setDraggingBand(newBandId);
             setIsDragging(true);
             onBandSelect(newBandId);
+            
+            // Setup calibration audio for the new band
+            const audioPlayer = getReferenceCalibrationAudio();
+            
+            // Set parameters before starting playback to ensure continuous rhythm
+            audioPlayer.updateCalibrationParameters(clampedFrequency, 1.0);
+            
+            // Audio will start playing via the useEffect when draggingBand is updated
           }
         }
       }
@@ -428,6 +487,9 @@ export function useEQInteraction({
       if (draggingBand === clickedBandId) {
         setDraggingBand(null);
         setIsDragging(false);
+        
+        // Stop any playing audio
+        playCalibrationAudio(null, false);
       }
       onBandSelect(null);
       
@@ -435,7 +497,7 @@ export function useEQInteraction({
       handleMouseMoveThrottled.cancel();
       throttledBandUpdate.cancel();
     }
-  }, [bands, freqRange, hoveredBandId, draggingBand, onBandAdd, onBandRemove, onBandSelect, canvasRef, handleMouseMoveThrottled, throttledBandUpdate]);
+  }, [bands, freqRange, hoveredBandId, draggingBand, onBandAdd, onBandRemove, onBandSelect, canvasRef, handleMouseMoveThrottled, throttledBandUpdate, playCalibrationAudio]);
 
   // Cancel throttled functions on unmount
   useEffect(() => {
@@ -445,6 +507,15 @@ export function useEQInteraction({
       throttledBandUpdate.cancel();
     };
   }, [handleGlobalMouseMoveThrottled, handleMouseMoveThrottled, throttledBandUpdate]);
+
+  // Clean up audio when component unmounts
+  useEffect(() => {
+    return () => {
+      // Make sure audio is stopped when component unmounts
+      const audioPlayer = getReferenceCalibrationAudio();
+      audioPlayer.setPlaying(false);
+    };
+  }, []);
 
   return {
     handleMouseMove,
