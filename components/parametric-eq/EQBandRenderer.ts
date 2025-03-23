@@ -244,6 +244,16 @@ export class EQBandRenderer {
       ctx.arc(xOffset + dotX, yOffset + volumeY, dotRadius + 3, 0, Math.PI * 2);
       ctx.stroke();
     }
+    
+    // Add back the volume value display
+    if (isDragging || isHovered || Math.abs(volume) > 0.1) {
+      ctx.fillStyle = isDarkMode ? "#ffffff" : "#000000";
+      ctx.textAlign = "right";
+      ctx.font = `${isHovered || isDragging ? "bold " : ""}12px sans-serif`;
+      const volumeText = `${volume.toFixed(1)} dB`;
+      // Position text to the left of the dot instead of right
+      ctx.fillText(volumeText, xOffset + dotX - 15, yOffset + volumeY + 5);
+    }
   }
 
   /**

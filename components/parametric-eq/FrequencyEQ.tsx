@@ -228,7 +228,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     if (!canvas) return;
     
     const rect = canvas.getBoundingClientRect();
-    const margin = (canvas as any).margin || 30;
+    const margin = (canvas as any).margin || 40;
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
@@ -264,7 +264,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     if (!canvas) return;
     
     const rect = canvas.getBoundingClientRect();
-    const margin = (canvas as any).margin || 30;
+    const margin = (canvas as any).margin || 40;
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
@@ -295,7 +295,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
         if (!canvas || !profile) return;
         
         const rect = canvas.getBoundingClientRect();
-        const margin = (canvas as any).margin || 30;
+        const margin = (canvas as any).margin || 40;
         const y = e.clientY - rect.top;
         
         // Calculate position within the inner area
@@ -385,8 +385,8 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     // Get canvas dimensions
     const rect = canvas.getBoundingClientRect();
 
-    // Define equal margins for all sides
-    const margin = 30; // Equal margin on all sides
+    // Define equal margins for all sides (increased for more compact visualization)
+    const margin = 40; // Increased from 30 to 40px
     
     // Store margins in a ref to access in other functions
     if (!canvasRef.current) return;
@@ -418,16 +418,16 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       [2000, 20000], // Third decade: 2kHz to 20kHz
     ];
     
-    // Generate 9 points between each decade boundary (plus the boundary itself)
+    // Generate 10 linearly spaced points for each decade
+    // Since we're using freqToX which already does logarithmic conversion,
+    // we need linear spacing here to get logarithmic grid lines
     decades.forEach(([startFreq, endFreq]) => {
-      const startLog = Math.log10(startFreq);
-      const endLog = Math.log10(endFreq);
-      const step = (endLog - startLog) / 10;
+      const range = endFreq - startFreq;
+      const step = range / 10;
       
       // Add points for this decade
       for (let i = 0; i < 10; i++) {
-        const logFreq = startLog + i * step;
-        const freq = Math.pow(10, logFreq);
+        const freq = startFreq + i * step;
         freqPoints.push(Math.round(freq));
       }
     });
@@ -462,8 +462,8 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     ctx.font = "10px sans-serif";
     ctx.fillStyle = isDarkMode ? "#a1a1aa" : "#64748b";
     
-    // Show only the decade boundaries for labels
-    const freqLabels = [20, 200, 2000, 20000];
+    // Show more frequency labels for better reference
+    const freqLabels = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
     const labelY = rect.height - margin + 5; // Position labels below the bottom margin
     
     for (let freq of freqLabels) {
@@ -536,7 +536,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
 
     // Get canvas dimensions and margin
     const rect = canvas.getBoundingClientRect();
-    const margin = (canvas as any).margin || 30; // Get margin from canvas or use default
+    const margin = (canvas as any).margin || 40; // Get margin from canvas or use default
 
     // Clear canvas
     ctx.clearRect(0, 0, rect.width, rect.height);
@@ -594,36 +594,6 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       ctx.beginPath();
       ctx.rect(margin, margin, rect.width - margin * 2, rect.height - margin * 2);
       ctx.clip();
-      
-    //   // First draw a wider, more transparent version for the glow effect
-    //   EQCurveRenderer.drawFrequencyResponse(
-    //     ctx,
-    //     frequencyResponse,
-    //     rect.width - margin * 2, // Adjust width for margins
-    //     rect.height - margin * 2, // Adjust height for margins
-    //     freqRange,
-    //     isDarkMode,
-    //     8, // Even wider lineWidth for stronger glow
-    //     0.4, // lower alpha for glow
-    //     isEnabled, // Pass isEnabled parameter
-    //     margin, // Pass margin for x coordinate adjustment
-    //     margin  // Pass margin for y coordinate adjustment
-    //   );
-      
-    //   // Second glow layer (medium width)
-    //   EQCurveRenderer.drawFrequencyResponse(
-    //     ctx,
-    //     frequencyResponse,
-    //     rect.width - margin * 2,
-    //     rect.height - margin * 2,
-    //     freqRange,
-    //     isDarkMode,
-    //     5, // medium lineWidth
-    //     0.6, // medium alpha
-    //     isEnabled,
-    //     margin,
-    //     margin
-    //   );
       
       // Then draw the main curve with higher brightness
       EQCurveRenderer.drawFrequencyResponse(
