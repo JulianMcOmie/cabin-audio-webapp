@@ -2,6 +2,7 @@ import { EQBandWithUI } from './types';
 import { EQCurveRenderer } from './EQCurveRenderer';
 import { EQCoordinateUtils } from './EQCoordinateUtils';
 import { calculateBandResponse } from './useEQProcessor';
+import { ColorUtils } from './ColorUtils';
 
 export class EQBandRenderer {
   /**
@@ -21,17 +22,12 @@ export class EQBandRenderer {
     if (band.frequency < freqRange.min || band.frequency > freqRange.max) return;
     
     // Adjust opacity based on isHovered state
-    const baseOpacity = isHovered ? 0.7 : 0.4; // More opaque when highlighted, but more vibrant by default
+    const baseOpacity = isHovered ? 0.85 : 0.5; // More opaque when highlighted, but more vibrant by default
     
     const bandColor = isEnabled 
       ? EQCoordinateUtils.getBandColor(band.frequency, baseOpacity, isDarkMode)
       : `rgba(128, 128, 128, ${baseOpacity})`;
       
-    const strokeOpacity = isHovered ? 0.8 : 0.6; // More opaque when highlighted, more vibrant by default
-    const strokeColor = isEnabled 
-      ? EQCoordinateUtils.getBandColor(band.frequency, strokeOpacity, isDarkMode)
-      : `rgba(128, 128, 128, ${strokeOpacity})`;
-    
     // Always calculate the exact frequency response for the most accurate rendering
     // This ensures we're using the Web Audio API's getFrequencyResponse method
     const response = calculateBandResponse(band);
@@ -43,8 +39,7 @@ export class EQBandRenderer {
       width,
       height,
       freqRange,
-      bandColor,
-      strokeColor
+      bandColor
     );
     
     // Draw the band handle
@@ -52,10 +47,8 @@ export class EQBandRenderer {
     const y = EQCoordinateUtils.gainToY(band.gain, height);
     
     // Increase handle color opacity when highlighted
-    const handleOpacity = band.isHovered || isHovered ? 0.9 : 0.8; // More vibrant by default
-    const handleColor = isEnabled 
-      ? EQCoordinateUtils.getBandColor(band.frequency, handleOpacity, isDarkMode)
-      : `rgba(128, 128, 128, ${handleOpacity})`;
+    // const handleOpacity = band.isHovered || isHovered ? 0.9 : 0.8; // More vibrant by default
+    const handleColor = EQCoordinateUtils.getBandColor(band.frequency, 1.0, isDarkMode)
     
     this.drawBandHandle(ctx, x, y, handleColor, band.isHovered || isHovered, isEnabled);
   }
@@ -68,51 +61,34 @@ export class EQBandRenderer {
     x: number,
     y: number,
     color: string,
-    isHighlighted: boolean,
+    isHovered: boolean,
     isEnabled: boolean = true
   ) {
-    const handleRadius = isHighlighted ? 10 : 8;
-    
-    // Create a shadow effect for depth
-    if (isEnabled && isHighlighted) {
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-      ctx.shadowBlur = 4;
-      ctx.shadowOffsetX = 1;
-      ctx.shadowOffsetY = 1;
+    const handleRadius = 8;
+    const innerRadius = isHovered ? handleRadius : handleRadius / 2;
+
+    let outerColor = color;
+    let innerColor = color;
+
+    if (!isEnabled) {
+      outerColor = ColorUtils.asGrayscale(color);
+      innerColor = ColorUtils.asGrayscale(color);
     }
+
+    outerColor = ColorUtils.setOpacity(outerColor, 0.5);
+    innerColor = ColorUtils.setOpacity(innerColor, 1.0);
     
     // Draw the outer circle
     ctx.beginPath();
     ctx.arc(x, y, handleRadius, 0, Math.PI * 2);
-    ctx.fillStyle = color;
+    ctx.fillStyle = outerColor;
     ctx.fill();
-    
-    // Reset shadow for other elements
-    ctx.shadowColor = 'transparent';
-    ctx.shadowBlur = 0;
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 0;
-    
-    // Draw border
-    ctx.strokeStyle = isEnabled 
-      ? (isHighlighted ? '#fff' : '#888')
-      : (isHighlighted ? '#ccc' : '#888');
-    ctx.lineWidth = isHighlighted ? 2 : 1;
-    ctx.stroke();
-    
-    // Draw inner circle for a more polished look
-    if (isHighlighted) {
-      ctx.beginPath();
-      ctx.arc(x, y, handleRadius - 4, 0, Math.PI * 2);
-      ctx.fillStyle = isEnabled ? 'rgba(255, 255, 255, 0.3)' : 'rgba(200, 200, 200, 0.3)';
-      ctx.fill();
-      
-      // Draw a smaller inner circle for depth
-      ctx.beginPath();
-      ctx.arc(x, y, handleRadius / 3, 0, Math.PI * 2);
-      ctx.fillStyle = isEnabled ? 'rgba(255, 255, 255, 0.6)' : 'rgba(200, 200, 200, 0.6)';
-      ctx.fill();
-    }
+
+    // Draw inner circle with same color but with higher opacity
+    ctx.beginPath();
+    ctx.arc(x, y, innerRadius, 0, Math.PI * 2);
+    ctx.fillStyle = innerColor;
+    ctx.fill();
   }
   
   /**

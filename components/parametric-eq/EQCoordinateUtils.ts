@@ -64,9 +64,11 @@ export class EQCoordinateUtils {
     const normalizedFreq = (Math.log10(frequency) - minFreq) / (maxFreq - minFreq);
     
     // Use HSL color space for a nice gradient
-    const hue = 240 - normalizedFreq * 240; // 240 (blue) to 0 (red)
-    const saturation = 90; // Increased from 80 to make colors more vibrant
-    const lightness = isDarkMode ? 65 : 55; // Brighter in both modes for more vibrancy
+    const offset = 220;
+    const range = 120;
+    const hue = (offset - normalizedFreq * range) % 360; // 240 (blue) to 0 (red)
+    const saturation = 255; // Increased from 80 to make colors more vibrant
+    const lightness = isDarkMode ? 50 : 80; // Brighter in both modes for more vibrancy
     return `hsla(${hue}, ${saturation}%, ${lightness}%, ${alpha})`;
   }
 } 

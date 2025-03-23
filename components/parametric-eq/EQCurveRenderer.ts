@@ -107,7 +107,6 @@ export class EQCurveRenderer {
     height: number,
     freqRange: { min: number, max: number },
     fillColor: string,
-    strokeColor?: string
   ): void {
     if (frequencyResponse.length === 0) return;
     
@@ -159,14 +158,5 @@ export class EQCurveRenderer {
     // Fill the path
     ctx.fillStyle = fillColor;
     ctx.fill();
-    
-    // Optionally stroke the outline
-    if (strokeColor) {
-      ctx.strokeStyle = strokeColor;
-      ctx.lineWidth = 1;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      ctx.stroke();
-    }
   }
 } 

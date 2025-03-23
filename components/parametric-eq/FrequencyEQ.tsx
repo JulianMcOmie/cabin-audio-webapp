@@ -449,7 +449,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     if (ghostNode.visible && !disabled) {
       // Calculate color based on location (frequency)
       const ghostFreq = EQCoordinateUtils.xToFreq(ghostNode.x, rect.width, freqRange)
-      const ghostColor = EQCoordinateUtils.getBandColor(ghostFreq, 0.7, isDarkMode)
+      const ghostColor = EQCoordinateUtils.getBandColor(ghostFreq, 1.0, isDarkMode)
       
       // Draw ghost node handle
       EQBandRenderer.drawBandHandle(
