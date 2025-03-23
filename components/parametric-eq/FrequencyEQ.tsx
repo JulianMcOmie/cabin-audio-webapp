@@ -71,6 +71,10 @@ export function updateAudio(
 
 export function FrequencyEQ({ profileId, disabled = false, className, onInstructionChange, onRequestEnable }: FrequencyEQProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  // Add refs for animation frame and canvas context
+  const animationFrameRef = useRef<number | null>(null)
+  const canvasContextRef = useRef<CanvasRenderingContext2D | null>(null)
+  
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [selectedBandId, setSelectedBandId] = useState<string | null>(null)
   
@@ -332,69 +336,70 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     }
   }, [])
 
-  // Redraw canvas when theme or other dependencies change
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
+  // Main canvas rendering function to be called by requestAnimationFrame
+  const renderCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
 
-    const ctx = canvas.getContext("2d")
-    if (!ctx) return
+    // Get or create context
+    let ctx = canvasContextRef.current;
+    if (!ctx) {
+      ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      canvasContextRef.current = ctx;
+    }
 
-    // Set canvas dimensions
-    const dpr = window.devicePixelRatio || 1
-    const rect = canvas.getBoundingClientRect()
-    canvas.width = rect.width * dpr
-    canvas.height = rect.height * dpr
-    ctx.scale(dpr, dpr)
+    // Get canvas dimensions
+    const rect = canvas.getBoundingClientRect();
 
     // Clear canvas
-    ctx.clearRect(0, 0, rect.width, rect.height)
+    ctx.clearRect(0, 0, rect.width, rect.height);
 
     // Add semi-transparent background with reduced opacity
-    ctx.fillStyle = isDarkMode ? "rgba(24, 24, 36, 0.4)" : "rgba(255, 255, 255, 0.4)"
-    ctx.fillRect(0, 0, rect.width, rect.height)
+    ctx.fillStyle = isDarkMode ? "rgba(24, 24, 36, 0.4)" : "rgba(255, 255, 255, 0.4)";
+    ctx.fillRect(0, 0, rect.width, rect.height);
 
     // Draw background grid
-    ctx.strokeStyle = isDarkMode ? "#3f3f5c" : "#e2e8f0" // Darker grid lines for dark mode
-    ctx.lineWidth = 1
+    ctx.strokeStyle = isDarkMode ? "#3f3f5c" : "#e2e8f0"; // Darker grid lines for dark mode
+    ctx.lineWidth = 1;
 
     // Vertical grid lines (frequency bands)
-    const numBands = 10
+    const numBands = 10;
     for (let i = 0; i <= numBands; i++) {
-      const x = (i / numBands) * rect.width
-      ctx.beginPath()
-      ctx.moveTo(x, 0)
-      ctx.lineTo(x, rect.height)
-      ctx.stroke()
+      const x = (i / numBands) * rect.width;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, rect.height);
+      ctx.stroke();
     }
 
     // Horizontal grid lines (dB levels)
-    const levels = 6
+    const levels = 6;
     for (let i = 0; i <= levels; i++) {
-      const y = (i / levels) * rect.height
-      ctx.beginPath()
-      ctx.moveTo(0, y)
-      ctx.lineTo(rect.width, y)
-      ctx.stroke()
+      const y = (i / levels) * rect.height;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(rect.width, y);
+      ctx.stroke();
     }
 
     // Draw frequency labels
-    ctx.fillStyle = isDarkMode ? "#a1a1aa" : "#64748b" // Brighter text for dark mode
-    ctx.font = "10px sans-serif"
-    ctx.textAlign = "center"
+    ctx.fillStyle = isDarkMode ? "#a1a1aa" : "#64748b"; // Brighter text for dark mode
+    ctx.font = "10px sans-serif";
+    ctx.textAlign = "center";
 
-    const freqLabels = ["20Hz", "50Hz", "100Hz", "200Hz", "500Hz", "1kHz", "2kHz", "5kHz", "10kHz", "20kHz"]
+    const freqLabels = ["20Hz", "50Hz", "100Hz", "200Hz", "500Hz", "1kHz", "2kHz", "5kHz", "10kHz", "20kHz"];
     for (let i = 0; i < freqLabels.length; i++) {
-      const x = ((i + 0.5) / numBands) * rect.width
-      ctx.fillText(freqLabels[i], x, rect.height - 5)
+      const x = ((i + 0.5) / numBands) * rect.width;
+      ctx.fillText(freqLabels[i], x, rect.height - 5);
     }
 
     // Draw dB labels
-    ctx.textAlign = "right"
-    const dbLabels = ["+12dB", "+6dB", "0dB", "-6dB", "-12dB", "-18dB"]
+    ctx.textAlign = "right";
+    const dbLabels = ["+12dB", "+6dB", "0dB", "-6dB", "-12dB", "-18dB"];
     for (let i = 0; i < dbLabels.length; i++) {
-      const y = (i / (levels - 1)) * (rect.height - 30) + 15
-      ctx.fillText(dbLabels[i], rect.width - 10, y)
+      const y = (i / (levels - 1)) * (rect.height - 30) + 15;
+      ctx.fillText(dbLabels[i], rect.width - 10, y);
     }
 
     // Set isEnabled based on disabled prop
@@ -402,35 +407,35 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
 
     // Draw individual band responses
     renderableBands.forEach((band) => {
-        // Consider a band "hovered" if it's the selected band or if it's being dragged
-        const isHovered = band.id === hoveredBandId;
-        const isDragging = band.id === draggingBandId;
-        
-        EQBandRenderer.drawBand(
+      // Consider a band "hovered" if it's the selected band or if it's being dragged
+      const isHovered = band.id === hoveredBandId;
+      const isDragging = band.id === draggingBandId;
+      
+      EQBandRenderer.drawBand(
+        ctx,
+        band,
+        rect.width,
+        rect.height,
+        freqRange,
+        isDarkMode,
+        isHovered,
+        isDragging,
+        isEnabled
+      );
+      
+      // Draw Q indicator if shift is pressed and band is selected or hovered
+      if (isShiftPressed && (band.id === selectedBandId || band.isHovered)) {
+        EQBandRenderer.drawQIndicator(
           ctx,
           band,
           rect.width,
           rect.height,
           freqRange,
           isDarkMode,
-          isHovered,
-          isDragging,
           isEnabled
-        )
-        
-        // Draw Q indicator if shift is pressed and band is selected or hovered
-        if (isShiftPressed && (band.id === selectedBandId || band.isHovered)) {
-          EQBandRenderer.drawQIndicator(
-            ctx,
-            band,
-            rect.width,
-            rect.height,
-            freqRange,
-            isDarkMode,
-            isEnabled
-          )
-        }
-    })
+        );
+      }
+    });
 
     // Draw the combined EQ curve
     if (frequencyResponse.length > 0) {
@@ -444,14 +449,14 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
         3, // lineWidth
         0.8, // alpha
         isEnabled // Pass isEnabled parameter
-      )
+      );
     }
     
     // Draw ghost node if visible and not disabled
-    if (ghostNode.visible && !disabled) {
+    if (ghostNode.visible && !isEnabled) {
       // Calculate color based on location (frequency)
-      const ghostFreq = EQCoordinateUtils.xToFreq(ghostNode.x, rect.width, freqRange)
-      const ghostColor = EQCoordinateUtils.getBandColor(ghostFreq, 1.0, isDarkMode)
+      const ghostFreq = EQCoordinateUtils.xToFreq(ghostNode.x, rect.width, freqRange);
+      const ghostColor = EQCoordinateUtils.getBandColor(ghostFreq, 1.0, isDarkMode);
       
       // Draw ghost node handle
       EQBandRenderer.drawBandHandle(
@@ -461,7 +466,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
         ghostColor,
         true,
         isEnabled
-      )
+      );
     }
     
     // Draw volume control if we have a profile
@@ -521,8 +526,76 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
         ctx.fillText(volumeText, volumeDotX + 15, volumeDotY + 5);
       }
     }
+
+    // Continue the animation loop
+    animationFrameRef.current = requestAnimationFrame(renderCanvas);
+  }, [
+    renderableBands, 
+    frequencyResponse, 
+    disabled, 
+    isDarkMode, 
+    selectedBandId, 
+    isShiftPressed, 
+    ghostNode, 
+    draggingBandId, 
+    hoveredBandId, 
+    profile, 
+    volumeToY, 
+    isDraggingVolume,
+    freqRange
+  ]);
+
+  // Initialize canvas and start animation loop
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // Set canvas dimensions
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
     
-  }, [renderableBands, frequencyResponse, disabled, isDarkMode, selectedBandId, isShiftPressed, ghostNode, draggingBandId, hoveredBandId, profile, volumeToY, isDraggingVolume])
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    
+    ctx.scale(dpr, dpr);
+    canvasContextRef.current = ctx;
+    
+    // Start the animation loop
+    animationFrameRef.current = requestAnimationFrame(renderCanvas);
+    
+    // Clean up animation frame on unmount
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [renderCanvas]);
+
+  // Handle window resize
+  useEffect(() => {
+    const handleResize = () => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      
+      // Update canvas dimensions
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      
+      // Reset context scale
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.scale(dpr, dpr);
+        canvasContextRef.current = ctx;
+      }
+    };
+    
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   return (
     <div
