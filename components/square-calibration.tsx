@@ -4,9 +4,7 @@ import { useRef, useEffect, useState } from "react"
 import * as squareCalibrationAudio from '@/lib/audio/squareCalibrationAudio'
 import { Corner } from '@/lib/audio/squareCalibrationAudio'
 import { Button } from "@/components/ui/button"
-import { Play, Grid3X3, Smartphone } from "lucide-react"
-import { Switch } from "@/components/ui/switch"
-import { Label } from "@/components/ui/label"
+import { Play } from "lucide-react"
 
 // Handle size
 const HANDLE_SIZE = 8; // Size of resize handles in pixels
@@ -22,9 +20,6 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
-  
-  // State for pattern mode
-  const [patternMode, setPatternMode] = useState<'diagonal' | 'drumGrid'>('diagonal');
   
   // State for dragging and resizing
   const [isDragging, setIsDragging] = useState(false);
@@ -89,12 +84,6 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
     setSquareSize(size);
   }, []);
   
-  // Update pattern mode when toggle changes
-  useEffect(() => {
-    const audioPlayer = squareCalibrationAudio.getSquareCalibrationAudio();
-    audioPlayer.setPatternMode(patternMode);
-  }, [patternMode]);
-  
   // Connect to audio module for corner activation events
   useEffect(() => {
     const audioPlayer = squareCalibrationAudio.getSquareCalibrationAudio();
@@ -124,6 +113,11 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
   // Update audio player when playing state changes
   useEffect(() => {
     const audioPlayer = squareCalibrationAudio.getSquareCalibrationAudio();
+    
+    // Set diagonal pattern mode by default (removing the toggle)
+    audioPlayer.setPatternMode('diagonal');
+    
+    // Set playing state
     audioPlayer.setPlaying(isPlaying);
   }, [isPlaying]);
   
@@ -158,7 +152,25 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
     const innerWidth = squareSize[0] * canvasSize.width;
     const innerHeight = squareSize[1] * canvasSize.height;
     
-    // Draw inner square
+    // Create vertical gradient that spans the entire canvas height
+    // This way, the square acts as a "window" into a larger gradient
+    const gradient = ctx.createLinearGradient(0, canvasSize.height, 0, 0);
+    
+    // Add color stops for the full-height gradient (matches EQ band colors)
+    // Using more vibrant colors that match the band colors in the EQ
+    gradient.addColorStop(0, isDarkMode ? 'rgba(239, 68, 68, 0.85)' : 'rgba(220, 38, 38, 0.7)');    // red (low freq)
+    gradient.addColorStop(0.15, isDarkMode ? 'rgba(249, 115, 22, 0.85)' : 'rgba(234, 88, 12, 0.7)'); // orange
+    gradient.addColorStop(0.3, isDarkMode ? 'rgba(245, 158, 11, 0.85)' : 'rgba(217, 119, 6, 0.7)');  // amber
+    gradient.addColorStop(0.45, isDarkMode ? 'rgba(132, 204, 22, 0.85)' : 'rgba(101, 163, 13, 0.7)'); // lime
+    gradient.addColorStop(0.6, isDarkMode ? 'rgba(34, 197, 94, 0.85)' : 'rgba(22, 163, 74, 0.7)');   // green
+    gradient.addColorStop(0.75, isDarkMode ? 'rgba(6, 182, 212, 0.85)' : 'rgba(8, 145, 178, 0.7)');  // cyan
+    gradient.addColorStop(1, isDarkMode ? 'rgba(99, 102, 241, 0.85)' : 'rgba(79, 70, 229, 0.7)');    // indigo (high freq)
+    
+    // Fill the inner square with the gradient
+    ctx.fillStyle = gradient;
+    ctx.fillRect(innerX, innerY, innerWidth, innerHeight);
+    
+    // Draw inner square border
     ctx.strokeStyle = isDarkMode ? '#a1a1aa' : '#94a3b8';
     ctx.lineWidth = 1.5;
     ctx.strokeRect(innerX, innerY, innerWidth, innerHeight);
@@ -179,35 +191,13 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
       if (activeCorner !== null && pos.corner === activeCorner) {
         ctx.fillStyle = isDarkMode ? '#38bdf8' : '#0284c7'; // sky-400 or sky-600
         ctx.arc(pos.x, pos.y, cornerDotRadius * 1.8, 0, Math.PI * 2);
-      } else {
-        ctx.fillStyle = isDarkMode ? '#94a3b8' : '#64748b'; // slate-400 or slate-500
-        ctx.arc(pos.x, pos.y, cornerDotRadius, 0, Math.PI * 2);
+        ctx.fill();
       }
-      
-      ctx.fill();
-    });
-    
-    // Draw corner handles
-    const handlePositions = [
-      { x: innerX, y: innerY, type: 'nw' },                       // Top-left
-      { x: innerX + innerWidth / 2, y: innerY, type: 'n' },       // Top-center
-      { x: innerX + innerWidth, y: innerY, type: 'ne' },          // Top-right
-      { x: innerX + innerWidth, y: innerY + innerHeight / 2, type: 'e' }, // Middle-right
-      { x: innerX + innerWidth, y: innerY + innerHeight, type: 'se' },    // Bottom-right
-      { x: innerX + innerWidth / 2, y: innerY + innerHeight, type: 's' }, // Bottom-center
-      { x: innerX, y: innerY + innerHeight, type: 'sw' },                 // Bottom-left
-      { x: innerX, y: innerY + innerHeight / 2, type: 'w' }               // Middle-left
-    ];
-    
-    // Draw handles
-    handlePositions.forEach(pos => {
-      ctx.fillStyle = isDarkMode ? '#a1a1aa' : '#94a3b8';
-      ctx.fillRect(pos.x - HANDLE_SIZE / 2, pos.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
     });
     
     // Draw center if dragging
-    if (isDragging && !currentHandle) {
-      ctx.fillStyle = isDarkMode ? 'rgba(56, 189, 248, 0.5)' : 'rgba(2, 132, 199, 0.5)';
+    if (isDragging) {
+      ctx.fillStyle = isDarkMode ? 'rgba(255, 255, 255, 0.8)' : 'rgba(0, 0, 0, 0.8)';
       ctx.beginPath();
       ctx.arc(innerX + innerWidth / 2, innerY + innerHeight / 2, 8, 0, Math.PI * 2);
       ctx.fill();
@@ -461,7 +451,7 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
   };
 
   return (
-    <div className={`space-y-4 ${className}`}>
+    <div className={`space-y-2 ${className}`}>
       <div className="relative bg-background/50 rounded-lg p-3">
         <canvas
           ref={canvasRef}
@@ -476,25 +466,7 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
       
       <div className="flex justify-between items-center">
         <div className="text-xs text-muted-foreground">
-          Drag the square to move, drag corners or edges to resize
-        </div>
-        <div className="flex items-center space-x-2">
-          <Label htmlFor="pattern-mode" className="text-xs text-muted-foreground cursor-pointer">
-            {patternMode === 'diagonal' ? (
-              <Smartphone className="h-4 w-4" />
-            ) : (
-              <Grid3X3 className="h-4 w-4" />
-            )}
-          </Label>
-          <Switch
-            id="pattern-mode"
-            checked={patternMode === 'drumGrid'}
-            onCheckedChange={(checked) => setPatternMode(checked ? 'drumGrid' : 'diagonal')}
-            aria-label="Toggle pattern mode"
-          />
-          <div className="text-xs text-muted-foreground">
-            {patternMode === 'diagonal' ? 'Diagonal' : '3x3 Rhythm'}
-          </div>
+          Drag to move, resize from edges
         </div>
       </div>
     </div>

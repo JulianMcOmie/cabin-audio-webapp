@@ -187,47 +187,72 @@ export function EQView({ setEqEnabled }: EQViewProps) {
 
       {/* Main EQ View */}
       <div className="space-y-6">
-        {/* Frequency Graph (on top) */}
-        <div className="relative" ref={eqContainerRef}>
-          {/* FFT Visualizer as background layer */}
-          {squareCalibrationPlaying && preEQAnalyser && (
-            <div className="absolute inset-0 z-0 w-full aspect-[2/1]">
-              <FFTVisualizer 
-                analyser={preEQAnalyser} 
-                width={eqWidth} 
-                height={eqWidth / 2} 
-                className="w-full h-full"
+        {/* EQ and Calibration in a side-by-side layout that stacks on small screens */}
+        <div className="flex flex-col md:flex-row gap-4">
+          {/* Frequency Graph (taking most of the width) */}
+          <div className="flex-1 relative" ref={eqContainerRef}>
+            {/* FFT Visualizer as background layer */}
+            {squareCalibrationPlaying && preEQAnalyser && (
+              <div className="absolute inset-0 z-0 w-full aspect-[2/1]">
+                <FFTVisualizer 
+                  analyser={preEQAnalyser} 
+                  width={eqWidth} 
+                  height={eqWidth / 2} 
+                  className="w-full h-full"
+                />
+              </div>
+            )}
+            
+            {/* FrequencyEQ component overlaid on top */}
+            <div className="relative z-10">
+              <FrequencyGraph 
+                selectedDot={selectedDot} 
+                disabled={!isEQEnabled} 
+                className="w-full" 
+                onInstructionChange={setInstruction}
+                onRequestEnable={() => setEQEnabled(true)}
               />
             </div>
-          )}
-          
-          {/* FrequencyEQ component overlaid on top */}
-          <div className="relative z-10">
-            <FrequencyGraph 
-              selectedDot={selectedDot} 
-              disabled={!isEQEnabled} 
-              className="w-full" 
-              onInstructionChange={setInstruction}
-              onRequestEnable={() => setEQEnabled(true)}
-            />
+
+            {/* Contextual Instructions */}
+            <div className="mt-1 mb-3 px-2 py-1.5 bg-muted/40 rounded text-sm text-muted-foreground border-l-2 border-electric-blue">
+              {instruction}
+            </div>
+
+            {/* EQ Toggle Button - Updated for consistency */}
+            <div className="eq-toggle-container">
+              <Button
+                variant={isEQEnabled ? "default" : "outline"}
+                size="sm"
+                className={isEQEnabled ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : ""}
+                onClick={toggleEQ}
+                title={isEQEnabled ? "Turn EQ Off" : "Turn EQ On"}
+              >
+                <Power className="h-4 w-4 mr-2" />
+                {isEQEnabled ? "EQ On" : "EQ Off"}
+              </Button>
+            </div>
           </div>
 
-          {/* Contextual Instructions */}
-          <div className="mt-1 mb-3 px-2 py-1.5 bg-muted/40 rounded text-sm text-muted-foreground border-l-2 border-electric-blue">
-            {instruction}
-          </div>
+          {/* Calibration Panel (small width on desktop, full width on mobile) */}
+          <div className="w-full md:w-64 bg-muted/50 p-4 rounded-lg">
+            <h4 className="font-medium mb-3">Calibration</h4>
+            
+            {/* Square Calibration Component */}
+            <div className="mb-3">
+              <SquareCalibration 
+                isPlaying={squareCalibrationPlaying}
+                disabled={false}
+              />
+            </div>
 
-          {/* EQ Toggle Button - Updated for consistency */}
-          <div className="eq-toggle-container">
             <Button
-              variant={isEQEnabled ? "default" : "outline"}
               size="sm"
-              className={isEQEnabled ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : ""}
-              onClick={toggleEQ}
-              title={isEQEnabled ? "Turn EQ Off" : "Turn EQ On"}
+              className="w-full bg-electric-blue hover:bg-electric-blue/90 text-white"
+              onClick={() => setSquareCalibrationPlaying(!squareCalibrationPlaying)}
             >
-              <Power className="h-4 w-4 mr-2" />
-              {isEQEnabled ? "EQ On" : "EQ Off"}
+              <Play className="mr-2 h-4 w-4" />
+              {squareCalibrationPlaying ? "Stop" : "Start"}
             </Button>
           </div>
         </div>
@@ -266,7 +291,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
           </div>
         </div>
 
-        {/* Calibration Section */}
+        {/* Calibration Section - Commented out as requested */}
+        {/*
         <div className="mt-8 border rounded-lg p-6 bg-card">
           <h3 className="text-lg font-medium mb-4">How to Calibrate Your EQ</h3>
           <div className="flex flex-col md:flex-row gap-6">
@@ -367,7 +393,6 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   <h4 className="font-medium">Calibration Controls</h4>
                 </div>
 
-                {/* Square Calibration Component */}
                 <div className="mb-3">
                   <SquareCalibration 
                     isPlaying={squareCalibrationPlaying}
@@ -391,6 +416,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
             </div>
           </div>
         </div>
+        */}
       </div>
 
       {/* EQ Profiles Section */}
