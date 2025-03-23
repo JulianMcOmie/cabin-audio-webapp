@@ -237,7 +237,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       x >= margin && x <= rect.width - margin &&
       y >= margin && y <= rect.height - margin;
     
-    // Adjust coordinates to inner coordinate system
+    // Calculate inner dimensions
     const innerWidth = rect.width - margin * 2;
     const innerHeight = rect.height - margin * 2;
     
@@ -250,24 +250,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     
     // Only pass mouse move to band interaction if not hovering over volume and within inner area
     if (!isOverVolume && isWithinInnerArea) {
-      // Create a synthetic event with adjusted coordinates
-      const syntheticEvent = {
-        ...e,
-        clientX: e.clientX,
-        clientY: e.clientY,
-        currentTarget: {
-          ...e.currentTarget,
-          getBoundingClientRect: () => ({
-            ...rect,
-            width: innerWidth,
-            height: innerHeight,
-            left: rect.left + margin,
-            top: rect.top + margin
-          })
-        }
-      };
-      
-      handleBandMouseMove(syntheticEvent as any);
+      handleBandMouseMove(e);
     }
   }, [profile, handleBandMouseMove, isDraggingVolume]);
   
@@ -290,12 +273,11 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       x >= margin && x <= rect.width - margin &&
       y >= margin && y <= rect.height - margin;
     
-    // Adjust coordinates to inner coordinate system
-    const innerY = y - margin;
+    // Calculate inner dimensions
     const innerWidth = rect.width - margin * 2;
     const innerHeight = rect.height - margin * 2;
     
-    // Check if we're clicking on the volume control using raw coordinates
+    // Check if we're clicking on the volume control
     const isOverVolume = EQBandRenderer.isInVolumeControl(
       x, y, innerWidth, innerHeight, profile.volume || 0, margin, margin
     );
@@ -304,6 +286,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       setIsDraggingVolume(true);
       
       // Initial volume adjustment based on click position
+      const innerY = y - margin;
       const newVolume = EQCoordinateUtils.yToGain(innerY, innerHeight);
       updateProfile(profile.id, { volume: newVolume });
       
@@ -339,24 +322,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     
     // If not clicking on volume control and within inner area, delegate to the band mouse handler
     if (isWithinInnerArea) {
-      // Create a synthetic event with adjusted coordinates
-      const syntheticEvent = {
-        ...e,
-        clientX: e.clientX,
-        clientY: e.clientY,
-        currentTarget: {
-          ...e.currentTarget,
-          getBoundingClientRect: () => ({
-            ...rect,
-            width: innerWidth,
-            height: innerHeight,
-            left: rect.left + margin,
-            top: rect.top + margin
-          })
-        }
-      };
-      
-      handleBandMouseDown(syntheticEvent as any);
+      handleBandMouseDown(e);
     }
   }, [disabled, handleBandMouseDown, profile, updateProfile]);
   
@@ -443,7 +409,13 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     ctx.lineWidth = 1;
 
     // Define frequency points for logarithmic grid (in Hz)
-    const freqPoints = [20, 30, 50, 70, 100, 200, 300, 500, 700, 1000, 2000, 3000, 5000, 7000, 10000, 20000];
+    // More frequent grid lines with logarithmic spacing
+    const freqPoints = [
+      20, 25, 31.5, 40, 50, 63, 80, 100,
+      125, 160, 200, 250, 315, 400, 500, 630, 800, 1000,
+      1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000,
+      12500, 16000, 20000
+    ];
     
     // Vertical grid lines (logarithmic frequency bands)
     for (let freq of freqPoints) {
@@ -455,7 +427,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     }
 
     // Define dB points for grid (matching actual EQ range, with more values, extending to +24dB)
-    const dbPoints = [24, 21, 18, 15, 12, 9, 6, 3, 0, -3, -6, -9, -12, -15, -18, -21, -24];
+    const dbPoints = [24, 20, 16, 12, 8, 4, 0, -4, -8, -12, -16, -20, -24];
     
     // Horizontal grid lines (dB levels)
     for (let db of dbPoints) {
@@ -503,8 +475,8 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     ctx.textBaseline = "middle";
     
     for (let db of dbPoints) {
-      // Only show a subset of dB labels to avoid crowding
-      if (db % 3 === 0) {  // Show every 3dB label
+      // Only show every 4dB label
+      if (db % 4 === 0) {  // Changed from 3 to 4
         const y = margin + EQCoordinateUtils.gainToY(db, rect.height - margin * 2);
         const label = `${db > 0 ? '+' : ''}${db}dB`;
         

@@ -87,6 +87,9 @@ export function useEQInteraction({
       
       const rect = canvas.getBoundingClientRect();
       
+      // Get the margin from the canvas if available
+      const margin = (canvas as any).margin || 0;
+      
       // Get current mouse position
       const currentMousePosition = {
         x: e.clientX,
@@ -105,21 +108,25 @@ export function useEQInteraction({
       // Update previous position for next frame
       prevMousePositionRef.current = currentMousePosition;
       
-      // Calculate position relative to canvas, applying shift offsets
-      let x = e.clientX - rect.left - shiftOffset.x;
-      let y = e.clientY - rect.top - shiftOffset.y;
+      // Get inner canvas dimensions (accounting for margins)
+      const innerWidth = rect.width - margin * 2;
+      const innerHeight = rect.height - margin * 2;
       
-      // Check if mouse is inside canvas
+      // Calculate position relative to inner canvas, applying shift offsets
+      let x = e.clientX - rect.left - margin - shiftOffset.x;
+      let y = e.clientY - rect.top - margin - shiftOffset.y;
+      
+      // Check if mouse is inside inner canvas area
       const isInsideCanvas = 
-        x >= 0 && x <= rect.width && 
-        y >= 0 && y <= rect.height;
+        x >= 0 && x <= innerWidth && 
+        y >= 0 && y <= innerHeight;
       
-      // Clamp x and y to canvas boundaries for calculation purposes
-      x = Math.max(0, Math.min(rect.width, x));
-      y = Math.max(0, Math.min(rect.height, y));
+      // Clamp x and y to inner canvas boundaries for calculation purposes
+      x = Math.max(0, Math.min(innerWidth, x));
+      y = Math.max(0, Math.min(innerHeight, y));
       
       // Calculate frequency from x position (clamped to valid range)
-      const frequency = EQCoordinateUtils.xToFreq(x, rect.width, freqRange);
+      const frequency = EQCoordinateUtils.xToFreq(x, innerWidth, freqRange);
       const clampedFrequency = Math.max(20, Math.min(20000, frequency));
       
       if (isShiftPressed) {
@@ -143,7 +150,7 @@ export function useEQInteraction({
         }
       } else {
         // Normal drag adjusts frequency and gain
-        const gain = EQCoordinateUtils.yToGain(y, rect.height);
+        const gain = EQCoordinateUtils.yToGain(y, innerHeight);
         const clampedGain = Math.max(-24, Math.min(24, gain));
 
         // If we're outside of the canvas, but we move towards the canvas, we can reduce shiftOffset
@@ -231,22 +238,40 @@ export function useEQInteraction({
       
       const rect = canvas.getBoundingClientRect();
       
+      // Get the margin from the canvas if available
+      const margin = (canvas as any).margin || 0;
+      
       // Calculate mouse position relative to canvas
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       
-      // Check if hovering over a band
+      // Get inner canvas dimensions (accounting for margins)
+      const innerWidth = rect.width - margin * 2;
+      const innerHeight = rect.height - margin * 2;
+      
+      // Check if mouse is within inner area
+      const isWithinInnerArea = 
+        x >= margin && x <= rect.width - margin &&
+        y >= margin && y <= rect.height - margin;
+      
+      // Calculate inner coordinates
+      const innerX = x - margin;
+      const innerY = y - margin;
+      
+      // Check if hovering over a band (only if within inner area)
       let newHoveredBandId: string | null = null;
       
-      for (const band of bands) {
-        if (band.frequency >= freqRange.min && band.frequency <= freqRange.max) {
-          const bandX = EQCoordinateUtils.freqToX(band.frequency, rect.width, freqRange);
-          const bandY = EQCoordinateUtils.gainToY(band.gain, rect.height);
-          
-          const distance = Math.sqrt(Math.pow(x - bandX, 2) + Math.pow(y - bandY, 2));
-          if (distance <= 10) { // 10px radius for hover detection
-            newHoveredBandId = band.id;
-            break;
+      if (isWithinInnerArea) {
+        for (const band of bands) {
+          if (band.frequency >= freqRange.min && band.frequency <= freqRange.max) {
+            const bandX = EQCoordinateUtils.freqToX(band.frequency, innerWidth, freqRange);
+            const bandY = EQCoordinateUtils.gainToY(band.gain, innerHeight);
+            
+            const distance = Math.sqrt(Math.pow(innerX - bandX, 2) + Math.pow(innerY - bandY, 2));
+            if (distance <= 10) { // 10px radius for hover detection
+              newHoveredBandId = band.id;
+              break;
+            }
           }
         }
       }
@@ -263,19 +288,27 @@ export function useEQInteraction({
         });
       }
       
-      // Check if mouse is near center line to show ghost node
-      const centerY = rect.height / 2;
-      const distanceToCenter = Math.abs(y - centerY);
-      
-      if (distanceToCenter <= CENTER_LINE_THRESHOLD && !newHoveredBandId) {
-        // Show ghost node on center line
-        setGhostNode({
-          x,
-          y: centerY,
-          visible: true
-        });
+      // Check if mouse is near center line to show ghost node (only if within inner area)
+      if (isWithinInnerArea) {
+        const centerY = margin + innerHeight / 2;
+        const distanceToCenter = Math.abs(y - centerY);
+        
+        if (distanceToCenter <= CENTER_LINE_THRESHOLD && !newHoveredBandId) {
+          // Show ghost node on center line
+          setGhostNode({
+            x,
+            y: centerY,
+            visible: true
+          });
+        } else {
+          // Hide ghost node
+          setGhostNode(prev => ({
+            ...prev,
+            visible: false
+          }));
+        }
       } else {
-        // Hide ghost node
+        // Hide ghost node when outside inner area
         setGhostNode(prev => ({
           ...prev,
           visible: false
@@ -296,9 +329,30 @@ export function useEQInteraction({
     
     const rect = canvas.getBoundingClientRect();
     
+    // Get the margin from the canvas if available
+    const margin = (canvas as any).margin || 0;
+    
     // Calculate mouse position relative to canvas
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+    
+    // Get inner canvas dimensions (accounting for margins)
+    const innerWidth = rect.width - margin * 2;
+    const innerHeight = rect.height - margin * 2;
+    
+    // Check if mouse is within inner area
+    const isWithinInnerArea = 
+      x >= margin && x <= rect.width - margin &&
+      y >= margin && y <= rect.height - margin;
+    
+    // Only proceed if within inner area
+    if (!isWithinInnerArea) {
+      return;
+    }
+    
+    // Calculate inner coordinates
+    const innerX = x - margin;
+    const innerY = y - margin;
     
     // Initialize position tracking for delta calculations
     prevMousePositionRef.current = {
@@ -308,17 +362,16 @@ export function useEQInteraction({
     
     // Reset both offsets when starting a new drag
     setShiftOffset({ x: 0, y: 0 });
-    // setQOffset(0);
     
     // Check if clicking on a band
     let clickedBandId: string | null = null;
     
     for (const band of bands) {
       if (band.frequency >= freqRange.min && band.frequency <= freqRange.max) {
-        const bandX = EQCoordinateUtils.freqToX(band.frequency, rect.width, freqRange);
-        const bandY = EQCoordinateUtils.gainToY(band.gain, rect.height);
+        const bandX = EQCoordinateUtils.freqToX(band.frequency, innerWidth, freqRange);
+        const bandY = EQCoordinateUtils.gainToY(band.gain, innerHeight);
         
-        const distance = Math.sqrt(Math.pow(x - bandX, 2) + Math.pow(y - bandY, 2));
+        const distance = Math.sqrt(Math.pow(innerX - bandX, 2) + Math.pow(innerY - bandY, 2));
         if (distance <= 10) {
           clickedBandId = band.id;
           break;
@@ -334,12 +387,12 @@ export function useEQInteraction({
         onBandSelect(clickedBandId);
       } else {
         // Check if click is near center line
-        const centerY = rect.height / 2;
+        const centerY = margin + innerHeight / 2;
         const distanceToCenter = Math.abs(y - centerY);
         
         if (distanceToCenter <= CENTER_LINE_THRESHOLD) {
           // Add new band at center line
-          const frequency = EQCoordinateUtils.xToFreq(x, rect.width, freqRange);
+          const frequency = EQCoordinateUtils.xToFreq(innerX, innerWidth, freqRange);
           
           // Create a new band (gain is 0 since it's on center line)
           const newBand = {
