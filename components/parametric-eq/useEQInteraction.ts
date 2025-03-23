@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, RefObject, useRef } from 'react';
+import { throttle } from 'lodash';
 // import { v4 as uuidv4 } from 'uuid';
 import { EQBandWithUI } from './types';
 import { EQCoordinateUtils } from './EQCoordinateUtils';
@@ -45,6 +46,15 @@ export function useEQInteraction({
   // Distance threshold for showing ghost node near center line
   const CENTER_LINE_THRESHOLD = 15;
 
+  // Create throttled band update function to improve performance
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const throttledBandUpdate = useCallback(
+    throttle((id: string, updates: Partial<EQBandWithUI>) => {
+      onBandUpdate(id, updates);
+    }, 16), // Throttle to roughly 60fps
+    [onBandUpdate]
+  );
+
   // Listen for shift key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -68,13 +78,12 @@ export function useEQInteraction({
     };
   }, []);
 
-  // Handle global mouse events for dragging outside the canvas
-  useEffect(() => {
-    if (!isDragging || !draggingBand) return;
-    
-    const handleGlobalMouseMove = (e: MouseEvent) => {
+  // Create throttled mouse move handler - defined once
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const handleGlobalMouseMoveThrottled = useCallback(
+    throttle((e: MouseEvent) => {
       const canvas = canvasRef.current;
-      if (!canvas) return;
+      if (!canvas || !isDragging || !draggingBand) return;
       
       const rect = canvas.getBoundingClientRect();
       
@@ -130,7 +139,7 @@ export function useEQInteraction({
           const scaleFactor = 0.02;
           const newQ = Math.max(0.1, Math.min(10, currentQ * Math.exp(-deltaY * scaleFactor)));
           
-          onBandUpdate(draggingBand, { q: newQ });
+          throttledBandUpdate(draggingBand, { q: newQ });
         }
       } else {
         // Normal drag adjusts frequency and gain
@@ -167,17 +176,32 @@ export function useEQInteraction({
             }));
           }
         }
-        onBandUpdate(draggingBand, {
+        throttledBandUpdate(draggingBand, {
           frequency: clampedFrequency,
           gain: clampedGain
         });
       }
+    }, 16), // Throttle to roughly 60fps (16ms)
+    [canvasRef, draggingBand, isDragging, bands, isShiftPressed, shiftOffset, freqRange, throttledBandUpdate]
+  );
+
+  // Handle global mouse events for dragging outside the canvas
+  useEffect(() => {
+    if (!isDragging || !draggingBand) return;
+    
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+      // Use the throttled handler
+      handleGlobalMouseMoveThrottled(e);
     };
     
     const handleGlobalMouseUp = () => {
       setDraggingBand(null);
       setIsDragging(false);
       prevMousePositionRef.current = null; // Reset position tracking
+      
+      // Cancel any pending throttled updates
+      handleGlobalMouseMoveThrottled.cancel();
+      throttledBandUpdate.cancel();
     };
     
     // Add global event listeners
@@ -188,71 +212,83 @@ export function useEQInteraction({
     return () => {
       window.removeEventListener('mousemove', handleGlobalMouseMove);
       window.removeEventListener('mouseup', handleGlobalMouseUp);
+      
+      // Cancel any pending throttled updates
+      handleGlobalMouseMoveThrottled.cancel();
+      throttledBandUpdate.cancel();
     };
-  }, [isDragging, draggingBand, bands, isShiftPressed, onBandUpdate, shiftOffset, freqRange, canvasRef]);
+  }, [isDragging, draggingBand, handleGlobalMouseMoveThrottled, throttledBandUpdate]);
 
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    // Only handle hover state here - dragging is handled by the global handler
-    if (draggingBand) return;
-    
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    const rect = canvas.getBoundingClientRect();
-    
-    // Calculate mouse position relative to canvas
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    
-    // Check if hovering over a band
-    let newHoveredBandId: string | null = null;
-    
-    for (const band of bands) {
-      if (band.frequency >= freqRange.min && band.frequency <= freqRange.max) {
-        const bandX = EQCoordinateUtils.freqToX(band.frequency, rect.width, freqRange);
-        const bandY = EQCoordinateUtils.gainToY(band.gain, rect.height);
-        
-        const distance = Math.sqrt(Math.pow(x - bandX, 2) + Math.pow(y - bandY, 2));
-        if (distance <= 10) { // 10px radius for hover detection
-          newHoveredBandId = band.id;
-          break;
+  // Throttled mouse move handler for hover effects
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const handleMouseMoveThrottled = useCallback(
+    throttle((e: React.MouseEvent) => {
+      // Only handle hover state here - dragging is handled by the global handler
+      if (draggingBand) return;
+      
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      
+      const rect = canvas.getBoundingClientRect();
+      
+      // Calculate mouse position relative to canvas
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      
+      // Check if hovering over a band
+      let newHoveredBandId: string | null = null;
+      
+      for (const band of bands) {
+        if (band.frequency >= freqRange.min && band.frequency <= freqRange.max) {
+          const bandX = EQCoordinateUtils.freqToX(band.frequency, rect.width, freqRange);
+          const bandY = EQCoordinateUtils.gainToY(band.gain, rect.height);
+          
+          const distance = Math.sqrt(Math.pow(x - bandX, 2) + Math.pow(y - bandY, 2));
+          if (distance <= 10) { // 10px radius for hover detection
+            newHoveredBandId = band.id;
+            break;
+          }
         }
       }
-    }
-
-    console.log("newHoveredBandId", newHoveredBandId);
-    
-    // Update hovered band
-    if (newHoveredBandId !== hoveredBandId) {
-      setHoveredBandId(newHoveredBandId);
       
-      // Update isHovered state in bands
-      bands.forEach(band => {
-        if (band.isHovered !== (band.id === newHoveredBandId)) {
-          onBandUpdate(band.id, { isHovered: band.id === newHoveredBandId });
-        }
-      });
-    }
-    
-    // Check if mouse is near center line to show ghost node
-    const centerY = rect.height / 2;
-    const distanceToCenter = Math.abs(y - centerY);
-    
-    if (distanceToCenter <= CENTER_LINE_THRESHOLD && !newHoveredBandId) {
-      // Show ghost node on center line
-      setGhostNode({
-        x,
-        y: centerY,
-        visible: true
-      });
-    } else {
-      // Hide ghost node
-      setGhostNode(prev => ({
-        ...prev,
-        visible: false
-      }));
-    }
-  }, [bands, draggingBand, hoveredBandId, freqRange, onBandUpdate, canvasRef]);
+      // Update hovered band
+      if (newHoveredBandId !== hoveredBandId) {
+        setHoveredBandId(newHoveredBandId);
+        
+        // Update isHovered state in bands
+        bands.forEach(band => {
+          if (band.isHovered !== (band.id === newHoveredBandId)) {
+            onBandUpdate(band.id, { isHovered: band.id === newHoveredBandId });
+          }
+        });
+      }
+      
+      // Check if mouse is near center line to show ghost node
+      const centerY = rect.height / 2;
+      const distanceToCenter = Math.abs(y - centerY);
+      
+      if (distanceToCenter <= CENTER_LINE_THRESHOLD && !newHoveredBandId) {
+        // Show ghost node on center line
+        setGhostNode({
+          x,
+          y: centerY,
+          visible: true
+        });
+      } else {
+        // Hide ghost node
+        setGhostNode(prev => ({
+          ...prev,
+          visible: false
+        }));
+      }
+    }, 16), // Throttle to roughly 60fps
+    [bands, draggingBand, hoveredBandId, freqRange, onBandUpdate, canvasRef]
+  );
+
+  // Wrapper for the throttled mouse move handler
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    handleMouseMoveThrottled(e);
+  }, [handleMouseMoveThrottled]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     const canvas = canvasRef.current;
@@ -296,9 +332,6 @@ export function useEQInteraction({
         setDraggingBand(clickedBandId);
         setIsDragging(true);
         onBandSelect(clickedBandId);
-        
-        // Add console log for debugging
-        console.log("Started dragging band:", clickedBandId);
       } else {
         // Check if click is near center line
         const centerY = rect.height / 2;
@@ -330,7 +363,6 @@ export function useEQInteraction({
             setDraggingBand(newBandId);
             setIsDragging(true);
             onBandSelect(newBandId);
-            console.log("Created and started dragging new band:", newBandId);
           }
         }
       }
@@ -345,8 +377,21 @@ export function useEQInteraction({
         setIsDragging(false);
       }
       onBandSelect(null);
+      
+      // Cancel any pending throttled updates
+      handleMouseMoveThrottled.cancel();
+      throttledBandUpdate.cancel();
     }
-  }, [bands, freqRange, hoveredBandId, draggingBand, onBandAdd, onBandRemove, onBandSelect, canvasRef]);
+  }, [bands, freqRange, hoveredBandId, draggingBand, onBandAdd, onBandRemove, onBandSelect, canvasRef, handleMouseMoveThrottled, throttledBandUpdate]);
+
+  // Cancel throttled functions on unmount
+  useEffect(() => {
+    return () => {
+      handleGlobalMouseMoveThrottled.cancel();
+      handleMouseMoveThrottled.cancel();
+      throttledBandUpdate.cancel();
+    };
+  }, [handleGlobalMouseMoveThrottled, handleMouseMoveThrottled, throttledBandUpdate]);
 
   return {
     handleMouseMove,
