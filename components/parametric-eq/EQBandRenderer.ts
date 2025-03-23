@@ -148,4 +148,106 @@ export class EQBandRenderer {
       : (isDarkMode ? '#aaa' : '#777');
     ctx.fillText(`Q: ${band.q.toFixed(1)}`, x, y + 20);
   }
+
+  /**
+   * Draw volume control slider
+   */
+  static drawVolumeControl(
+    ctx: CanvasRenderingContext2D,
+    volume: number,
+    width: number,
+    height: number,
+    isDarkMode: boolean,
+    isEnabled: boolean = true,
+    isDragging: boolean = false,
+    isHovered: boolean = false
+  ): void {
+    // Center line y-position (0dB)
+    const centerY = height * 0.5;
+    const startPos = 0;
+    const endPos = width;
+    
+    // Calculate volume dot position (using same calculation as gainToY)
+    const volumeY = EQCoordinateUtils.gainToY(volume, height);
+    
+    // Draw a horizontal line across the full width
+    ctx.beginPath();
+    ctx.strokeStyle = isDarkMode ? "#a1a1aa" : "#64748b";
+    ctx.lineWidth = 1;
+    ctx.moveTo(startPos, centerY);
+    ctx.lineTo(endPos, centerY);
+    ctx.stroke();
+    
+    // Draw filled rectangle between center line and volume line
+    ctx.beginPath();
+    
+    // Use a more prominent color when hovered
+    const fillOpacity = isHovered || isDragging ? (isEnabled ? 0.2 : 0.1) : (isEnabled ? 0.1 : 0.03);
+    ctx.fillStyle = `rgba(255, 255, 255, ${fillOpacity})`;  // White with opacity
+    
+    // Draw the full-width rectangle
+    ctx.rect(
+      startPos, // Start from left edge
+      Math.min(centerY, volumeY), // Top of rectangle (either center or volume line)
+      endPos, // Full width
+      Math.abs(centerY - volumeY) // Height - absolute difference between center and volume
+    );
+    ctx.fill();
+    
+    // Draw volume indicator line across full width
+    ctx.beginPath();
+    
+    // Brighter/more visible when hovered
+    const lineOpacity = isHovered || isDragging ? 1.0 : (isEnabled ? 0.8 : 0.5);
+    ctx.strokeStyle = `rgba(255, 255, 255, ${lineOpacity})`; // White with opacity
+    ctx.lineWidth = isHovered || isDragging ? 2 : 1;
+    ctx.moveTo(startPos, volumeY);
+    ctx.lineTo(endPos, volumeY);
+    ctx.stroke();
+    
+    // Only draw the dot indicator on the right side
+    const dotX = width - 20; // 20px from right edge
+    
+    // Draw volume dot
+    ctx.beginPath();
+    ctx.fillStyle = isEnabled 
+      ? `rgba(255, 255, 255, ${lineOpacity})` 
+      : `rgba(255, 255, 255, ${lineOpacity * 0.7})`;
+    
+    // Larger dot when hovered
+    const dotRadius = isHovered || isDragging ? 8 : 6;
+    ctx.arc(dotX, volumeY, dotRadius, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Draw a subtle ring around dot when hovered
+    if (isHovered && !isDragging) {
+      ctx.beginPath();
+      ctx.strokeStyle = isDarkMode 
+        ? "rgba(200, 200, 200, 0.4)" 
+        : "rgba(150, 150, 150, 0.3)";
+      ctx.lineWidth = 1.5;
+      ctx.arc(dotX, volumeY, dotRadius + 3, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    
+    // Draw volume value if being dragged or hovered
+    if (isDragging || isHovered || Math.abs(volume) > 0.1) {
+      ctx.fillStyle = isDarkMode ? "#ffffff" : "#000000";
+      ctx.textAlign = "left";
+      ctx.font = `${isHovered || isDragging ? "bold " : ""}12px sans-serif`;
+      const volumeText = `${volume.toFixed(1)} dB`;
+      ctx.fillText(volumeText, dotX + 15, volumeY + 5);
+    }
+  }
+
+  /**
+   * Check if point is inside the volume control dot
+   */
+  static isInVolumeControl(x: number, y: number, width: number, height: number, volume: number): boolean {
+    const dotX = width - 20; // 20px from right edge
+    const volumeY = EQCoordinateUtils.gainToY(volume, height);
+    const dotRadius = 10; // Slightly larger hit area for better UX
+    
+    return Math.sqrt(Math.pow(x - dotX, 2) + Math.pow(y - volumeY, 2)) <= dotRadius;
+  }
 } 
