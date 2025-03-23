@@ -407,8 +407,9 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
 
     // Draw individual band responses
     renderableBands.forEach((band) => {
-      // Consider a band "hovered" if it's the selected band or if it's being dragged
-      const isHovered = band.id === hoveredBandId;
+      // Consider a band "hovered" if it's the selected band, if it's being dragged,
+      // or if it's already marked as hovered
+      const isHovered = band.id === hoveredBandId || band.id === draggingBandId;
       const isDragging = band.id === draggingBandId;
       
       EQBandRenderer.drawBand(
@@ -423,8 +424,8 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
         isEnabled
       );
       
-      // Draw Q indicator if shift is pressed and band is selected or hovered
-      if (isShiftPressed && (band.id === selectedBandId || band.isHovered)) {
+      // Draw Q indicator if shift is pressed and band is selected, hovered, or being dragged
+      if (isShiftPressed && (band.id === selectedBandId || band.isHovered || band.id === draggingBandId)) {
         EQBandRenderer.drawQIndicator(
           ctx,
           band,
@@ -453,7 +454,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     }
     
     // Draw ghost node if visible and not disabled
-    if (ghostNode.visible && !isEnabled) {
+    if (ghostNode.visible && !disabled) {
       // Calculate color based on location (frequency)
       const ghostFreq = EQCoordinateUtils.xToFreq(ghostNode.x, rect.width, freqRange);
       const ghostColor = EQCoordinateUtils.getBandColor(ghostFreq, 1.0, isDarkMode);
@@ -465,6 +466,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
         ghostNode.y,
         ghostColor,
         true,
+        false,
         isEnabled
       );
     }
