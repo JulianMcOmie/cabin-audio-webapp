@@ -199,6 +199,22 @@ export class ColorUtils {
   }
   
   /**
+   * Convert a color to grayscale
+   * Sets saturation to 0 and optionally adjusts opacity
+   */
+  static makeGrayscale(color: string, opacity?: number): string {
+    const hsla = this.parseColor(color);
+    
+    // Set saturation to 0 for grayscale
+    const newS = 0;
+    
+    // Use provided opacity or keep the original
+    const newA = opacity !== undefined ? opacity : hsla.a;
+    
+    return this.toHsla(hsla.h, newS, hsla.l, newA);
+  }
+  
+  /**
    * Generate a contrasting color (for text on background)
    * Returns either white or black depending on the background color
    */
@@ -226,22 +242,6 @@ export class ColorUtils {
     }
     
     return result;
-  }
-  
-  /**
-   * Works directly with EQCoordinateUtils.getBandColor
-   * Makes the band color more or less vibrant based on state
-   */
-  static adjustBandColor(frequency: number, isDarkMode: boolean, isHovered: boolean): string {
-    // Use the existing getBandColor function from EQCoordinateUtils
-    const baseColor = EQCoordinateUtils.getBandColor(frequency, isHovered ? 0.9 : 0.7, isDarkMode);
-    
-    // Further adjust the color based on hover state
-    if (isHovered) {
-      return this.makeVibrant(baseColor, 1.2);
-    } else {
-      return baseColor;
-    }
   }
   
   /**

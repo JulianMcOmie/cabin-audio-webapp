@@ -25,9 +25,13 @@ export class EQBandRenderer {
     // Adjust opacity based on isHovered state
     const baseOpacity = isHovered ? 0.85 : 0.5; // More opaque when highlighted, but more vibrant by default
     
-    const bandColor = isEnabled 
-      ? EQCoordinateUtils.getBandColor(band.frequency, baseOpacity, isDarkMode)
-      : `rgba(128, 128, 128, ${baseOpacity})`;
+    // Get the base color
+    let bandColor = EQCoordinateUtils.getBandColor(band.frequency, baseOpacity, isDarkMode);
+    
+    // If disabled, convert to grayscale 
+    if (!isEnabled) {
+      bandColor = ColorUtils.makeGrayscale(bandColor, baseOpacity * 0.7);
+    }
       
     // Always calculate the exact frequency response for the most accurate rendering
     // This ensures we're using the Web Audio API's getFrequencyResponse method
@@ -70,12 +74,16 @@ export class EQBandRenderer {
     const handleRadius = 8;
     const innerRadius = isDragging ? handleRadius : handleRadius / 2;
 
-    let outerColor = ColorUtils.setOpacity(color, 0.5);
-    let innerColor = ColorUtils.setOpacity(color, 1.0);
-
-    if (!isEnabled) {
-      outerColor = ColorUtils.makeMuted(color, 0.2);
-      innerColor = ColorUtils.makeMuted(color, 0.5);
+    // Set colors based on enabled state
+    let outerColor, innerColor;
+    
+    if (isEnabled) {
+      outerColor = ColorUtils.setOpacity(color, 0.5);
+      innerColor = ColorUtils.setOpacity(color, 1.0);
+    } else {
+      // Use grayscale for disabled state
+      outerColor = ColorUtils.makeGrayscale(color, 0.3);
+      innerColor = ColorUtils.makeGrayscale(color, 0.5);
     }
     
     // Draw the outer circle

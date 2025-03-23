@@ -71,9 +71,12 @@ export function updateAudio(
 
 export function FrequencyEQ({ profileId, disabled = false, className, onInstructionChange, onRequestEnable }: FrequencyEQProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const backgroundCanvasRef = useRef<HTMLCanvasElement>(null)
   // Add refs for animation frame and canvas context
   const animationFrameRef = useRef<number | null>(null)
   const canvasContextRef = useRef<CanvasRenderingContext2D | null>(null)
+  const backgroundContextRef = useRef<CanvasRenderingContext2D | null>(null)
+  const backgroundDrawnRef = useRef<boolean>(false)
   
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [selectedBandId, setSelectedBandId] = useState<string | null>(null)
@@ -325,6 +328,8 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
         if (mutation.attributeName === "class") {
           const newIsDarkMode = document.documentElement.classList.contains("dark")
           setIsDarkMode(newIsDarkMode)
+          // When theme changes, we need to redraw the background
+          backgroundDrawnRef.current = false;
         }
       })
     })
@@ -336,17 +341,17 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     }
   }, [])
 
-  // Main canvas rendering function to be called by requestAnimationFrame
-  const renderCanvas = useCallback(() => {
-    const canvas = canvasRef.current;
+  // Draw static background elements
+  const renderBackgroundCanvas = useCallback(() => {
+    const canvas = backgroundCanvasRef.current;
     if (!canvas) return;
 
     // Get or create context
-    let ctx = canvasContextRef.current;
+    let ctx = backgroundContextRef.current;
     if (!ctx) {
       ctx = canvas.getContext("2d");
       if (!ctx) return;
-      canvasContextRef.current = ctx;
+      backgroundContextRef.current = ctx;
     }
 
     // Get canvas dimensions
@@ -400,6 +405,34 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     for (let i = 0; i < dbLabels.length; i++) {
       const y = (i / (levels - 1)) * (rect.height - 30) + 15;
       ctx.fillText(dbLabels[i], rect.width - 10, y);
+    }
+
+    // Mark background as drawn
+    backgroundDrawnRef.current = true;
+  }, [isDarkMode]);
+
+  // Main canvas rendering function to be called by requestAnimationFrame
+  const renderCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // Get or create context
+    let ctx = canvasContextRef.current;
+    if (!ctx) {
+      ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      canvasContextRef.current = ctx;
+    }
+
+    // Get canvas dimensions
+    const rect = canvas.getBoundingClientRect();
+
+    // Clear canvas
+    ctx.clearRect(0, 0, rect.width, rect.height);
+
+    // Check if background needs to be drawn
+    if (!backgroundDrawnRef.current) {
+      renderBackgroundCanvas();
     }
 
     // Set isEnabled based on disabled prop
@@ -544,25 +577,39 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     profile, 
     volumeToY, 
     isDraggingVolume,
-    freqRange
+    freqRange,
+    renderBackgroundCanvas
   ]);
 
-  // Initialize canvas and start animation loop
+  // Initialize canvases and start animation loop
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const backgroundCanvas = backgroundCanvasRef.current;
+    if (!canvas || !backgroundCanvas) return;
 
     // Set canvas dimensions
     const dpr = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
+    
     canvas.width = rect.width * dpr;
     canvas.height = rect.height * dpr;
     
+    backgroundCanvas.width = rect.width * dpr;
+    backgroundCanvas.height = rect.height * dpr;
+    
     const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    const bgCtx = backgroundCanvas.getContext("2d");
+    
+    if (!ctx || !bgCtx) return;
     
     ctx.scale(dpr, dpr);
+    bgCtx.scale(dpr, dpr);
+    
     canvasContextRef.current = ctx;
+    backgroundContextRef.current = bgCtx;
+    
+    // Mark background as needing to be redrawn
+    backgroundDrawnRef.current = false;
     
     // Start the animation loop
     animationFrameRef.current = requestAnimationFrame(renderCanvas);
@@ -579,19 +626,32 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
   useEffect(() => {
     const handleResize = () => {
       const canvas = canvasRef.current;
-      if (!canvas) return;
+      const backgroundCanvas = backgroundCanvasRef.current;
+      if (!canvas || !backgroundCanvas) return;
       
       // Update canvas dimensions
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
+      
       canvas.width = rect.width * dpr;
       canvas.height = rect.height * dpr;
       
+      backgroundCanvas.width = rect.width * dpr;
+      backgroundCanvas.height = rect.height * dpr;
+      
       // Reset context scale
       const ctx = canvas.getContext("2d");
-      if (ctx) {
+      const bgCtx = backgroundCanvas.getContext("2d");
+      
+      if (ctx && bgCtx) {
         ctx.scale(dpr, dpr);
+        bgCtx.scale(dpr, dpr);
+        
         canvasContextRef.current = ctx;
+        backgroundContextRef.current = bgCtx;
+        
+        // Mark background as needing to be redrawn
+        backgroundDrawnRef.current = false;
       }
     };
     
@@ -601,11 +661,15 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
 
   return (
     <div
-      className={`w-full aspect-[2/1] frequency-graph rounded-lg border dark:border-gray-700 overflow-hidden opacity-80 ${className || ""}`}
+      className={`w-full aspect-[2/1] frequency-graph rounded-lg border dark:border-gray-700 overflow-hidden opacity-80 ${className || ""} relative`}
     >
       <canvas 
+        ref={backgroundCanvasRef}
+        className="w-full h-full absolute top-0 left-0 z-0"
+      />
+      <canvas 
         ref={canvasRef} 
-        className="w-full h-full" 
+        className="w-full h-full absolute top-0 left-0 z-10"
         onMouseMove={handleBandMouseMove}
         onMouseDown={handleMouseDown}
         onContextMenu={(e) => e.preventDefault()}
