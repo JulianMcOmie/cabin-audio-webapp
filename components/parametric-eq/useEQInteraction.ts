@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, RefObject } from 'react';
+import { useState, useEffect, useCallback, RefObject, useRef } from 'react';
 // import { v4 as uuidv4 } from 'uuid';
 import { EQBandWithUI } from './types';
 import { EQCoordinateUtils } from './EQCoordinateUtils';
@@ -39,6 +39,9 @@ export function useEQInteraction({
     visible: false,
   });
 
+  // Add ref to track previous mouse position
+  const prevMousePositionRef = useRef<{x: number, y: number} | null>(null);
+
   // Distance threshold for showing ghost node near center line
   const CENTER_LINE_THRESHOLD = 15;
 
@@ -75,6 +78,24 @@ export function useEQInteraction({
       
       const rect = canvas.getBoundingClientRect();
       
+      // Get current mouse position
+      const currentMousePosition = {
+        x: e.clientX,
+        y: e.clientY
+      };
+      
+      // Calculate delta manually by comparing with previous position
+      let deltaX = 0;
+      let deltaY = 0;
+      
+      if (prevMousePositionRef.current) {
+        deltaX = currentMousePosition.x - prevMousePositionRef.current.x;
+        deltaY = currentMousePosition.y - prevMousePositionRef.current.y;
+      }
+      
+      // Update previous position for next frame
+      prevMousePositionRef.current = currentMousePosition;
+      
       // Calculate position relative to canvas, applying shift offsets
       let x = e.clientX - rect.left - shiftOffset.x;
       let y = e.clientY - rect.top - shiftOffset.y;
@@ -96,21 +117,18 @@ export function useEQInteraction({
         // Shift + drag adjusts Q
         const band = bands.find(b => b.id === draggingBand);
         if (band) {
-          // Track Q adjustment with qOffset
-        //   setQOffset(prev => prev + e.movementY);
-          
           // Only update shiftOffset if mouse is inside canvas
           if (isInsideCanvas) {
             setShiftOffset(prev => ({
-              x: prev.x + e.movementX,
-              y: prev.y + e.movementY
+              x: prev.x + deltaX,
+              y: prev.y + deltaY
             }));
           }
           
           // Calculate new Q: moving up (negative offset) increases Q, moving down decreases Q
           const currentQ = band.q || 1.0;
           const scaleFactor = 0.02;
-          const newQ = Math.max(0.1, Math.min(10, currentQ * Math.exp(-e.movementY * scaleFactor)));
+          const newQ = Math.max(0.1, Math.min(10, currentQ * Math.exp(-deltaY * scaleFactor)));
           
           onBandUpdate(draggingBand, { q: newQ });
         }
@@ -122,30 +140,30 @@ export function useEQInteraction({
         // If we're outside of the canvas, but we move towards the canvas, we can reduce shiftOffset
         if (!isInsideCanvas) {
           // Handle X offset reduction
-          if (shiftOffset.x > 0 && e.movementX > 0) {
+          if (shiftOffset.x > 0 && deltaX > 0) {
             setShiftOffset(prev => ({
               ...prev,
-              x: Math.max(0, prev.x - e.movementX)
+              x: Math.max(0, prev.x - deltaX)
             }));
           }
-          if (shiftOffset.x < 0 && e.movementX < 0) {
+          if (shiftOffset.x < 0 && deltaX < 0) {
             setShiftOffset(prev => ({
               ...prev,
-              x: Math.min(0, prev.x - e.movementX)
+              x: Math.min(0, prev.x - deltaX)
             }));
           }
           
           // Handle Y offset reduction
-          if (shiftOffset.y > 0 && e.movementY > 0) {
+          if (shiftOffset.y > 0 && deltaY > 0) {
             setShiftOffset(prev => ({
               ...prev,
-              y: Math.max(0, prev.y - e.movementY)
+              y: Math.max(0, prev.y - deltaY)
             }));
           }
-          if (shiftOffset.y < 0 && e.movementY < 0) {
+          if (shiftOffset.y < 0 && deltaY < 0) {
             setShiftOffset(prev => ({
               ...prev,
-              y: Math.min(0, prev.y - e.movementY)
+              y: Math.min(0, prev.y - deltaY)
             }));
           }
         }
@@ -159,6 +177,7 @@ export function useEQInteraction({
     const handleGlobalMouseUp = () => {
       setDraggingBand(null);
       setIsDragging(false);
+      prevMousePositionRef.current = null; // Reset position tracking
     };
     
     // Add global event listeners
@@ -244,6 +263,12 @@ export function useEQInteraction({
     // Calculate mouse position relative to canvas
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+    
+    // Initialize position tracking for delta calculations
+    prevMousePositionRef.current = {
+      x: e.clientX,
+      y: e.clientY
+    };
     
     // Reset both offsets when starting a new drag
     setShiftOffset({ x: 0, y: 0 });
