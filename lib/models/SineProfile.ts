@@ -7,4 +7,5 @@ export interface SineProfile {
   points: EQPoint[];
   lastModified: number;
   syncStatus: SyncStatus;
+  volume?: number; // Volume offset in dB
 } 

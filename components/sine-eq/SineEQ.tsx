@@ -48,6 +48,10 @@ export function SineEQ({
   const [isDarkMode, setIsDarkMode] = useState(false)
   const backgroundDrawnRef = useRef<boolean>(false)
   
+  // Volume control state
+  const [isDraggingVolume, setIsDraggingVolume] = useState(false)
+  const [isHoveringVolume, setIsHoveringVolume] = useState(false)
+  
   // Reference node (1kHz, 0dB) - can't be moved
   const referenceNode: EQPoint = { frequency: 1000, amplitude: 0 }
   
@@ -121,9 +125,10 @@ export function SineEQ({
   useEffect(() => {
     // Only sync if the disabled prop wasn't explicitly set
     if (disabled === undefined) {
-      onRequestEnable?.(!isSineEQEnabled)
+      setSineEQEnabled(!isSineEQEnabled)
+      onRequestEnable?.()
     }
-  }, [isSineEQEnabled, disabled, onRequestEnable])
+  }, [isSineEQEnabled, disabled, onRequestEnable, setSineEQEnabled])
   
   // Detect theme changes
   useEffect(() => {
@@ -180,6 +185,49 @@ export function SineEQ({
     backgroundDrawnRef.current = true
   }, [isDarkMode])
   
+  // Get actual disabled state either from props or from store
+  const actualDisabled = disabled !== undefined ? disabled : !isSineEQEnabled
+
+  // Draw volume control
+  const drawVolumeControl = useCallback((ctx: CanvasRenderingContext2D, volume: number, width: number, height: number, isDarkMode: boolean, isEnabled: boolean, isDragging: boolean, isHovered: boolean, marginX: number, marginY: number) => {
+    const handleSize = 12;
+    const handleY = marginY + CoordinateUtils.amplitudeToY(volume, height, ampRange);
+    const handleX = width + marginX - handleSize;
+    
+    // Draw handle background
+    ctx.fillStyle = isDarkMode 
+      ? (isHovered ? "rgba(255, 255, 255, 0.2)" : "rgba(255, 255, 255, 0.1)")
+      : (isHovered ? "rgba(0, 0, 0, 0.1)" : "rgba(0, 0, 0, 0.05)");
+    ctx.fillRect(handleX, handleY - handleSize/2, handleSize, handleSize);
+    
+    // Draw handle border
+    ctx.strokeStyle = isDarkMode 
+      ? (isHovered ? "rgba(255, 255, 255, 0.5)" : "rgba(255, 255, 255, 0.3)")
+      : (isHovered ? "rgba(0, 0, 0, 0.3)" : "rgba(0, 0, 0, 0.2)");
+    ctx.lineWidth = 1;
+    ctx.strokeRect(handleX, handleY - handleSize/2, handleSize, handleSize);
+    
+    // Draw handle line
+    ctx.beginPath();
+    ctx.moveTo(handleX + handleSize/2, handleY - handleSize/2);
+    ctx.lineTo(handleX + handleSize/2, handleY + handleSize/2);
+    ctx.strokeStyle = isDarkMode 
+      ? (isEnabled ? "rgba(255, 255, 255, 0.8)" : "rgba(255, 255, 255, 0.3)")
+      : (isEnabled ? "rgba(0, 0, 0, 0.8)" : "rgba(0, 0, 0, 0.3)");
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }, [ampRange]);
+
+  // Helper function to check if a point is in the volume control
+  const isInVolumeControl = useCallback((x: number, y: number, width: number, height: number, volume: number, marginX: number, marginY: number): boolean => {
+    const handleSize = 12;
+    const handleY = marginY + CoordinateUtils.amplitudeToY(volume, height, ampRange);
+    const handleX = width + marginX - handleSize;
+    
+    return x >= handleX && x <= handleX + handleSize &&
+           y >= handleY - handleSize/2 && y <= handleY + handleSize/2;
+  }, [ampRange]);
+
   // Main canvas rendering function (frequency response curve and points)
   const renderCanvas = useCallback(() => {
     const canvas = canvasRef.current
@@ -271,6 +319,23 @@ export function SineEQ({
       )
     }
 
+    // Draw volume control if we have a profile
+    const profile = profileId ? getProfileById(profileId) : getActiveProfile()
+    if (profile) {
+      drawVolumeControl(
+        ctx,
+        profile.volume || 0,
+        rect.width - margin * 2,
+        rect.height - margin * 2,
+        isDarkMode,
+        !disabled,
+        isDraggingRef.current,
+        false,
+        margin,
+        margin
+      )
+    }
+
     // Continue the animation loop
     animationFrameRef.current = requestAnimationFrame(renderCanvas)
   }, [
@@ -282,7 +347,11 @@ export function SineEQ({
     ampRange, 
     renderBackgroundCanvas,
     referenceNode,
-    disabled
+    disabled,
+    drawVolumeControl,
+    profileId,
+    getProfileById,
+    getActiveProfile
   ])
   
   // Find nearest point to cursor coordinates
@@ -369,76 +438,99 @@ export function SineEQ({
   
   // Handler for mouse movement
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (disabled) return
+    if (disabled) return;
     
-    const canvas = canvasRef.current
-    if (!canvas) return
+    const canvas = canvasRef.current;
+    if (!canvas) return;
     
-    const rect = canvas.getBoundingClientRect()
+    const rect = canvas.getBoundingClientRect();
     
     // Get mouse coordinates
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Get the current profile
+    const profile = profileId ? getProfileById(profileId) : getActiveProfile();
+    if (!profile) return;
     
     // Check if we're in the inner canvas area
     const isInnerArea = x >= margin && x <= rect.width - margin && 
-                      y >= margin && y <= rect.height - margin
+                      y >= margin && y <= rect.height - margin;
     
-    // If we're dragging a point, update its position
+    // Check if we're hovering over the volume control
+    const isOverVolume = isInVolumeControl(
+      x, y, rect.width - margin * 2, rect.height - margin * 2,
+      profile.volume || 0, margin, margin
+    );
+    
+    setIsHoveringVolume(isOverVolume);
+    
+    // If we're dragging volume, handle that
+    if (isDraggingVolume) {
+      // Calculate new volume based on y position
+      const innerY = Math.max(0, Math.min(rect.height - margin * 2, y - margin));
+      const newVolume = CoordinateUtils.yToAmplitude(innerY, rect.height - margin * 2, ampRange);
+      
+      // Update profile volume
+      updateProfile(profile.id, { volume: newVolume });
+      return;
+    }
+    
+    // If we're not dragging volume, handle point interactions
     if (isDraggingRef.current && selectedPointIndex !== null && isInnerArea) {
       // Calculate the new frequency and amplitude
-      const innerX = x - margin
-      const innerY = y - margin
-      const innerWidth = rect.width - margin * 2
-      const innerHeight = rect.height - margin * 2
+      const innerX = x - margin;
+      const innerY = y - margin;
+      const innerWidth = rect.width - margin * 2;
+      const innerHeight = rect.height - margin * 2;
       
-      const newFrequency = CoordinateUtils.xToFreq(innerX, innerWidth, freqRange)
-      const newAmplitude = CoordinateUtils.yToAmplitude(innerY, innerHeight, ampRange)
+      const newFrequency = CoordinateUtils.xToFreq(innerX, innerWidth, freqRange);
+      const newAmplitude = CoordinateUtils.yToAmplitude(innerY, innerHeight, ampRange);
       
       // Update the point
-      const newPoints = [...points]
+      const newPoints = [...points];
       newPoints[selectedPointIndex] = {
         frequency: newFrequency,
         amplitude: newAmplitude
-      }
-      setPoints(newPoints)
+      };
+      setPoints(newPoints);
       
       // Update cursor
-      document.body.style.cursor = 'grabbing'
+      document.body.style.cursor = 'grabbing';
       
-      return
+      return;
     }
     
     // If we're not dragging, check if we're hovering over a point
     if (isInnerArea) {
-      const nearestPointIndex = findNearestPoint(x, y)
+      const nearestPointIndex = findNearestPoint(x, y);
       
       if (nearestPointIndex !== null) {
         // We're hovering over a point
-        setSelectedPointIndex(nearestPointIndex)
-        setGhostPoint({ visible: false, x: 0, y: 0, frequency: 0, amplitude: 0 })
-        document.body.style.cursor = 'grab'
+        setSelectedPointIndex(nearestPointIndex);
+        setGhostPoint({ visible: false, x: 0, y: 0, frequency: 0, amplitude: 0 });
+        document.body.style.cursor = 'grab';
         
         if (onInstructionChange) {
-          onInstructionChange('Click and drag to move the point')
+          onInstructionChange('Click and drag to move the point');
         }
       } else {
         // We're not hovering over a point, show ghost point
-        const innerX = x - margin
-        const innerY = y - margin
-        const innerWidth = rect.width - margin * 2
-        const innerHeight = rect.height - margin * 2
+        const innerX = x - margin;
+        const innerY = y - margin;
+        const innerWidth = rect.width - margin * 2;
+        const innerHeight = rect.height - margin * 2;
         
-        const frequency = CoordinateUtils.xToFreq(innerX, innerWidth, freqRange)
+        const frequency = CoordinateUtils.xToFreq(innerX, innerWidth, freqRange);
         
         // For the ghost point's amplitude, we'll get the current curve value at this frequency
-        const amplitude = calculateAmplitudeAtFrequency(frequency)
+        const amplitude = calculateAmplitudeAtFrequency(frequency);
         
         // Now calculate the y position for this amplitude
-        const curveY = margin + CoordinateUtils.amplitudeToY(amplitude, innerHeight, ampRange)
+        const curveY = margin + CoordinateUtils.amplitudeToY(amplitude, innerHeight, ampRange);
         
         // Only show ghost if close to the curve
-        const distanceToCurve = Math.abs(y - curveY)
+        const distanceToCurve = Math.abs(y - curveY);
         
         if (distanceToCurve < 20) {
           setGhostPoint({
@@ -447,167 +539,215 @@ export function SineEQ({
             y: curveY,
             frequency,
             amplitude
-          })
-          document.body.style.cursor = 'crosshair'
+          });
+          document.body.style.cursor = 'crosshair';
           
           if (onInstructionChange) {
-            onInstructionChange('Click to add a new control point')
+            onInstructionChange('Click to add a new control point');
           }
         } else {
-          setGhostPoint({ visible: false, x: 0, y: 0, frequency: 0, amplitude: 0 })
-          document.body.style.cursor = 'default'
+          setGhostPoint({ visible: false, x: 0, y: 0, frequency: 0, amplitude: 0 });
+          document.body.style.cursor = 'default';
           
           if (onInstructionChange) {
-            onInstructionChange('Move cursor near the curve to add points')
+            onInstructionChange('Move cursor near the curve to add points');
           }
         }
         
-        setSelectedPointIndex(null)
+        setSelectedPointIndex(null);
       }
     } else {
       // Outside inner area
-      setGhostPoint({ visible: false, x: 0, y: 0, frequency: 0, amplitude: 0 })
-      setSelectedPointIndex(null)
-      document.body.style.cursor = 'default'
+      setGhostPoint({ visible: false, x: 0, y: 0, frequency: 0, amplitude: 0 });
+      setSelectedPointIndex(null);
+      document.body.style.cursor = 'default';
     }
-  }, [disabled, selectedPointIndex, points, freqRange, ampRange, onInstructionChange])
-  
+  }, [
+    disabled, 
+    selectedPointIndex, 
+    points, 
+    freqRange, 
+    ampRange, 
+    onInstructionChange,
+    isDraggingVolume,
+    profileId,
+    getProfileById,
+    getActiveProfile,
+    updateProfile,
+    isInVolumeControl
+  ]);
+
   // Handler for mouse down
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (disabled) {
       // If disabled, ask to enable
       if (onRequestEnable) {
-        setSineEQEnabled(true)
-        onRequestEnable()
+        setSineEQEnabled(true);
+        onRequestEnable();
       }
-      return
+      return;
     }
     
-    const canvas = canvasRef.current
-    if (!canvas) return
+    const canvas = canvasRef.current;
+    if (!canvas) return;
     
-    const rect = canvas.getBoundingClientRect()
+    const rect = canvas.getBoundingClientRect();
     
     // Get mouse coordinates
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Get the current profile
+    const profile = profileId ? getProfileById(profileId) : getActiveProfile();
+    if (!profile) return;
+    
+    // Check if we're clicking on the volume control
+    const isOverVolume = isInVolumeControl(
+      x, y, rect.width - margin * 2, rect.height - margin * 2,
+      profile.volume || 0, margin, margin
+    );
+    
+    if (isOverVolume) {
+      setIsDraggingVolume(true);
+      document.body.style.cursor = 'grabbing';
+      
+      // Handle document mouse move to support dragging outside canvas bounds
+      const handleDocumentMouseMove = (e: MouseEvent) => {
+        const rect = canvas.getBoundingClientRect();
+        const y = e.clientY - rect.top;
+        
+        // Calculate position within the inner area
+        const innerY = Math.max(margin, Math.min(rect.height - margin, y)) - margin;
+        
+        // Calculate new volume using CoordinateUtils
+        const newVolume = CoordinateUtils.yToAmplitude(innerY, rect.height - margin * 2, ampRange);
+        
+        // Update profile volume
+        updateProfile(profile.id, { volume: newVolume });
+      };
+      
+      const handleDocumentMouseUp = () => {
+        setIsDraggingVolume(false);
+        document.body.style.cursor = '';
+        
+        document.removeEventListener('mousemove', handleDocumentMouseMove);
+        document.removeEventListener('mouseup', handleDocumentMouseUp);
+      };
+      
+      document.addEventListener('mousemove', handleDocumentMouseMove);
+      document.addEventListener('mouseup', handleDocumentMouseUp);
+      
+      return;
+    }
     
     // Check if right click (for deleting points)
     if (e.button === 2) {
-      e.preventDefault()
+      e.preventDefault();
       
       // Check if we're clicking on a point
-      const nearestPointIndex = findNearestPoint(x, y)
+      const nearestPointIndex = findNearestPoint(x, y);
       
       if (nearestPointIndex !== null) {
         // Delete the point
-        const newPoints = [...points]
-        newPoints.splice(nearestPointIndex, 1)
-        setPoints(newPoints)
-        setSelectedPointIndex(null)
+        const newPoints = [...points];
+        newPoints.splice(nearestPointIndex, 1);
+        setPoints(newPoints);
+        setSelectedPointIndex(null);
       }
       
-      return
+      return;
     }
     
     // Left click - handle point creation or dragging
     if (selectedPointIndex !== null) {
       // Start dragging the selected point
-      isDraggingRef.current = true
-      document.body.style.cursor = 'grabbing'
+      isDraggingRef.current = true;
+      document.body.style.cursor = 'grabbing';
     } else if (ghostPoint.visible) {
       // Create a new point
       const newPoint: EQPoint = {
         frequency: ghostPoint.frequency,
         amplitude: ghostPoint.amplitude
-      }
+      };
       
       // Create updated points array with the new point
-      const newPoints = [...points, newPoint]
+      const newPoints = [...points, newPoint];
       
       // Update state
-      setPoints(newPoints)
+      setPoints(newPoints);
       
       // Select and start dragging the new point
-      setSelectedPointIndex(newPoints.length - 1)
-      isDraggingRef.current = true
+      setSelectedPointIndex(newPoints.length - 1);
+      isDraggingRef.current = true;
       
       // Hide the ghost point immediately
-      setGhostPoint({ visible: false, x: 0, y: 0, frequency: 0, amplitude: 0 })
+      setGhostPoint({ visible: false, x: 0, y: 0, frequency: 0, amplitude: 0 });
       
-      document.body.style.cursor = 'grabbing'
+      document.body.style.cursor = 'grabbing';
       
       // Immediately save the new point to the profile
-      const profile = profileId 
-        ? getProfileById(profileId) 
-        : getActiveProfile()
-      
       if (profile) {
         // Use newPoints here instead of points to ensure we save the latest state
-        updateProfile(profile.id, { points: newPoints })
+        updateProfile(profile.id, { points: newPoints });
       }
     }
     
     // Add document event listeners for dragging outside canvas
     const handleDocumentMouseMove = (e: MouseEvent) => {
-      if (!canvas) return
+      if (!canvas) return;
       
-      const rect = canvas.getBoundingClientRect()
-      const x = e.clientX - rect.left
-      const y = e.clientY - rect.top
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
       
       // Check if we're in the inner canvas area
       const isInnerArea = x >= margin && x <= rect.width - margin && 
-                        y >= margin && y <= rect.height - margin
+                        y >= margin && y <= rect.height - margin;
       
       if (isDraggingRef.current && selectedPointIndex !== null) {
         // Calculate new position, but clamp to inner area
-        const innerX = Math.max(0, Math.min(rect.width - margin * 2, x - margin))
-        const innerY = Math.max(0, Math.min(rect.height - margin * 2, y - margin))
-        const innerWidth = rect.width - margin * 2
-        const innerHeight = rect.height - margin * 2
+        const innerX = Math.max(0, Math.min(rect.width - margin * 2, x - margin));
+        const innerY = Math.max(0, Math.min(rect.height - margin * 2, y - margin));
+        const innerWidth = rect.width - margin * 2;
+        const innerHeight = rect.height - margin * 2;
         
-        const newFrequency = CoordinateUtils.xToFreq(innerX, innerWidth, freqRange)
-        const newAmplitude = CoordinateUtils.yToAmplitude(innerY, innerHeight, ampRange)
+        const newFrequency = CoordinateUtils.xToFreq(innerX, innerWidth, freqRange);
+        const newAmplitude = CoordinateUtils.yToAmplitude(innerY, innerHeight, ampRange);
         
         // Update the point
-        const newPoints = [...points]
+        const newPoints = [...points];
         newPoints[selectedPointIndex] = {
           frequency: newFrequency,
           amplitude: newAmplitude
-        }
-        setPoints(newPoints)
+        };
+        setPoints(newPoints);
       }
-    }
+    };
     
     const handleDocumentMouseUp = () => {
-      isDraggingRef.current = false
-      document.body.style.cursor = ''
+      isDraggingRef.current = false;
+      document.body.style.cursor = '';
       
       // When we release, save the points to the profile
-      const profile = profileId 
-        ? getProfileById(profileId) 
-        : getActiveProfile()
-      
       if (profile) {
         // Important: Need to access the current points state here
         // Use a function to get the latest points from the updater
         setPoints(currentPoints => {
           // Save the latest points
           if (profile) {
-            updateProfile(profile.id, { points: currentPoints })
+            updateProfile(profile.id, { points: currentPoints });
           }
           // Return unchanged
-          return currentPoints
-        })
+          return currentPoints;
+        });
       }
       
-      document.removeEventListener('mousemove', handleDocumentMouseMove)
-      document.removeEventListener('mouseup', handleDocumentMouseUp)
-    }
+      document.removeEventListener('mousemove', handleDocumentMouseMove);
+      document.removeEventListener('mouseup', handleDocumentMouseUp);
+    };
     
-    document.addEventListener('mousemove', handleDocumentMouseMove)
-    document.addEventListener('mouseup', handleDocumentMouseUp)
+    document.addEventListener('mousemove', handleDocumentMouseMove);
+    document.addEventListener('mouseup', handleDocumentMouseUp);
   }, [
     disabled, 
     selectedPointIndex, 
@@ -620,8 +760,9 @@ export function SineEQ({
     getProfileById, 
     getActiveProfile, 
     updateProfile,
-    setSineEQEnabled
-  ])
+    setSineEQEnabled,
+    isInVolumeControl
+  ]);
   
   // Prevent context menu on right click
   const handleContextMenu = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -705,9 +846,6 @@ export function SineEQ({
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
   }, [])
-
-  // Get actual disabled state either from props or from store
-  const actualDisabled = disabled !== undefined ? disabled : !isSineEQEnabled
 
   return (
     <div

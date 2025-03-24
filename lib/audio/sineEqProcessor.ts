@@ -86,6 +86,19 @@ class SineEQProcessor {
     // Create impulse buffer
     const impulseBuffer = ctx.createBuffer(2, this.bufferSize, ctx.sampleRate);
     
+    // Check if the response is flat (no points or all points at 0dB)
+    const isFlat = points.length === 0 || points.every(p => Math.abs(p.amplitude) < 0.01);
+    
+    if (isFlat) {
+      // For a flat response, use a simple impulse for perfect transparency
+      for (let channel = 0; channel < 2; channel++) {
+        const channelData = impulseBuffer.getChannelData(channel);
+        channelData[0] = 1.0; // Simple delta function
+      }
+      return Promise.resolve(impulseBuffer);
+    }
+    
+    // If not flat, proceed with FFT-based approach
     // Create FFT data arrays - complex format with real/imag pairs
     const frequencyData = new Float32Array(this.bufferSize * 2);
     
@@ -142,11 +155,14 @@ class SineEQProcessor {
       channelData[i + halfSize] = tempData[i];
     }
     
-    // Apply windowing
+    // Apply windowing with gain compensation
+    // Hann window reduces energy by ~50%, so we apply ~1.41 (sqrt(2)) multiplier 
+    const gainCompensation = 2.0; // Empirically determined for proper volume matching
+    
     for (let i = 0; i < this.bufferSize; i++) {
       // Hann window: 0.5 * (1 - cos(2π*n/(N-1)))
       const windowValue = 0.5 * (1 - Math.cos(2 * Math.PI * i / (this.bufferSize - 1)));
-      channelData[i] *= windowValue;
+      channelData[i] = channelData[i] * windowValue * gainCompensation;
     }
     
     // Copy to stereo buffer
@@ -257,28 +273,31 @@ class SineEQProcessor {
     }
   }
   
-  // Apply a sine profile to the processor
+  // Apply a profile to the processor
   public async applyProfile(profile: SineProfile): Promise<void> {
-    this.currentProfile = profile;
-    
-    if (!this.convolverNode) return;
-    
-    try {
-      // Generate impulse response from profile
-      const impulseBuffer = await this.createImpulseResponseFromFrequencyResponse(
-        profile.points || []
-      );
+    if (!this.convolverNode || !this.outputNode) return;
 
-      // Print out the first few elements of the impulse buffer
-      console.log('Impulse buffer:', impulseBuffer.getChannelData(0));
+    try {
+      // Generate impulse response from frequency response
+      const impulseBuffer = await this.createImpulseResponseFromFrequencyResponse(profile.points);
       
       // Set the convolver buffer
       this.convolverNode.buffer = impulseBuffer;
       
-      // Update bypass state
+      // Apply volume offset
+      if (profile.volume !== undefined) {
+        // Convert dB to linear gain
+        const linearGain = Math.pow(10, profile.volume / 20);
+        this.outputNode.gain.value = linearGain;
+      } else {
+        // Reset to unity gain if no volume specified
+        this.outputNode.gain.value = 1.0;
+      }
+      
+      // Update bypass state based on isEnabled
       this.setEnabled(this.isEnabled);
     } catch (error) {
-      console.error('Error applying sine profile:', error);
+      console.error('Error applying Sine EQ profile:', error);
     }
   }
   
