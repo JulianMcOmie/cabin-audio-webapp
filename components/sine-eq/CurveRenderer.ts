@@ -16,7 +16,8 @@ export class CurveRenderer {
     lineWidth: number = 4,
     alpha: number = 1.0,
     xOffset: number = 0,
-    yOffset: number = 0
+    yOffset: number = 0,
+    disabled: boolean = false
   ): void {
     // First sort the points by frequency
     const sortedPoints = [...points].sort((a, b) => a.frequency - b.frequency);
@@ -27,7 +28,9 @@ export class CurveRenderer {
       const y0 = CoordinateUtils.amplitudeToY(0, height, ampRange);
       ctx.moveTo(xOffset, y0 + yOffset);
       ctx.lineTo(width + xOffset, y0 + yOffset);
-      ctx.strokeStyle = isDarkMode ? 'rgba(255, 255, 255, 0.7)' : 'rgba(0, 0, 0, 0.7)';
+      ctx.strokeStyle = disabled ? 
+        'rgba(120, 120, 120, 0.8)' : 
+        (isDarkMode ? 'rgba(255, 255, 255, 1.0)' : 'rgba(0, 0, 0, 1.0)');
       ctx.lineWidth = lineWidth;
       ctx.stroke();
       return;
@@ -52,24 +55,29 @@ export class CurveRenderer {
       }
     }
     
-    // Create a gradient for the curve stroke
-    const gradient = ctx.createLinearGradient(xOffset, yOffset, width + xOffset, yOffset);
-    
-    // Add color stops for a smooth gradient across the frequency spectrum
-    const numStops = 20;
-    const logMin = Math.log10(freqRange.min);
-    const logMax = Math.log10(freqRange.max);
-    const logRange = logMax - logMin;
-    
-    for (let i = 0; i <= numStops; i++) {
-      const position = i / numStops;
-      const logFreq = logMin + position * logRange;
-      const freq = Math.pow(10, logFreq);
-      gradient.addColorStop(position, CoordinateUtils.getFrequencyColor(freq, alpha, isDarkMode));
+    if (disabled) {
+      // Use a gray gradient when disabled
+      ctx.strokeStyle = 'rgba(120, 120, 120, 0.8)';
+    } else {
+      // Create a gradient for the curve stroke
+      const gradient = ctx.createLinearGradient(xOffset, yOffset, width + xOffset, yOffset);
+      
+      // Add color stops for a smooth gradient across the frequency spectrum with full opacity
+      const numStops = 20;
+      const logMin = Math.log10(freqRange.min);
+      const logMax = Math.log10(freqRange.max);
+      const logRange = logMax - logMin;
+      
+      for (let i = 0; i <= numStops; i++) {
+        const position = i / numStops;
+        const logFreq = logMin + position * logRange;
+        const freq = Math.pow(10, logFreq);
+        gradient.addColorStop(position, CoordinateUtils.getFrequencyColor(freq, 1.0, isDarkMode));
+      }
+      
+      ctx.strokeStyle = gradient;
     }
     
-    // Apply the gradient
-    ctx.strokeStyle = gradient;
     ctx.lineWidth = lineWidth;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -194,7 +202,9 @@ export class CurveRenderer {
     isDarkMode: boolean,
     selectedPoint: number | null = null,
     xOffset: number = 0,
-    yOffset: number = 0
+    yOffset: number = 0,
+    isDragging: boolean = false,
+    disabled: boolean = false
   ): void {
     // Draw each control point
     points.forEach((point, index) => {
@@ -202,22 +212,31 @@ export class CurveRenderer {
       const y = CoordinateUtils.amplitudeToY(point.amplitude, height, ampRange);
       
       const isSelected = index === selectedPoint;
-      const pointColor = CoordinateUtils.getFrequencyColor(
-        point.frequency, 
-        isSelected ? 1.0 : 0.9, 
-        isDarkMode
-      );
+      const isBeingDragged = isSelected && isDragging;
       
-      // Draw the point with no outline
+      // Determine point color
+      let pointColor;
+      if (disabled) {
+        pointColor = 'rgba(120, 120, 120, 1.0)';
+      } else {
+        pointColor = CoordinateUtils.getFrequencyColor(
+          point.frequency, 
+          1.0, // Full opacity
+          isDarkMode
+        );
+      }
+      
+      // Draw the point, with larger size when being dragged
+      const pointSize = isBeingDragged ? 12 : (isSelected ? 9 : 7);
       ctx.beginPath();
-      ctx.arc(x + xOffset, y + yOffset, isSelected ? 8 : 6, 0, Math.PI * 2);
+      ctx.arc(x + xOffset, y + yOffset, pointSize, 0, Math.PI * 2);
       ctx.fillStyle = pointColor;
       ctx.fill();
     });
   }
   
   /**
-   * Draw the reference point (1kHz, 0dB)
+   * Draw the reference point (1kHz, 0dB) as a simple white dot
    */
   static drawReferencePoint(
     ctx: CanvasRenderingContext2D,
@@ -228,35 +247,19 @@ export class CurveRenderer {
     ampRange: { min: number, max: number },
     isDarkMode: boolean,
     xOffset: number = 0,
-    yOffset: number = 0
+    yOffset: number = 0,
+    disabled: boolean = false
   ): void {
     const x = CoordinateUtils.freqToX(point.frequency, width, freqRange);
     const y = CoordinateUtils.amplitudeToY(point.amplitude, height, ampRange);
     
-    // Draw an outer ring
-    ctx.beginPath();
-    ctx.arc(x + xOffset, y + yOffset, 12, 0, Math.PI * 2);
-    ctx.fillStyle = isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)';
-    ctx.fill();
-    
-    // Draw middle ring
-    ctx.beginPath();
-    ctx.arc(x + xOffset, y + yOffset, 8, 0, Math.PI * 2);
-    ctx.fillStyle = isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)';
-    ctx.fill();
-    
-    // Draw the inner point (white/black depending on theme)
-    ctx.beginPath();
-    ctx.arc(x + xOffset, y + yOffset, 4, 0, Math.PI * 2);
-    ctx.fillStyle = isDarkMode ? 'rgba(255, 255, 255, 0.8)' : 'rgba(0, 0, 0, 0.8)';
-    ctx.fill();
-    
-    // Draw a small ring to indicate it's a reference
+    // Draw the reference point as a simple white/gray dot
     ctx.beginPath();
     ctx.arc(x + xOffset, y + yOffset, 10, 0, Math.PI * 2);
-    ctx.strokeStyle = isDarkMode ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.3)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
+    ctx.fillStyle = disabled ? 
+      'rgba(120, 120, 120, 1.0)' : 
+      (isDarkMode ? 'rgba(255, 255, 255, 1.0)' : 'rgba(255, 255, 255, 1.0)');
+    ctx.fill();
   }
   
   /**
@@ -269,9 +272,13 @@ export class CurveRenderer {
     frequency: number,
     isDarkMode: boolean,
     xOffset: number = 0,
-    yOffset: number = 0
+    yOffset: number = 0,
+    disabled: boolean = false
   ): void {
-    const pointColor = CoordinateUtils.getFrequencyColor(frequency, 0.7, isDarkMode);
+    // Don't draw ghost point if disabled
+    if (disabled) return;
+    
+    const pointColor = CoordinateUtils.getFrequencyColor(frequency, 1.0, isDarkMode);
     
     // Draw the ghost point
     ctx.beginPath();
@@ -283,7 +290,7 @@ export class CurveRenderer {
     ctx.beginPath();
     ctx.arc(x + xOffset, y + yOffset, 7, 0, Math.PI * 2);
     ctx.setLineDash([2, 2]);
-    ctx.strokeStyle = isDarkMode ? 'rgba(255, 255, 255, 0.5)' : 'rgba(0, 0, 0, 0.5)';
+    ctx.strokeStyle = isDarkMode ? 'rgba(255, 255, 255, 1.0)' : 'rgba(0, 0, 0, 1.0)';
     ctx.lineWidth = 1;
     ctx.stroke();
     ctx.setLineDash([]);

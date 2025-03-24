@@ -20,6 +20,7 @@ import { FFTVisualizer } from "@/components/audio/FFTVisualizer"
 import { getReferenceCalibrationAudio } from "@/lib/audio/referenceCalibrationAudio"
 import { EQCalibrationProcess } from "@/components/eq-calibration-process"
 import { SineEQGraph } from "@/components/sine-eq-graph"
+import { SineProfiles } from "@/components/sine-profiles"
 
 interface EQViewProps {
 //   isPlaying: boolean
@@ -195,6 +196,13 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     setCalibrationPlaying(true)
   }
 
+  // State for the sine EQ profiles
+  const [selectedSineProfileId, setSelectedSineProfileId] = useState<string>("")
+
+  const handleSelectSineProfile = (profileId: string) => {
+    setSelectedSineProfileId(profileId)
+  }
+
   return (
     <div className="mx-auto space-y-8 pb-24">
       <div className="flex justify-between items-center mb-2">
@@ -237,6 +245,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
               className="w-full" 
               onInstructionChange={setInstruction}
               onRequestEnable={() => setEQEnabled(true)}
+              profileId={selectedSineProfileId}
             />
           </div>
 
@@ -417,6 +426,16 @@ export function EQView({ setEqEnabled }: EQViewProps) {
           onProfileClick={handleProfileClick}
           selectedProfile={selectedProfileId}
           onSelectProfile={handleSelectProfile}
+        />
+      </div>
+
+      {/* Sine EQ Profiles Section */}
+      <div className="mt-8">
+        <h3 className="text-lg font-medium mb-4">Sine EQ Profiles</h3>
+        <SineProfiles
+          onProfileClick={() => {}}
+          selectedProfile={selectedSineProfileId}
+          onSelectProfile={handleSelectSineProfile}
         />
       </div>
 

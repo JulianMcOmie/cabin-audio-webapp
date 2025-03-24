@@ -4,19 +4,22 @@ import { useRef, useEffect, useState, useCallback } from "react"
 import { EQPoint, GhostPoint } from './types'
 import { CoordinateUtils } from './CoordinateUtils'
 import { CurveRenderer } from './CurveRenderer'
+import { useSineProfileStore } from '@/lib/stores/sineProfileStore'
 
 interface SineEQProps {
   disabled?: boolean
   className?: string
   onInstructionChange?: (instruction: string) => void
   onRequestEnable?: () => void
+  profileId?: string
 }
 
 export function SineEQ({ 
   disabled = false, 
   className, 
   onInstructionChange,
-  onRequestEnable 
+  onRequestEnable,
+  profileId
 }: SineEQProps) {
   // Canvas and context refs
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -25,12 +28,21 @@ export function SineEQ({
   const backgroundContextRef = useRef<CanvasRenderingContext2D | null>(null)
   const animationFrameRef = useRef<number | null>(null)
   
+  // Use the sine profile store
+  const { 
+    getActiveProfile, 
+    getProfileById, 
+    updateProfile, 
+    setSineEQEnabled, 
+    isSineEQEnabled 
+  } = useSineProfileStore()
+  
   // Fixed frequency and amplitude ranges
   const freqRange = { min: 20, max: 20000 }
   const ampRange = { min: -24, max: 24 }
   
-  // Canvas margin
-  const margin = 40
+  // Canvas margin - removed completely
+  const margin = 0
   
   // Theme tracking
   const [isDarkMode, setIsDarkMode] = useState(false)
@@ -52,6 +64,45 @@ export function SineEQ({
     frequency: 1000,
     amplitude: 0
   })
+  
+  // Sync with profile store
+  useEffect(() => {
+    // Get the appropriate profile
+    const profile = profileId 
+      ? getProfileById(profileId) 
+      : getActiveProfile()
+    
+    // Load points from profile
+    if (profile) {
+      setPoints(profile.points || [])
+    } else {
+      setPoints([])
+    }
+  }, [profileId, getProfileById, getActiveProfile])
+  
+  // Save points to profile when they change
+  useEffect(() => {
+    // Only save if we're done dragging to avoid excessive updates
+    if (isDraggingRef.current) return
+    
+    // Get the appropriate profile
+    const profile = profileId 
+      ? getProfileById(profileId) 
+      : getActiveProfile()
+    
+    // Save points to profile
+    if (profile && points !== profile.points) {
+      updateProfile(profile.id, { points })
+    }
+  }, [points, profileId, getProfileById, getActiveProfile, updateProfile])
+  
+  // Update the disabled state based on the profile store
+  useEffect(() => {
+    // Only sync if the disabled prop wasn't explicitly set
+    if (disabled === undefined) {
+      onRequestEnable?.(!isSineEQEnabled)
+    }
+  }, [isSineEQEnabled, disabled, onRequestEnable])
   
   // Detect theme changes
   useEffect(() => {
@@ -77,7 +128,7 @@ export function SineEQ({
     }
   }, [])
   
-  // Draw background grid and labels
+  // Draw background (just a solid black/near-black color)
   const renderBackgroundCanvas = useCallback(() => {
     const canvas = backgroundCanvasRef.current
     if (!canvas) return
@@ -100,65 +151,13 @@ export function SineEQ({
     // Clear canvas
     ctx.clearRect(0, 0, rect.width, rect.height)
 
-    // Add semi-transparent background (significantly darker)
-    ctx.fillStyle = isDarkMode ? "rgba(5, 5, 8, 0.98)" : "rgba(10, 10, 15, 0.95)"
+    // Add near-black background - MUCH darker now
+    ctx.fillStyle = isDarkMode ? "rgba(0, 0, 0, 1.0)" : "rgba(1, 1, 3, 0.98)"
     ctx.fillRect(0, 0, rect.width, rect.height)
-    
-    // Draw a subtle border around the content area
-    ctx.strokeStyle = isDarkMode ? "rgba(80, 80, 100, 0.3)" : "rgba(100, 100, 120, 0.3)"
-    ctx.lineWidth = 1
-    ctx.strokeRect(margin, margin, rect.width - margin * 2, rect.height - margin * 2)
-
-    // Draw background grid
-    ctx.strokeStyle = isDarkMode ? "rgba(63, 63, 92, 0.2)" : "rgba(100, 100, 130, 0.15)"
-    ctx.lineWidth = 1
-
-    // Define frequency points for logarithmic grid
-    const freqPoints: number[] = []
-    const decades = [
-      [20, 200],    // First decade: 20Hz to 200Hz
-      [200, 2000],  // Second decade: 200Hz to 2kHz
-      [2000, 20000] // Third decade: 2kHz to 20kHz
-    ]
-    
-    // Generate 10 linearly spaced points for each decade
-    decades.forEach(([startFreq, endFreq]) => {
-      const range = endFreq - startFreq
-      const step = range / 10
-      
-      for (let i = 0; i < 10; i++) {
-        const freq = startFreq + i * step
-        freqPoints.push(Math.round(freq))
-      }
-    })
-    
-    // Add the final point (20kHz)
-    freqPoints.push(20000)
-    
-    // Vertical grid lines (logarithmic frequency bands)
-    for (let freq of freqPoints) {
-      const x = margin + CoordinateUtils.freqToX(freq, rect.width - margin * 2, freqRange)
-      ctx.beginPath()
-      ctx.moveTo(x, margin)
-      ctx.lineTo(x, rect.height - margin)
-      ctx.stroke()
-    }
-
-    // Define dB points for grid
-    const dbPoints = [24, 20, 16, 12, 8, 4, 0, -4, -8, -12, -16, -20, -24]
-    
-    // Horizontal grid lines (dB levels)
-    for (let db of dbPoints) {
-      const y = margin + CoordinateUtils.amplitudeToY(db, rect.height - margin * 2, ampRange)
-      ctx.beginPath()
-      ctx.moveTo(margin, y)
-      ctx.lineTo(rect.width - margin, y)
-      ctx.stroke()
-    }
 
     // Mark background as drawn
     backgroundDrawnRef.current = true
-  }, [isDarkMode, freqRange, ampRange])
+  }, [isDarkMode])
   
   // Main canvas rendering function (frequency response curve and points)
   const renderCanvas = useCallback(() => {
@@ -203,7 +202,8 @@ export function SineEQ({
       4,  // Line width 
       1.0, // Alpha
       margin,
-      margin
+      margin,
+      disabled // Pass disabled state
     )
     
     // Draw the user control points
@@ -217,7 +217,9 @@ export function SineEQ({
       isDarkMode,
       selectedPointIndex,
       margin,
-      margin
+      margin,
+      isDraggingRef.current, // Pass dragging state
+      disabled // Pass disabled state
     )
     
     // Draw the reference node (special rendering)
@@ -230,7 +232,8 @@ export function SineEQ({
       ampRange,
       isDarkMode,
       margin,
-      margin
+      margin,
+      disabled // Pass disabled state
     )
     
     // Draw ghost point if visible
@@ -242,7 +245,8 @@ export function SineEQ({
         ghostPoint.frequency,
         isDarkMode,
         0, // No offset needed since x,y are absolute
-        0
+        0,
+        disabled // Pass disabled state
       )
     }
 
@@ -256,7 +260,8 @@ export function SineEQ({
     freqRange, 
     ampRange, 
     renderBackgroundCanvas,
-    referenceNode
+    referenceNode,
+    disabled
   ])
   
   // Find nearest point to cursor coordinates
@@ -451,6 +456,7 @@ export function SineEQ({
     if (disabled) {
       // If disabled, ask to enable
       if (onRequestEnable) {
+        setSineEQEnabled(true)
         onRequestEnable()
       }
       return
@@ -544,13 +550,35 @@ export function SineEQ({
       isDraggingRef.current = false
       document.body.style.cursor = ''
       
+      // When we release, save the points to the profile
+      const profile = profileId 
+        ? getProfileById(profileId) 
+        : getActiveProfile()
+      
+      if (profile) {
+        updateProfile(profile.id, { points })
+      }
+      
       document.removeEventListener('mousemove', handleDocumentMouseMove)
       document.removeEventListener('mouseup', handleDocumentMouseUp)
     }
     
     document.addEventListener('mousemove', handleDocumentMouseMove)
     document.addEventListener('mouseup', handleDocumentMouseUp)
-  }, [disabled, selectedPointIndex, ghostPoint, points, freqRange, ampRange, onRequestEnable])
+  }, [
+    disabled, 
+    selectedPointIndex, 
+    ghostPoint, 
+    points, 
+    freqRange, 
+    ampRange, 
+    onRequestEnable, 
+    profileId, 
+    getProfileById, 
+    getActiveProfile, 
+    updateProfile,
+    setSineEQEnabled
+  ])
   
   // Prevent context menu on right click
   const handleContextMenu = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -635,9 +663,12 @@ export function SineEQ({
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
+  // Get actual disabled state either from props or from store
+  const actualDisabled = disabled !== undefined ? disabled : !isSineEQEnabled
+
   return (
     <div
-      className={`w-full aspect-[2/1] frequency-graph rounded-lg border dark:border-gray-700 overflow-hidden opacity-80 ${className || ""} relative`}
+      className={`w-full aspect-[2/1] frequency-graph rounded-lg border dark:border-gray-700 overflow-hidden ${actualDisabled ? 'opacity-70' : 'opacity-100'} ${className || ""} relative`}
     >
       <canvas 
         ref={backgroundCanvasRef}

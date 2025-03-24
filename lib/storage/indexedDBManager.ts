@@ -1,5 +1,5 @@
 const DB_NAME = 'cabinAudioDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 // Define store names
 export const STORES = {
@@ -8,6 +8,7 @@ export const STORES = {
   ARTISTS: 'artists',
   PLAYLISTS: 'playlists',
   EQ_PROFILES: 'eqProfiles',
+  SINE_PROFILES: 'sineProfiles',
   AUDIO_FILES: 'audioFiles',
   IMAGES: 'images',
   SYNC_STATE: 'syncState'
@@ -56,6 +57,11 @@ export const initDB = (): Promise<IDBDatabase> => {
       if (!db.objectStoreNames.contains(STORES.EQ_PROFILES)) {
         const eqProfileStore = db.createObjectStore(STORES.EQ_PROFILES, { keyPath: 'id' });
         eqProfileStore.createIndex('syncStatus', 'syncStatus', { unique: false });
+      }
+      
+      if (!db.objectStoreNames.contains(STORES.SINE_PROFILES)) {
+        const sineProfileStore = db.createObjectStore(STORES.SINE_PROFILES, { keyPath: 'id' });
+        sineProfileStore.createIndex('syncStatus', 'syncStatus', { unique: false });
       }
       
       if (!db.objectStoreNames.contains(STORES.AUDIO_FILES)) {
