@@ -66,7 +66,7 @@ class ReferenceCalibrationAudio {
   };
   
   // Add a constant for fixed noise bandwidth
-  private readonly FIXED_NOISE_BANDWIDTH = 1.0; // Half octave fixed width for noise bursts
+  private readonly FIXED_NOISE_BANDWIDTH = 0.5; // Half octave fixed width for noise bursts
   
   private constructor() {
     // Initialize noise buffer
@@ -224,10 +224,10 @@ class ReferenceCalibrationAudio {
         0.05 // Time constant for exponential approach (smaller = faster)
       );
       
-      // Keep Q value constant using fixed bandwidth
+      // Update Q based on current bandwidth
       this.activeCalibrationFilters.bandpass1.Q.cancelScheduledValues(currentTime);
       this.activeCalibrationFilters.bandpass1.Q.setTargetAtTime(
-        1.0 / this.FIXED_NOISE_BANDWIDTH,
+        1.0 / this.currentBandwidth,
         currentTime,
         0.05
       );
@@ -244,7 +244,7 @@ class ReferenceCalibrationAudio {
       
       this.activeCalibrationFilters.bandpass2.Q.cancelScheduledValues(currentTime);
       this.activeCalibrationFilters.bandpass2.Q.setTargetAtTime(
-        1.0 / this.FIXED_NOISE_BANDWIDTH * 0.9,
+        1.0 / this.currentBandwidth * 0.9,
         currentTime,
         0.05
       );
@@ -364,39 +364,34 @@ class ReferenceCalibrationAudio {
     // Get current pan position from the array
     const panPosition = PANNING_POSITIONS[this.currentPosition];
     
-    // In the new pattern, we alternate between calibration and reference for each position
-    // Calibration pans across positions, reference stays centered
+    // Play the burst - reference or calibrated
+    // Both rows will pan across the stereo field in the same way
     if (this.isPlayingReference) {
-      // Play reference always at center (pan = 0)
-      this.playNoiseAtFrequency(REFERENCE_FREQ, 0, true);
+      this.playNoiseAtFrequency(REFERENCE_FREQ, panPosition, true);
     } else {
-      // Play calibration at the current pan position
       this.playNoiseAtFrequency(this.calibrationFrequency, panPosition, false);
     }
     
     // Notify position listeners
     this.positionListeners.forEach(listener => 
-      listener(this.isPlayingReference ? 0 : panPosition, this.isPlayingReference)
+      listener(panPosition, this.isPlayingReference)
     );
     
-    // Toggle between reference and calibration for EACH position
-    this.isPlayingReference = !this.isPlayingReference;
+    // Increment position within the current row
+    this.currentPosition++;
     
-    // Only increment position after playing both reference and calibration at current position
-    if (!this.isPlayingReference) {
-      // We just played calibration, so next will be reference at a new position
-      this.currentPosition++;
+    // If we've reached the end of a row
+    if (this.currentPosition >= PANNING_POSITIONS.length) {
+      this.currentPosition = 0;
       
-      // Reset position when we've gone through all positions
-      if (this.currentPosition >= PANNING_POSITIONS.length) {
-        this.currentPosition = 0;
-      }
+      // Toggle between reference and calibration rows
+      this.isPlayingReference = !this.isPlayingReference;
     }
     
     // Determine the next interval
-    // Add a longer pause between rows only when we complete a full cycle
-    const isFullCycleComplete = this.currentPosition === 0 && this.isPlayingReference;
-    const nextInterval = isFullCycleComplete ? ROW_PAUSE : BURST_INTERVAL;
+    // Add a longer pause between rows (when we reset position)
+    const isRowTransition = this.currentPosition === 0;
+    const nextInterval = isRowTransition ? ROW_PAUSE : BURST_INTERVAL;
     
     // Schedule next burst
     this.timeoutId = window.setTimeout(() => {
@@ -447,38 +442,38 @@ class ReferenceCalibrationAudio {
     const source = ctx.createBufferSource();
     source.buffer = this.noiseBuffer;
     
-    // Use FIXED_NOISE_BANDWIDTH instead of this.currentBandwidth for consistent noise character
-    const octaveRatio = Math.pow(2, this.FIXED_NOISE_BANDWIDTH / 2); // Half bandwidth on each side
+    // Use currentBandwidth for both reference and calibration
+    const octaveRatio = Math.pow(2, this.currentBandwidth / 2); // Half bandwidth on each side
     const lowFreq = frequency / octaveRatio;
     const highFreq = frequency * octaveRatio;
     
     let bandpassFilter1, bandpassFilter2;
     
     if (isReference) {
-      // Reference uses fixed bandwidth for consistent sound
+      // Reference now uses the same bandwidth as calibration
       bandpassFilter1 = ctx.createBiquadFilter();
       bandpassFilter1.type = 'bandpass';
       bandpassFilter1.frequency.value = frequency;
-      bandpassFilter1.Q.value = 1.0 / this.FIXED_NOISE_BANDWIDTH; // Use fixed bandwidth
+      bandpassFilter1.Q.value = 1.0 / this.currentBandwidth; // Use band's bandwidth
       
       bandpassFilter2 = ctx.createBiquadFilter();
       bandpassFilter2.type = 'bandpass';
       bandpassFilter2.frequency.value = frequency;
-      bandpassFilter2.Q.value = 1.0 / this.FIXED_NOISE_BANDWIDTH * 0.9; // Slight variation
+      bandpassFilter2.Q.value = 1.0 / this.currentBandwidth * 0.9; // Slight variation
     } else {
       // For calibration, use the active filters or create new ones
       if (!this.activeCalibrationFilters.bandpass1) {
         this.activeCalibrationFilters.bandpass1 = ctx.createBiquadFilter();
         this.activeCalibrationFilters.bandpass1.type = 'bandpass';
         this.activeCalibrationFilters.bandpass1.frequency.value = this.calibrationFrequency;
-        this.activeCalibrationFilters.bandpass1.Q.value = 1.0 / this.FIXED_NOISE_BANDWIDTH;
+        this.activeCalibrationFilters.bandpass1.Q.value = 1.0 / this.currentBandwidth;
       }
       
       if (!this.activeCalibrationFilters.bandpass2) {
         this.activeCalibrationFilters.bandpass2 = ctx.createBiquadFilter();
         this.activeCalibrationFilters.bandpass2.type = 'bandpass';
         this.activeCalibrationFilters.bandpass2.frequency.value = this.calibrationFrequency;
-        this.activeCalibrationFilters.bandpass2.Q.value = 1.0 / this.FIXED_NOISE_BANDWIDTH * 0.9;
+        this.activeCalibrationFilters.bandpass2.Q.value = 1.0 / this.currentBandwidth * 0.9;
       }
       
       bandpassFilter1 = this.activeCalibrationFilters.bandpass1;
@@ -540,7 +535,7 @@ class ReferenceCalibrationAudio {
     
     // Log the noise burst details
     if (!isReference) {
-      console.log(`🔊 Calibration burst: freq=${this.calibrationFrequency.toFixed(0)}Hz (band: ${lowFreq.toFixed(0)}-${highFreq.toFixed(0)}Hz, BW=${this.FIXED_NOISE_BANDWIDTH.toFixed(2)})`);
+      console.log(`🔊 Calibration burst: freq=${this.calibrationFrequency.toFixed(0)}Hz (band: ${lowFreq.toFixed(0)}-${highFreq.toFixed(0)}Hz, BW=${this.currentBandwidth.toFixed(2)})`);
     }
   }
 
