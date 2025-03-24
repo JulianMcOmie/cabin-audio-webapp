@@ -34,13 +34,22 @@ class SineEQAudio {
       
       // Create master gain node (for overall volume control)
       this.masterGainNode = this.audioCtx.createGain();
-      this.masterGainNode.gain.value = 0.15; // Half volume to avoid being too loud
+      this.masterGainNode.gain.value = 0.15; // Lower volume to avoid being too loud
       
       // Connect master gain to destination
       this.masterGainNode.connect(this.audioCtx.destination);
     } catch (error) {
       console.error('Error initializing SineEQAudio:', error);
     }
+  }
+  
+  // Calculate the pink noise adjustment (-3dB/octave) for a given frequency
+  private calculatePinkNoiseAdjustment(frequency: number): number {
+    // Calculate octave difference from reference (1kHz)
+    const octaveDifference = Math.log2(frequency / this.referenceFrequency);
+    
+    // Apply -3dB per octave slope
+    return -3 * octaveDifference;
   }
   
   // Start the tone pattern
@@ -80,8 +89,6 @@ class SineEQAudio {
   
   // Update the calibration frequency and amplitude (while dragging)
   public updateCalibration(frequency: number, amplitude: number): void {
-
-    console.log('updateCalibration', frequency, amplitude);
     this.calibrationFrequency = frequency;
     this.calibrationAmplitude = amplitude;
     
@@ -98,9 +105,12 @@ class SineEQAudio {
           this.audioCtx!.currentTime
         );
         
-        // Update gain for amplitude
+        // Update gain for amplitude, applying the pink noise adjustment
         if (this.envelopeNode) {
-          const linearGain = dbToLinear(amplitude);
+          // Apply pink noise slope adjustment
+          const adjustedAmplitude = amplitude + this.calculatePinkNoiseAdjustment(frequency);
+          const linearGain = dbToLinear(adjustedAmplitude);
+          
           // Don't change immediately, apply to the sustain portion of envelope
           const now = this.audioCtx!.currentTime;
           this.envelopeNode.gain.cancelScheduledValues(now);
@@ -133,8 +143,6 @@ class SineEQAudio {
     this.envelopeNode.gain.value = 0; // Start silent
     
     // Set frequency based on whether this is reference or calibration
-    // Always use the CURRENT calibration frequency and amplitude
-    // This ensures we use the latest values from drag events
     const frequency = isReference ? this.referenceFrequency : this.calibrationFrequency;
     this.oscillatorNode.frequency.value = frequency;
     
@@ -150,8 +158,16 @@ class SineEQAudio {
     const now = this.audioCtx.currentTime;
     const attackTime = 0.01; // 10ms attack
     const decayTime = 0.02; // 20ms decay
-    // Always use the CURRENT calibration amplitude for non-reference tones
-    const sustainLevel = isReference ? 0.7 : dbToLinear(this.calibrationAmplitude) * 0.7;
+    
+    // Calculate amplitude with pink noise adjustment
+    let amplitude = isReference ? 0 : this.calibrationAmplitude;
+    if (!isReference) {
+      // Apply pink noise slope adjustment to calibration tone
+      amplitude += this.calculatePinkNoiseAdjustment(frequency);
+    }
+    
+    // Convert to linear gain and apply envelope
+    const sustainLevel = isReference ? 0.7 : dbToLinear(amplitude) * 0.7;
     const releaseTime = 0.05; // 50ms release
     
     // Attack phase
