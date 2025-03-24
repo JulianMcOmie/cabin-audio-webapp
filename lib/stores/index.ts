@@ -4,4 +4,5 @@ export { useArtistStore } from './artistStore';
 export { usePlaylistStore } from './playlistStore';
 export { useEQProfileStore } from './eqProfileStore';
 export { usePlayerStore } from './playerStore';
-export { useSyncStore } from './syncStore'; 
+export { useSyncStore } from './syncStore';
+export { useSineProfileStore } from './sineProfileStore'; 

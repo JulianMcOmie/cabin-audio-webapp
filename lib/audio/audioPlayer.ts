@@ -1,7 +1,8 @@
 import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
+import * as sineEqProcessor from './sineEqProcessor';
 import * as fileStorage from '../storage/fileStorage';
-import { useEQProfileStore } from '../stores';
+import { useEQProfileStore, useSineProfileStore } from '../stores';
 
 // Define callback types
 type ProgressCallback = (progress: number) => void;
@@ -35,15 +36,21 @@ class AudioPlayer {
       this.distortionGainNode = audioContext.createGain();
       this.distortionGainNode.gain.value = 1.0; // Default to no reduction
       
-      // Get the EQ processor and connect through it
+      // Get the EQ processor
       const eq = eqProcessor.getEQProcessor();
       
-      // Connect nodes: gainNode -> distortionGainNode -> EQ -> destination
-      this.gainNode.connect(this.distortionGainNode!);
-      this.distortionGainNode!.connect(eq.getInputNode());
+      // Get the SineEQ processor
+      const sineEq = sineEqProcessor.getSineEQProcessor();
       
-      // Connect EQ output to destination
-      eq.getOutputNode().connect(audioContext.getAudioContext().destination);
+      // Connect nodes: gainNode -> distortionGainNode -> EQ -> SineEQ -> destination
+      this.gainNode.connect(this.distortionGainNode!);
+      this.distortionGainNode!.connect(eq.getInputNode()!);
+      
+      // Connect EQ output to SineEQ input
+      eq.getOutputNode()!.connect(sineEq.getInputNode()!);
+      
+      // Connect SineEQ output to destination
+      sineEq.getOutputNode()!.connect(audioContext.getAudioContext().destination);
       
       // Set up progress tracking
       this.setupProgressTracking();
@@ -56,6 +63,26 @@ class AudioPlayer {
       useEQProfileStore.subscribe(
         (state) => {
           this.setDistortionGain(state.distortionGain);
+        }
+      );
+      
+      // Apply initial SineEQ profile
+      sineEqProcessor.applyActiveProfile();
+      
+      // Subscribe to SineEQ enabled state changes
+      useSineProfileStore.subscribe(
+        state => {
+          sineEq.setEnabled(state.isSineEQEnabled);
+        }
+      );
+      
+      // Subscribe to active profile changes
+      useSineProfileStore.subscribe(
+        state => {
+          // Only reapply if the active profile ID changes
+          if (state.activeProfileId !== sineEq.getCurrentProfile()?.id) {
+            sineEqProcessor.applyActiveProfile();
+          }
         }
       );
       

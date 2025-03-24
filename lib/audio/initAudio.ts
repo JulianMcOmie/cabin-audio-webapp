@@ -8,6 +8,8 @@
 import * as audioContext from './audioContext';
 import * as audioPlayer from './audioPlayer';
 import * as audioRouting from './audioRouting';
+import * as eqProcessor from './eqProcessor';
+import * as sineEqProcessor from './sineEqProcessor';
 
 // Flag to track initialization state
 let isInitialized = false;
@@ -26,6 +28,7 @@ export const initializeAudio = (): void => {
     audioContext.getAudioContext(); // Initialize audio context
     
     // eqProcessor is a singleton, so it will be initialized automatically
+    // Same for sineEqProcessor
 
     audioRouting.initializeAudioRouting();
     
@@ -53,6 +56,12 @@ export const cleanupAudio = (): void => {
     // Clean up in reverse order
     audioPlayer.cleanupAudioPlayer();
     audioRouting.cleanupAudioRouting();
+    
+    // Reset processors
+    eqProcessor.resetEQProcessor();
+    sineEqProcessor.resetSineEQProcessor();
+    
+    // Suspend audio context
     audioContext.suspendAudioContext();
     
     // Reset initialization flag

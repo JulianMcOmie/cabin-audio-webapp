@@ -1,5 +1,6 @@
 import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
+import * as sineEqProcessor from './sineEqProcessor';
 
 // Class to manage audio routing
 class AudioRouting {
@@ -20,8 +21,12 @@ class AudioRouting {
     this.analyserNode = audioContext.createAnalyser();
     this.analyserNode.fftSize = 2048;
     
-    // Connect EQ processor output to analyser
-    eqProcessor.getEQProcessor().getOutputNode().connect(this.analyserNode);
+    // Get the processors
+    const eq = eqProcessor.getEQProcessor();
+    const sineEq = sineEqProcessor.getSineEQProcessor();
+    
+    // Connect SineEQ output to analyser (since it's the last in the chain)
+    sineEq.getOutputNode()!.connect(this.analyserNode);
     
     // Connect analyser to destination
     this.analyserNode.connect(this.destinationNode);
@@ -39,6 +44,7 @@ class AudioRouting {
     if (this.isConnected && this.analyserNode) {
       this.analyserNode.disconnect();
       eqProcessor.getEQProcessor().getOutputNode().disconnect();
+      sineEqProcessor.getSineEQProcessor().getOutputNode().disconnect();
       this.isConnected = false;
     }
   }
@@ -47,6 +53,7 @@ class AudioRouting {
   public reconnect(): void {
     if (!this.isConnected && this.analyserNode && this.destinationNode) {
       eqProcessor.getEQProcessor().getOutputNode().connect(this.analyserNode);
+      sineEqProcessor.getSineEQProcessor().getOutputNode().connect(this.analyserNode);
       this.analyserNode.connect(this.destinationNode);
       this.isConnected = true;
     }
