@@ -47,6 +47,9 @@ export function useEQInteraction({
   // Distance threshold for showing ghost node near center line
   const CENTER_LINE_THRESHOLD = 15;
 
+  // Add this state to track the last used bandwidth/Q value
+  const [lastUsedQ, setLastUsedQ] = useState(1.0); // Default Q value
+
   // Function to play calibration audio based on current band
   const playCalibrationAudio = useCallback((bandId: string | null, play: boolean) => {
     const audioPlayer = getReferenceCalibrationAudio();
@@ -77,12 +80,15 @@ export function useEQInteraction({
     }
   }, [bands]);
 
-  // Create throttled band update function to improve performance
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Modify the throttledBandUpdate function to capture Q changes
   const throttledBandUpdate = useCallback(
     throttle((id: string, updates: Partial<EQBandWithUI>) => {
+      // If this update includes a Q value, store it for future bands
+      if (updates.q !== undefined) {
+        setLastUsedQ(updates.q);
+      }
       onBandUpdate(id, updates);
-    }, 16), // Throttle to roughly 60fps
+    }, 16),
     [onBandUpdate]
   );
 
@@ -452,7 +458,7 @@ export function useEQInteraction({
           const newBand = {
             frequency: clampedFrequency,
             gain: 0,
-            q: 1.0,
+            q: lastUsedQ, // Use the last modified Q value instead of fixed 1.0
             type: 'peaking' as BiquadFilterType
           };
           
@@ -500,7 +506,7 @@ export function useEQInteraction({
       handleMouseMoveThrottled.cancel();
       throttledBandUpdate.cancel();
     }
-  }, [bands, freqRange, hoveredBandId, draggingBand, onBandAdd, onBandRemove, onBandSelect, canvasRef, handleMouseMoveThrottled, throttledBandUpdate, playCalibrationAudio]);
+  }, [bands, freqRange, hoveredBandId, draggingBand, onBandAdd, onBandRemove, onBandSelect, canvasRef, handleMouseMoveThrottled, throttledBandUpdate, playCalibrationAudio, lastUsedQ]);
 
   // Cancel throttled functions on unmount
   useEffect(() => {

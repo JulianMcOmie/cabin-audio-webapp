@@ -68,6 +68,9 @@ class ReferenceCalibrationAudio {
   // Add a constant for fixed noise bandwidth
   private readonly FIXED_NOISE_BANDWIDTH = 0.5; // Half octave fixed width for noise bursts
   
+  // Add a scaling factor for noise bandwidth
+  private readonly BANDWIDTH_SCALING_FACTOR = 2.0; // Makes noise bandwidth narrower than EQ band
+  
   private constructor() {
     // Initialize noise buffer
     this.generateNoiseBuffer();
@@ -195,7 +198,9 @@ class ReferenceCalibrationAudio {
    * @param bandwidth Width in octaves
    */
   public setBandwidth(bandwidth: number): void {
-    this.currentBandwidth = Math.max(0.1, Math.min(2.0, bandwidth));
+    // Scale the bandwidth down for the noise to make it more focused
+    const scaledBandwidth = bandwidth * this.BANDWIDTH_SCALING_FACTOR;
+    this.currentBandwidth = Math.max(0.1, Math.min(2.0, scaledBandwidth));
     
     // Update active filters in real-time if they exist
     this.updateActiveFilters();
@@ -369,7 +374,7 @@ class ReferenceCalibrationAudio {
     if (this.isPlayingReference) {
       this.playNoiseAtFrequency(REFERENCE_FREQ, panPosition, true);
     } else {
-      this.playNoiseAtFrequency(this.calibrationFrequency, panPosition, false);
+      this.playNoiseAtFrequency(this.calibrationFrequency, panPosition, true);
     }
     
     // Notify position listeners

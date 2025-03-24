@@ -173,9 +173,11 @@ export function EQView({ setEqEnabled }: EQViewProps) {
 
   // Handle completing the calibration process
   const handleCalibrationComplete = () => {
-    setShowCalibrationProcess(false)
+    setShowCalibrationProcess(false);
     // Stop the calibration audio when the process is complete
-    setCalibrationPlaying(false)
+    setCalibrationPlaying(false);
+    // Make sure the analyzer is cleaned up
+    setPreEQAnalyser(null);
   }
   
   // Handle canceling the calibration process
@@ -224,8 +226,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
         <div className="flex flex-col md:flex-row gap-4">
           {/* Frequency Graph (taking most of the width) */}
           <div className="flex-1 relative" ref={eqContainerRef}>
-            {/* FFT Visualizer as background layer */}
-            {calibrationPlaying && preEQAnalyser && (
+            {/* FFT Visualizer should always be visible during calibration */}
+            {(calibrationPlaying || showCalibrationProcess) && preEQAnalyser && (
               <div className="absolute inset-0 z-0 w-full aspect-[2/1]">
                 <FFTVisualizer 
                   analyser={preEQAnalyser} 
