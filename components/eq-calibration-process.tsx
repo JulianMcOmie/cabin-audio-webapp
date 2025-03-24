@@ -40,7 +40,7 @@ function generateFrequenciesForStage(stage: number): number[] {
 }
 
 // Updated Q values - much wider bands (lower Q values)
-const BASE_Q = 0.1; // Default Q factor (lower = wider bandwidth)
+const BASE_Q = 0.5; // Default Q factor (lower = wider bandwidth)
 
 const DEFAULT_GAIN = 0; // Default gain in dB (0 = neutral)
 
@@ -158,7 +158,30 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
     return newBand;
   }, [currentFrequency, currentGain, currentStage]);
   
-  // Apply EQ changes immediately when slider changes
+  // Add a new useEffect to apply all calibrated bands to the EQ processor
+  useEffect(() => {
+    // Apply all previously calibrated bands to the EQ
+    const eq = eqProcessor.getEQProcessor();
+    
+    // First, clear any bands that might be at frequencies we're calibrating
+    calibratedBands.forEach(band => {
+      eq.removeBandByFrequency(band.frequency);
+    });
+    
+    // Then apply all calibrated bands so far
+    calibratedBands.forEach(band => {
+      eq.updateBand(band);
+    });
+    
+    // Clean up function to remove all bands when component unmounts
+    return () => {
+      calibratedBands.forEach(band => {
+        eq.removeBandByFrequency(band.frequency);
+      });
+    };
+  }, [calibratedBands]);
+  
+  // Modify the existing useEffect for the current step
   useEffect(() => {
     // Dynamically update the EQ processor for immediate feedback
     const eq = eqProcessor.getEQProcessor();
@@ -166,17 +189,21 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
     // Create a temporary band for the current frequency
     const tempBand = createBandForCurrentFrequency();
     
-    // Apply it to the EQ processor (this doesn't save to the profile)
-    eq.updateBand(tempBand);
+    // Only add current frequency band if it's not already in calibratedBands
+    const existingBand = calibratedBands.find(band => band.frequency === currentFrequency);
+    if (!existingBand) {
+      // Apply it to the EQ processor (this doesn't save to the profile)
+      eq.updateBand(tempBand);
+    }
     
-    // Clean up function to remove the temp band when component unmounts
+    // Clean up function to remove only the temporary band
     return () => {
-      if (currentFrequency) {
-        // Find and remove this frequency from the EQ processor
+      // Only remove the current frequency if it's not in our calibrated set
+      if (currentFrequency && !calibratedBands.some(band => band.frequency === currentFrequency)) {
         eq.removeBandByFrequency(currentFrequency);
       }
     };
-  }, [createBandForCurrentFrequency, currentFrequency, currentGain]);
+  }, [createBandForCurrentFrequency, currentFrequency, currentGain, calibratedBands]);
   
   // Move to the next step or stage
   const handleNextStep = () => {
