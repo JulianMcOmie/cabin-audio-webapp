@@ -53,29 +53,27 @@ export function useEQInteraction({
   // Function to play calibration audio based on current band
   const playCalibrationAudio = useCallback((bandId: string | null, play: boolean) => {
     const audioPlayer = getReferenceCalibrationAudio();
+
+    // console.log(`🔊 playCalibrationAudio: bandId=${bandId}, play=${play}`);
     
-    if (play) {
-      // Only proceed with starting audio if we have a valid band
-      if (bandId) {
-        // Find the band being dragged
-        const band = bands.find(b => b.id === bandId);
+    if (play && bandId) {
+      // Find the band being dragged
+      const band = bands.find(b => b.id === bandId);
+      
+      if (band) {
+        // Calculate bandwidth from Q
+        const bandwidth = band.q ? 1.0 / band.q : 1.0;
         
-        if (band) {
-          // Calculate bandwidth from Q
-          const bandwidth = band.q ? 1.0 / band.q : 1.0;
-          
-          // Pass both frequency and bandwidth to match the band's current settings
-          audioPlayer.updateCalibrationParameters(band.frequency, bandwidth);
-          
-          // Only start playing if not already playing
-          if (!audioPlayer.isActive()) {
-            audioPlayer.setPlaying(true);
-          }
+        // Set initial parameters with combined method to avoid pattern restarts
+        audioPlayer.updateCalibrationParameters(band.frequency, bandwidth);
+        
+        // Only start playing if not already playing
+        if (!audioPlayer.isActive()) {
+          audioPlayer.setPlaying(true);
         }
       }
-      // If play=true but no bandId, we keep playing with existing parameters
     } else {
-      // Only stop playing when explicitly told to stop (play=false)
+      // Stop playing when released
       audioPlayer.setPlaying(false);
     }
   }, [bands]);
