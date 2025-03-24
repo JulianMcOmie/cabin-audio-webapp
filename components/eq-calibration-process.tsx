@@ -14,9 +14,9 @@ import * as eqProcessor from "@/lib/audio/eqProcessor"
 
 // Define stages with frequency counts
 const CALIBRATION_STAGES = [
-  { count: 4, name: "Coarse Tuning", bandwidth: 1.0 },
-  { count: 8, name: "Fine Tuning", bandwidth: 0.5 },
-  { count: 16, name: "Precision Tuning", bandwidth: 0.25 }
+  { count: 4, name: "Coarse Tuning", bandwidth: 2.0, eqBandwidth: 1.5 },
+  { count: 8, name: "Fine Tuning", bandwidth: 2.0, eqBandwidth: 0.75 },
+  { count: 16, name: "Precision Tuning", bandwidth: 2.0, eqBandwidth: 0.375 }
 ];
 
 // Generate frequencies for a specific stage
@@ -144,14 +144,14 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
     // Calculate Q based on stage bandwidth
     // The Q is inversely proportional to bandwidth
     // Lower Q = wider bandwidth
-    const stageWidthFactor = CALIBRATION_STAGES[currentStage].bandwidth;
-    const bandQ = BASE_Q / stageWidthFactor; // Wider bands = lower Q value
+    const eqWidthFactor = CALIBRATION_STAGES[currentStage].eqBandwidth; // Use stage-specific EQ bandwidth
+    const bandQ = BASE_Q / eqWidthFactor; // Wider bands = lower Q value
     
     const newBand: EQBand = {
       id: uuidv4(),
       frequency: currentFrequency,
       gain: currentGain,
-      q: bandQ, // Dynamic Q based on stage
+      q: bandQ, // Q based on eqBandwidth
       type: 'peaking'
     };
     
@@ -495,7 +495,7 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
               <AlertCircle className="h-5 w-5 mr-2 flex-shrink-0 mt-0.5" />
               <div>
                 <strong>Stage {currentStage + 1} Info:</strong> {CALIBRATION_STAGES[currentStage].name} uses 
-                {CALIBRATION_STAGES[currentStage].bandwidth} octave bandwidth to {currentStage === 0 ? "broadly shape" : 
+                {CALIBRATION_STAGES[currentStage].bandwidth} octave audio bandwidth and {CALIBRATION_STAGES[currentStage].eqBandwidth} octave EQ bandwidth to {currentStage === 0 ? "broadly shape" : 
                   currentStage === 1 ? "refine" : "precisely adjust"} your EQ curve.
               </div>
             </div>
