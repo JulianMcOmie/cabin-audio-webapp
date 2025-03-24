@@ -100,6 +100,13 @@ export const useSineProfileStore = create<SineProfileState>((set, get) => {
           const defaultProfile = Object.values(loadedProfiles).find(p => p.isDefault);
           const firstProfile = Object.values(loadedProfiles)[0];
           
+          // Ensure all profiles have a valid points array
+          Object.values(loadedProfiles).forEach(profile => {
+            if (!profile.points) {
+              profile.points = [];
+            }
+          });
+          
           set({ 
             profiles: loadedProfiles, 
             activeProfileId: get().activeProfileId || (defaultProfile?.id || firstProfile?.id || null),
@@ -128,6 +135,11 @@ export const useSineProfileStore = create<SineProfileState>((set, get) => {
     isSineEQEnabled: true, // Default to enabled
     
     addProfile: (profile: SineProfileWithDefault) => {
+      // Ensure profile has a valid points array
+      if (!profile.points) {
+        profile.points = [];
+      }
+      
       // Update local state first for immediate UI feedback
       set((state) => ({
         profiles: {
@@ -150,6 +162,11 @@ export const useSineProfileStore = create<SineProfileState>((set, get) => {
               syncStatus: 'modified' as SyncStatus
             };
             
+            // Ensure points array exists
+            if (!updatedProfile.points) {
+              updatedProfile.points = [];
+            }
+            
             // Use updateItem instead
             indexedDBManager.updateItem(indexedDBManager.STORES.SINE_PROFILES, updatedProfile)
               .catch(updateError => console.error('Failed to update existing Sine EQ profile:', updateError));
@@ -171,6 +188,11 @@ export const useSineProfileStore = create<SineProfileState>((set, get) => {
           lastModified: Date.now(),
           syncStatus: 'modified' as SyncStatus
         };
+        
+        // Ensure points array is valid
+        if (!updatedProfile.points) {
+          updatedProfile.points = [];
+        }
         
         // Update local state
         const newState = {

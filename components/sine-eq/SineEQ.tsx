@@ -74,27 +74,48 @@ export function SineEQ({
     
     // Load points from profile
     if (profile) {
-      setPoints(profile.points || [])
+      // Ensure we always have a valid array, even if profile.points is null/undefined
+      const profilePoints = Array.isArray(profile.points) ? profile.points : [];
+      setPoints(profilePoints);
+      
+      // Debug to verify points are loaded correctly
+      console.log(`Loaded ${profilePoints.length} points from profile ${profile.id}`);
     } else {
-      setPoints([])
+      setPoints([]);
     }
   }, [profileId, getProfileById, getActiveProfile])
   
   // Save points to profile when they change
   useEffect(() => {
-    // Only save if we're done dragging to avoid excessive updates
-    if (isDraggingRef.current) return
-    
-    // Get the appropriate profile
-    const profile = profileId 
-      ? getProfileById(profileId) 
-      : getActiveProfile()
-    
-    // Save points to profile
-    if (profile && points !== profile.points) {
-      updateProfile(profile.id, { points })
+    // Skip during active drag operations to avoid excessive updates
+    if (isDraggingRef.current) {
+      return;
     }
-  }, [points, profileId, getProfileById, getActiveProfile, updateProfile])
+    
+    // Use a timeout to ensure we're not doing too many rapid updates
+    const saveTimeout = setTimeout(() => {
+      // Get the appropriate profile
+      const profile = profileId 
+        ? getProfileById(profileId) 
+        : getActiveProfile()
+      
+      // Save points to profile
+      if (profile) {
+        // Check if points actually changed by comparing contents
+        const pointsChanged = 
+          !profile.points || 
+          points.length !== profile.points.length ||
+          JSON.stringify(points) !== JSON.stringify(profile.points);
+          
+        if (pointsChanged) {
+          console.log(`Saving ${points.length} points to profile ${profile.id}`);
+          updateProfile(profile.id, { points });
+        }
+      }
+    }, 50); // Small delay to batch rapid changes
+    
+    return () => clearTimeout(saveTimeout);
+  }, [points, profileId, getProfileById, getActiveProfile, updateProfile]);
   
   // Update the disabled state based on the profile store
   useEffect(() => {
@@ -501,7 +522,10 @@ export function SineEQ({
         amplitude: ghostPoint.amplitude
       }
       
+      // Create updated points array with the new point
       const newPoints = [...points, newPoint]
+      
+      // Update state
       setPoints(newPoints)
       
       // Select and start dragging the new point
@@ -512,6 +536,16 @@ export function SineEQ({
       setGhostPoint({ visible: false, x: 0, y: 0, frequency: 0, amplitude: 0 })
       
       document.body.style.cursor = 'grabbing'
+      
+      // Immediately save the new point to the profile
+      const profile = profileId 
+        ? getProfileById(profileId) 
+        : getActiveProfile()
+      
+      if (profile) {
+        // Use newPoints here instead of points to ensure we save the latest state
+        updateProfile(profile.id, { points: newPoints })
+      }
     }
     
     // Add document event listeners for dragging outside canvas
@@ -556,7 +590,16 @@ export function SineEQ({
         : getActiveProfile()
       
       if (profile) {
-        updateProfile(profile.id, { points })
+        // Important: Need to access the current points state here
+        // Use a function to get the latest points from the updater
+        setPoints(currentPoints => {
+          // Save the latest points
+          if (profile) {
+            updateProfile(profile.id, { points: currentPoints })
+          }
+          // Return unchanged
+          return currentPoints
+        })
       }
       
       document.removeEventListener('mousemove', handleDocumentMouseMove)
