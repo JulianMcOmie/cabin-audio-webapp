@@ -30,47 +30,53 @@ export function createFrequencyResponseFunction(
   
   // Return a function that can calculate amplitude at any frequency
   return (frequency: number): number => {
-    // Find the two points that bracket this frequency
-    let leftPoint: EQPoint | null = null;
-    let rightPoint: EQPoint | null = null;
+    // Edge case checks
+    if (frequency <= sortedPoints[0].frequency) {
+      return sortedPoints[0].amplitude;
+    }
+    if (frequency >= sortedPoints[sortedPoints.length - 1].frequency) {
+      return sortedPoints[sortedPoints.length - 1].amplitude;
+    }
     
-    for (const point of sortedPoints) {
-      if (point.frequency <= frequency) {
-        if (!leftPoint || point.frequency > leftPoint.frequency) {
-          leftPoint = point;
-        }
+    // Find the points that bracket this frequency
+    let freq0 = 0, freq1 = 0, freq2 = 0, freq3 = 0;
+    let amp0 = 0, amp1 = 0, amp2 = 0, amp3 = 0;
+    
+    for (let i = 0; i < sortedPoints.length; i++) {
+      const currFreq = sortedPoints[i].frequency;
+      
+      // Exact match
+      if (frequency === currFreq) {
+        return sortedPoints[i].amplitude;
       }
       
-      if (point.frequency >= frequency) {
-        if (!rightPoint || point.frequency < rightPoint.frequency) {
-          rightPoint = point;
-        }
+      // Found the bracket
+      if (frequency < currFreq) {
+        freq1 = sortedPoints[i - 1].frequency;
+        amp1 = sortedPoints[i - 1].amplitude;
+        freq2 = currFreq;
+        amp2 = sortedPoints[i].amplitude;
+        
+        // Get points for Catmull-Rom interpolation
+        amp0 = (i > 1) ? sortedPoints[i - 2].amplitude : amp1;
+        freq0 = (i > 1) ? sortedPoints[i - 2].frequency : freq1;
+        amp3 = (i < sortedPoints.length - 1) ? sortedPoints[i + 1].amplitude : amp2;
+        freq3 = (i < sortedPoints.length - 1) ? sortedPoints[i + 1].frequency : freq2;
+        
+        break;
       }
     }
     
-    // Interpolate between points
-    if (leftPoint && rightPoint) {
-      if (leftPoint === rightPoint) {
-        return leftPoint.amplitude;
-      } else {
-        return CoordinateUtils.linearInterpolate(
-          frequency,
-          leftPoint.frequency,
-          leftPoint.amplitude,
-          rightPoint.frequency,
-          rightPoint.amplitude
-        );
-      }
-    } else if (leftPoint) {
-      // We're to the right of all points
-      return leftPoint.amplitude;
-    } else if (rightPoint) {
-      // We're to the left of all points
-      return rightPoint.amplitude;
-    } else {
-      // This shouldn't happen, but just in case
-      return 0;
-    }
+    // Use Catmull-Rom interpolation
+    return CoordinateUtils.interpolateFrequencyResponse(
+      frequency,
+      freq1,
+      freq2,
+      amp0,
+      amp1,
+      amp2,
+      amp3
+    );
   };
 }
 

@@ -96,4 +96,49 @@ export class CoordinateUtils {
     // Simple linear interpolation
     return y1 + (x - x1) * (y2 - y1) / (x2 - x1);
   }
+
+  /**
+   * Catmull-Rom spline interpolation
+   * t: interpolation parameter (0 to 1)
+   * p0, p1, p2, p3: control points
+   */
+  public static catmullRom(t: number, p0: number, p1: number, p2: number, p3: number): number {
+    const t2 = t * t;
+    const t3 = t2 * t;
+    
+    // Catmull-Rom matrix coefficients
+    const c0 = -0.5 * p0 + 1.5 * p1 - 1.5 * p2 + 0.5 * p3;
+    const c1 = p0 - 2.5 * p1 + 2 * p2 - 0.5 * p3;
+    const c2 = -0.5 * p0 + 0.5 * p2;
+    const c3 = p1;
+    
+    return c0 * t3 + c1 * t2 + c2 * t + c3;
+  }
+
+  /**
+   * Interpolate between points using Catmull-Rom splines
+   * frequency: target frequency
+   * freq1, freq2: frequency range
+   * amp0, amp1, amp2, amp3: amplitudes for interpolation
+   */
+  public static interpolateFrequencyResponse(
+    frequency: number,
+    freq1: number,
+    freq2: number,
+    amp0: number,
+    amp1: number,
+    amp2: number,
+    amp3: number
+  ): number {
+    // Convert frequencies to log scale for interpolation
+    const logFreq1 = Math.log(freq1);
+    const logFreq2 = Math.log(freq2);
+    const logFreq = Math.log(frequency);
+    
+    // Normalize the log frequency
+    const t = (logFreq - logFreq1) / (logFreq2 - logFreq1);
+    
+    // Use Catmull-Rom interpolation
+    return this.catmullRom(t, amp0, amp1, amp2, amp3);
+  }
 } 
