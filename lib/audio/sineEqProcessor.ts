@@ -77,110 +77,183 @@ class SineEQProcessor {
   }
   
   // Generate impulse response from frequency response using IFFT
-  private createImpulseResponseFromFrequencyResponse(points: EQPoint[]): AudioBuffer {
+  private createImpulseResponseFromFrequencyResponse(points: EQPoint[]): Promise<AudioBuffer> {
     const ctx = audioContext.getAudioContext();
     
     // Create a function that can be sampled at any frequency
     const responseFunction = createFrequencyResponseFunction(points, referenceNode);
     
-    // Generate frequency response array
-    const frequencyResponse = generateFrequencyResponseArray(
-      responseFunction,
-      DEFAULT_FREQ_RANGE,
-      this.bufferSize // Use buffer size as resolution
-    );
-    
-    // Create FFT buffer with real and imaginary components
-    // We'll use AnalyserNode's getFloatFrequencyData to fill this
-    const realBuffer = new Float32Array(this.bufferSize);
-    const imagBuffer = new Float32Array(this.bufferSize);
-    
-    // Fill the frequency response data (convert from dB to linear magnitude)
-    for (let i = 0; i < frequencyResponse.length; i++) {
-      // Convert dB amplitude to linear magnitude
-      const linearMagnitude = dbToLinear(frequencyResponse[i].amplitude);
-      
-      // Set magnitude as real component (phase is 0 for minimum phase)
-      realBuffer[i] = linearMagnitude;
-      imagBuffer[i] = 0; // Zero phase (minimum phase response)
-    }
-    
-    // Mirror the frequency response for negative frequencies (conjugate symmetry)
-    // This ensures the resulting impulse response is real
-    for (let i = 1; i < this.bufferSize / 2; i++) {
-      realBuffer[this.bufferSize - i] = realBuffer[i];
-      imagBuffer[this.bufferSize - i] = -imagBuffer[i]; // Conjugate
-    }
-    
-    // Create an AudioBuffer for our impulse response
+    // Create impulse buffer
     const impulseBuffer = ctx.createBuffer(2, this.bufferSize, ctx.sampleRate);
     
-    // Use OfflineAudioContext to perform IFFT
-    const offlineCtx = new OfflineAudioContext(
-      1, // Mono
-      this.bufferSize,
-      ctx.sampleRate
-    );
+    // Create FFT data arrays - complex format with real/imag pairs
+    const frequencyData = new Float32Array(this.bufferSize * 2);
     
-    // Create an oscillator to generate the impulse
-    const oscillator = offlineCtx.createOscillator();
-    
-    // Create a custom wave using our frequency response
-    try {
-      // Use the Web Audio API's createPeriodicWave to perform the IFFT
-      const wave = offlineCtx.createPeriodicWave(realBuffer, imagBuffer, {
-        disableNormalization: true
-      });
+    // Fill frequency response at correct bin positions
+    for (let i = 0; i <= this.bufferSize / 2; i++) {
+      // Convert bin index to normalized frequency (0 to 0.5)
+      const normalizedFreq = i / (this.bufferSize / 2);
       
-      oscillator.setPeriodicWave(wave);
-      oscillator.frequency.value = 0; // DC (needed for impulse response)
+      // Map to actual frequency (0 to Nyquist)
+      const freq = normalizedFreq * (ctx.sampleRate / 2);
       
-      // Connect to the offline context destination
-      oscillator.connect(offlineCtx.destination);
+      // Get amplitude at this frequency and convert to linear
+      const amplitude = responseFunction(freq);
+      const linearMagnitude = dbToLinear(amplitude);
       
-      // Start the oscillator at the beginning
-      oscillator.start();
-      
-      // Render the audio
-      return offlineCtx.startRendering().then(renderedBuffer => {
-        // Apply windowing to avoid time-domain artifacts
-        this.applyWindow(renderedBuffer);
-        
-        // Copy to stereo buffer
-        for (let channel = 0; channel < 2; channel++) {
-          const channelData = impulseBuffer.getChannelData(channel);
-          const renderedData = renderedBuffer.getChannelData(0);
-          
-          // Copy data
-          for (let i = 0; i < this.bufferSize; i++) {
-            channelData[i] = renderedData[i];
-          }
-        }
-        
-        return impulseBuffer;
-      });
-    } catch (error) {
-      console.error('Error creating impulse response:', error);
-      
-      // Fallback: create a flat impulse response
-      for (let channel = 0; channel < 2; channel++) {
-        const channelData = impulseBuffer.getChannelData(channel);
-        channelData[0] = 1.0; // Simple delta function
-      }
-      
-      return Promise.resolve(impulseBuffer);
+      // Set magnitude as real component (phase is 0 for minimum phase)
+      frequencyData[i * 2] = linearMagnitude;     // Real part
+      frequencyData[i * 2 + 1] = 0;               // Imaginary part
     }
+    
+    // Create conjugate symmetry for negative frequencies (excluding DC and Nyquist)
+    for (let i = 1; i < this.bufferSize / 2; i++) {
+      const reverseIdx = this.bufferSize - i;
+      frequencyData[reverseIdx * 2] = frequencyData[i * 2];          // Real part
+      frequencyData[reverseIdx * 2 + 1] = -frequencyData[i * 2 + 1]; // Negative imaginary for conjugate
+    }
+    
+    // Perform IFFT (implemented below)
+    const timeData = this.performIFFT(frequencyData);
+    
+    // Copy to the impulse buffer and apply processing
+    const channelData = new Float32Array(this.bufferSize);
+    for (let i = 0; i < this.bufferSize; i++) {
+      // Take only real part and scale by buffer size
+      channelData[i] = timeData[i * 2] / this.bufferSize;
+    }
+    
+    // Transform post-ringing into pre-ringing (swap halves of the buffer)
+    const halfSize = this.bufferSize / 2;
+    const tempData = new Float32Array(halfSize);
+    
+    // Copy first half to temp
+    for (let i = 0; i < halfSize; i++) {
+      tempData[i] = channelData[i];
+    }
+    
+    // Move second half to first half
+    for (let i = 0; i < halfSize; i++) {
+      channelData[i] = channelData[i + halfSize];
+    }
+    
+    // Move temp to second half
+    for (let i = 0; i < halfSize; i++) {
+      channelData[i + halfSize] = tempData[i];
+    }
+    
+    // Apply windowing
+    for (let i = 0; i < this.bufferSize; i++) {
+      // Hann window: 0.5 * (1 - cos(2π*n/(N-1)))
+      const windowValue = 0.5 * (1 - Math.cos(2 * Math.PI * i / (this.bufferSize - 1)));
+      channelData[i] *= windowValue;
+    }
+    
+    // Copy to stereo buffer
+    for (let channel = 0; channel < 2; channel++) {
+      const outputData = impulseBuffer.getChannelData(channel);
+      
+      // Copy data
+      for (let i = 0; i < this.bufferSize; i++) {
+        outputData[i] = channelData[i];
+      }
+    }
+    
+    // Print out the first few elements of the impulse buffer
+    console.log('Impulse buffer:', impulseBuffer.getChannelData(0).slice(0, 10));
+    
+    return Promise.resolve(impulseBuffer);
   }
   
-  // Apply a window function to the impulse response to reduce artifacts
-  private applyWindow(buffer: AudioBuffer): void {
-    // Apply a half Hann (raised cosine) window
-    const data = buffer.getChannelData(0);
+  // Perform IFFT (Inverse Fast Fourier Transform)
+  private performIFFT(frequencyData: Float32Array): Float32Array {
+    // Ensure buffer size is power of 2
+    const n = frequencyData.length / 2;
+    if ((n & (n - 1)) !== 0) {
+      throw new Error('FFT size must be a power of 2');
+    }
     
-    for (let i = 0; i < data.length; i++) {
-      // Half Hann window: 0.5 * (1 - cos(2π*n/(N-1)))
-      const windowValue = 0.5 * (1 - Math.cos(2 * Math.PI * i / (data.length - 1)));
-      data[i] *= windowValue;
+    // Create complex data array (conjugate the input for IFFT)
+    const data = new Float32Array(frequencyData.length);
+    for (let i = 0; i < frequencyData.length; i += 2) {
+      data[i] = frequencyData[i];        // Real part stays the same
+      data[i+1] = -frequencyData[i+1];   // Conjugate imaginary part
+    }
+    
+    // Perform FFT (the conjugated input makes this an IFFT)
+    this.performFFT(data, false);
+    
+    // Return the result
+    return data;
+  }
+  
+  // Perform FFT (Fast Fourier Transform)
+  private performFFT(data: Float32Array, inverse: boolean): void {
+    const n = data.length / 2;
+    
+    // Bit reversal permutation
+    let j = 0;
+    for (let i = 0; i < n - 1; i++) {
+      if (i < j) {
+        // Swap real parts
+        const tempReal = data[i*2];
+        data[i*2] = data[j*2];
+        data[j*2] = tempReal;
+        
+        // Swap imaginary parts
+        const tempImag = data[i*2+1];
+        data[i*2+1] = data[j*2+1];
+        data[j*2+1] = tempImag;
+      }
+      
+      let k = n / 2;
+      while (k <= j) {
+        j -= k;
+        k /= 2;
+      }
+      j += k;
+    }
+    
+    // Cooley-Tukey FFT
+    for (let step = 1; step < n; step *= 2) {
+      const jump = step * 2;
+      
+      // Calculate twiddle factor
+      const theta = Math.PI / step * (inverse ? -1 : 1);
+      const wReal = Math.cos(theta);
+      const wImag = Math.sin(theta);
+      
+      for (let group = 0; group < n; group += jump) {
+        let tReal = 1.0;
+        let tImag = 0.0;
+        
+        for (let butterfly = 0; butterfly < step; butterfly++) {
+          const aIndex = (group + butterfly) * 2;
+          const bIndex = (group + butterfly + step) * 2;
+          
+          // Get values
+          const aReal = data[aIndex];
+          const aImag = data[aIndex+1];
+          const bReal = data[bIndex];
+          const bImag = data[bIndex+1];
+          
+          // Calculate twiddle * b
+          const tBReal = bReal * tReal - bImag * tImag;
+          const tBImag = bReal * tImag + bImag * tReal;
+          
+          // Butterfly operation
+          data[bIndex] = aReal - tBReal;
+          data[bIndex+1] = aImag - tBImag;
+          data[aIndex] = aReal + tBReal;
+          data[aIndex+1] = aImag + tBImag;
+          
+          // Update twiddle factor
+          const nextTReal = tReal * wReal - tImag * wImag;
+          const nextTImag = tReal * wImag + tImag * wReal;
+          tReal = nextTReal;
+          tImag = nextTImag;
+        }
+      }
     }
   }
   
@@ -195,6 +268,9 @@ class SineEQProcessor {
       const impulseBuffer = await this.createImpulseResponseFromFrequencyResponse(
         profile.points || []
       );
+
+      // Print out the first few elements of the impulse buffer
+      console.log('Impulse buffer:', impulseBuffer.getChannelData(0));
       
       // Set the convolver buffer
       this.convolverNode.buffer = impulseBuffer;

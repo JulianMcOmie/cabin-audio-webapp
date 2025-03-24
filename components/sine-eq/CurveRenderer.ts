@@ -1,5 +1,10 @@
 import { EQPoint, FrequencyResponsePoint } from './types';
 import { CoordinateUtils } from './CoordinateUtils';
+import { 
+  createFrequencyResponseFunction, 
+  generateFrequencyResponseArray, 
+  DEFAULT_FREQ_RANGE 
+} from '@/lib/audio/sineFrequencyResponse';
 
 export class CurveRenderer {
   /**
@@ -102,69 +107,29 @@ export class CurveRenderer {
       return this.generateFlatResponse(freqRange, resolution, points[0].amplitude);
     }
     
-    // Generate logarithmically spaced frequency points
-    const frequencies: number[] = [];
-    const logMin = Math.log10(freqRange.min);
-    const logMax = Math.log10(freqRange.max);
-    const logStep = (logMax - logMin) / (resolution - 1);
+    // Use sineFrequencyResponse to create the frequency response function and curve
+    // Find the reference node (1kHz, 0dB)
+    const referenceNode = points.find(p => p.frequency === 1000 && p.amplitude === 0);
     
-    for (let i = 0; i < resolution; i++) {
-      const logFreq = logMin + i * logStep;
-      frequencies.push(Math.pow(10, logFreq));
-    }
+    // Get the non-reference points (user control points)
+    const userPoints = referenceNode 
+      ? points.filter(p => p !== referenceNode) 
+      : points;
     
-    // Calculate amplitude at each frequency using linear interpolation
-    const response: FrequencyResponsePoint[] = [];
+    // Create frequency response function
+    const responseFunction = createFrequencyResponseFunction(
+      userPoints,
+      referenceNode
+    );
     
-    for (const freq of frequencies) {
-      // Find the control points that surround this frequency
-      let leftPoint: EQPoint | null = null;
-      let rightPoint: EQPoint | null = null;
-      
-      for (const point of points) {
-        if (point.frequency <= freq) {
-          if (!leftPoint || point.frequency > leftPoint.frequency) {
-            leftPoint = point;
-          }
-        }
-        
-        if (point.frequency >= freq) {
-          if (!rightPoint || point.frequency < rightPoint.frequency) {
-            rightPoint = point;
-          }
-        }
-      }
-      
-      let amplitude: number;
-      
-      // Interpolate between points
-      if (leftPoint && rightPoint) {
-        if (leftPoint === rightPoint) {
-          amplitude = leftPoint.amplitude;
-        } else {
-          amplitude = CoordinateUtils.linearInterpolate(
-            freq,
-            leftPoint.frequency,
-            leftPoint.amplitude,
-            rightPoint.frequency,
-            rightPoint.amplitude
-          );
-        }
-      } else if (leftPoint) {
-        // We're to the right of all points
-        amplitude = leftPoint.amplitude;
-      } else if (rightPoint) {
-        // We're to the left of all points
-        amplitude = rightPoint.amplitude;
-      } else {
-        // This shouldn't happen, but just in case
-        amplitude = 0;
-      }
-      
-      response.push({ frequency: freq, amplitude });
-    }
+    // Generate frequency response array with logarithmically spaced points
+    const responseArray = generateFrequencyResponseArray(
+      responseFunction,
+      freqRange,
+      resolution
+    );
     
-    return response;
+    return responseArray;
   }
   
   /**
