@@ -1,3 +1,4 @@
+import { M_PLUS_1 } from 'next/font/google';
 import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
 
@@ -52,9 +53,6 @@ class ReferenceCalibrationAudio {
   
   // Calibration frequency (user adjustable)
   private calibrationFrequency: number = DEFAULT_CALIBRATION_FREQ;
-  
-  // Calibration bandwidth (adjustable per stage)
-  private currentBandwidth: number = BANDWIDTH_OCTAVE;
   
   // Active filter nodes for real-time updates
   private activeCalibrationFilters: {
@@ -192,20 +190,22 @@ class ReferenceCalibrationAudio {
 
   /**
    * Set the current bandwidth in octaves and update active filters
+   * Note: This is kept for API compatibility but has no effect with the new filter design
    * @param bandwidth Width in octaves
    */
   public setBandwidth(bandwidth: number): void {
-    this.currentBandwidth = Math.max(0.1, Math.min(2.0, bandwidth));
-    
-    // Update active filters in real-time if they exist
-    this.updateActiveFilters();
+    // No longer used - we now use adaptive filtering based on frequency
+    console.log(`🔊 setBandwidth(${bandwidth}) called - ignored, using adaptive filtering instead`);
+    // Kept for API compatibility
   }
   
   /**
    * Get the current bandwidth in octaves
+   * Note: This always returns 1.0 as bandwidth isn't used in the new filter design
    */
   public getBandwidth(): number {
-    return this.currentBandwidth;
+    // No longer used - return a default value for compatibility
+    return 1.0;
   }
   
   /**
@@ -215,40 +215,69 @@ class ReferenceCalibrationAudio {
     const ctx = audioContext.getAudioContext();
     const currentTime = ctx.currentTime;
     
-    if (this.activeCalibrationFilters.bandpass1) {
-      // Smooth transition to new frequency (faster than default for responsive UI)
-      this.activeCalibrationFilters.bandpass1.frequency.cancelScheduledValues(currentTime);
-      this.activeCalibrationFilters.bandpass1.frequency.setTargetAtTime(
-        this.calibrationFrequency, 
-        currentTime, 
-        0.05 // Time constant for exponential approach (smaller = faster)
-      );
-      
-      // Update Q based on current bandwidth
-      this.activeCalibrationFilters.bandpass1.Q.cancelScheduledValues(currentTime);
-      this.activeCalibrationFilters.bandpass1.Q.setTargetAtTime(
-        1.0 / this.currentBandwidth,
-        currentTime,
-        0.05
-      );
+    // Skip if no active filters
+    if (!this.activeCalibrationFilters.bandpass1 || !this.activeCalibrationFilters.bandpass2) {
+      return;
     }
     
-    if (this.activeCalibrationFilters.bandpass2) {
-      // Update second filter in the same way with a slight variation for natural sound
-      this.activeCalibrationFilters.bandpass2.frequency.cancelScheduledValues(currentTime);
-      this.activeCalibrationFilters.bandpass2.frequency.setTargetAtTime(
-        this.calibrationFrequency, 
-        currentTime, 
-        0.05
-      );
-      
-      this.activeCalibrationFilters.bandpass2.Q.cancelScheduledValues(currentTime);
-      this.activeCalibrationFilters.bandpass2.Q.setTargetAtTime(
-        1.0 / this.currentBandwidth * 0.9,
-        currentTime,
-        0.05
-      );
+    // Calculate normalization factor for frequency (0 to 1 across the hearing range)
+    const logMin = Math.log10(MIN_FREQ);
+    const logMax = Math.log10(MAX_FREQ);
+    const normalizedFreq = 1 - (Math.log10(this.calibrationFrequency) - logMin) / (logMax - logMin);
+    
+    // Dynamic Q values for filters
+    const minQ = 0.05;
+    const maxQ = 0.05;
+    const highpassQ = minQ + (maxQ - minQ) * normalizedFreq;
+    const lowpassQ = minQ + (maxQ - minQ) * (1 - normalizedFreq);
+    
+    // Calculate adaptive spread
+    const octaveSpread = 1.0; // Base spread in octaves
+    const adaptiveSpread = 0;//octaveSpread * (1 - Math.pow(normalizedFreq * 2 - 1, 2) * 0.5);
+    
+    // Calculate new cutoff frequencies
+    const highpassCutoff = this.calibrationFrequency / Math.pow(2, adaptiveSpread);
+    const lowpassCutoff = this.calibrationFrequency * Math.pow(2, adaptiveSpread);
+    
+    // Update highpass filter (using bandpass1 reference)
+    if (this.activeCalibrationFilters.bandpass1.type !== 'highpass') {
+      this.activeCalibrationFilters.bandpass1.type = 'highpass';
     }
+    
+    this.activeCalibrationFilters.bandpass1.frequency.cancelScheduledValues(currentTime);
+    this.activeCalibrationFilters.bandpass1.frequency.setTargetAtTime(
+      highpassCutoff, 
+      currentTime, 
+      0.05
+    );
+    
+    this.activeCalibrationFilters.bandpass1.Q.cancelScheduledValues(currentTime);
+    this.activeCalibrationFilters.bandpass1.Q.setTargetAtTime(
+      highpassQ,
+      currentTime,
+      0.05
+    );
+    
+    // Update lowpass filter (using bandpass2 reference)
+    if (this.activeCalibrationFilters.bandpass2.type !== 'lowpass') {
+      this.activeCalibrationFilters.bandpass2.type = 'lowpass';
+    }
+    
+    this.activeCalibrationFilters.bandpass2.frequency.cancelScheduledValues(currentTime);
+    this.activeCalibrationFilters.bandpass2.frequency.setTargetAtTime(
+      lowpassCutoff, 
+      currentTime, 
+      0.05
+    );
+    
+    this.activeCalibrationFilters.bandpass2.Q.cancelScheduledValues(currentTime);
+    this.activeCalibrationFilters.bandpass2.Q.setTargetAtTime(
+      lowpassQ,
+      currentTime,
+      0.05
+    );
+    
+    console.log(`🔊 Updated filters: freq=${this.calibrationFrequency.toFixed(0)}Hz (HP=${highpassCutoff.toFixed(0)}Hz LP=${lowpassCutoff.toFixed(0)}Hz HPQ=${highpassQ.toFixed(2)} LPQ=${lowpassQ.toFixed(2)})`);
   }
 
   /**
@@ -442,42 +471,60 @@ class ReferenceCalibrationAudio {
     const source = ctx.createBufferSource();
     source.buffer = this.noiseBuffer;
     
-    // Use currentBandwidth for both reference and calibration
-    const octaveRatio = Math.pow(2, this.currentBandwidth / 2); // Half bandwidth on each side
-    const lowFreq = frequency / octaveRatio;
-    const highFreq = frequency * octaveRatio;
+    // Create adaptive filters based on frequency range
+    // Calculate normalization factor for frequency (0 to 1 across the hearing range)
+    const logMin = Math.log10(MIN_FREQ);
+    const logMax = Math.log10(MAX_FREQ);
+    const normalizedFreq = (Math.log10(frequency) - logMin) / (logMax - logMin);
     
-    let bandpassFilter1, bandpassFilter2;
+    // Create highpass and lowpass filters with adaptive characteristics
+    const highpassFilter = ctx.createBiquadFilter();
+    highpassFilter.type = 'highpass';
     
-    if (isReference) {
-      // Reference now uses the same bandwidth as calibration
-      bandpassFilter1 = ctx.createBiquadFilter();
-      bandpassFilter1.type = 'bandpass';
-      bandpassFilter1.frequency.value = frequency;
-      bandpassFilter1.Q.value = 1.0 / this.currentBandwidth; // Use band's bandwidth
-      
-      bandpassFilter2 = ctx.createBiquadFilter();
-      bandpassFilter2.type = 'bandpass';
-      bandpassFilter2.frequency.value = frequency;
-      bandpassFilter2.Q.value = 1.0 / this.currentBandwidth * 0.9; // Slight variation
-    } else {
-      // For calibration, use the active filters or create new ones
-      if (!this.activeCalibrationFilters.bandpass1) {
-        this.activeCalibrationFilters.bandpass1 = ctx.createBiquadFilter();
-        this.activeCalibrationFilters.bandpass1.type = 'bandpass';
-        this.activeCalibrationFilters.bandpass1.frequency.value = this.calibrationFrequency;
-        this.activeCalibrationFilters.bandpass1.Q.value = 1.0 / this.currentBandwidth;
+    const lowpassFilter = ctx.createBiquadFilter();
+    lowpassFilter.type = 'lowpass';
+    
+    // Dynamic Q values for filters (higher Q = sharper slope)
+    // For highpass: sharp at low frequencies, broad at high frequencies
+    // For lowpass: broad at low frequencies, sharp at high frequencies
+    const minQ = 3.0;
+    const maxQ = 3.0;
+    const highpassQ = minQ + (maxQ - minQ) * normalizedFreq; // 2.0 at low freqs, 0.2 at high freqs
+    const lowpassQ = minQ + (maxQ - minQ) * (1 - normalizedFreq); // 0.2 at low freqs, 2.0 at high freqs
+    
+    // Calculate cutoff frequencies for both filters
+    // For a perceptually balanced sound, use logarithmic spacing
+    const octaveSpread = 1.0; // Base spread in octaves
+    const spreadFactor = 3.5;
+    
+    // Adaptive spread - tighter for mid-frequencies, wider for extremes
+    // Formula creates a dip at 0.5 (mid-frequency) and increases at extremes
+    const adaptiveSpread = 1.0;//octaveSpread * (1 + Math.pow(normalizedFreq * 2 - 1, 2) * 0.5);
+    
+    // Calculate octave-based cutoffs
+    const highpassCutoff = frequency / Math.pow(2, adaptiveSpread);
+    const lowpassCutoff = frequency * Math.pow(2, adaptiveSpread);
+    
+    // Apply filter settings
+    highpassFilter.frequency.value = highpassCutoff;
+    highpassFilter.Q.value = highpassQ;
+    
+    lowpassFilter.frequency.value = lowpassCutoff;
+    lowpassFilter.Q.value = lowpassQ;
+    
+    // Store active filter references if this is a calibration (non-reference) play
+    if (!isReference) {
+      // Replace existing active filters (we're using highpass/lowpass now instead of bandpass)
+      if (this.activeCalibrationFilters.bandpass1) {
+        this.activeCalibrationFilters.bandpass1.disconnect();
+      }
+      if (this.activeCalibrationFilters.bandpass2) {
+        this.activeCalibrationFilters.bandpass2.disconnect();
       }
       
-      if (!this.activeCalibrationFilters.bandpass2) {
-        this.activeCalibrationFilters.bandpass2 = ctx.createBiquadFilter();
-        this.activeCalibrationFilters.bandpass2.type = 'bandpass';
-        this.activeCalibrationFilters.bandpass2.frequency.value = this.calibrationFrequency;
-        this.activeCalibrationFilters.bandpass2.Q.value = 1.0 / this.currentBandwidth * 0.9;
-      }
-      
-      bandpassFilter1 = this.activeCalibrationFilters.bandpass1;
-      bandpassFilter2 = this.activeCalibrationFilters.bandpass2;
+      // Store new filters for future reference
+      this.activeCalibrationFilters.bandpass1 = highpassFilter; // Reusing the bandpass names for now
+      this.activeCalibrationFilters.bandpass2 = lowpassFilter;
     }
     
     // Create a panner
@@ -500,9 +547,9 @@ class ReferenceCalibrationAudio {
     envelopeGain.gain.linearRampToValueAtTime(0, now + BURST_LENGTH + ENVELOPE_RELEASE);
     
     // Connect the audio chain
-    source.connect(bandpassFilter1);
-    bandpassFilter1.connect(bandpassFilter2);
-    bandpassFilter2.connect(panner);
+    source.connect(highpassFilter);
+    highpassFilter.connect(lowpassFilter);
+    lowpassFilter.connect(panner);
     panner.connect(envelopeGain);
     envelopeGain.connect(gainNode);
     
@@ -535,7 +582,7 @@ class ReferenceCalibrationAudio {
     
     // Log the noise burst details
     if (!isReference) {
-      console.log(`🔊 Calibration burst: freq=${this.calibrationFrequency.toFixed(0)}Hz (band: ${lowFreq.toFixed(0)}-${highFreq.toFixed(0)}Hz, BW=${this.currentBandwidth.toFixed(2)})`);
+      console.log(`🔊 Calibration burst: freq=${frequency.toFixed(0)}Hz (HP=${highpassCutoff.toFixed(0)}Hz, LP=${lowpassCutoff.toFixed(0)}Hz, HPQ=${highpassQ.toFixed(2)}, LPQ=${lowpassQ.toFixed(2)})`);
     }
   }
 

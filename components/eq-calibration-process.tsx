@@ -14,9 +14,9 @@ import * as eqProcessor from "@/lib/audio/eqProcessor"
 
 // Define stages with frequency counts
 const CALIBRATION_STAGES = [
-  { count: 4, name: "Coarse Tuning", bandwidth: 2.0, eqBandwidth: 1.5 },
-  { count: 8, name: "Fine Tuning", bandwidth: 2.0, eqBandwidth: 0.75 },
-  { count: 16, name: "Precision Tuning", bandwidth: 2.0, eqBandwidth: 0.375 }
+  { count: 4, name: "Coarse Tuning", eqBandwidth: 1.5 },
+  { count: 8, name: "Fine Tuning", eqBandwidth: 1.5 },
+  { count: 16, name: "Precision Tuning", eqBandwidth: 1.5 }
 ];
 
 // Generate frequencies for a specific stage
@@ -86,9 +86,8 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
     setStageFrequencies(frequencies);
     setCurrentStep(0); // Reset step when changing stage
     
-    // Update bandwidth in the audio player
+    // Reference audio player no longer uses bandwidth
     const audioPlayer = getReferenceCalibrationAudio();
-    audioPlayer.setBandwidth(CALIBRATION_STAGES[currentStage].bandwidth);
     
     console.log(`Stage ${currentStage + 1}: ${CALIBRATION_STAGES[currentStage].name} - Frequencies:`, frequencies);
   }, [currentStage]);
@@ -495,7 +494,7 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
               <AlertCircle className="h-5 w-5 mr-2 flex-shrink-0 mt-0.5" />
               <div>
                 <strong>Stage {currentStage + 1} Info:</strong> {CALIBRATION_STAGES[currentStage].name} uses 
-                {CALIBRATION_STAGES[currentStage].bandwidth} octave audio bandwidth and {CALIBRATION_STAGES[currentStage].eqBandwidth} octave EQ bandwidth to {currentStage === 0 ? "broadly shape" : 
+                adaptive frequency filtering and {CALIBRATION_STAGES[currentStage].eqBandwidth} octave EQ bandwidth to {currentStage === 0 ? "broadly shape" : 
                   currentStage === 1 ? "refine" : "precisely adjust"} your EQ curve.
               </div>
             </div>
