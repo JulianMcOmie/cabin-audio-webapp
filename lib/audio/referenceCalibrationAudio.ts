@@ -508,8 +508,11 @@ class ReferenceCalibrationAudio {
     
     // Connect to proper destination based on whether this is reference or not
     if (isReference) {
-      // Reference signal ALWAYS bypasses EQ and connects directly to main output
-      gainNode.connect(audioContext.getAudioContext().destination);
+      // Add compensation gain to match the level of the EQ-processed calibration signal
+      const compensationGain = ctx.createGain();
+      compensationGain.gain.value = 4.0; // Adjust this value to match calibration volume
+      gainNode.connect(compensationGain);
+      compensationGain.connect(audioContext.getAudioContext().destination);
       
       // Also connect to analyzer if it exists (for visualization only)
       if (this.preEQGain) {
