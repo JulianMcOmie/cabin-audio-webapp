@@ -36,6 +36,9 @@ export function SineEQ({
   const [isDarkMode, setIsDarkMode] = useState(false)
   const backgroundDrawnRef = useRef<boolean>(false)
   
+  // Reference node (1kHz, 0dB) - can't be moved
+  const referenceNode: EQPoint = { frequency: 1000, amplitude: 0 }
+  
   // EQ control points
   const [points, setPoints] = useState<EQPoint[]>([])
   const [selectedPointIndex, setSelectedPointIndex] = useState<number | null>(null)
@@ -97,17 +100,17 @@ export function SineEQ({
     // Clear canvas
     ctx.clearRect(0, 0, rect.width, rect.height)
 
-    // Add semi-transparent background
-    ctx.fillStyle = isDarkMode ? "rgba(5, 5, 8, 0.95)" : "rgba(230, 230, 230, 0.7)"
+    // Add semi-transparent background (significantly darker)
+    ctx.fillStyle = isDarkMode ? "rgba(5, 5, 8, 0.98)" : "rgba(10, 10, 15, 0.95)"
     ctx.fillRect(0, 0, rect.width, rect.height)
     
     // Draw a subtle border around the content area
-    ctx.strokeStyle = isDarkMode ? "rgba(80, 80, 100, 0.3)" : "rgba(200, 200, 200, 0.5)"
+    ctx.strokeStyle = isDarkMode ? "rgba(80, 80, 100, 0.3)" : "rgba(100, 100, 120, 0.3)"
     ctx.lineWidth = 1
     ctx.strokeRect(margin, margin, rect.width - margin * 2, rect.height - margin * 2)
 
     // Draw background grid
-    ctx.strokeStyle = isDarkMode ? "rgba(63, 63, 92, 0.4)" : "rgba(226, 232, 240, 0.5)"
+    ctx.strokeStyle = isDarkMode ? "rgba(63, 63, 92, 0.2)" : "rgba(100, 100, 130, 0.15)"
     ctx.lineWidth = 1
 
     // Define frequency points for logarithmic grid
@@ -185,22 +188,25 @@ export function SineEQ({
     const innerWidth = rect.width - margin * 2
     const innerHeight = rect.height - margin * 2
     
+    // Create all points array including the reference node
+    const allPoints = [referenceNode, ...points]
+    
     // Draw the curve
     CurveRenderer.drawCurve(
       ctx,
-      points,
+      allPoints,
       innerWidth,
       innerHeight,
       freqRange,
       ampRange,
       isDarkMode,
-      3,
-      0.8,
+      4,  // Line width 
+      1.0, // Alpha
       margin,
       margin
     )
     
-    // Draw the control points
+    // Draw the user control points
     CurveRenderer.drawPoints(
       ctx,
       points,
@@ -210,6 +216,19 @@ export function SineEQ({
       ampRange,
       isDarkMode,
       selectedPointIndex,
+      margin,
+      margin
+    )
+    
+    // Draw the reference node (special rendering)
+    CurveRenderer.drawReferencePoint(
+      ctx,
+      referenceNode,
+      innerWidth,
+      innerHeight,
+      freqRange,
+      ampRange,
+      isDarkMode,
       margin,
       margin
     )
@@ -236,7 +255,8 @@ export function SineEQ({
     isDarkMode, 
     freqRange, 
     ampRange, 
-    renderBackgroundCanvas
+    renderBackgroundCanvas,
+    referenceNode
   ])
   
   // Find nearest point to cursor coordinates
@@ -270,11 +290,13 @@ export function SineEQ({
   
   // Calculate the amplitude at a given frequency based on the current points
   const calculateAmplitudeAtFrequency = (frequency: number): number => {
-    if (points.length === 0) return 0
-    if (points.length === 1) return points[0].amplitude
+    // Include the reference node in the calculation
+    const allPoints = [referenceNode, ...points]
+    
+    if (allPoints.length === 1) return allPoints[0].amplitude
     
     // Sort points by frequency
-    const sortedPoints = [...points].sort((a, b) => a.frequency - b.frequency)
+    const sortedPoints = [...allPoints].sort((a, b) => a.frequency - b.frequency)
     
     // Find the two points that bracket this frequency
     let leftPoint: EQPoint | null = null
@@ -479,6 +501,10 @@ export function SineEQ({
       // Select and start dragging the new point
       setSelectedPointIndex(newPoints.length - 1)
       isDraggingRef.current = true
+      
+      // Hide the ghost point immediately
+      setGhostPoint({ visible: false, x: 0, y: 0, frequency: 0, amplitude: 0 })
+      
       document.body.style.cursor = 'grabbing'
     }
     

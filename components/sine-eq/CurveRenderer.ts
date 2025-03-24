@@ -13,8 +13,8 @@ export class CurveRenderer {
     freqRange: { min: number, max: number },
     ampRange: { min: number, max: number },
     isDarkMode: boolean,
-    lineWidth: number = 3,
-    alpha: number = 0.8,
+    lineWidth: number = 4,
+    alpha: number = 1.0,
     xOffset: number = 0,
     yOffset: number = 0
   ): void {
@@ -208,19 +208,55 @@ export class CurveRenderer {
         isDarkMode
       );
       
-      // Draw the point
+      // Draw the point with no outline
       ctx.beginPath();
       ctx.arc(x + xOffset, y + yOffset, isSelected ? 8 : 6, 0, Math.PI * 2);
       ctx.fillStyle = pointColor;
       ctx.fill();
-      
-      // Draw a border
-      ctx.beginPath();
-      ctx.arc(x + xOffset, y + yOffset, isSelected ? 8 : 6, 0, Math.PI * 2);
-      ctx.strokeStyle = isDarkMode ? 'rgba(255, 255, 255, 0.6)' : 'rgba(0, 0, 0, 0.6)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
     });
+  }
+  
+  /**
+   * Draw the reference point (1kHz, 0dB)
+   */
+  static drawReferencePoint(
+    ctx: CanvasRenderingContext2D,
+    point: EQPoint,
+    width: number,
+    height: number,
+    freqRange: { min: number, max: number },
+    ampRange: { min: number, max: number },
+    isDarkMode: boolean,
+    xOffset: number = 0,
+    yOffset: number = 0
+  ): void {
+    const x = CoordinateUtils.freqToX(point.frequency, width, freqRange);
+    const y = CoordinateUtils.amplitudeToY(point.amplitude, height, ampRange);
+    
+    // Draw an outer ring
+    ctx.beginPath();
+    ctx.arc(x + xOffset, y + yOffset, 12, 0, Math.PI * 2);
+    ctx.fillStyle = isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)';
+    ctx.fill();
+    
+    // Draw middle ring
+    ctx.beginPath();
+    ctx.arc(x + xOffset, y + yOffset, 8, 0, Math.PI * 2);
+    ctx.fillStyle = isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)';
+    ctx.fill();
+    
+    // Draw the inner point (white/black depending on theme)
+    ctx.beginPath();
+    ctx.arc(x + xOffset, y + yOffset, 4, 0, Math.PI * 2);
+    ctx.fillStyle = isDarkMode ? 'rgba(255, 255, 255, 0.8)' : 'rgba(0, 0, 0, 0.8)';
+    ctx.fill();
+    
+    // Draw a small ring to indicate it's a reference
+    ctx.beginPath();
+    ctx.arc(x + xOffset, y + yOffset, 10, 0, Math.PI * 2);
+    ctx.strokeStyle = isDarkMode ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.3)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
   }
   
   /**
