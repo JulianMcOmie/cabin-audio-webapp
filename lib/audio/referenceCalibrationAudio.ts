@@ -66,10 +66,7 @@ class ReferenceCalibrationAudio {
   };
   
   // Add a constant for fixed noise bandwidth
-  private readonly FIXED_NOISE_BANDWIDTH = 0.5; // Half octave fixed width for noise bursts
-  
-  // Add a scaling factor for noise bandwidth
-  private readonly BANDWIDTH_SCALING_FACTOR = 2.0; // Makes noise bandwidth narrower than EQ band
+  private readonly FIXED_NOISE_BANDWIDTH = 1.0; // Half octave fixed width for noise bursts
   
   private constructor() {
     // Initialize noise buffer
@@ -375,7 +372,8 @@ class ReferenceCalibrationAudio {
       // Play reference always at center (pan = 0)
       this.playNoiseAtFrequency(REFERENCE_FREQ, 0, true);
     } else {
-      this.playNoiseAtFrequency(this.calibrationFrequency, panPosition, true);
+      // Play calibration at the current pan position
+      this.playNoiseAtFrequency(this.calibrationFrequency, panPosition, false);
     }
     
     // Notify position listeners
@@ -459,16 +457,16 @@ class ReferenceCalibrationAudio {
     let bandpassFilter1, bandpassFilter2;
     
     if (isReference) {
-      // Reference uses the same bandwidth as calibration
+      // Reference uses fixed bandwidth for consistent sound
       bandpassFilter1 = ctx.createBiquadFilter();
       bandpassFilter1.type = 'bandpass';
       bandpassFilter1.frequency.value = frequency;
-      bandpassFilter1.Q.value = 1.0 / this.currentBandwidth;
+      bandpassFilter1.Q.value = 1.0 / this.FIXED_NOISE_BANDWIDTH; // Use fixed bandwidth
       
       bandpassFilter2 = ctx.createBiquadFilter();
       bandpassFilter2.type = 'bandpass';
       bandpassFilter2.frequency.value = frequency;
-      bandpassFilter2.Q.value = 1.0 / this.currentBandwidth * 0.9;
+      bandpassFilter2.Q.value = 1.0 / this.FIXED_NOISE_BANDWIDTH * 0.9; // Slight variation
     } else {
       // For calibration, use the active filters or create new ones
       if (!this.activeCalibrationFilters.bandpass1) {
