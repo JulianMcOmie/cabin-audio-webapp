@@ -450,16 +450,16 @@ class ReferenceCalibrationAudio {
     let bandpassFilter1, bandpassFilter2;
     
     if (isReference) {
-      // Reference now uses the same bandwidth as calibration
+      // Reference uses the same bandwidth as calibration
       bandpassFilter1 = ctx.createBiquadFilter();
       bandpassFilter1.type = 'bandpass';
       bandpassFilter1.frequency.value = frequency;
-      bandpassFilter1.Q.value = 1.0 / this.currentBandwidth; // Use band's bandwidth
+      bandpassFilter1.Q.value = 1.0 / this.currentBandwidth;
       
       bandpassFilter2 = ctx.createBiquadFilter();
       bandpassFilter2.type = 'bandpass';
       bandpassFilter2.frequency.value = frequency;
-      bandpassFilter2.Q.value = 1.0 / this.currentBandwidth * 0.9; // Slight variation
+      bandpassFilter2.Q.value = 1.0 / this.currentBandwidth * 0.9;
     } else {
       // For calibration, use the active filters or create new ones
       if (!this.activeCalibrationFilters.bandpass1) {
@@ -506,30 +506,15 @@ class ReferenceCalibrationAudio {
     panner.connect(envelopeGain);
     envelopeGain.connect(gainNode);
     
-    // Connect to proper destination based on whether this is reference or not
-    if (isReference) {
-      // Reference signal ALWAYS bypasses EQ and connects directly to main output
-      gainNode.connect(audioContext.getAudioContext().destination);
-      
-      // Also connect to analyzer if it exists (for visualization only)
-      if (this.preEQGain) {
-        // Create a reduced-volume copy for analyzer to avoid double volume
-        const analyzerGain = ctx.createGain();
-        analyzerGain.gain.value = 0.2; // Low volume just for visualization
-        gainNode.connect(analyzerGain);
-        analyzerGain.connect(this.preEQGain);
-      }
+    // CHANGED: Both reference and calibration signals now go through EQ
+    if (this.preEQGain) {
+      gainNode.connect(this.preEQGain);
     } else {
-      // Calibration signal goes through EQ
-      if (this.preEQGain) {
-        gainNode.connect(this.preEQGain);
-      } else {
-        const eq = eqProcessor.getEQProcessor();
-        gainNode.connect(eq.getInputNode());
-      }
+      const eq = eqProcessor.getEQProcessor();
+      gainNode.connect(eq.getInputNode());
     }
     
-    // Start and automatically stop the source (but not the filters for calibration)
+    // Start and automatically stop the source
     source.start();
     source.stop(now + BURST_LENGTH + ENVELOPE_RELEASE + 0.1);
     
