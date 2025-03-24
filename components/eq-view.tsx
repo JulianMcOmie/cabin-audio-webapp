@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { HelpCircle, Play, Power, Volume2, Sliders } from "lucide-react"
+import { HelpCircle, Play, Power, Volume2, Sliders, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { FrequencyGraph } from "@/components/frequency-graph"
 import { ReferenceCalibration } from "@/components/reference-calibration"
@@ -21,6 +21,8 @@ import { getReferenceCalibrationAudio } from "@/lib/audio/referenceCalibrationAu
 import { EQCalibrationProcess } from "@/components/eq-calibration-process"
 import { SineEQGraph } from "@/components/sine-eq-graph"
 import { SineProfiles } from "@/components/sine-profiles"
+import { useSineProfileStore } from "@/lib/stores/sineProfileStore"
+import { applyActiveProfile as applySineActiveProfile } from "@/lib/audio/sineEqProcessor"
 
 interface EQViewProps {
 //   isPlaying: boolean
@@ -43,6 +45,11 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     setActiveProfile,
     addProfile 
   } = useEQProfileStore()
+  
+  const { 
+    isSineEQEnabled, 
+    setSineEQEnabled 
+  } = useSineProfileStore()
   
   const [showCalibrationModal, setShowCalibrationModal] = useState(false)
   const [showCreateNewDialog, setShowCreateNewDialog] = useState(false)
@@ -169,6 +176,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
 
   const toggleEQ = () => {
     setEQEnabled(!isEQEnabled);
+    setSineEQEnabled(!isEQEnabled);
   };
 
   const [showCalibrationProcess, setShowCalibrationProcess] = useState(false)
@@ -202,6 +210,11 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const handleSelectSineProfile = (profileId: string) => {
     setSelectedSineProfileId(profileId)
   }
+
+  // Update sineEQProcessor with current sine profile
+  const updateSineEQ = async () => {
+    await applySineActiveProfile();
+  };
 
   return (
     <div className="mx-auto space-y-8 pb-24">
@@ -244,7 +257,10 @@ export function EQView({ setEqEnabled }: EQViewProps) {
               disabled={!isEQEnabled} 
               className="w-full" 
               onInstructionChange={setInstruction}
-              onRequestEnable={() => setEQEnabled(true)}
+              onRequestEnable={() => {
+                setEQEnabled(true);
+                setSineEQEnabled(true);
+              }}
               profileId={selectedSineProfileId}
             />
           </div>
@@ -254,8 +270,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
             {instruction}
           </div>
 
-          {/* EQ Toggle Button - Updated for consistency */}
-          <div className="eq-toggle-container">
+          {/* EQ Toggle and Apply buttons */}
+          <div className="eq-toggle-container flex gap-2">
             <Button
               variant={isEQEnabled ? "default" : "outline"}
               size="sm"
@@ -265,6 +281,16 @@ export function EQView({ setEqEnabled }: EQViewProps) {
             >
               <Power className="h-4 w-4 mr-2" />
               {isEQEnabled ? "EQ On" : "EQ Off"}
+            </Button>
+            
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={updateSineEQ}
+              title="Update Sine EQ with current profile"
+            >
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Apply Sine EQ
             </Button>
           </div>
         </div>

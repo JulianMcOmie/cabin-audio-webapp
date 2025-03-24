@@ -26,10 +26,15 @@ class AudioRouting {
     const sineEq = sineEqProcessor.getSineEQProcessor();
     
     // Connect SineEQ output to analyser (since it's the last in the chain)
-    sineEq.getOutputNode()!.connect(this.analyserNode);
+    const sineEqOutput = sineEq.getOutputNode();
+    if (sineEqOutput && this.analyserNode) {
+      sineEqOutput.connect(this.analyserNode);
+    }
     
     // Connect analyser to destination
-    this.analyserNode.connect(this.destinationNode);
+    if (this.analyserNode && this.destinationNode) {
+      this.analyserNode.connect(this.destinationNode);
+    }
     
     this.isConnected = true;
   }
@@ -43,8 +48,17 @@ class AudioRouting {
   public disconnect(): void {
     if (this.isConnected && this.analyserNode) {
       this.analyserNode.disconnect();
-      eqProcessor.getEQProcessor().getOutputNode().disconnect();
-      sineEqProcessor.getSineEQProcessor().getOutputNode().disconnect();
+      
+      const eqOutput = eqProcessor.getEQProcessor().getOutputNode();
+      if (eqOutput) {
+        eqOutput.disconnect();
+      }
+      
+      const sineEqOutput = sineEqProcessor.getSineEQProcessor().getOutputNode();
+      if (sineEqOutput) {
+        sineEqOutput.disconnect();
+      }
+      
       this.isConnected = false;
     }
   }
@@ -52,8 +66,11 @@ class AudioRouting {
   // Reconnect audio nodes
   public reconnect(): void {
     if (!this.isConnected && this.analyserNode && this.destinationNode) {
-      eqProcessor.getEQProcessor().getOutputNode().connect(this.analyserNode);
-      sineEqProcessor.getSineEQProcessor().getOutputNode().connect(this.analyserNode);
+      const sineEqOutput = sineEqProcessor.getSineEQProcessor().getOutputNode();
+      if (sineEqOutput) {
+        sineEqOutput.connect(this.analyserNode);
+      }
+      
       this.analyserNode.connect(this.destinationNode);
       this.isConnected = true;
     }
