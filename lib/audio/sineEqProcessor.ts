@@ -17,6 +17,7 @@ class SineEQProcessor {
   private inputNode: GainNode | null = null;
   private outputNode: GainNode | null = null;
   private convolverNode: ConvolverNode | null = null;
+  private convolverGainNode: GainNode | null = null;  // New gain node for convolver
   private bypassNode: GainNode | null = null;
   private isEnabled: boolean = true;
   private currentProfile: SineProfile | null = null;
@@ -41,6 +42,11 @@ class SineEQProcessor {
     
     // Create convolver node
     this.convolverNode = ctx.createConvolver();
+    this.convolverNode.normalize = false;
+    
+    // Create convolver gain node for wet signal control
+    this.convolverGainNode = ctx.createGain();
+    this.convolverGainNode.gain.value = 1; // Initially on
     
     // Create bypass node for when convolution is disabled
     this.bypassNode = ctx.createGain();
@@ -48,7 +54,8 @@ class SineEQProcessor {
     
     // Connect the nodes
     this.inputNode.connect(this.convolverNode);
-    this.convolverNode.connect(this.outputNode);
+    this.convolverNode.connect(this.convolverGainNode!);
+    this.convolverGainNode!.connect(this.outputNode);
     
     // Create bypass path (parallel to convolver)
     this.inputNode.connect(this.bypassNode);
@@ -312,14 +319,15 @@ class SineEQProcessor {
     const now = ctx.currentTime;
     const TRANSITION_TIME = 0.02; // 20ms transition
     
-    if (!this.convolverNode || !this.bypassNode) return;
+    if (!this.convolverGainNode || !this.bypassNode) return;
     
     if (enabled) {
       // Fade in convolver, fade out bypass
+      this.convolverGainNode.gain.linearRampToValueAtTime(1, now + TRANSITION_TIME);
       this.bypassNode.gain.linearRampToValueAtTime(0, now + TRANSITION_TIME);
-      // Web Audio API doesn't allow changing convolver wet gain, so we use an additional gain node
     } else {
-      // Fade in bypass (dry signal only)
+      // Fade out convolver, fade in bypass
+      this.convolverGainNode.gain.linearRampToValueAtTime(0, now + TRANSITION_TIME);
       this.bypassNode.gain.linearRampToValueAtTime(1, now + TRANSITION_TIME);
     }
   }
@@ -364,6 +372,9 @@ class SineEQProcessor {
     }
     if (this.convolverNode) {
       this.convolverNode.disconnect();
+    }
+    if (this.convolverGainNode) {
+      this.convolverGainNode.disconnect();
     }
     if (this.bypassNode) {
       this.bypassNode.disconnect();

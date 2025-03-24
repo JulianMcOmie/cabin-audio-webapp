@@ -36,21 +36,12 @@ class AudioPlayer {
       this.distortionGainNode = audioContext.createGain();
       this.distortionGainNode.gain.value = 1.0; // Default to no reduction
       
-      // Get the EQ processor
-      const eq = eqProcessor.getEQProcessor();
-      
       // Get the SineEQ processor
       const sineEq = sineEqProcessor.getSineEQProcessor();
       
-      // Connect nodes: gainNode -> distortionGainNode -> EQ -> SineEQ -> destination
+      // Connect nodes: gainNode -> distortionGainNode -> SineEQ
       this.gainNode.connect(this.distortionGainNode!);
-      this.distortionGainNode!.connect(eq.getInputNode()!);
-      
-      // Connect EQ output to SineEQ input
-      eq.getOutputNode()!.connect(sineEq.getInputNode()!);
-      
-      // Connect SineEQ output to destination
-      sineEq.getOutputNode()!.connect(audioContext.getAudioContext().destination);
+      this.distortionGainNode!.connect(sineEq.getInputNode()!);
       
       // Set up progress tracking
       this.setupProgressTracking();

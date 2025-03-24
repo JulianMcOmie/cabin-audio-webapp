@@ -5,6 +5,7 @@ import { EQPoint, GhostPoint } from './types'
 import { CoordinateUtils } from './CoordinateUtils'
 import { CurveRenderer } from './CurveRenderer'
 import { useSineProfileStore } from '@/lib/stores/sineProfileStore'
+import { createFrequencyResponseFunction } from '@/lib/audio/sineFrequencyResponse'
 
 interface SineEQProps {
   disabled?: boolean
@@ -383,59 +384,6 @@ export function SineEQ({
     return closestIndex
   }
   
-  // Calculate the amplitude at a given frequency based on the current points
-  const calculateAmplitudeAtFrequency = (frequency: number): number => {
-    // Include the reference node in the calculation
-    const allPoints = [referenceNode, ...points]
-    
-    if (allPoints.length === 1) return allPoints[0].amplitude
-    
-    // Sort points by frequency
-    const sortedPoints = [...allPoints].sort((a, b) => a.frequency - b.frequency)
-    
-    // Find the two points that bracket this frequency
-    let leftPoint: EQPoint | null = null
-    let rightPoint: EQPoint | null = null
-    
-    for (const point of sortedPoints) {
-      if (point.frequency <= frequency) {
-        if (!leftPoint || point.frequency > leftPoint.frequency) {
-          leftPoint = point
-        }
-      }
-      
-      if (point.frequency >= frequency) {
-        if (!rightPoint || point.frequency < rightPoint.frequency) {
-          rightPoint = point
-        }
-      }
-    }
-    
-    // Interpolate between points
-    if (leftPoint && rightPoint) {
-      if (leftPoint === rightPoint) {
-        return leftPoint.amplitude
-      } else {
-        return CoordinateUtils.linearInterpolate(
-          frequency,
-          leftPoint.frequency,
-          leftPoint.amplitude,
-          rightPoint.frequency,
-          rightPoint.amplitude
-        )
-      }
-    } else if (leftPoint) {
-      // We're to the right of all points
-      return leftPoint.amplitude
-    } else if (rightPoint) {
-      // We're to the left of all points
-      return rightPoint.amplitude
-    } else {
-      // This shouldn't happen, but just in case
-      return 0
-    }
-  }
-  
   // Handler for mouse movement
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (disabled) return;
@@ -523,8 +471,11 @@ export function SineEQ({
         
         const frequency = CoordinateUtils.xToFreq(innerX, innerWidth, freqRange);
         
-        // For the ghost point's amplitude, we'll get the current curve value at this frequency
-        const amplitude = calculateAmplitudeAtFrequency(frequency);
+        // Create frequency response function using all points including reference
+        const responseFunction = createFrequencyResponseFunction(points, referenceNode);
+        
+        // Get the amplitude at this frequency
+        const amplitude = responseFunction(frequency);
         
         // Now calculate the y position for this amplitude
         const curveY = margin + CoordinateUtils.amplitudeToY(amplitude, innerHeight, ampRange);
@@ -574,7 +525,8 @@ export function SineEQ({
     getProfileById,
     getActiveProfile,
     updateProfile,
-    isInVolumeControl
+    isInVolumeControl,
+    referenceNode
   ]);
 
   // Handler for mouse down
