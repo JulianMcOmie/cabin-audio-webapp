@@ -19,6 +19,7 @@ import { SyncStatus } from "@/lib/models/SyncStatus"
 import { FFTVisualizer } from "@/components/audio/FFTVisualizer"
 import { getReferenceCalibrationAudio } from "@/lib/audio/referenceCalibrationAudio"
 import { EQCalibrationProcess } from "@/components/eq-calibration-process"
+import { SineEQGraph } from "@/components/sine-eq-graph"
 
 interface EQViewProps {
 //   isPlaying: boolean
@@ -238,10 +239,9 @@ export function EQView({ setEqEnabled }: EQViewProps) {
               </div>
             )}
             
-            {/* FrequencyEQ component overlaid on top */}
+            {/* Replace FrequencyGraph with SineEQGraph */}
             <div className="relative z-10">
-              <FrequencyGraph 
-                selectedDot={selectedDot} 
+              <SineEQGraph 
                 disabled={!isEQEnabled} 
                 className="w-full" 
                 onInstructionChange={setInstruction}
