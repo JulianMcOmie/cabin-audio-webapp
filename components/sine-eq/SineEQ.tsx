@@ -6,6 +6,7 @@ import { CoordinateUtils } from './CoordinateUtils'
 import { CurveRenderer } from './CurveRenderer'
 import { useSineProfileStore } from '@/lib/stores/sineProfileStore'
 import { createFrequencyResponseFunction } from '@/lib/audio/sineFrequencyResponse'
+import { getSineEQAudio } from '@/lib/audio/sineEQAudio'
 
 interface SineEQProps {
   disabled?: boolean
@@ -443,6 +444,9 @@ export function SineEQ({
       };
       setPoints(newPoints);
       
+      // Update audio feedback with the new frequency and amplitude
+      getSineEQAudio().updateCalibration(newFrequency, newAmplitude);
+      
       // Update cursor
       document.body.style.cursor = 'grabbing';
       
@@ -615,6 +619,10 @@ export function SineEQ({
       // Start dragging the selected point
       isDraggingRef.current = true;
       document.body.style.cursor = 'grabbing';
+      
+      // Start audio feedback with the frequency and amplitude of the selected point
+      const point = points[selectedPointIndex];
+      getSineEQAudio().startPattern(point.frequency, point.amplitude);
     } else if (ghostPoint.visible) {
       // Create a new point
       const newPoint: EQPoint = {
@@ -631,6 +639,9 @@ export function SineEQ({
       // Select and start dragging the new point
       setSelectedPointIndex(newPoints.length - 1);
       isDraggingRef.current = true;
+      
+      // Start audio feedback with the ghost point frequency and amplitude
+      getSineEQAudio().startPattern(ghostPoint.frequency, ghostPoint.amplitude);
       
       // Hide the ghost point immediately
       setGhostPoint({ visible: false, x: 0, y: 0, frequency: 0, amplitude: 0 });
@@ -673,12 +684,19 @@ export function SineEQ({
           amplitude: newAmplitude
         };
         setPoints(newPoints);
+        
+        console.log('updateCalibration', newFrequency, newAmplitude);
+        // Update audio feedback with the new frequency and amplitude
+        getSineEQAudio().updateCalibration(newFrequency, newAmplitude);
       }
     };
     
     const handleDocumentMouseUp = () => {
       isDraggingRef.current = false;
       document.body.style.cursor = '';
+      
+      // Stop audio feedback
+      getSineEQAudio().stopPattern();
       
       // When we release, save the points to the profile
       if (profile) {

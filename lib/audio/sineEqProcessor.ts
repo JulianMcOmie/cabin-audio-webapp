@@ -164,7 +164,7 @@ class SineEQProcessor {
     
     // Apply windowing with gain compensation
     // Hann window reduces energy by ~50%, so we apply ~1.41 (sqrt(2)) multiplier 
-    const gainCompensation = 2.0; // Empirically determined for proper volume matching
+    const gainCompensation = 1.0; // Empirically determined for proper volume matching
     
     for (let i = 0; i < this.bufferSize; i++) {
       // Hann window: 0.5 * (1 - cos(2π*n/(N-1)))
