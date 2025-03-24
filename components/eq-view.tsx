@@ -269,14 +269,14 @@ export function EQView({ setEqEnabled }: EQViewProps) {
             </div>
           </div>
 
-          {/* Calibration Panel (small width on desktop, full width on mobile)
+          {/* Calibration Panel (small width on desktop, full width on mobile) */}
           <div className="w-full md:w-64 bg-muted/50 p-4 rounded-lg">
             <h4 className="font-medium mb-3">Calibration</h4>
             
-            Square Calibration Component
+            {/* Reference Calibration Component */}
             <div className="mb-3">
-              <SquareCalibration 
-                isPlaying={squareCalibrationPlaying}
+              <ReferenceCalibration 
+                isPlaying={calibrationPlaying}
                 disabled={false}
               />
             </div>
@@ -284,12 +284,12 @@ export function EQView({ setEqEnabled }: EQViewProps) {
             <Button
               size="sm"
               className="w-full bg-electric-blue hover:bg-electric-blue/90 text-white"
-              onClick={() => setSquareCalibrationPlaying(!squareCalibrationPlaying)}
+              onClick={() => setCalibrationPlaying(!calibrationPlaying)}
             >
               <Play className="mr-2 h-4 w-4" />
-              {squareCalibrationPlaying ? "Stop" : "Start"}
+              {calibrationPlaying ? "Stop" : "Start"}
             </Button>
-          </div> */}
+          </div>
         </div>
 
         {/* Distortion Control Section */}

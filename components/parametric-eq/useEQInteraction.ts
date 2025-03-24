@@ -29,6 +29,9 @@ export function useEQInteraction({
   onBandRemove,
   onBandSelect,
 }: UseEQInteractionProps) {
+  // Flag to control whether EQ band changes affect the reference calibration
+  const SHOULD_UPDATE_CALIBRATION = false;
+  
   const [draggingBand, setDraggingBand] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isShiftPressed, setIsShiftPressed] = useState(false);
@@ -64,8 +67,11 @@ export function useEQInteraction({
         // Calculate bandwidth from Q
         const bandwidth = band.q ? 1.0 / band.q : 1.0;
         
-        // Set initial parameters with combined method to avoid pattern restarts
-        audioPlayer.updateCalibrationParameters(band.frequency, bandwidth);
+        // Only update if the flag is true
+        if (SHOULD_UPDATE_CALIBRATION) {
+          // Set initial parameters with combined method to avoid pattern restarts
+          audioPlayer.updateCalibrationParameters(band.frequency, bandwidth);
+        }
         
         // Only start playing if not already playing
         if (!audioPlayer.isActive()) {
@@ -184,11 +190,13 @@ export function useEQInteraction({
           const scaleFactor = 0.02;
           const newQ = Math.max(0.1, Math.min(10, currentQ * Math.exp(-deltaY * scaleFactor)));
           
-          // Update the calibration audio bandwidth (inverse of Q)
-          const newBandwidth = 1.0 / newQ;
-          
-          // Use the combined update method to avoid pattern restart
-          audioPlayer.updateCalibrationParameters(undefined, newBandwidth);
+          // Only update calibration if the flag is true
+          if (SHOULD_UPDATE_CALIBRATION) {
+            // Update the calibration audio bandwidth (inverse of Q)
+            const newBandwidth = 1.0 / newQ;
+            // Use the combined update method to avoid pattern restart
+            audioPlayer.updateCalibrationParameters(undefined, newBandwidth);
+          }
           
           throttledBandUpdate(draggingBand, { q: newQ });
         }
@@ -197,8 +205,11 @@ export function useEQInteraction({
         const gain = EQCoordinateUtils.yToGain(y, innerHeight);
         const clampedGain = Math.max(-24, Math.min(24, gain));
         
-        // Use the combined update method to avoid pattern restart
-        audioPlayer.updateCalibrationParameters(clampedFrequency);
+        // Only update calibration if the flag is true
+        if (SHOULD_UPDATE_CALIBRATION) {
+          // Use the combined update method to avoid pattern restart
+          audioPlayer.updateCalibrationParameters(clampedFrequency);
+        }
 
         // If we're outside of the canvas, but we move towards the canvas, we can reduce shiftOffset
         if (!isInsideCanvas) {
@@ -478,8 +489,11 @@ export function useEQInteraction({
             // Setup calibration audio for the new band
             const audioPlayer = getReferenceCalibrationAudio();
             
-            // Set parameters before starting playback to ensure continuous rhythm
-            audioPlayer.updateCalibrationParameters(clampedFrequency, 1.0);
+            // Only update calibration if the flag is true
+            if (SHOULD_UPDATE_CALIBRATION) {
+              // Set parameters before starting playback to ensure continuous rhythm
+              audioPlayer.updateCalibrationParameters(clampedFrequency, 1.0);
+            }
             
             // Audio will start playing via the useEffect when draggingBand is updated
           }

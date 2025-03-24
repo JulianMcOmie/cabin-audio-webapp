@@ -4,6 +4,7 @@ import { useRef, useEffect, useState } from "react"
 import * as referenceCalibrationAudio from '@/lib/audio/referenceCalibrationAudio'
 import { Button } from "@/components/ui/button"
 import { Play } from "lucide-react"
+import { Slider } from "@/components/ui/slider"
 
 // Constants
 const HANDLE_SIZE = 8; // Size of the frequency control handle in pixels
@@ -23,6 +24,9 @@ export function ReferenceCalibration({ isPlaying, disabled = false, className = 
   
   // State for tracking the calibration frequency
   const [calibrationFrequency, setCalibrationFrequency] = useState(3000);
+  
+  // State for tracking the calibration bandwidth
+  const [calibrationBandwidth, setCalibrationBandwidth] = useState(0.5);
   
   // State for dragging
   const [isDragging, setIsDragging] = useState(false);
@@ -74,11 +78,15 @@ export function ReferenceCalibration({ isPlaying, disabled = false, className = 
     return () => window.removeEventListener('resize', updateCanvasSize);
   }, []);
   
-  // Initialize with frequency from audio module
+  // Initialize with values from audio module
   useEffect(() => {
     const audioPlayer = referenceCalibrationAudio.getReferenceCalibrationAudio();
     const frequency = audioPlayer.getCalibrationFrequency();
     setCalibrationFrequency(frequency);
+    
+    // Also initialize bandwidth
+    const bandwidth = audioPlayer.getBandwidth();
+    setCalibrationBandwidth(bandwidth);
   }, []);
   
   // Connect to audio module for active position events
@@ -123,11 +131,27 @@ export function ReferenceCalibration({ isPlaying, disabled = false, className = 
     audioPlayer.setCalibrationFrequency(calibrationFrequency);
   }, [calibrationFrequency]);
   
+  // Update audio module when bandwidth changes
+  useEffect(() => {
+    const audioPlayer = referenceCalibrationAudio.getReferenceCalibrationAudio();
+    audioPlayer.setBandwidth(calibrationBandwidth);
+  }, [calibrationBandwidth]);
+  
   // Update audio player when playing state changes
   useEffect(() => {
     const audioPlayer = referenceCalibrationAudio.getReferenceCalibrationAudio();
     audioPlayer.setPlaying(isPlaying);
   }, [isPlaying]);
+  
+  // Handler for bandwidth slider change
+  const handleBandwidthChange = (values: number[]) => {
+    setCalibrationBandwidth(values[0]);
+  };
+  
+  // Format bandwidth for display
+  const formatBandwidth = (value: number): string => {
+    return value.toFixed(1) + " oct";
+  };
   
   // Check if mouse is near the line
   const isNearLine = (): boolean => {
@@ -370,6 +394,29 @@ export function ReferenceCalibration({ isPlaying, disabled = false, className = 
       
       <div className="text-xs text-center text-muted-foreground mb-2">
         Drag the line up/down to change the calibration frequency
+      </div>
+      
+      {/* Bandwidth Slider */}
+      <div className="pt-2 border-t border-muted">
+        <div className="flex justify-between items-center mb-1">
+          <span className="text-sm font-medium">Bandwidth</span>
+          <span className="text-sm">{formatBandwidth(calibrationBandwidth)}</span>
+        </div>
+        
+        <Slider
+          value={[calibrationBandwidth]}
+          min={0.1}
+          max={2.0}
+          step={0.1}
+          onValueChange={handleBandwidthChange}
+          className="w-full"
+          disabled={disabled}
+        />
+        
+        <div className="flex justify-between text-xs text-muted-foreground mt-1">
+          <span>Narrow</span>
+          <span>Wide</span>
+        </div>
       </div>
     </div>
   );

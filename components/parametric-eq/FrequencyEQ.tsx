@@ -11,6 +11,7 @@ import { useEQProcessor, calculateBandResponse } from "./useEQProcessor"
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
 import { EQBand } from "@/lib/models/EQBand"
 import { throttle } from 'lodash';
+import { getReferenceCalibrationAudio } from '@/lib/audio/referenceCalibrationAudio';
 
 interface FrequencyEQProps {
   profileId?: string
@@ -85,6 +86,9 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
   const [isDraggingVolume, setIsDraggingVolume] = useState(false)
   const [isHoveringVolume, setIsHoveringVolume] = useState(false)
   
+  // State to track if Control or Option key is pressed
+  const [isModifierKeyPressed, setIsModifierKeyPressed] = useState(false)
+  
   // Connect to EQ profile store
   const { 
     getProfileById, 
@@ -156,6 +160,104 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     return newProfileBand.id
   }, [profile, updateProfile, onRequestEnable, disabled])
   
+  // Add keyboard event listeners for Control and Option keys
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Check if Control (ctrlKey) or Option/Alt (altKey) is pressed
+      if (e.ctrlKey || e.altKey) {
+        setIsModifierKeyPressed(true);
+      }
+    };
+    
+    const handleKeyUp = (e: KeyboardEvent) => {
+      // When no modifier keys are pressed anymore
+      if (!e.ctrlKey && !e.altKey) {
+        setIsModifierKeyPressed(false);
+        
+        // Stop the calibration sound when keys are released
+        const audioPlayer = getReferenceCalibrationAudio();
+        audioPlayer.setPlaying(false);
+      }
+    };
+    
+    // Add global event listeners
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', () => {
+      // Stop the calibration sound when window loses focus
+      setIsModifierKeyPressed(false);
+      const audioPlayer = getReferenceCalibrationAudio();
+      audioPlayer.setPlaying(false);
+    });
+    
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', () => {
+        setIsModifierKeyPressed(false);
+        const audioPlayer = getReferenceCalibrationAudio();
+        audioPlayer.setPlaying(false);
+      });
+    };
+  }, []);
+  
+  // Function to update calibration frequency based on mouse position
+  const updateCalibrationFromMousePosition = useCallback((e: React.MouseEvent<HTMLCanvasElement> | MouseEvent) => {
+    if (!isModifierKeyPressed || !canvasRef.current) return;
+    
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const margin = (canvas as any).margin || 40;
+    
+    // Get mouse coordinates relative to canvas
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Check if within the inner EQ area
+    const isWithinInnerArea = 
+      x >= margin && x <= rect.width - margin &&
+      y >= margin && y <= rect.height - margin;
+    
+    if (isWithinInnerArea) {
+      // Calculate inner coordinates
+      const innerX = x - margin;
+      const innerWidth = rect.width - margin * 2;
+      
+      // Convert X position to frequency
+      const frequency = EQCoordinateUtils.xToFreq(innerX, innerWidth, freqRange);
+      const clampedFrequency = Math.max(20, Math.min(20000, frequency));
+      
+      // Update calibration audio
+      const audioPlayer = getReferenceCalibrationAudio();
+      audioPlayer.setCalibrationFrequency(clampedFrequency);
+      
+      // Make sure it's playing
+      if (!audioPlayer.isActive()) {
+        audioPlayer.setPlaying(true);
+      }
+    }
+  }, [isModifierKeyPressed, freqRange]);
+  
+  // Add a document mousemove listener to update calibration when modifier key is pressed
+  useEffect(() => {
+    if (!isModifierKeyPressed) {
+      // If no modifier key is pressed, don't need the listener
+      return;
+    }
+    
+    // Handler for document mouse move
+    const handleDocumentMouseMove = (e: MouseEvent) => {
+      updateCalibrationFromMousePosition(e);
+    };
+    
+    // Add global event listener
+    document.addEventListener('mousemove', handleDocumentMouseMove);
+    
+    return () => {
+      document.removeEventListener('mousemove', handleDocumentMouseMove);
+    };
+  }, [isModifierKeyPressed, updateCalibrationFromMousePosition]);
+  
   const handleBandUpdate = useCallback((id: string, updates: Partial<EQBandWithUI>) => {
     if (!profile) return
 
@@ -224,6 +326,12 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!profile || isDraggingVolume) return;
     
+    // First check if we should update calibration based on modifier keys
+    if (isModifierKeyPressed) {
+      updateCalibrationFromMousePosition(e);
+      // Still allow regular hover behavior
+    }
+    
     const canvas = canvasRef.current;
     if (!canvas) return;
     
@@ -248,17 +356,18 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     
     setIsHoveringVolume(isOverVolume);
     
-    // Only pass mouse move to band interaction if not hovering over volume and within inner area
-    if (!isOverVolume && isWithinInnerArea) {
+    // If we're not over the volume control, pass to band handler
+    if (!isOverVolume) {
       handleBandMouseMove(e);
+    } else {
+      // Update cursor based on volume hover
+      document.body.style.cursor = 'pointer';
     }
-  }, [profile, handleBandMouseMove, isDraggingVolume]);
+  }, [profile, isDraggingVolume, handleBandMouseMove, isModifierKeyPressed, updateCalibrationFromMousePosition]);
   
   // Handle mouse down for volume control
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!profile) {
-      return;
-    }
+    if (!profile) return;
     
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -268,40 +377,33 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
-    // Check if within the inner EQ area
-    const isWithinInnerArea = 
-      x >= margin && x <= rect.width - margin &&
-      y >= margin && y <= rect.height - margin;
-    
-    // Calculate inner dimensions
+    // inner dimensions
     const innerWidth = rect.width - margin * 2;
     const innerHeight = rect.height - margin * 2;
     
-    // Check if we're clicking on the volume control
+    // volume control
     const isOverVolume = EQBandRenderer.isInVolumeControl(
       x, y, innerWidth, innerHeight, profile.volume || 0, margin, margin
     );
     
     if (isOverVolume) {
       setIsDraggingVolume(true);
+      document.body.style.cursor = 'grabbing';
       
-      // Initial volume adjustment based on click position
-      const innerY = y - margin;
-      const newVolume = EQCoordinateUtils.yToGain(innerY, innerHeight);
-      updateProfile(profile.id, { volume: newVolume });
-      
-      // Add event listeners for mouse move and mouse up
+      // Handle document mouse move to support dragging outside canvas bounds
       const handleDocumentMouseMove = (e: MouseEvent) => {
-        if (!canvas || !profile) return;
+        // If modifier key is pressed during volume dragging, update calibration as well
+        if (isModifierKeyPressed) {
+          updateCalibrationFromMousePosition(e);
+        }
         
         const rect = canvas.getBoundingClientRect();
-        const margin = (canvas as any).margin || 40;
         const y = e.clientY - rect.top;
         
         // Calculate position within the inner area
         const innerY = Math.max(margin, Math.min(rect.height - margin, y)) - margin;
-        const innerHeight = rect.height - margin * 2;
         
+        // Calculate new volume using EQCoordinateUtils
         const newVolume = EQCoordinateUtils.yToGain(innerY, innerHeight);
         
         // Update profile volume
@@ -310,21 +412,26 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       
       const handleDocumentMouseUp = () => {
         setIsDraggingVolume(false);
+        document.body.style.cursor = '';
+        
         document.removeEventListener('mousemove', handleDocumentMouseMove);
         document.removeEventListener('mouseup', handleDocumentMouseUp);
       };
       
       document.addEventListener('mousemove', handleDocumentMouseMove);
       document.addEventListener('mouseup', handleDocumentMouseUp);
-      
-      return;
+    } else if (!disabled) {
+      // Only pass mouse down to band interaction if within inner area
+      const isWithinInnerArea = 
+        x >= margin && x <= rect.width - margin &&
+        y >= margin && y <= rect.height - margin;
+        
+      if (isWithinInnerArea) {
+        // If not dragging volume and not disabled, pass to band handler
+        handleBandMouseDown(e);
+      }
     }
-    
-    // If not clicking on volume control and within inner area, delegate to the band mouse handler
-    if (isWithinInnerArea) {
-      handleBandMouseDown(e);
-    }
-  }, [disabled, handleBandMouseDown, profile, updateProfile]);
+  }, [disabled, handleBandMouseDown, profile, updateProfile, isModifierKeyPressed, updateCalibrationFromMousePosition]);
   
   // Update instruction text based on interaction state
   useEffect(() => {
