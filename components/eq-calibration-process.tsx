@@ -9,13 +9,17 @@ import { ReferenceCalibration } from "@/components/reference-calibration"
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
 import { getReferenceCalibrationAudio } from "@/lib/audio/referenceCalibrationAudio"
 import { EQBand } from "@/lib/models/EQBand"
-import { AlertCircle, ArrowLeft, ArrowRight, Check, Play, RefreshCw, ThumbsUp } from "lucide-react"
+import { AlertCircle, ArrowLeft, ArrowRight, Check, Play, RefreshCw, ThumbsUp, TrendingUp, TrendingDown } from "lucide-react"
 import * as eqProcessor from "@/lib/audio/eqProcessor"
 
 // Define the center frequency and total number of bands
-const CENTER_FREQ = 1000; // Middle frequency (1kHz)
+const CENTER_FREQ = 800; // Middle frequency (800Hz instead of 1kHz)
 const TOTAL_BANDS = 21; // Total number of bands to create
 const BANDS_PER_DIRECTION = Math.floor(TOTAL_BANDS / 2); // Number of bands in each direction (up/down)
+
+// Define frequency range limits
+const MIN_FREQ = 30;   // Lowest frequency (30Hz)
+const MAX_FREQ = 17000; // Highest frequency (17kHz)
 
 // Use a single small bandwidth for all bands
 const BAND_BANDWIDTH = 0.5; // Half-octave bandwidth
@@ -23,29 +27,35 @@ const BASE_Q = 1.0; // Default Q factor (higher = narrower bandwidth)
 
 // Generate all frequencies from middle, going up, then down
 function generateCalibrationFrequencies(): number[] {
-  const frequencies: number[] = [CENTER_FREQ]; // Start with the center frequency
+  // Start with the center frequency
+  const frequencies: number[] = [CENTER_FREQ];
+  const upFrequencies: number[] = [];
+  const downFrequencies: number[] = [];
   
-  // Calculate the octave step size - how much to go up/down per step
-  // To cover roughly 20Hz to 20kHz in BANDS_PER_DIRECTION steps in each direction
-  const octaveRange = Math.log2(20000 / 20); // ~10 octaves from 20Hz to 20kHz
-  const octaveStep = octaveRange / (BANDS_PER_DIRECTION * 1.5); // Divide the range into steps
+  // Calculate the octave step size for going up
+  const upOctaveRange = Math.log2(MAX_FREQ / CENTER_FREQ);
+  const upOctaveStep = upOctaveRange / BANDS_PER_DIRECTION;
+  
+  // Calculate the octave step size for going down
+  const downOctaveRange = Math.log2(CENTER_FREQ / MIN_FREQ);
+  const downOctaveStep = downOctaveRange / BANDS_PER_DIRECTION;
   
   // Generate frequencies going up from center
   let currentFreq = CENTER_FREQ;
   for (let i = 0; i < BANDS_PER_DIRECTION; i++) {
-    currentFreq = currentFreq * Math.pow(2, octaveStep); // Multiply by 2^step to go up by octaveStep octaves
-    frequencies.push(Math.round(currentFreq));
+    currentFreq = currentFreq * Math.pow(2, upOctaveStep); // Multiply by 2^step to go up by octaveStep octaves
+    upFrequencies.push(Math.round(currentFreq));
   }
   
   // Generate frequencies going down from center (excluding center which is already added)
   currentFreq = CENTER_FREQ;
   for (let i = 0; i < BANDS_PER_DIRECTION; i++) {
-    currentFreq = currentFreq / Math.pow(2, octaveStep); // Divide by 2^step to go down by octaveStep octaves
-    frequencies.push(Math.round(currentFreq));
+    currentFreq = currentFreq / Math.pow(2, downOctaveStep); // Divide by 2^step to go down by octaveStep octaves
+    downFrequencies.push(Math.round(currentFreq));
   }
   
-  // Sort frequencies from low to high for display purposes
-  return frequencies.sort((a, b) => a - b);
+  // Return in the specific order: center first, then up, then down
+  return [...frequencies, ...upFrequencies, ...downFrequencies];
 }
 
 const DEFAULT_GAIN = 0; // Default gain in dB (0 = neutral)
@@ -65,8 +75,8 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
   // All frequencies for calibration
   const [calibrationFrequencies, setCalibrationFrequencies] = useState<number[]>([]);
   
-  // Direction of calibration (0 = center, 1 = going up, 2 = going down)
-  const [calibrationDirection, setCalibrationDirection] = useState(0);
+  // Track whether we're going up or down from center
+  const [isGoingUp, setIsGoingUp] = useState<boolean | null>(null);
   
   // Current gain for the band being adjusted
   const [currentGain, setCurrentGain] = useState(DEFAULT_GAIN);
@@ -95,6 +105,68 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
   
   // Get the current frequency to calibrate
   const currentFrequency = calibrationFrequencies[currentStep] || CENTER_FREQ;
+  
+  // Determine direction based on current frequency
+  useEffect(() => {
+    if (currentFrequency > CENTER_FREQ) {
+      setIsGoingUp(true);
+    } else if (currentFrequency < CENTER_FREQ) {
+      setIsGoingUp(false);
+    } else {
+      // At center frequency
+      setIsGoingUp(null);
+    }
+  }, [currentFrequency]);
+  
+  // Get direction text and icon
+  const getDirectionInfo = () => {
+    if (isGoingUp === null) {
+      return { 
+        text: "Starting Point (800Hz)", 
+        icon: <Check className="h-4 w-4" />,
+        description: "We'll start at 800Hz, then go up to 17kHz, then down to 30Hz."
+      };
+    } else if (isGoingUp) {
+      return { 
+        text: "Higher Frequencies", 
+        icon: <TrendingUp className="h-4 w-4" />,
+        description: "We're working on the higher frequencies, up to 17kHz." 
+      };
+    } else {
+      return { 
+        text: "Lower Frequencies", 
+        icon: <TrendingDown className="h-4 w-4" />,
+        description: "We're working on the lower frequencies, down to 30Hz."
+      };
+    }
+  };
+  
+  // Calculate the progress within the current phase (center, high, low)
+  const calculatePhaseProgress = () => {
+    if (isGoingUp === null) {
+      return 100; // At center point - complete
+    } 
+    
+    if (isGoingUp) {
+      // First frequency after center is at index 1
+      // We're going through indices 1 to BANDS_PER_DIRECTION
+      const upProgress = ((currentStep - 1) / BANDS_PER_DIRECTION) * 100;
+      return Math.min(Math.max(0, upProgress), 100);
+    } else {
+      // First low frequency is at index BANDS_PER_DIRECTION + 1
+      // We're going through the rest of the frequencies
+      const lowStartIndex = BANDS_PER_DIRECTION + 1; 
+      const lowProgress = ((currentStep - lowStartIndex) / BANDS_PER_DIRECTION) * 100;
+      return Math.min(Math.max(0, lowProgress), 100);
+    }
+  };
+  
+  // Determine which phase we're in (1, 2, or 3)
+  const getCurrentPhase = () => {
+    if (isGoingUp === null) return 1; // Center
+    if (isGoingUp) return 2; // Going up
+    return 3; // Going down
+  };
   
   // Calculate overall progress percentage
   const calculateProgress = () => {
@@ -330,7 +402,19 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
         <div className="md:w-1/2 space-y-5">
           <div className="text-center">
             <h4 className="text-xl font-semibold">{formatFrequency(currentFrequency)}</h4>
-            <p className="text-sm text-muted-foreground">
+            <div className="flex items-center justify-center mt-1 gap-1">
+              <span className={`text-sm px-2 py-0.5 rounded-full ${
+                isGoingUp === null 
+                  ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300" 
+                  : isGoingUp 
+                    ? "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300"
+                    : "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300"
+              }`}>
+                {getDirectionInfo().icon}
+                <span className="ml-1">{getDirectionInfo().text}</span>
+              </span>
+            </div>
+            <p className="text-sm text-muted-foreground mt-2">
               Step {currentStep + 1} of {calibrationFrequencies.length}
             </p>
           </div>
@@ -341,6 +425,41 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
               <span>{calculateProgress()}%</span>
             </div>
             <Progress value={calculateProgress()} className="h-2" />
+          </div>
+          
+          {/* Visual progress indicator showing the three phases */}
+          <div className="relative pt-6 pb-2">
+            <div className="flex justify-between mb-1">
+              <div className="text-xs font-medium">
+                <div className={`inline-block w-3 h-3 rounded-full mr-1 ${getCurrentPhase() === 1 ? 'bg-blue-500' : 'bg-gray-200 dark:bg-gray-700'}`} />
+                Center
+              </div>
+              <div className="text-xs font-medium">
+                <div className={`inline-block w-3 h-3 rounded-full mr-1 ${getCurrentPhase() === 2 ? 'bg-amber-500' : 'bg-gray-200 dark:bg-gray-700'}`} />
+                High Freq
+              </div>
+              <div className="text-xs font-medium">
+                <div className={`inline-block w-3 h-3 rounded-full mr-1 ${getCurrentPhase() === 3 ? 'bg-purple-500' : 'bg-gray-200 dark:bg-gray-700'}`} />
+                Low Freq
+              </div>
+            </div>
+            <div className="relative bg-gray-200 dark:bg-gray-700 h-2 rounded-full overflow-hidden">
+              {/* Phase 1 - center point */}
+              <div 
+                className={`absolute left-0 h-full transition-all duration-500 bg-blue-500 ${getCurrentPhase() >= 1 ? 'opacity-100' : 'opacity-30'}`}
+                style={{ width: '5%' }}
+              />
+              {/* Phase 2 - high frequencies */}
+              <div 
+                className={`absolute left-[5%] h-full transition-all duration-500 bg-amber-500 ${getCurrentPhase() >= 2 ? 'opacity-100' : 'opacity-30'}`}
+                style={{ width: '45%', transform: `scaleX(${getCurrentPhase() === 2 ? calculatePhaseProgress() / 100 : getCurrentPhase() > 2 ? 1 : 0})` }}
+              />
+              {/* Phase 3 - low frequencies */}
+              <div 
+                className={`absolute left-[50%] h-full transition-all duration-500 bg-purple-500 ${getCurrentPhase() >= 3 ? 'opacity-100' : 'opacity-30'}`}
+                style={{ width: '50%', transform: `scaleX(${getCurrentPhase() === 3 ? calculatePhaseProgress() / 100 : 0})` }}
+              />
+            </div>
           </div>
           
           <div className="space-y-6">
@@ -414,6 +533,18 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
               </div>
             </div>
           </div>
+          
+          <div className="mt-4 text-sm bg-amber-100 dark:bg-amber-950/30 text-amber-800 dark:text-amber-200 p-3 rounded-md flex items-start">
+            <AlertCircle className="h-5 w-5 mr-2 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="mb-1">
+                <strong>Current Frequency:</strong> {formatFrequency(currentFrequency)}
+              </p>
+              <p>
+                {getDirectionInfo().description}
+              </p>
+            </div>
+          </div>
         </div>
         
         <div className="md:w-1/2">
@@ -439,8 +570,7 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
                   <strong>Current Frequency:</strong> {formatFrequency(currentFrequency)}
                 </p>
                 <p>
-                  Adjust this frequency until it sounds balanced with the reference tone.
-                  We'll create {TOTAL_BANDS} bands across the full frequency spectrum.
+                  {getDirectionInfo().description}
                 </p>
               </div>
             </div>
