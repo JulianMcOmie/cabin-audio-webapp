@@ -24,6 +24,11 @@ const ROW_PAUSE = 0.2; // pause between rows
 const DEFAULT_Q = 3.0; // Q for bandwidth
 const BANDWIDTH_OCTAVE = 1.5; // Width of the band in octaves (0.5 = half octave)
 const FILTER_SLOPE = 24; // Filter slope in dB/octave (24 = steep filter)
+const FIXED_BANDWIDTH = 1.5; // Fixed bandwidth for noise bursts in octaves
+
+// Effective frequency range accounting for bandwidth
+const EFFECTIVE_MIN_FREQ = MIN_FREQ * Math.pow(2, FIXED_BANDWIDTH); // Min center freq to avoid HP cutoff
+const EFFECTIVE_MAX_FREQ = MAX_FREQ / Math.pow(2, FIXED_BANDWIDTH); // Max center freq to avoid LP cutoff
 
 // Bandwidth for different stages
 const STAGE_BANDWIDTH = [
@@ -168,8 +173,13 @@ class ReferenceCalibrationAudio {
    * @param frequency Frequency in Hz
    */
   public setCalibrationFrequency(frequency: number): void {
-    // Ensure frequency is in valid range
-    const validFreq = Math.max(MIN_FREQ, Math.min(MAX_FREQ, frequency));
+    // Ensure frequency is in valid range accounting for bandwidth
+    const validFreq = Math.max(EFFECTIVE_MIN_FREQ, Math.min(EFFECTIVE_MAX_FREQ, frequency));
+    
+    if (validFreq !== frequency) {
+      console.log(`🔊 Adjusted frequency from ${frequency.toFixed(1)}Hz to ${validFreq.toFixed(1)}Hz to account for bandwidth`);
+    }
+    
     if (this.calibrationFrequency !== validFreq) {
       this.calibrationFrequency = validFreq;
       
@@ -220,24 +230,13 @@ class ReferenceCalibrationAudio {
       return;
     }
     
-    // Calculate normalization factor for frequency (0 to 1 across the hearing range)
-    const logMin = Math.log10(MIN_FREQ);
-    const logMax = Math.log10(MAX_FREQ);
-    const normalizedFreq = 1 - (Math.log10(this.calibrationFrequency) - logMin) / (logMax - logMin);
+    // Check if frequency is at the extreme edges (within 5% of the effective range)
+    const isAtMinEdge = this.calibrationFrequency <= EFFECTIVE_MIN_FREQ * 1.05;
+    const isAtMaxEdge = this.calibrationFrequency >= EFFECTIVE_MAX_FREQ * 0.95;
     
-    // Dynamic Q values for filters
-    const minQ = 0.05;
-    const maxQ = 0.05;
-    const highpassQ = minQ + (maxQ - minQ) * normalizedFreq;
-    const lowpassQ = minQ + (maxQ - minQ) * (1 - normalizedFreq);
-    
-    // Calculate adaptive spread
-    const octaveSpread = 1.0; // Base spread in octaves
-    const adaptiveSpread = 0;//octaveSpread * (1 - Math.pow(normalizedFreq * 2 - 1, 2) * 0.5);
-    
-    // Calculate new cutoff frequencies
-    const highpassCutoff = this.calibrationFrequency / Math.pow(2, adaptiveSpread);
-    const lowpassCutoff = this.calibrationFrequency * Math.pow(2, adaptiveSpread);
+    // Calculate filter cutoffs - bypassing appropriate filter at extremes
+    const highpassCutoff = isAtMinEdge ? 20 : this.calibrationFrequency / Math.pow(2, FIXED_BANDWIDTH/2);
+    const lowpassCutoff = isAtMaxEdge ? 20000 : this.calibrationFrequency * Math.pow(2, FIXED_BANDWIDTH/2);
     
     // Update highpass filter (using bandpass1 reference)
     if (this.activeCalibrationFilters.bandpass1.type !== 'highpass') {
@@ -253,7 +252,7 @@ class ReferenceCalibrationAudio {
     
     this.activeCalibrationFilters.bandpass1.Q.cancelScheduledValues(currentTime);
     this.activeCalibrationFilters.bandpass1.Q.setTargetAtTime(
-      highpassQ,
+      3.0, // Standard Q value
       currentTime,
       0.05
     );
@@ -272,12 +271,19 @@ class ReferenceCalibrationAudio {
     
     this.activeCalibrationFilters.bandpass2.Q.cancelScheduledValues(currentTime);
     this.activeCalibrationFilters.bandpass2.Q.setTargetAtTime(
-      lowpassQ,
+      3.0, // Standard Q value
       currentTime,
       0.05
     );
     
-    console.log(`🔊 Updated filters: freq=${this.calibrationFrequency.toFixed(0)}Hz (HP=${highpassCutoff.toFixed(0)}Hz LP=${lowpassCutoff.toFixed(0)}Hz HPQ=${highpassQ.toFixed(2)} LPQ=${lowpassQ.toFixed(2)})`);
+    // Log what we're doing
+    if (isAtMinEdge) {
+      console.log(`🔊 Updated filters: freq=${this.calibrationFrequency.toFixed(0)}Hz (bypassing highpass filter, LP=${lowpassCutoff.toFixed(0)}Hz)`);
+    } else if (isAtMaxEdge) {
+      console.log(`🔊 Updated filters: freq=${this.calibrationFrequency.toFixed(0)}Hz (HP=${highpassCutoff.toFixed(0)}Hz, bypassing lowpass filter)`);
+    } else {
+      console.log(`🔊 Updated filters: freq=${this.calibrationFrequency.toFixed(0)}Hz (HP=${highpassCutoff.toFixed(0)}Hz LP=${lowpassCutoff.toFixed(0)}Hz)`);
+    }
   }
 
   /**
@@ -471,50 +477,37 @@ class ReferenceCalibrationAudio {
     const source = ctx.createBufferSource();
     source.buffer = this.noiseBuffer;
     
-    // Create adaptive filters based on frequency range
-    // Calculate normalization factor for frequency (0 to 1 across the hearing range)
-    const logMin = Math.log10(MIN_FREQ);
-    const logMax = Math.log10(MAX_FREQ);
-    const normalizedFreq = (Math.log10(frequency) - logMin) / (logMax - logMin);
+    // Check if frequency is at the extreme edges (within 5% of the effective range)
+    const isAtMinEdge = frequency <= EFFECTIVE_MIN_FREQ * 1.05;
+    const isAtMaxEdge = frequency >= EFFECTIVE_MAX_FREQ * 0.95;
     
-    // Create highpass and lowpass filters with adaptive characteristics
+    let centerFreq = frequency;
+    
+    // Adjust center frequency only if needed to keep it within effective range
+    if (!isAtMinEdge && !isAtMaxEdge && (frequency < EFFECTIVE_MIN_FREQ || frequency > EFFECTIVE_MAX_FREQ)) {
+      centerFreq = Math.max(EFFECTIVE_MIN_FREQ, Math.min(EFFECTIVE_MAX_FREQ, frequency));
+      console.log(`🔊 Adjusted burst frequency from ${frequency.toFixed(1)}Hz to ${centerFreq.toFixed(1)}Hz to account for bandwidth`);
+    }
+    
+    // Calculate filter cutoffs based on center frequency
+    // At edges, we'll bypass one filter by setting it to an extreme value
+    const highpassCutoff = isAtMinEdge ? 20 : centerFreq / Math.pow(2, FIXED_BANDWIDTH/2);
+    const lowpassCutoff = isAtMaxEdge ? 20000 : centerFreq * Math.pow(2, FIXED_BANDWIDTH/2);
+    
+    // Create filters
     const highpassFilter = ctx.createBiquadFilter();
     highpassFilter.type = 'highpass';
+    highpassFilter.frequency.value = highpassCutoff;
+    highpassFilter.Q.value = 3.0; // Standard Q value
     
     const lowpassFilter = ctx.createBiquadFilter();
     lowpassFilter.type = 'lowpass';
-    
-    // Dynamic Q values for filters (higher Q = sharper slope)
-    // For highpass: sharp at low frequencies, broad at high frequencies
-    // For lowpass: broad at low frequencies, sharp at high frequencies
-    const minQ = 3.0;
-    const maxQ = 3.0;
-    const highpassQ = minQ + (maxQ - minQ) * normalizedFreq; // 2.0 at low freqs, 0.2 at high freqs
-    const lowpassQ = minQ + (maxQ - minQ) * (1 - normalizedFreq); // 0.2 at low freqs, 2.0 at high freqs
-    
-    // Calculate cutoff frequencies for both filters
-    // For a perceptually balanced sound, use logarithmic spacing
-    const octaveSpread = 1.0; // Base spread in octaves
-    const spreadFactor = 3.5;
-    
-    // Adaptive spread - tighter for mid-frequencies, wider for extremes
-    // Formula creates a dip at 0.5 (mid-frequency) and increases at extremes
-    const adaptiveSpread = 1.0;//octaveSpread * (1 + Math.pow(normalizedFreq * 2 - 1, 2) * 0.5);
-    
-    // Calculate octave-based cutoffs
-    const highpassCutoff = frequency / Math.pow(2, adaptiveSpread);
-    const lowpassCutoff = frequency * Math.pow(2, adaptiveSpread);
-    
-    // Apply filter settings
-    highpassFilter.frequency.value = highpassCutoff;
-    highpassFilter.Q.value = highpassQ;
-    
     lowpassFilter.frequency.value = lowpassCutoff;
-    lowpassFilter.Q.value = lowpassQ;
+    lowpassFilter.Q.value = 3.0; // Standard Q value
     
     // Store active filter references if this is a calibration (non-reference) play
     if (!isReference) {
-      // Replace existing active filters (we're using highpass/lowpass now instead of bandpass)
+      // Replace existing active filters
       if (this.activeCalibrationFilters.bandpass1) {
         this.activeCalibrationFilters.bandpass1.disconnect();
       }
@@ -523,7 +516,7 @@ class ReferenceCalibrationAudio {
       }
       
       // Store new filters for future reference
-      this.activeCalibrationFilters.bandpass1 = highpassFilter; // Reusing the bandpass names for now
+      this.activeCalibrationFilters.bandpass1 = highpassFilter;
       this.activeCalibrationFilters.bandpass2 = lowpassFilter;
     }
     
@@ -582,7 +575,13 @@ class ReferenceCalibrationAudio {
     
     // Log the noise burst details
     if (!isReference) {
-      console.log(`🔊 Calibration burst: freq=${frequency.toFixed(0)}Hz (HP=${highpassCutoff.toFixed(0)}Hz, LP=${lowpassCutoff.toFixed(0)}Hz, HPQ=${highpassQ.toFixed(2)}, LPQ=${lowpassQ.toFixed(2)})`);
+      if (isAtMinEdge) {
+        console.log(`🔊 Calibration burst: freq=${centerFreq.toFixed(0)}Hz (bypassing highpass filter, LP=${lowpassCutoff.toFixed(0)}Hz)`);
+      } else if (isAtMaxEdge) {
+        console.log(`🔊 Calibration burst: freq=${centerFreq.toFixed(0)}Hz (HP=${highpassCutoff.toFixed(0)}Hz, bypassing lowpass filter)`);
+      } else {
+        console.log(`🔊 Calibration burst: freq=${centerFreq.toFixed(0)}Hz (HP=${highpassCutoff.toFixed(0)}Hz, LP=${lowpassCutoff.toFixed(0)}Hz)`);
+      }
     }
   }
 
