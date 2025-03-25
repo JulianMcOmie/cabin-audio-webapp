@@ -25,7 +25,7 @@ const ROW_PAUSE = 0.2; // pause between rows
 const DEFAULT_Q = 3.0; // Q for bandwidth
 const BANDWIDTH_OCTAVE = 1.5; // Width of the band in octaves (0.5 = half octave)
 const FILTER_SLOPE = 24; // Filter slope in dB/octave (24 = steep filter)
-const FIXED_BANDWIDTH = 0.1; // Fixed bandwidth for noise bursts in octaves
+const FIXED_BANDWIDTH = 0.05; // Fixed bandwidth for noise bursts in octaves
 
 // Effective frequency range accounting for bandwidth
 const EFFECTIVE_MIN_FREQ = MIN_FREQ * Math.pow(2, FIXED_BANDWIDTH); // Min center freq to avoid HP cutoff
@@ -269,7 +269,7 @@ class ReferenceCalibrationAudio {
     
     this.activeCalibrationFilters.bandpass1.Q.cancelScheduledValues(currentTime);
     this.activeCalibrationFilters.bandpass1.Q.setTargetAtTime(
-      3.0, // Standard Q value
+      DEFAULT_Q, // Standard Q value
       currentTime,
       0.05
     );
@@ -288,7 +288,7 @@ class ReferenceCalibrationAudio {
     
     this.activeCalibrationFilters.bandpass2.Q.cancelScheduledValues(currentTime);
     this.activeCalibrationFilters.bandpass2.Q.setTargetAtTime(
-      3.0, // Standard Q value
+      DEFAULT_Q, // Standard Q value
       currentTime,
       0.05
     );
@@ -515,12 +515,12 @@ class ReferenceCalibrationAudio {
     const highpassFilter = ctx.createBiquadFilter();
     highpassFilter.type = 'highpass';
     highpassFilter.frequency.value = highpassCutoff;
-    highpassFilter.Q.value = 3.0; // Standard Q value
+    highpassFilter.Q.value = DEFAULT_Q; // Standard Q value
     
     const lowpassFilter = ctx.createBiquadFilter();
     lowpassFilter.type = 'lowpass';
     lowpassFilter.frequency.value = lowpassCutoff;
-    lowpassFilter.Q.value = 3.0; // Standard Q value
+    lowpassFilter.Q.value = DEFAULT_Q; // Standard Q value
     
     // Store active filter references if this is a calibration (non-reference) play
     if (!isReference) {
