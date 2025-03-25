@@ -18,14 +18,14 @@ const ENVELOPE_RELEASE = 0.01; // seconds
 const BURST_LENGTH = 0.09; // seconds
 
 // Pattern timing
-const BURST_INTERVAL = 0.1; // seconds between bursts
-const ROW_PAUSE = 0.1; // pause between rows
+const BURST_INTERVAL = 0.2; // seconds between bursts
+const ROW_PAUSE = 0.2; // pause between rows
 
 // Filter settings
 const DEFAULT_Q = 3.0; // Q for bandwidth
 const BANDWIDTH_OCTAVE = 1.5; // Width of the band in octaves (0.5 = half octave)
 const FILTER_SLOPE = 24; // Filter slope in dB/octave (24 = steep filter)
-const FIXED_BANDWIDTH = 0.03; // Fixed bandwidth for noise bursts in octaves
+const FIXED_BANDWIDTH = 0.05; // Fixed bandwidth for noise bursts in octaves
 
 // Effective frequency range accounting for bandwidth
 const EFFECTIVE_MIN_FREQ = MIN_FREQ * Math.pow(2, FIXED_BANDWIDTH); // Min center freq to avoid HP cutoff
@@ -99,8 +99,7 @@ class ReferenceCalibrationAudio {
   }
 
   /**
-   * Generate pink noise buffer
-   * Uses Paul Kellet's refined method for generating pink noise
+   * Generate white noise buffer
    */
   private async generateNoiseBuffer(): Promise<void> {
     const ctx = audioContext.getAudioContext();
@@ -108,29 +107,13 @@ class ReferenceCalibrationAudio {
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
     const data = buffer.getChannelData(0);
 
-    // Pink noise generation using Paul Kellet's refined method
-    // This produces a true -3dB/octave spectrum characteristic of pink noise
-    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
-    
+    // Generate white noise - equal energy across all frequencies
     for (let i = 0; i < bufferSize; i++) {
-      // Generate white noise sample
-      const white = Math.random() * 2 - 1;
-      
-      // Pink noise filtering - refined coefficients for accurate spectral slope
-      b0 = 0.99886 * b0 + white * 0.0555179;
-      b1 = 0.99332 * b1 + white * 0.0750759;
-      b2 = 0.96900 * b2 + white * 0.1538520;
-      b3 = 0.86650 * b3 + white * 0.3104856;
-      b4 = 0.55000 * b4 + white * 0.5329522;
-      b5 = -0.7616 * b5 - white * 0.0168980;
-      b6 = white * 0.5362;
-      
-      // Combine with proper scaling to maintain pink noise characteristics
-      // The sum is multiplied by 0.11 to normalize the output
-      data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6) * 0.11;
+      // Generate white noise sample (values between -1 and 1)
+      data[i] = Math.random() * 2 - 1;
     }
     
-    // Apply a second-pass normalization to ensure consistent volume
+    // Apply normalization to ensure consistent volume
     // Find the peak amplitude
     let peak = 0;
     for (let i = 0; i < bufferSize; i++) {
@@ -144,7 +127,7 @@ class ReferenceCalibrationAudio {
       data[i] *= normalizationFactor;
     }
 
-    console.log(`🔊 Generated pink noise buffer: ${bufferSize} samples, normalized by ${normalizationFactor.toFixed(4)}`);
+    console.log(`🔊 Generated white noise buffer: ${bufferSize} samples, normalized by ${normalizationFactor.toFixed(4)}`);
     this.noiseBuffer = buffer;
   }
 
