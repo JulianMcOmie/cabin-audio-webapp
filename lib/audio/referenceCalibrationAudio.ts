@@ -14,18 +14,18 @@ const MASTER_GAIN = 2.0;
 const ENVELOPE_ATTACK = 0.01; // seconds
 const ENVELOPE_DECAY = 0.02; // seconds
 const ENVELOPE_SUSTAIN = 0.8; // level
-const ENVELOPE_RELEASE = 0.1; // seconds
+const ENVELOPE_RELEASE = 0.05; // seconds
 const BURST_LENGTH = 0.15; // seconds
 
 // Pattern timing
-const BURST_INTERVAL = 0.1; // seconds between bursts
-const ROW_PAUSE = 0.1; // pause between rows
+const BURST_INTERVAL = 0.2; // seconds between bursts
+const ROW_PAUSE = 0.2; // pause between rows
 
 // Filter settings
 const DEFAULT_Q = 3.0; // Q for bandwidth
 const BANDWIDTH_OCTAVE = 1.5; // Width of the band in octaves (0.5 = half octave)
 const FILTER_SLOPE = 24; // Filter slope in dB/octave (24 = steep filter)
-const FIXED_BANDWIDTH = 0.3; // Fixed bandwidth for noise bursts in octaves
+const FIXED_BANDWIDTH = 0.1; // Fixed bandwidth for noise bursts in octaves
 
 // Effective frequency range accounting for bandwidth
 const EFFECTIVE_MIN_FREQ = MIN_FREQ * Math.pow(2, FIXED_BANDWIDTH); // Min center freq to avoid HP cutoff
@@ -39,7 +39,7 @@ const STAGE_BANDWIDTH = [
 ];
 
 // Panning positions
-const PANNING_POSITIONS = [-1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0]; // Full left to full right
+const PANNING_POSITIONS = [-1.0, -0.5, 0.0, 0.5, 1.0]; // Full left to full right
 
 // Observer for calibration events
 type FrequencyChangeListener = (frequency: number) => void;
