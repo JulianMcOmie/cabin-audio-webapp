@@ -30,7 +30,7 @@ export function useEQInteraction({
   onBandSelect,
 }: UseEQInteractionProps) {
   // Flag to control whether EQ band changes affect the reference calibration
-  const SHOULD_UPDATE_CALIBRATION = false;
+  const SHOULD_UPDATE_CALIBRATION = true;
   
   const [draggingBand, setDraggingBand] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -69,8 +69,22 @@ export function useEQInteraction({
         
         // Only update if the flag is true
         if (SHOULD_UPDATE_CALIBRATION) {
-          // Set initial parameters with combined method to avoid pattern restarts
-          audioPlayer.updateCalibrationParameters(band.frequency, bandwidth);
+          // Adjust calibration frequency to focus on the edge of the noise burst
+          // Using logarithmic scaling to make the adjustment more natural for audio
+          let calibrationFreq = band.frequency;
+          const centerFreq = 1000; // Reference center point where no adjustment occurs
+          
+          if (band.frequency !== centerFreq) {
+            // Calculate logarithmic compression factor
+            // This compresses the range logarithmically toward the center (1000Hz)
+            const logRatio = Math.log10(band.frequency / centerFreq);
+            const compressionFactor = 1.0; // Controls how much compression to apply
+            
+            // Apply logarithmic compression
+            calibrationFreq = centerFreq * Math.pow(10, logRatio * compressionFactor);
+          }
+          
+          audioPlayer.updateCalibrationParameters(calibrationFreq, bandwidth);
         }
         
         // Only start playing if not already playing

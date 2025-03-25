@@ -1,13 +1,14 @@
 import { M_PLUS_1 } from 'next/font/google';
 import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
+import { useEQProfileStore } from '../stores';
 
 // Constants
 const MIN_FREQ = 20; // Hz
 const MAX_FREQ = 20000; // Hz
 const REFERENCE_FREQ = 800; // Hz
 const DEFAULT_CALIBRATION_FREQ = 3000; // Hz
-const MASTER_GAIN = 0.8;
+const MASTER_GAIN = 2.0;
 
 // Envelope settings
 const ENVELOPE_ATTACK = 0.01; // seconds
@@ -17,14 +18,14 @@ const ENVELOPE_RELEASE = 0.1; // seconds
 const BURST_LENGTH = 0.15; // seconds
 
 // Pattern timing
-const BURST_INTERVAL = 0.2; // seconds between bursts
-const ROW_PAUSE = 0.2; // pause between rows
+const BURST_INTERVAL = 0.1; // seconds between bursts
+const ROW_PAUSE = 0.1; // pause between rows
 
 // Filter settings
 const DEFAULT_Q = 3.0; // Q for bandwidth
 const BANDWIDTH_OCTAVE = 1.5; // Width of the band in octaves (0.5 = half octave)
 const FILTER_SLOPE = 24; // Filter slope in dB/octave (24 = steep filter)
-const FIXED_BANDWIDTH = 1.0; // Fixed bandwidth for noise bursts in octaves
+const FIXED_BANDWIDTH = 0.3; // Fixed bandwidth for noise bursts in octaves
 
 // Effective frequency range accounting for bandwidth
 const EFFECTIVE_MIN_FREQ = MIN_FREQ * Math.pow(2, FIXED_BANDWIDTH); // Min center freq to avoid HP cutoff
@@ -38,7 +39,7 @@ const STAGE_BANDWIDTH = [
 ];
 
 // Panning positions
-const PANNING_POSITIONS = [-1.0, -0.33, 0.33, 1.0]; // Full left to full right
+const PANNING_POSITIONS = [-1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0]; // Full left to full right
 
 // Observer for calibration events
 type FrequencyChangeListener = (frequency: number) => void;
@@ -71,9 +72,23 @@ class ReferenceCalibrationAudio {
   // Add a constant for fixed noise bandwidth
   private readonly FIXED_NOISE_BANDWIDTH = 0.5; // Half octave fixed width for noise bursts
   
+  // Add property to store distortion gain value
+  private distortionGain: number = 1.0;
+  
   private constructor() {
     // Initialize noise buffer
     this.generateNoiseBuffer();
+    
+    // Apply initial distortion gain from store
+    const distortionGain = useEQProfileStore.getState().distortionGain;
+    this.setDistortionGain(distortionGain);
+    
+    // Subscribe to distortion gain changes from the store
+    useEQProfileStore.subscribe(
+      (state) => {
+        this.setDistortionGain(state.distortionGain);
+      }
+    );
   }
 
   public static getInstance(): ReferenceCalibrationAudio {
@@ -173,6 +188,8 @@ class ReferenceCalibrationAudio {
    * @param frequency Frequency in Hz
    */
   public setCalibrationFrequency(frequency: number): void {
+    console.log(`🔊 Setting calibration frequency to ${frequency}Hz`);
+
     // Ensure frequency is in valid range accounting for bandwidth
     const validFreq = Math.max(EFFECTIVE_MIN_FREQ, Math.min(EFFECTIVE_MAX_FREQ, frequency));
     
@@ -525,8 +542,11 @@ class ReferenceCalibrationAudio {
     panner.pan.value = pan;
     
     // Create a gain node with different levels for reference vs calibration
+    // AND apply distortion gain to prevent clipping
     const gainNode = ctx.createGain();
-    gainNode.gain.value = isReference ? MASTER_GAIN * 2.0 : MASTER_GAIN; // Double gain (+6dB) for reference
+    gainNode.gain.value = isReference ? 
+      MASTER_GAIN * 2.0 * this.distortionGain : // Double gain (+6dB) for reference, but apply distortion gain
+      MASTER_GAIN * this.distortionGain;        // Apply distortion gain to calibration tone
     
     // Create envelope
     const envelopeGain = ctx.createGain();
@@ -626,6 +646,13 @@ class ReferenceCalibrationAudio {
     }
     
     // No need to restart pattern - filters will update in real-time
+  }
+
+  // Add method to update distortion gain
+  private setDistortionGain(gain: number): void {
+    // Clamp gain between 0 and 1
+    this.distortionGain = Math.max(0, Math.min(1, gain));
+    console.log(`🔊 Reference calibration distortion gain set to ${this.distortionGain.toFixed(2)}`);
   }
 }
 
