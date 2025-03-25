@@ -14,10 +14,12 @@ const MASTER_GAIN = 2.0;
 const ENVELOPE_ATTACK = 0.01; // seconds
 const ENVELOPE_DECAY = 0.02; // seconds
 const ENVELOPE_SUSTAIN = 0.8; // level
-const ENVELOPE_RELEASE = 0.01; // seconds
-const BURST_LENGTH = 0.09; // seconds
+const ENVELOPE_RELEASE = 0.3; // seconds
+const BURST_LENGTH = 0.15; // seconds
 
 // Pattern timing
+const BURST_INTERVAL = 0.3; // seconds between bursts
+const ROW_PAUSE = 0.3; // pause between rows
 const BURST_INTERVAL = 0.3; // seconds between bursts
 const ROW_PAUSE = 0.3; // pause between rows
 
