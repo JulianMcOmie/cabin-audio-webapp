@@ -14,12 +14,12 @@ const MASTER_GAIN = 2.0;
 const ENVELOPE_ATTACK = 0.01; // seconds
 const ENVELOPE_DECAY = 0.02; // seconds
 const ENVELOPE_SUSTAIN = 0.8; // level
-const ENVELOPE_RELEASE = 0.05; // seconds
+const ENVELOPE_RELEASE = 0.1; // seconds
 const BURST_LENGTH = 0.15; // seconds
 
 // Pattern timing
-const BURST_INTERVAL = 0.2; // seconds between bursts
-const ROW_PAUSE = 0.2; // pause between rows
+const BURST_INTERVAL = 0.05; // seconds between bursts
+const ROW_PAUSE = 0.05; // pause between rows
 
 // Filter settings
 const DEFAULT_Q = 3.0; // Q for bandwidth
