@@ -32,14 +32,14 @@ export const initDB = (): Promise<IDBDatabase> => {
       // Create object stores with indices
       if (!db.objectStoreNames.contains(STORES.TRACKS)) {
         const trackStore = db.createObjectStore(STORES.TRACKS, { keyPath: 'id' });
-        trackStore.createIndex('artistId', 'artistId', { unique: true });
-        trackStore.createIndex('albumId', 'albumId', { unique: true });
+        trackStore.createIndex('artistId', 'artistId', { unique: false });
+        trackStore.createIndex('albumId', 'albumId', { unique: false });
         trackStore.createIndex('syncStatus', 'syncStatus', { unique: false });
       }
       
       if (!db.objectStoreNames.contains(STORES.ALBUMS)) {
         const albumStore = db.createObjectStore(STORES.ALBUMS, { keyPath: 'id' });
-        albumStore.createIndex('artistId', 'artistId', { unique: true });
+        albumStore.createIndex('artistId', 'artistId', { unique: false });
         albumStore.createIndex('syncStatus', 'syncStatus', { unique: false });
       }
       

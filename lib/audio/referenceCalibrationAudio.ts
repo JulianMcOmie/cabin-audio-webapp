@@ -24,7 +24,7 @@ const ROW_PAUSE = 0.2; // pause between rows
 const DEFAULT_Q = 3.0; // Q for bandwidth
 const BANDWIDTH_OCTAVE = 1.5; // Width of the band in octaves (0.5 = half octave)
 const FILTER_SLOPE = 24; // Filter slope in dB/octave (24 = steep filter)
-const FIXED_BANDWIDTH = 1.5; // Fixed bandwidth for noise bursts in octaves
+const FIXED_BANDWIDTH = 1.0; // Fixed bandwidth for noise bursts in octaves
 
 // Effective frequency range accounting for bandwidth
 const EFFECTIVE_MIN_FREQ = MIN_FREQ * Math.pow(2, FIXED_BANDWIDTH); // Min center freq to avoid HP cutoff
@@ -524,9 +524,9 @@ class ReferenceCalibrationAudio {
     const panner = ctx.createStereoPanner();
     panner.pan.value = pan;
     
-    // Create a gain node
+    // Create a gain node with different levels for reference vs calibration
     const gainNode = ctx.createGain();
-    gainNode.gain.value = MASTER_GAIN;
+    gainNode.gain.value = isReference ? MASTER_GAIN * 2.0 : MASTER_GAIN; // Double gain (+6dB) for reference
     
     // Create envelope
     const envelopeGain = ctx.createGain();
