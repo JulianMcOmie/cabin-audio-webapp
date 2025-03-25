@@ -27,9 +27,21 @@ const BANDWIDTH_OCTAVE = 1.5; // Width of the band in octaves (0.5 = half octave
 const FILTER_SLOPE = 24; // Filter slope in dB/octave (24 = steep filter)
 const FIXED_BANDWIDTH = 0.05; // Fixed bandwidth for noise bursts in octaves
 
+// Function to return bandwidth - currently returns fixed value
+// but could be extended to provide dynamic bandwidth based on frequency
+function getBandwidth(frequency: number): number {
+  const MIN_BANDWIDTH = 0.01;
+  const MAX_BANDWIDTH = 2.0;
+  const logNormalizedFrequency = Math.log2(frequency / MIN_FREQ) / Math.log2(MAX_FREQ / MIN_FREQ); // from 0 to 1
+  // Interpolate min bandwidth and max bandwidth linearly based on logNormalizedFrequency
+  const interpolatedBandwidth = MIN_BANDWIDTH + (MAX_BANDWIDTH - MIN_BANDWIDTH) * logNormalizedFrequency;
+
+  return interpolatedBandwidth;
+}
+
 // Effective frequency range accounting for bandwidth
-const EFFECTIVE_MIN_FREQ = MIN_FREQ * Math.pow(2, FIXED_BANDWIDTH); // Min center freq to avoid HP cutoff
-const EFFECTIVE_MAX_FREQ = MAX_FREQ / Math.pow(2, FIXED_BANDWIDTH); // Max center freq to avoid LP cutoff
+const EFFECTIVE_MIN_FREQ = MIN_FREQ * Math.pow(2, getBandwidth(MIN_FREQ)); // Min center freq to avoid HP cutoff
+const EFFECTIVE_MAX_FREQ = MAX_FREQ / Math.pow(2, getBandwidth(MAX_FREQ)); // Max center freq to avoid LP cutoff
 
 // Bandwidth for different stages
 const STAGE_BANDWIDTH = [
@@ -252,8 +264,8 @@ class ReferenceCalibrationAudio {
     const isAtMaxEdge = this.calibrationFrequency >= EFFECTIVE_MAX_FREQ * 0.95;
     
     // Calculate filter cutoffs - bypassing appropriate filter at extremes
-    const highpassCutoff = isAtMinEdge ? 20 : this.calibrationFrequency / Math.pow(2, FIXED_BANDWIDTH/2);
-    const lowpassCutoff = isAtMaxEdge ? 20000 : this.calibrationFrequency * Math.pow(2, FIXED_BANDWIDTH/2);
+    const highpassCutoff = isAtMinEdge ? 20 : this.calibrationFrequency / Math.pow(2, getBandwidth(this.calibrationFrequency)/2);
+    const lowpassCutoff = isAtMaxEdge ? 20000 : this.calibrationFrequency * Math.pow(2, getBandwidth(this.calibrationFrequency)/2);
     
     // Update highpass filter (using bandpass1 reference)
     if (this.activeCalibrationFilters.bandpass1.type !== 'highpass') {
@@ -508,8 +520,8 @@ class ReferenceCalibrationAudio {
     
     // Calculate filter cutoffs based on center frequency
     // At edges, we'll bypass one filter by setting it to an extreme value
-    const highpassCutoff = isAtMinEdge ? 20 : centerFreq / Math.pow(2, FIXED_BANDWIDTH/2);
-    const lowpassCutoff = isAtMaxEdge ? 20000 : centerFreq * Math.pow(2, FIXED_BANDWIDTH/2);
+    const highpassCutoff = isAtMinEdge ? 20 : centerFreq / Math.pow(2, getBandwidth(centerFreq)/2);
+    const lowpassCutoff = isAtMaxEdge ? 20000 : centerFreq * Math.pow(2, getBandwidth(centerFreq)/2);
     
     // Create filters
     const highpassFilter = ctx.createBiquadFilter();
