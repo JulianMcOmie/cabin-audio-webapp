@@ -18,7 +18,8 @@ import { v4 as uuidv4 } from 'uuid'
 import { SyncStatus } from "@/lib/models/SyncStatus"
 import { FFTVisualizer } from "@/components/audio/FFTVisualizer"
 import { getReferenceCalibrationAudio } from "@/lib/audio/referenceCalibrationAudio"
-import { EQCalibrationProcess } from "@/components/eq-calibration-process"
+// Comment out EQCalibrationProcess import
+// import { EQCalibrationProcess } from "@/components/eq-calibration-process"
 
 interface EQViewProps {
 //   isPlaying: boolean
@@ -169,30 +170,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     setEQEnabled(!isEQEnabled);
   };
 
-  const [showCalibrationProcess, setShowCalibrationProcess] = useState(false)
-
-  // Handle completing the calibration process
-  const handleCalibrationComplete = () => {
-    setShowCalibrationProcess(false);
-    // Stop the calibration audio when the process is complete
-    setCalibrationPlaying(false);
-    // Make sure the analyzer is cleaned up
-    setPreEQAnalyser(null);
-  }
-  
-  // Handle canceling the calibration process
-  const handleCalibrationCancel = () => {
-    setShowCalibrationProcess(false)
-    // Stop the calibration audio when the process is canceled
-    setCalibrationPlaying(false)
-  }
-  
-  // Start the automated calibration process
-  const startCalibration = () => {
-    setShowCalibrationProcess(true)
-    // Automatically start the calibration audio
-    setCalibrationPlaying(true)
-  }
+  // Comment out auto-calibration related state
+  // const [showCalibrationProcess, setShowCalibrationProcess] = useState(false)
 
   return (
     <div className="mx-auto space-y-8 pb-24">
@@ -206,13 +185,14 @@ export function EQView({ setEqEnabled }: EQViewProps) {
           </div>
         </div>
         <div className="flex gap-2">
-          <Button 
+          {/* Comment out the Auto-Calibrate EQ button */}
+          {/* <Button 
             className="bg-electric-blue hover:bg-electric-blue/90 text-white" 
             onClick={startCalibration}
           >
             <Sliders className="mr-2 h-5 w-5" />
             Auto-Calibrate EQ
-          </Button>
+          </Button> */}
           <Button variant="outline" onClick={() => setShowCalibrationModal(true)}>
             <HelpCircle className="mr-2 h-5 w-5" />
             Tutorial
@@ -227,7 +207,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
           {/* Frequency Graph (taking most of the width) */}
           <div className="flex-1 relative" ref={eqContainerRef}>
             {/* FFT Visualizer should always be visible during calibration */}
-            {(calibrationPlaying || showCalibrationProcess) && preEQAnalyser && (
+            {(calibrationPlaying) && preEQAnalyser && (
               <div className="absolute inset-0 z-0 w-full aspect-[2/1]">
                 <FFTVisualizer 
                   analyser={preEQAnalyser} 
@@ -270,10 +250,10 @@ export function EQView({ setEqEnabled }: EQViewProps) {
           </div>
 
           {/* Calibration Panel (small width on desktop, full width on mobile) */}
+          {/* 
           <div className="w-full md:w-64 bg-muted/50 p-4 rounded-lg">
             <h4 className="font-medium mb-3">Calibration</h4>
             
-            {/* Reference Calibration Component */}
             <div className="mb-3">
               <ReferenceCalibration 
                 isPlaying={calibrationPlaying}
@@ -290,6 +270,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
               {calibrationPlaying ? "Stop" : "Start"}
             </Button>
           </div>
+          */}
         </div>
 
         {/* Distortion Control Section */}
@@ -452,8 +433,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
         />
       </div>
 
-      {/* EQ Automatic Calibration Process Dialog */}
-      {showCalibrationProcess && (
+      {/* Comment out the EQ Automatic Calibration Process Dialog */}
+      {/* {showCalibrationProcess && (
         <Dialog open={showCalibrationProcess} onOpenChange={setShowCalibrationProcess}>
           <DialogContent className="sm:max-w-[850px] p-0">
             <EQCalibrationProcess 
@@ -462,7 +443,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
             />
           </DialogContent>
         </Dialog>
-      )}
+      )} */}
 
       {/* Create New Profile Dialog */}
       <Dialog open={showCreateNewDialog} onOpenChange={setShowCreateNewDialog}>

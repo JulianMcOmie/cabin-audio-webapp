@@ -57,27 +57,37 @@ export function EQCalibrationModal({ open, onClose }: EQCalibrationModalProps) {
             <TabsContent value="calibration" className="m-0 p-0">
               <div className="space-y-4">
                 <p className="text-sm text-muted-foreground">
-                  Cabin Audio features a patent-pending calibration system that helps you create a personalized EQ
-                  profile tailored to your unique hearing and audio equipment.
-                </p>
-
-                <p className="text-sm text-muted-foreground">
-                  You&apos;ll find our calibration tool below the EQ graph. It uses a square calibration system that plays test sounds
-                  at precise locations in your soundstage to help you fine-tune your EQ settings for optimal spatial separation and clarity.
+                  The Reference Calibration tool helps you adjust your EQ with precision by comparing a reference tone with different frequencies.
                 </p>
 
                 <div className="space-y-2">
-                  <h3 className="font-medium text-sm">How the Square Calibration Works:</h3>
-                  <ul className="space-y-1 text-sm text-muted-foreground">
-                    <li>• The outer square represents your entire sound stage</li>
-                    <li>• The inner square defines the test area</li>
-                    <li>• Test sounds play at the corners in a pattern</li>
-                    <li>• You can move and resize the inner square to test different areas</li>
+                  <h3 className="font-medium">How to Use the Calibration:</h3>
+                  <ol className="space-y-2 text-sm text-muted-foreground list-decimal pl-5">
+                    <li>Press <strong>Start</strong> in the Calibration panel to begin playing the test sounds</li>
+                    <li>You'll hear two rows of sound bursts:
+                      <ul className="list-disc pl-5 mt-1">
+                        <li><strong>Reference row</strong> (top): Always plays at 800Hz</li>
+                        <li><strong>Test row</strong> (bottom): Plays at the frequency you're adjusting with EQ</li>
+                      </ul>
+                    </li>
+                    <li>Adjust your EQ at different frequencies until both rows sound equally wide/spacious in your headphones</li>
+                    <li>When both rows have the same perceived spatial width, your EQ is calibrated for that frequency</li>
+                  </ol>
+                </div>
+
+                <div className="mt-2">
+                  <h3 className="font-medium">Tips for Better Results:</h3>
+                  <ul className="space-y-1 text-sm text-muted-foreground list-disc pl-5 mt-1">
+                    <li>Focus on the perceived <strong>spatial width</strong> of the sound, not just volume</li>
+                    <li>Low frequencies typically need boosting (drag EQ up)</li>
+                    <li>High frequencies may need reduction (drag EQ down)</li>
+                    <li>Take your time with each adjustment for best results</li>
                   </ul>
                 </div>
 
                 <div className="bg-muted/50 p-3 rounded-md text-sm text-muted-foreground">
-                  Try it out! Close this tutorial and scroll down to see the &quot;How to Calibrate Your EQ&quot; section.
+                  The calibration tool uses psychoacoustic techniques to help you match your EQ settings to your unique 
+                  hearing and audio equipment, creating a personalized listening experience.
                 </div>
               </div>
             </TabsContent>
