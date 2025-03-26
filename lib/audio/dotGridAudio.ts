@@ -10,7 +10,7 @@ const ENVELOPE_MAX_GAIN = 1.0; // Maximum gain during envelope cycle
 const ENVELOPE_ATTACK = 0.01; // Faster attack time in seconds - for very punchy transients
 // const ENVELOPE_RELEASE_DEFAULT = 0.2; // Default release time (for reference only)
 const ENVELOPE_RELEASE_LOW_FREQ = 0.3; // Release time for lowest frequencies (seconds)
-const ENVELOPE_RELEASE_HIGH_FREQ = 0.05; // Release time for highest frequencies (seconds)
+const ENVELOPE_RELEASE_HIGH_FREQ = 0.01; // Release time for highest frequencies (seconds)
 const MASTER_GAIN = 1.0; // Much louder master gain for calibration
 
 // Polyrhythm settings
@@ -515,28 +515,12 @@ class DotGridAudioPlayer {
     // Trigger the envelope for this dot
     this.triggerDotEnvelope(dotKey);
     
-    // Advance sequence with the 2-burst repetition logic
+    // Simply advance to the next dot in sequence
     this.sequenceIndex++;
-    
-    // If we've played 2 bursts (0,1)
-    if (this.sequenceIndex % 2 === 0 || this.sequenceIndex >= this.orderedDots.length) {
-      // Check if we need to repeat this group of 2
-      if (this.sequenceRepeatCount < 1) { // We've done it once, need to do it twice total
-        // Start the group over, but increment repeat count
-        this.sequenceIndex = this.sequenceGroupStart;
-        this.sequenceRepeatCount++;
-      } else {
-        // We've repeated twice, move to next group of 2
-        this.sequenceGroupStart = this.sequenceIndex;
-        this.sequenceRepeatCount = 0;
-      }
-    }
     
     // If we reach the end, wrap around
     if (this.sequenceIndex >= this.orderedDots.length) {
       this.sequenceIndex = 0;
-      this.sequenceGroupStart = 0;
-      this.sequenceRepeatCount = 0;
     }
   }
   
@@ -876,7 +860,7 @@ class DotGridAudioPlayer {
     // const distFromCenter = Math.abs(normalizedY - 0.5) * 2;
     // const minQ = 1.0;
     // const maxQ = 4.0;
-    const qValue = 1.0;//minQ + (1 - distFromCenter) * (maxQ - minQ);
+    const qValue = 4.0;//minQ + (1 - distFromCenter) * (maxQ - minQ);
     
     // Create filter(s) based on the filter mode
     const filter = ctx.createBiquadFilter();
