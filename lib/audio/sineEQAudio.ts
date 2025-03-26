@@ -49,7 +49,7 @@ class SineEQAudio {
     const octaveDifference = Math.log2(frequency / this.referenceFrequency);
     
     // Apply -3dB per octave slope
-    return -3 * octaveDifference;
+    return 0;//-3 * octaveDifference;
   }
   
   // Start the tone pattern
