@@ -89,7 +89,7 @@ export function useEQInteraction({
         
         // Only start playing if not already playing
         if (!audioPlayer.isActive()) {
-          audioPlayer.setPlaying(true);
+        //   audioPlayer.setPlaying(true);
         }
       }
     } else {

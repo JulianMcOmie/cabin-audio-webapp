@@ -20,8 +20,6 @@ const BURST_LENGTH = 0.15; // seconds
 // Pattern timing
 const BURST_INTERVAL = 0.3; // seconds between bursts
 const ROW_PAUSE = 0.3; // pause between rows
-const BURST_INTERVAL = 0.3; // seconds between bursts
-const ROW_PAUSE = 0.3; // pause between rows
 
 // Filter settings
 const DEFAULT_Q = 3.0; // Q for bandwidth

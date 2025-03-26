@@ -72,7 +72,7 @@ export class EQCoordinateUtils {
     // Increase saturation and lightness for more vibrant colors
     const saturation = 85;
     // Adjust lightness based on position in spectrum to ensure even brightness perception
-    const baseLightness = isDarkMode ? 60 : 70;
+    const baseLightness = isDarkMode ? 60 : 20;
     // Slightly boost lightness in the middle range to avoid dark spots
     const lightnessAdjust = Math.sin(normalizedFreq * Math.PI) * 10;
     const lightness = baseLightness + lightnessAdjust;

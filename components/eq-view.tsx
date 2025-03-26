@@ -18,6 +18,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { SyncStatus } from "@/lib/models/SyncStatus"
 import { FFTVisualizer } from "@/components/audio/FFTVisualizer"
 import { getReferenceCalibrationAudio } from "@/lib/audio/referenceCalibrationAudio"
+import { DotCalibration } from "@/components/dot-grid"
 // Comment out EQCalibrationProcess import
 // import { EQCalibrationProcess } from "@/components/eq-calibration-process"
 
@@ -65,6 +66,9 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   
   // State for storing the measured width
   const [eqWidth, setEqWidth] = useState(800)
+
+  // State for the dot grid
+  const [dotGridPlaying, setDotGridPlaying] = useState(false)
   
   // Measure the EQ component's width when it changes
   useEffect(() => {
@@ -202,9 +206,9 @@ export function EQView({ setEqEnabled }: EQViewProps) {
 
       {/* Main EQ View */}
       <div className="space-y-6">
-        {/* EQ and Calibration in a side-by-side layout that stacks on small screens */}
+        {/* EQ and Dot Grid in a side-by-side layout that stacks on small screens */}
         <div className="flex flex-col md:flex-row gap-4">
-          {/* Frequency Graph (taking most of the width) */}
+          {/* Frequency Graph (taking 2/3 of the width) */}
           <div className="flex-1 relative" ref={eqContainerRef}>
             {/* FFT Visualizer should always be visible during calibration */}
             {(calibrationPlaying) && preEQAnalyser && (
@@ -249,28 +253,26 @@ export function EQView({ setEqEnabled }: EQViewProps) {
             </div>
           </div>
 
-          {/* Calibration Panel (small width on desktop, full width on mobile) */}
-          {/* 
-          <div className="w-full md:w-64 bg-muted/50 p-4 rounded-lg">
-            <h4 className="font-medium mb-3">Calibration</h4>
-            
-            <div className="mb-3">
-              <ReferenceCalibration 
-                isPlaying={calibrationPlaying}
-                disabled={false}
-              />
+          {/* Dot Grid Calibration Panel (1/3 width on desktop, full width on mobile) */}
+          <div className="w-full md:w-80 bg-muted/30 p-4 rounded-lg">
+            <div className="flex justify-between items-center mb-3">
+              <h4 className="font-medium">Dot Grid</h4>
+              <Button
+                size="sm"
+                variant={dotGridPlaying ? "default" : "outline"}
+                className={dotGridPlaying ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : ""}
+                onClick={() => setDotGridPlaying(!dotGridPlaying)}
+              >
+                <Play className="mr-2 h-4 w-4" />
+                {dotGridPlaying ? "Stop" : "Play"}
+              </Button>
             </div>
-
-            <Button
-              size="sm"
-              className="w-full bg-electric-blue hover:bg-electric-blue/90 text-white"
-              onClick={() => setCalibrationPlaying(!calibrationPlaying)}
-            >
-              <Play className="mr-2 h-4 w-4" />
-              {calibrationPlaying ? "Stop" : "Start"}
-            </Button>
+            
+            <DotCalibration
+              isPlaying={dotGridPlaying}
+              disabled={false}
+            />
           </div>
-          */}
         </div>
 
         {/* Distortion Control Section */}
