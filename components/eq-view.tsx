@@ -19,6 +19,7 @@ import { SyncStatus } from "@/lib/models/SyncStatus"
 import { FFTVisualizer } from "@/components/audio/FFTVisualizer"
 import { getReferenceCalibrationAudio } from "@/lib/audio/referenceCalibrationAudio"
 import { DotCalibration } from "@/components/dot-grid"
+import { GlyphGrid } from "@/components/glyph-grid"
 // Comment out EQCalibrationProcess import
 // import { EQCalibrationProcess } from "@/components/eq-calibration-process"
 
@@ -69,6 +70,9 @@ export function EQView({ setEqEnabled }: EQViewProps) {
 
   // State for the dot grid
   const [dotGridPlaying, setDotGridPlaying] = useState(false)
+  
+  // State for the glyph grid
+  const [glyphGridPlaying, setGlyphGridPlaying] = useState(false)
   
   // Measure the EQ component's width when it changes
   useEffect(() => {
@@ -253,25 +257,49 @@ export function EQView({ setEqEnabled }: EQViewProps) {
             </div>
           </div>
 
-          {/* Dot Grid Calibration Panel (1/3 width on desktop, full width on mobile) */}
-          <div className="w-full md:w-80 bg-muted/30 p-4 rounded-lg">
-            <div className="flex justify-between items-center mb-3">
-              <h4 className="font-medium">Dot Grid</h4>
-              <Button
-                size="sm"
-                variant={dotGridPlaying ? "default" : "outline"}
-                className={dotGridPlaying ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : ""}
-                onClick={() => setDotGridPlaying(!dotGridPlaying)}
-              >
-                <Play className="mr-2 h-4 w-4" />
-                {dotGridPlaying ? "Stop" : "Play"}
-              </Button>
+          {/* Calibration Panel (1/3 width on desktop, full width on mobile) */}
+          <div className="w-full md:w-80 space-y-4">
+            {/* Dot Grid */}
+            <div className="bg-muted/30 p-4 rounded-lg">
+              <div className="flex justify-between items-center mb-3">
+                <h4 className="font-medium">Dot Grid</h4>
+                <Button
+                  size="sm"
+                  variant={dotGridPlaying ? "default" : "outline"}
+                  className={dotGridPlaying ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : ""}
+                  onClick={() => setDotGridPlaying(!dotGridPlaying)}
+                >
+                  <Play className="mr-2 h-4 w-4" />
+                  {dotGridPlaying ? "Stop" : "Play"}
+                </Button>
+              </div>
+              
+              <DotCalibration
+                isPlaying={dotGridPlaying}
+                disabled={false}
+              />
             </div>
             
-            <DotCalibration
-              isPlaying={dotGridPlaying}
-              disabled={false}
-            />
+            {/* Glyph Grid */}
+            <div className="bg-muted/30 p-4 rounded-lg">
+              <div className="flex justify-between items-center mb-3">
+                <h4 className="font-medium">Glyph Grid</h4>
+                <Button
+                  size="sm"
+                  variant={glyphGridPlaying ? "default" : "outline"}
+                  className={glyphGridPlaying ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : ""}
+                  onClick={() => setGlyphGridPlaying(!glyphGridPlaying)}
+                >
+                  <Play className="mr-2 h-4 w-4" />
+                  {glyphGridPlaying ? "Stop" : "Play"}
+                </Button>
+              </div>
+              
+              <GlyphGrid
+                isPlaying={glyphGridPlaying}
+                disabled={false}
+              />
+            </div>
           </div>
         </div>
 
