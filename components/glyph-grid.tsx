@@ -27,8 +27,8 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
   const [glyph, setGlyph] = useState<Glyph>({
     id: 'diagonal-line',
     type: 'line',
-    position: { x: 0, y: 0 }, // Center position (0,0 is center of canvas)
-    size: { width: 0.6, height: 0.6 }, // Default size (60% of available space)
+    position: { x: 0, y: 0 }, // Center position (0,0) is center of canvas)
+    size: { width: 1, height: 1 }, // Full size (1 = full extent of normalized space)
   })
   
   // Track the last mouse position for dragging and resizing
@@ -143,8 +143,8 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     ctx.lineWidth = 1
     
     // Vertical grid lines
-    for (let i = 1; i < 5; i++) {
-      const x = (i / 5) * rect.width
+    for (let i = 0; i <= 4; i++) {
+      const x = (i / 4) * rect.width
       ctx.beginPath()
       ctx.moveTo(x, 0)
       ctx.lineTo(x, rect.height)
@@ -152,8 +152,8 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     }
     
     // Horizontal grid lines
-    for (let i = 1; i < 5; i++) {
-      const y = (i / 5) * rect.height
+    for (let i = 0; i <= 4; i++) {
+      const y = (i / 4) * rect.height
       ctx.beginPath()
       ctx.moveTo(0, y)
       ctx.lineTo(rect.width, y)
@@ -162,19 +162,28 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     
     // Draw the diagonal line glyph
     if (glyph.type === 'line') {
-      const centerX = (rect.width / 2) + (glyph.position.x * rect.width / 2)
-      const centerY = (rect.height / 2) - (glyph.position.y * rect.height / 2)
-      const halfWidth = (glyph.size.width * rect.width / 2)
-      const halfHeight = (glyph.size.height * rect.height / 2)
+      // In the audio system, (-1,-1) is bottom-left and (1,1) is top-right
+      // In the canvas, (0,0) is top-left and (width,height) is bottom-right
       
-      // Calculate start and end points for the diagonal line
-      const startX = centerX - halfWidth
-      const startY = centerY + halfHeight
-      const endX = centerX + halfWidth
-      const endY = centerY - halfHeight
+      // Convert from glyph normalized coords to canvas coords
+      // startX maps from -1 to 0, and 1 to width
+      // startY maps from -1 to height, and 1 to 0 (Y is inverted)
+      
+      // Calculate glyph corners in normalized space
+      const startX_norm = glyph.position.x - glyph.size.width / 2
+      const startY_norm = glyph.position.y - glyph.size.height / 2
+      const endX_norm = glyph.position.x + glyph.size.width / 2
+      const endY_norm = glyph.position.y + glyph.size.height / 2
+      
+      // Convert normalized coordinates to canvas pixels
+      // Map from normalized -1,1 to canvas 0,width or 0,height
+      const startX = (startX_norm + 1) / 2 * rect.width
+      const startY = (1 - startY_norm) / 2 * rect.height // Y is inverted
+      const endX = (endX_norm + 1) / 2 * rect.width
+      const endY = (1 - endY_norm) / 2 * rect.height // Y is inverted
       
       // Draw the path that the noise will follow
-      ctx.strokeStyle = isDarkMode ? '#38bdf8' : '#0284c7' // sky-400 or sky-600
+      ctx.strokeStyle = isDarkMode ? '#38bdf8' : '#0284c7'
       ctx.lineWidth = 3
       ctx.beginPath()
       ctx.moveTo(startX, startY)
@@ -183,12 +192,11 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
       
       // If playing, draw a moving dot along the path
       if (isPlaying && !disabled) {
-        // Calculate position based on time (use a simple oscillation for now)
-        const time = (Date.now() % 2000) / 2000 // 0 to 1 over 2 seconds
-        const oscillation = Math.sin(time * Math.PI * 2) * 0.5 + 0.5 // 0 to 1 oscillating
+        const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
+        const pathPosition = audioPlayer.getPathPosition()
         
-        const dotX = startX + (endX - startX) * oscillation
-        const dotY = startY + (endY - startY) * oscillation
+        const dotX = startX + (endX - startX) * pathPosition
+        const dotY = startY + (endY - startY) * pathPosition
         
         // Draw the dot
         ctx.fillStyle = isDarkMode ? 'rgb(56, 189, 248)' : 'rgb(2, 132, 199)'
@@ -198,12 +206,11 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
         
         // Request animation frame to continue the animation
         requestAnimationFrame(() => {
-          // Force a re-render to update the animation
           setGlyph(prev => ({ ...prev }))
         })
       }
       
-      // Draw resize handles at corners
+      // Draw resize handles at corners if not disabled
       if (!disabled) {
         const handleRadius = 6
         const handles = [
@@ -234,27 +241,27 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     const mouseX = e.clientX - rect.left
     const mouseY = e.clientY - rect.top
     
-    // Convert to canvas coordinates
-    const canvasX = mouseX
-    const canvasY = mouseY
+    setLastMousePos({ x: mouseX, y: mouseY })
     
-    // Store last mouse position for drag calculations
-    setLastMousePos({ x: canvasX, y: canvasY })
+    // Convert canvas pixel coordinates to normalized coordinates
+    // Map from 0,width to -1,1 and 0,height to 1,-1 (Y is inverted)
+    const normX = (mouseX / rect.width) * 2 - 1
+    const normY = 1 - (mouseY / rect.height) * 2 // Y is inverted
     
-    // Convert glyph position and size to canvas coordinates
-    const centerX = (rect.width / 2) + (glyph.position.x * rect.width / 2)
-    const centerY = (rect.height / 2) - (glyph.position.y * rect.height / 2)
-    const halfWidth = (glyph.size.width * rect.width / 2)
-    const halfHeight = (glyph.size.height * rect.height / 2)
+    // Calculate glyph corners in normalized space
+    const startX_norm = glyph.position.x - glyph.size.width / 2
+    const startY_norm = glyph.position.y - glyph.size.height / 2
+    const endX_norm = glyph.position.x + glyph.size.width / 2
+    const endY_norm = glyph.position.y + glyph.size.height / 2
     
-    // Calculate corner positions
-    const startX = centerX - halfWidth
-    const startY = centerY + halfHeight
-    const endX = centerX + halfWidth
-    const endY = centerY - halfHeight
+    // Convert to canvas coordinates for checking handles
+    const startX = (startX_norm + 1) / 2 * rect.width
+    const startY = (1 - startY_norm) / 2 * rect.height
+    const endX = (endX_norm + 1) / 2 * rect.width
+    const endY = (1 - endY_norm) / 2 * rect.height
     
     // Check if we're near a resize handle
-    const handleRadius = 10 // Slightly larger hit area than visual size
+    const handleRadius = 10
     const handles = [
       { x: startX, y: startY }, // Bottom-left
       { x: endX, y: endY },     // Top-right
@@ -265,18 +272,17 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     for (let i = 0; i < handles.length; i++) {
       const handle = handles[i]
       const distance = Math.sqrt(
-        Math.pow(canvasX - handle.x, 2) + 
-        Math.pow(canvasY - handle.y, 2)
+        Math.pow(mouseX - handle.x, 2) + 
+        Math.pow(mouseY - handle.y, 2)
       )
       
       if (distance <= handleRadius) {
         setIsResizing(true)
-        setActiveHandle(i + 1) // 1-4 for the four handles
+        setActiveHandle(i + 1)
         return
       }
     }
     
-    // If not resizing, we're dragging the whole glyph
     setIsDragging(true)
   }
   

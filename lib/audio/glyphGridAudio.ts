@@ -9,7 +9,7 @@ const ENVELOPE_RELEASE_LOW_FREQ = 0.8 // 800ms for low frequencies
 const ENVELOPE_RELEASE_HIGH_FREQ = 0.2 // 200ms for high frequencies
 const ENVELOPE_MAX_GAIN = 1.0
 const ENVELOPE_MIN_GAIN = 0.001
-const DEFAULT_MODULATION_RATE = 4.0 // modulations per second
+const DEFAULT_MODULATION_RATE = 8.0 // modulations per second
 const DEFAULT_MODULATION_DEPTH = 0.8 // how much to modulate (0-1)
 const ENVELOPE_ATTACK_TIME = 0.005 // 5ms attack
 const ENVELOPE_RELEASE_TIME = 0.1 // 100ms release
@@ -159,10 +159,14 @@ class GlyphGridAudioPlayer {
     const minFreq = 20 // Lower minimum for better low-end
     const maxFreq = 20000 // Lower maximum to avoid harsh high-end
     
-    // Normalize y from -1,1 to 0,1
-    const normalizedY = (y + 1) / 2
+    // Properly normalize y from glyph space to full 0-1 range
+    // This ensures we fully reach 0 at bottom and 1 at top
+    const normalizedY = Math.max(0, Math.min(1, (y + 1) / 2))
 
-    console.log('🔊 Normalized y:', normalizedY)
+    // For debugging - check if we're hitting the full range
+    if (position === 0 || position === 1) {
+      console.log(`🔊 At ${position === 0 ? 'start' : 'end'} - Normalized y: ${normalizedY.toFixed(4)}, Raw y: ${y.toFixed(4)}`)
+    }
     
     // Map to logarithmic frequency scale
     const logMinFreq = Math.log2(minFreq)
@@ -468,6 +472,11 @@ class GlyphGridAudioPlayer {
     this.setPlaying(false)
     this.stopSweep()
     this.stopEnvelopeModulation()
+  }
+  
+  // Add this new public method to expose the current path position
+  public getPathPosition(): number {
+    return this.pathPosition;
   }
 }
 
