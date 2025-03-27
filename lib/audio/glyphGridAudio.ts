@@ -66,6 +66,13 @@ class GlyphGridAudioPlayer {
   private modulationDepth: number = DEFAULT_MODULATION_DEPTH
   private modulationTimerId: number | null = null
   
+  private isManualControl: boolean = false
+  private manualPosition: number = 0
+  
+  // Add preEQAnalyser property
+  private preEQAnalyser: AnalyserNode | null = null
+  private preEQGain: GainNode | null = null
+  
   private constructor() {
     this.generatePinkNoiseBuffer()
   }
@@ -135,17 +142,42 @@ class GlyphGridAudioPlayer {
   private updatePathPosition(): void {
     if (!this.currentGlyph) return
     
-    const ctx = getAudioContext()
+    // If in manual control mode, use the manually set position
+    if (this.isManualControl) {
+      const position = this.manualPosition
+      this.updateAudioParametersFromPosition(position)
+      return
+    }
     
-    // Get current position on the path (0 to 1)
-    // For a diagonal line, this maps directly to both x and y
+    // Otherwise, use automatic movement logic
     const position = this.pathPosition
+    
+    // Update audio parameters based on position
+    this.updateAudioParametersFromPosition(position)
+    
+    // Move the path position for next frame
+    this.pathPosition += 0.005 * this.pathDirection
+    
+    // Reverse direction at ends
+    if (this.pathPosition >= 1) {
+      this.pathPosition = 1
+      this.pathDirection = -1
+    } else if (this.pathPosition <= 0) {
+      this.pathPosition = 0
+      this.pathDirection = 1
+    }
+  }
+  
+  // New method to update audio parameters from a position
+  private updateAudioParametersFromPosition(position: number): void {
+    if (!this.currentGlyph) return
+    
+    const ctx = getAudioContext()
     
     // Get the glyph's position and size
     const { position: glyphPos, size: glyphSize } = this.currentGlyph
     
     // Calculate the actual x and y in normalized space (-1 to 1)
-    // For a diagonal line, start at bottom-left, end at top-right
     const startX = glyphPos.x - glyphSize.width / 2
     const startY = glyphPos.y - glyphSize.height / 2
     const endX = glyphPos.x + glyphSize.width / 2
@@ -156,17 +188,11 @@ class GlyphGridAudioPlayer {
     const y = startY + position * (endY - startY)
     
     // Map y to frequency (bottom = low, top = high)
-    const minFreq = 20 // Lower minimum for better low-end
-    const maxFreq = 20000 // Lower maximum to avoid harsh high-end
+    const minFreq = 20
+    const maxFreq = 20000
     
     // Properly normalize y from glyph space to full 0-1 range
-    // This ensures we fully reach 0 at bottom and 1 at top
     const normalizedY = Math.max(0, Math.min(1, (y + 1) / 2))
-
-    // For debugging - check if we're hitting the full range
-    if (position === 0 || position === 1) {
-      console.log(`🔊 At ${position === 0 ? 'start' : 'end'} - Normalized y: ${normalizedY.toFixed(4)}, Raw y: ${y.toFixed(4)}`)
-    }
     
     // Map to logarithmic frequency scale
     const logMinFreq = Math.log2(minFreq)
@@ -187,18 +213,6 @@ class GlyphGridAudioPlayer {
     
     if (this.audioNodes.panner) {
       this.audioNodes.panner.pan.value = panPosition
-    }
-    
-    // Move the path position
-    this.pathPosition += 0.005 * this.pathDirection
-    
-    // Reverse direction at ends
-    if (this.pathPosition >= 1) {
-      this.pathPosition = 1
-      this.pathDirection = -1
-    } else if (this.pathPosition <= 0) {
-      this.pathPosition = 0
-      this.pathDirection = 1
     }
   }
   
@@ -245,12 +259,20 @@ class GlyphGridAudioPlayer {
     filter.frequency.value = 500 // Default frequency
     filter.Q.value = 3.0 // Default Q
     
-    // Connect the nodes
+    // Connect the audio chain
     source.connect(gain)
     gain.connect(envelopeGain)
     envelopeGain.connect(filter)
     filter.connect(panner)
-    panner.connect(ctx.destination)
+    
+    // If we have an analyzer, connect through it
+    if (this.preEQAnalyser && this.preEQGain) {
+      panner.connect(this.preEQGain)
+      // preEQGain is already connected to destination and analyzer
+    } else {
+      // Direct connection to output
+      panner.connect(ctx.destination)
+    }
     
     // Store the nodes
     this.audioNodes = {
@@ -289,6 +311,15 @@ class GlyphGridAudioPlayer {
     if (this.animationFrameId) {
       cancelAnimationFrame(this.animationFrameId)
       this.animationFrameId = null
+    }
+    
+    // Clean up the analyzer nodes
+    if (this.preEQAnalyser) {
+      if (this.preEQGain) {
+        this.preEQGain.disconnect()
+        this.preEQGain = null
+      }
+      this.preEQAnalyser = null
     }
     
     if (this.audioNodes.source) {
@@ -477,6 +508,86 @@ class GlyphGridAudioPlayer {
   // Add this new public method to expose the current path position
   public getPathPosition(): number {
     return this.pathPosition;
+  }
+  
+  // New method to set manual position control
+  public setManualPosition(position: number): void {
+    this.isManualControl = true
+    this.manualPosition = Math.max(0, Math.min(1, position))
+  }
+  
+  // New method to turn off manual control
+  public setManualControl(enabled: boolean): void {
+    this.isManualControl = enabled
+    if (!enabled) {
+      // Reset to the current path position when turning off manual control
+      this.pathPosition = this.manualPosition
+    }
+  }
+  
+  // New method to resume automatic movement from a specific position
+  public resumeFromPosition(position: number): void {
+    this.pathPosition = Math.max(0, Math.min(1, position))
+    this.isManualControl = false
+  }
+  
+  // Add method to create and return an analyzer
+  public createPreEQAnalyser(): AnalyserNode {
+    const ctx = getAudioContext()
+    
+    // If we already have one, return it
+    if (this.preEQAnalyser) {
+      return this.preEQAnalyser
+    }
+    
+    // Create analyzer node
+    const analyser = ctx.createAnalyser()
+    analyser.fftSize = 2048
+    analyser.smoothingTimeConstant = 0.85
+    
+    // Create gain node for analyzer connection
+    const preEQGain = ctx.createGain()
+    preEQGain.gain.value = 1.0
+    
+    // Connect if we're playing and have a source
+    if (this.isPlaying && this.audioNodes.filter && this.audioNodes.panner) {
+      // Disconnect the panner from the destination
+      this.audioNodes.panner.disconnect()
+      
+      // Connect panner -> preEQGain -> analyser and preEQGain -> destination
+      this.audioNodes.panner.connect(preEQGain)
+      preEQGain.connect(analyser)
+      preEQGain.connect(ctx.destination)
+    }
+    
+    // Store for later access
+    this.preEQAnalyser = analyser
+    this.preEQGain = preEQGain
+    
+    return analyser
+  }
+  
+  // Add method to get the current analyzer
+  public getPreEQAnalyser(): AnalyserNode | null {
+    return this.preEQAnalyser
+  }
+  
+  // Add method to get current audio parameters
+  public getAudioParameters(): { frequency: number, panning: number } {
+    // Default values
+    let frequency = 0;
+    let panning = 0;
+    
+    // Get values from audio nodes if available
+    if (this.audioNodes.filter) {
+      frequency = this.audioNodes.filter.frequency.value;
+    }
+    
+    if (this.audioNodes.panner) {
+      panning = this.audioNodes.panner.pan.value;
+    }
+    
+    return { frequency, panning };
   }
 }
 

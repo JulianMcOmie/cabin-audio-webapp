@@ -20,6 +20,7 @@ import { FFTVisualizer } from "@/components/audio/FFTVisualizer"
 import { getReferenceCalibrationAudio } from "@/lib/audio/referenceCalibrationAudio"
 import { DotCalibration } from "@/components/dot-grid"
 import { GlyphGrid } from "@/components/glyph-grid"
+import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
 // Comment out EQCalibrationProcess import
 // import { EQCalibrationProcess } from "@/components/eq-calibration-process"
 
@@ -74,6 +75,10 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   // State for the glyph grid
   const [glyphGridPlaying, setGlyphGridPlaying] = useState(false)
   
+  // Add state for tracking current audio parameters
+  const [currentFrequency, setCurrentFrequency] = useState<number>(0);
+  const [currentPanning, setCurrentPanning] = useState<number>(0);
+
   // Measure the EQ component's width when it changes
   useEffect(() => {
     if (!eqContainerRef.current) return
@@ -111,11 +116,30 @@ export function EQView({ setEqEnabled }: EQViewProps) {
       const calibration = getReferenceCalibrationAudio();
       const analyser = calibration.createPreEQAnalyser();
       setPreEQAnalyser(analyser);
+    } else if (glyphGridPlaying) {
+      // Do nothing, handled by the glyph grid effect
+      // This prevents clearing analyzer if calibration stops but glyph is playing
     } else {
       // Clean up when not playing
       setPreEQAnalyser(null);
     }
-  }, [calibrationPlaying]);
+  }, [calibrationPlaying, glyphGridPlaying]);
+
+  // Add a new effect to handle the analyzer for glyph grid
+  useEffect(() => {
+    if (glyphGridPlaying) {
+      // Create and connect the analyzer for glyph grid
+      const glyphAudio = glyphGridAudio.getGlyphGridAudioPlayer();
+      const analyser = glyphAudio.createPreEQAnalyser();
+      setPreEQAnalyser(analyser);
+    } else if (calibrationPlaying) {
+      // Do nothing, handled by the calibration effect
+      // This prevents clearing analyzer if glyph stops but calibration is playing
+    } else {
+      // Clean up when not playing
+      setPreEQAnalyser(null);
+    }
+  }, [glyphGridPlaying, calibrationPlaying]);
 
   // Initialize selected profile from the active profile and keep it synced
   useEffect(() => {
@@ -131,6 +155,36 @@ export function EQView({ setEqEnabled }: EQViewProps) {
       }
     }
   }, [getActiveProfile, getProfiles, setActiveProfile]);
+
+  // Add function to format frequency
+  const formatFrequency = (freq: number): string => {
+    if (freq < 1000) {
+      return `${Math.round(freq)} Hz`;
+    } else {
+      return `${(freq / 1000).toFixed(1)} kHz`;
+    }
+  };
+
+  // Add effect to update frequency and panning info
+  useEffect(() => {
+    if (!glyphGridPlaying) {
+      setCurrentFrequency(0);
+      setCurrentPanning(0);
+      return;
+    }
+    
+    // Function to update current audio parameters
+    const updateAudioInfo = () => {
+      const audio = glyphGridAudio.getGlyphGridAudioPlayer();
+      const { frequency, panning } = audio.getAudioParameters();
+      setCurrentFrequency(frequency);
+      setCurrentPanning(panning);
+      requestAnimationFrame(updateAudioInfo);
+    };
+    
+    const frameId = requestAnimationFrame(updateAudioInfo);
+    return () => cancelAnimationFrame(frameId);
+  }, [glyphGridPlaying]);
 
   const handleProfileClick = () => {
     setNewProfileName("");
@@ -214,8 +268,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
         <div className="flex flex-col md:flex-row gap-4">
           {/* Frequency Graph (taking 2/3 of the width) */}
           <div className="flex-1 relative" ref={eqContainerRef}>
-            {/* FFT Visualizer should always be visible during calibration */}
-            {(calibrationPlaying) && preEQAnalyser && (
+            {/* FFT Visualizer should always be visible during audio playback */}
+            {(calibrationPlaying || glyphGridPlaying) && preEQAnalyser && (
               <div className="absolute inset-0 z-0 w-full aspect-[2/1]">
                 <FFTVisualizer 
                   analyser={preEQAnalyser} 
@@ -255,11 +309,24 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 {isEQEnabled ? "EQ On" : "EQ Off"}
               </Button>
             </div>
+            
+            {/* Audio Parameters Display for Glyph Grid */}
+            {glyphGridPlaying && (
+              <div className="mt-4 flex justify-between text-sm">
+                <div className="px-3 py-1.5 bg-muted/40 rounded-md">
+                  <span className="font-medium">Frequency:</span> {formatFrequency(currentFrequency)}
+                </div>
+                <div className="px-3 py-1.5 bg-muted/40 rounded-md">
+                  <span className="font-medium">Pan Position:</span> {currentPanning.toFixed(2)}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Calibration Panel (1/3 width on desktop, full width on mobile) */}
           <div className="w-full md:w-80 space-y-4">
             {/* Dot Grid */}
+            {/* Commented out Dot Grid
             <div className="bg-muted/30 p-4 rounded-lg">
               <div className="flex justify-between items-center mb-3">
                 <h4 className="font-medium">Dot Grid</h4>
@@ -279,6 +346,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 disabled={false}
               />
             </div>
+            */}
             
             {/* Glyph Grid */}
             <div className="bg-muted/30 p-4 rounded-lg">

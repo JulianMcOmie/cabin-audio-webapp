@@ -5,6 +5,7 @@ import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
+import { Button } from "@/components/ui/button"
 
 // Glyph interface for representing a shape that defines a path
 interface Glyph {
@@ -39,6 +40,12 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
   
   // State for dark mode detection
   const [isDarkMode, setIsDarkMode] = useState(false)
+
+  // Add to GlyphGrid component state
+  const [isScrubbing, setIsScrubbing] = useState(false)
+  const [manualPosition, setManualPosition] = useState(0) // 0 to 1
+  const timelineRef = useRef<HTMLDivElement>(null)
+  const isDraggingTimelineRef = useRef(false)
 
   // Set up observer to detect theme changes
   useEffect(() => {
@@ -404,6 +411,69 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     setLastMousePos(null)
   }
   
+  // Add this useEffect to update the audio player with the manual position
+  useEffect(() => {
+    const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
+    
+    if (isScrubbing) {
+      audioPlayer.setManualPosition(manualPosition)
+    } else {
+      audioPlayer.setManualControl(false)
+    }
+  }, [isScrubbing, manualPosition])
+
+  // Add these event handlers for the timeline
+  const handleTimelineMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (disabled) return
+    
+    const timeline = timelineRef.current
+    if (!timeline) return
+    
+    isDraggingTimelineRef.current = true
+    setIsScrubbing(true)
+    
+    // Calculate position based on click position
+    const rect = timeline.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const position = Math.max(0, Math.min(1, x / rect.width))
+    setManualPosition(position)
+  }
+
+  const handleTimelineMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isDraggingTimelineRef.current) return
+    
+    const timeline = timelineRef.current
+    if (!timeline) return
+    
+    // Calculate position based on mouse position
+    const rect = timeline.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const position = Math.max(0, Math.min(1, x / rect.width))
+    setManualPosition(position)
+  }
+
+  const handleTimelineMouseUp = () => {
+    isDraggingTimelineRef.current = false
+  }
+
+  const handleTimelineMouseLeave = () => {
+    if (isDraggingTimelineRef.current) {
+      isDraggingTimelineRef.current = false
+    }
+  }
+
+  const togglePlayback = () => {
+    if (isScrubbing) {
+      // Resume automatic movement from current position
+      const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
+      audioPlayer.resumeFromPosition(manualPosition)
+      setIsScrubbing(false)
+    } else {
+      // Switch to manual control
+      setIsScrubbing(true)
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="relative bg-background/50 rounded-lg p-3">
@@ -415,6 +485,52 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
         />
+      </div>
+      
+      {/* Timeline scrubber */}
+      <div className="space-y-2">
+        <div 
+          ref={timelineRef}
+          className="h-6 bg-muted rounded-md relative cursor-pointer"
+          onMouseDown={handleTimelineMouseDown}
+          onMouseMove={handleTimelineMouseMove}
+          onMouseUp={handleTimelineMouseUp}
+          onMouseLeave={handleTimelineMouseLeave}
+        >
+          {/* Timeline background with position markers */}
+          <div className="absolute inset-0 flex justify-between px-2">
+            {[0, 0.25, 0.5, 0.75, 1].map((pos) => (
+              <div key={pos} className="h-full flex flex-col justify-center">
+                <div className="w-0.5 h-2 bg-muted-foreground/30"></div>
+              </div>
+            ))}
+          </div>
+          
+          {/* Current position marker */}
+          <div 
+            className="absolute top-0 bottom-0 w-1 bg-primary rounded-full transform -translate-x-1/2"
+            style={{ 
+              left: `${(isScrubbing ? manualPosition : glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition()) * 100}%`,
+              transition: isScrubbing ? 'none' : 'left 0.1s linear'
+            }}
+          ></div>
+        </div>
+        
+        {/* Playback controls */}
+        <div className="flex justify-between items-center">
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={togglePlayback}
+            disabled={disabled || !isPlaying}
+          >
+            {isScrubbing ? "Resume Auto" : "Scrub"}
+          </Button>
+          
+          <div className="text-xs text-muted-foreground">
+            Position: {(isScrubbing ? manualPosition : glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition()).toFixed(2)}
+          </div>
+        </div>
       </div>
       
       <div className="flex flex-col space-y-2">
