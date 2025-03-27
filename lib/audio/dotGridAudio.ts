@@ -887,7 +887,7 @@ class DotGridAudioPlayer {
     // const distFromCenter = Math.abs(normalizedY - 0.5) * 2;
     // const minQ = 1.0;
     // const maxQ = 4.0;
-    const qValue = 4.0;//minQ + (1 - distFromCenter) * (maxQ - minQ);
+    const qValue = 3.0;//minQ + (1 - distFromCenter) * (maxQ - minQ);
     
     // Create filter(s) based on the filter mode
     const filter = ctx.createBiquadFilter();
