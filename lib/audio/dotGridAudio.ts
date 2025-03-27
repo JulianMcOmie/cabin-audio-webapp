@@ -7,9 +7,9 @@ const COLUMNS = 5; // Always 5 panning positions - match the value in dot-grid.t
 // Envelope settings
 const ENVELOPE_MIN_GAIN = 0.0; // Minimum gain during envelope cycle
 const ENVELOPE_MAX_GAIN = 1.0; // Maximum gain during envelope cycle
-const ENVELOPE_ATTACK = 0.01; // Faster attack time in seconds - for very punchy transients
+const ENVELOPE_ATTACK = 0.002; // Faster attack time in seconds - for very punchy transients
 // const ENVELOPE_RELEASE_DEFAULT = 0.2; // Default release time (for reference only)
-const ENVELOPE_RELEASE_LOW_FREQ = 0.3; // Release time for lowest frequencies (seconds)
+const ENVELOPE_RELEASE_LOW_FREQ = 0.2; // Release time for lowest frequencies (seconds)
 const ENVELOPE_RELEASE_HIGH_FREQ = 0.01; // Release time for highest frequencies (seconds)
 const MASTER_GAIN = 1.0; // Much louder master gain for calibration
 
@@ -509,6 +509,33 @@ class DotGridAudioPlayer {
     // If no dots, do nothing
     if (this.orderedDots.length === 0) return;
     
+    // Special case for exactly two dots - implement "1 - both - 2 - both" pattern
+    if (this.orderedDots.length === 2) {
+      // Pattern: 0 (first dot) - 2 (both) - 1 (second dot) - 2 (both)
+      // Where "2" is our special code for triggering both dots
+      
+      if (this.sequenceIndex % 4 === 0) {
+        // First dot solo
+        this.triggerDotEnvelope(this.orderedDots[0]);
+      } else if (this.sequenceIndex % 4 === 1) {
+        // Both dots
+        this.triggerDotEnvelope(this.orderedDots[0]);
+        this.triggerDotEnvelope(this.orderedDots[1]);
+      } else if (this.sequenceIndex % 4 === 2) {
+        // Second dot solo
+        this.triggerDotEnvelope(this.orderedDots[1]);
+      } else {
+        // Both dots again
+        this.triggerDotEnvelope(this.orderedDots[0]);
+        this.triggerDotEnvelope(this.orderedDots[1]);
+      }
+      
+      // Advance to next step in pattern
+      this.sequenceIndex = (this.sequenceIndex + 1) % 4;
+      return;
+    }
+    
+    // Regular sequence behavior for any other number of dots
     // Get the current dot key
     const dotKey = this.orderedDots[this.sequenceIndex];
     
