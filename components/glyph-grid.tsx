@@ -243,12 +243,7 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     
     setLastMousePos({ x: mouseX, y: mouseY })
     
-    // Convert canvas pixel coordinates to normalized coordinates
-    // Map from 0,width to -1,1 and 0,height to 1,-1 (Y is inverted)
-    const normX = (mouseX / rect.width) * 2 - 1
-    const normY = 1 - (mouseY / rect.height) * 2 // Y is inverted
-    
-    // Calculate glyph corners in normalized space
+    // Calculate glyph corners in canvas pixel coordinates
     const startX_norm = glyph.position.x - glyph.size.width / 2
     const startY_norm = glyph.position.y - glyph.size.height / 2
     const endX_norm = glyph.position.x + glyph.size.width / 2
@@ -295,26 +290,27 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
       const mouseX = e.clientX - rect.left
       const mouseY = e.clientY - rect.top
       
-      // Calculate delta from last position
+      // Calculate delta from last position in canvas pixels
       const deltaX = mouseX - lastMousePos.x
       const deltaY = mouseY - lastMousePos.y
       
       if (isDragging) {
         // Move the entire glyph
-        // Convert delta from canvas coordinates to normalized coordinates
-        const normalizedDeltaX = deltaX / (rect.width / 2)
-        const normalizedDeltaY = -deltaY / (rect.height / 2) // Negative because Y is inverted
+        // Convert delta from canvas pixels to normalized coordinates
+        const normalizedDeltaX = deltaX / rect.width * 2  // Scale to normalized space
+        const normalizedDeltaY = -deltaY / rect.height * 2  // Y is inverted in normalized space
         
         setGlyph(prev => {
           // Calculate new position
           let newX = prev.position.x + normalizedDeltaX
           let newY = prev.position.y + normalizedDeltaY
           
-          // Constrain to keep the glyph within bounds
-          const maxX = 1 - prev.size.width
-          const maxY = 1 - prev.size.height
-          newX = Math.max(-maxX, Math.min(maxX, newX))
-          newY = Math.max(-maxY, Math.min(maxY, newY))
+          // Constrain to keep the glyph within visible bounds (-1 to 1)
+          const maxOffset = 1 - prev.size.width / 2
+          newX = Math.max(-maxOffset, Math.min(maxOffset, newX))
+          
+          const maxOffsetY = 1 - prev.size.height / 2
+          newY = Math.max(-maxOffsetY, Math.min(maxOffsetY, newY))
           
           return {
             ...prev,
@@ -322,81 +318,76 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
           }
         })
       } else if (isResizing) {
+        // For resizing, work in canvas pixel coordinates and convert back to normalized
+        // This provides a direct 1:1 mapping between cursor movement and corner movement
+        
         setGlyph(prev => {
-          // Calculate center and current dimensions in canvas coordinates
-          const centerX = (rect.width / 2) + (prev.position.x * rect.width / 2)
-          const centerY = (rect.height / 2) - (prev.position.y * rect.height / 2)
-          const halfWidth = (prev.size.width * rect.width / 2)
-          const halfHeight = (prev.size.height * rect.height / 2)
+          // Convert glyph corners to canvas coordinates
+          const startX_norm = prev.position.x - prev.size.width / 2
+          const startY_norm = prev.position.y - prev.size.height / 2
+          const endX_norm = prev.position.x + prev.size.width / 2
+          const endY_norm = prev.position.y + prev.size.height / 2
           
-          // Calculate corner positions
-          const startX = centerX - halfWidth
-          const startY = centerY + halfHeight
-          const endX = centerX + halfWidth
-          const endY = centerY - halfHeight
+          // Convert to canvas coordinates
+          let startX = (startX_norm + 1) / 2 * rect.width
+          let startY = (1 - startY_norm) / 2 * rect.height
+          let endX = (endX_norm + 1) / 2 * rect.width
+          let endY = (1 - endY_norm) / 2 * rect.height
           
-          // Update position based on which handle is active
-          let newWidth = prev.size.width
-          let newHeight = prev.size.height
-          let newPosX = prev.position.x
-          let newPosY = prev.position.y
-          
+          // Update the appropriate corner based on which handle is active
           switch (activeHandle) {
             case 1: // Bottom-left
-              // Update width and height
-              newWidth = prev.size.width - (deltaX / (rect.width / 2)) * 2
-              newHeight = prev.size.height + (deltaY / (rect.height / 2)) * 2
-              
-              // Adjust position to keep the opposite corner fixed
-              newPosX = prev.position.x - (deltaX / (rect.width / 2))
-              newPosY = prev.position.y + (deltaY / (rect.height / 2))
+              startX += deltaX
+              startY += deltaY
               break
-              
             case 2: // Top-right
-              // Update width and height
-              newWidth = prev.size.width + (deltaX / (rect.width / 2)) * 2
-              newHeight = prev.size.height - (deltaY / (rect.height / 2)) * 2
-              
-              // Adjust position to keep the opposite corner fixed
-              newPosX = prev.position.x + (deltaX / (rect.width / 2))
-              newPosY = prev.position.y - (deltaY / (rect.height / 2))
+              endX += deltaX
+              endY += deltaY
               break
-              
             case 3: // Top-left
-              // Update width and height
-              newWidth = prev.size.width - (deltaX / (rect.width / 2)) * 2
-              newHeight = prev.size.height - (deltaY / (rect.height / 2)) * 2
-              
-              // Adjust position to keep the opposite corner fixed
-              newPosX = prev.position.x - (deltaX / (rect.width / 2))
-              newPosY = prev.position.y - (deltaY / (rect.height / 2))
+              startX += deltaX
+              endY += deltaY
               break
-              
             case 4: // Bottom-right
-              // Update width and height
-              newWidth = prev.size.width + (deltaX / (rect.width / 2)) * 2
-              newHeight = prev.size.height + (deltaY / (rect.height / 2)) * 2
-              
-              // Adjust position to keep the opposite corner fixed
-              newPosX = prev.position.x + (deltaX / (rect.width / 2))
-              newPosY = prev.position.y + (deltaY / (rect.height / 2))
+              endX += deltaX
+              startY += deltaY
               break
           }
           
-          // Constrain size and position
-          newWidth = Math.max(0.1, Math.min(2.0, newWidth))
-          newHeight = Math.max(0.1, Math.min(2.0, newHeight))
+          // Convert back to normalized coordinates
+          const new_startX_norm = (startX / rect.width) * 2 - 1
+          const new_startY_norm = 1 - (startY / rect.height) * 2 // Y is inverted
+          const new_endX_norm = (endX / rect.width) * 2 - 1
+          const new_endY_norm = 1 - (endY / rect.height) * 2 // Y is inverted
           
-          // Ensure glyph stays within bounds
-          const maxX = 1 - newWidth / 2
-          const maxY = 1 - newHeight / 2
-          newPosX = Math.max(-maxX, Math.min(maxX, newPosX))
-          newPosY = Math.max(-maxY, Math.min(maxY, newPosY))
+          // Calculate new dimensions and position
+          const newWidth = Math.abs(new_endX_norm - new_startX_norm)
+          const newHeight = Math.abs(new_endY_norm - new_startY_norm)
+          const newPosX = (new_startX_norm + new_endX_norm) / 2
+          const newPosY = (new_startY_norm + new_endY_norm) / 2
+          
+          // Constrain to keep within bounds (-1 to 1)
+          const constrainedWidth = Math.min(newWidth, 2)
+          const constrainedHeight = Math.min(newHeight, 2)
+          
+          // Ensure minimum size
+          const finalWidth = Math.max(0.1, constrainedWidth)
+          const finalHeight = Math.max(0.1, constrainedHeight)
+          
+          // Recalculate position to ensure we stay within bounds
+          let finalPosX = newPosX
+          let finalPosY = newPosY
+          
+          const maxOffsetX = 1 - finalWidth / 2
+          const maxOffsetY = 1 - finalHeight / 2
+          
+          finalPosX = Math.max(-maxOffsetX, Math.min(maxOffsetX, finalPosX))
+          finalPosY = Math.max(-maxOffsetY, Math.min(maxOffsetY, finalPosY))
           
           return {
             ...prev,
-            position: { x: newPosX, y: newPosY },
-            size: { width: newWidth, height: newHeight }
+            position: { x: finalPosX, y: finalPosY },
+            size: { width: finalWidth, height: finalHeight }
           }
         })
       }
