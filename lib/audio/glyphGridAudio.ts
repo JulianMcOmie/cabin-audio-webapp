@@ -13,6 +13,7 @@ const DEFAULT_MODULATION_RATE = 8.0 // modulations per second
 const DEFAULT_MODULATION_DEPTH = 0.8 // how much to modulate (0-1)
 const ENVELOPE_ATTACK_TIME = 0.005 // 5ms attack
 const ENVELOPE_RELEASE_TIME = 0.05 // 100ms release
+const DEFAULT_SPEED = 1.0 // Default movement speed
 
 export enum PlaybackMode {
   PATH = 'path', // Follow the path continuously back and forth
@@ -77,6 +78,9 @@ class GlyphGridAudioPlayer {
   private subsectionStart: number = 0 // Default to full range (0-1)
   private subsectionEnd: number = 1
   private useSubsection: boolean = false
+  
+  // Add speed property
+  private speed: number = DEFAULT_SPEED
   
   private constructor() {
     this.generatePinkNoiseBuffer()
@@ -161,7 +165,8 @@ class GlyphGridAudioPlayer {
     this.updateAudioParametersFromPosition(position)
     
     // Move the path position for next frame
-    this.pathPosition += 0.005 * this.pathDirection
+    // Apply speed factor to the position increment
+    this.pathPosition += 0.005 * this.pathDirection * this.speed
     
     // If using subsection, check subsection boundaries instead of full range
     if (this.useSubsection) {
@@ -637,6 +642,16 @@ class GlyphGridAudioPlayer {
   // Disable subsection (return to full range)
   public disableSubsection(): void {
     this.useSubsection = false;
+  }
+  
+  // Add getter and setter for speed
+  public setSpeed(speed: number): void {
+    // Ensure speed is positive and reasonable (between 0.25x and 4x)
+    this.speed = Math.max(0.25, Math.min(4.0, speed))
+  }
+  
+  public getSpeed(): number {
+    return this.speed
   }
 }
 

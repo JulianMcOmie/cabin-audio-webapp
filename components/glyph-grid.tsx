@@ -52,6 +52,9 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
   const [isDraggingSubsectionEnd, setIsDraggingSubsectionEnd] = useState(false)
   const subsectionTimelineRef = useRef<HTMLDivElement>(null)
 
+  // Add speed state
+  const [speed, setSpeed] = useState(1.0)
+
   // Set up observer to detect theme changes
   useEffect(() => {
     // Initial check
@@ -537,6 +540,22 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     setIsDraggingSubsectionEnd(false)
   }
 
+  // Add a useEffect to update the audio player when speed changes
+  useEffect(() => {
+    const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
+    audioPlayer.setSpeed(speed)
+  }, [speed])
+
+  // Add a handler for speed slider change
+  const handleSpeedChange = (values: number[]) => {
+    setSpeed(values[0])
+  }
+
+  // Add a function to format the speed display
+  const formatSpeed = (value: number): string => {
+    return `${value.toFixed(2)}x`
+  }
+
   return (
     <div className="space-y-4">
       <div className="relative bg-background/50 rounded-lg p-3">
@@ -663,6 +682,30 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
         <div className="flex text-xs text-muted-foreground justify-between">
           <span>Start</span>
           <span>End</span>
+        </div>
+      </div>
+      
+      {/* Speed control */}
+      <div className="pt-3 border-t border-muted space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium">Playback Speed</span>
+          <span className="text-xs text-muted-foreground">
+            {formatSpeed(speed)}
+          </span>
+        </div>
+        
+        <Slider
+          value={[speed]}
+          min={0.25}
+          max={4.0}
+          step={0.05}
+          onValueChange={handleSpeedChange}
+          disabled={disabled}
+        />
+        
+        <div className="flex text-xs text-muted-foreground justify-between">
+          <span>Slow</span>
+          <span>Fast</span>
         </div>
       </div>
       
