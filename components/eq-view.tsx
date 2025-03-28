@@ -273,13 +273,18 @@ export function EQView({ setEqEnabled }: EQViewProps) {
           <div className="w-3/4 relative" ref={eqContainerRef}>
             {/* FFT Visualizer should always be visible during audio playback */}
             {(calibrationPlaying || glyphGridPlaying) && preEQAnalyser && (
-              <div className="absolute inset-0 z-0 w-full aspect-[2/1]">
-                <FFTVisualizer 
-                  analyser={preEQAnalyser} 
-                  width={eqWidth} 
-                  height={eqWidth / 2} 
-                  className="w-full h-full"
-                />
+              <div className="absolute inset-0 z-0">
+                <div className="w-full aspect-[2/1] frequency-graph rounded-lg border dark:border-gray-700 overflow-hidden opacity-80 relative pointer-events-none">
+                  {/* The actual EQ visualization area has 40px margins on all sides */}
+                  <div className="absolute inset-0 m-[40px]">
+                    <FFTVisualizer 
+                      analyser={preEQAnalyser} 
+                      width={eqWidth - 80} /* Subtract margins from width (40px * 2) */
+                      height={(eqWidth / 2) - 80} /* Subtract margins from height (40px * 2) */
+                      className="w-full h-full"
+                    />
+                  </div>
+                </div>
               </div>
             )}
             
@@ -312,25 +317,11 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 {isEQEnabled ? "EQ On" : "EQ Off"}
               </Button>
             </div>
-            
-            {/* Audio Parameters Display for Glyph Grid */}
-            {glyphGridPlaying && (
-              <div className="mt-4 flex justify-between text-sm">
-                <div className="px-3 py-1.5 bg-muted/40 rounded-md">
-                  <span className="font-medium">Frequency:</span> {formatFrequency(currentFrequency)}
-                </div>
-                <div className="px-3 py-1.5 bg-muted/40 rounded-md">
-                  <span className="font-medium">Pan Position:</span> {currentPanning.toFixed(2)}
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Grid Visualizer - Now takes less width */}
           <div className="w-1/4 bg-card rounded-lg p-4">
             <div className="flex flex-col space-y-4">
-              <h3 className="text-lg font-medium">Calibration</h3>
-              
               {/* Updated segmented control with dot grid as default/left option */}
               <div className="flex border rounded-md overflow-hidden w-fit">
                 <button

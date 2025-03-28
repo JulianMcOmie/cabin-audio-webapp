@@ -62,6 +62,9 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
   // Add hover state tracking for interactive elements
   const [hoverState, setHoverState] = useState<'none' | 'vertex1' | 'vertex2' | 'line'>('none')
 
+  // Add a reference to store the animation frame ID
+  const animationFrameRef = useRef<number | null>(null);
+
   // Set up observer to detect theme changes
   useEffect(() => {
     // Initial check
@@ -506,11 +509,45 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
     
     if (isScrubbing) {
+      // Set to manual position and ensure audio is playing while scrubbing
       audioPlayer.setManualPosition(manualPosition)
+      audioPlayer.setPlaying(true)
     } else {
+      // When not scrubbing, return to automatic control based on isPlaying state
       audioPlayer.setManualControl(false)
+      audioPlayer.setPlaying(isPlaying && !disabled)
     }
-  }, [isScrubbing, manualPosition])
+  }, [isScrubbing, manualPosition, isPlaying, disabled])
+
+  // Replace the existing useEffect that forces UI updates with a more efficient animation frame approach
+  useEffect(() => {
+    const updateUI = () => {
+      if (isScrubbing) {
+        // Force a rerender by making a small state update
+        setGlyph(prev => ({...prev}));
+        
+        // Continue the animation loop while scrubbing
+        animationFrameRef.current = requestAnimationFrame(updateUI);
+      }
+    };
+    
+    if (isScrubbing) {
+      // Start the animation loop when scrubbing begins
+      animationFrameRef.current = requestAnimationFrame(updateUI);
+    } else if (animationFrameRef.current) {
+      // Cancel the animation loop when scrubbing ends
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    
+    return () => {
+      // Clean up the animation frame on unmount or when dependency changes
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+    };
+  }, [isScrubbing]);
 
   // Add these event handlers for the timeline
   const handleTimelineMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -519,22 +556,15 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     const timeline = subsectionTimelineRef.current
     if (!timeline) return
     
-    // Get current position
+    // Calculate position based on click position
     const rect = timeline.getBoundingClientRect()
     const mouseX = e.clientX - rect.left
-    const posX = glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition() * rect.width
+    const position = Math.max(0, Math.min(1, mouseX / rect.width))
     
-    // If we're within 10px of the position marker, start scrubbing
-    if (Math.abs(mouseX - posX) <= 10) {
-      isDraggingTimelineRef.current = true
-      setIsScrubbing(true)
-    } else {
-      // If not near the handle, set the position directly
-      const position = Math.max(0, Math.min(1, mouseX / rect.width))
-      setManualPosition(position)
-      isDraggingTimelineRef.current = true
-      setIsScrubbing(true)
-    }
+    // Set position and start scrubbing
+    setManualPosition(position)
+    isDraggingTimelineRef.current = true
+    setIsScrubbing(true)
   }
 
   const handleTimelineMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -547,16 +577,27 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     const rect = timeline.getBoundingClientRect()
     const x = e.clientX - rect.left
     const position = Math.max(0, Math.min(1, x / rect.width))
+    
+    // Update the manual position which will be picked up by the audio player
     setManualPosition(position)
   }
 
   const handleTimelineMouseUp = () => {
-    isDraggingTimelineRef.current = false
+    if (isDraggingTimelineRef.current) {
+      isDraggingTimelineRef.current = false
+      
+      // On mouseup, return to the previous play state
+      // If isPlaying was true, it will continue from the current position
+      // If isPlaying was false, it will stop
+      setIsScrubbing(false)
+      
+      // The audio state (playing or not playing) will be handled in the useEffect
+    }
   }
 
   const handleTimelineMouseLeave = () => {
     if (isDraggingTimelineRef.current) {
-      isDraggingTimelineRef.current = false
+      handleTimelineMouseUp()
     }
   }
 
@@ -636,12 +677,6 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
         />
-      </div>
-      
-      {/* Basic glyph information - make more compact */}
-      <div className="text-xs text-center text-muted-foreground">
-        X: {glyph.position.x.toFixed(2)} Y: {glyph.position.y.toFixed(2)} • 
-        W: {glyph.size.width.toFixed(2)} H: {glyph.size.height.toFixed(2)}
       </div>
       
       {/* Controls - make more compact */}
