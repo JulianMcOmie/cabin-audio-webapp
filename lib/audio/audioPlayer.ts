@@ -85,6 +85,11 @@ class AudioPlayer {
     );
   }
   
+  // Get the distortion gain node for external routing
+  public getDistortionGainNode(): GainNode | null {
+    return this.distortionGainNode;
+  }
+  
   // Set up progress tracking interval
   private setupProgressTracking(): void {
     

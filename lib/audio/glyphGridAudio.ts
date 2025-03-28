@@ -1,5 +1,6 @@
 import { getAudioContext } from '@/lib/audio/audioContext'
 import * as eqProcessor from '@/lib/audio/eqProcessor'
+import { useEQProfileStore } from '@/lib/stores'
 
 // Default values
 const DEFAULT_FREQ_MULTIPLIER = 1.0
@@ -98,8 +99,22 @@ class GlyphGridAudioPlayer {
   private lastHitIndex: number = -1 // Track the last hit point we passed
   private discreteFrequency: boolean = true // Whether to use discrete or continuous frequency
   
+  // Add distortion gain property
+  private distortionGain: number = 1.0;
+  
   private constructor() {
     this.generatePinkNoiseBuffer()
+    
+    // Apply initial distortion gain from store
+    const distortionGain = useEQProfileStore.getState().distortionGain;
+    this.setDistortionGain(distortionGain);
+    
+    // Subscribe to distortion gain changes from the store
+    useEQProfileStore.subscribe(
+      (state) => {
+        this.setDistortionGain(state.distortionGain);
+      }
+    );
   }
   
   public static getInstance(): GlyphGridAudioPlayer {
@@ -339,9 +354,9 @@ class GlyphGridAudioPlayer {
     source.buffer = this.pinkNoiseBuffer
     source.loop = true
     
-    // Create gain node for volume
+    // Create gain node for volume - apply distortion gain
     const gain = ctx.createGain()
-    gain.gain.value = MASTER_GAIN
+    gain.gain.value = MASTER_GAIN * this.distortionGain;
     
     // Create envelope gain node
     const envelopeGain = ctx.createGain()
@@ -368,7 +383,7 @@ class GlyphGridAudioPlayer {
       panner.connect(this.preEQGain)
       // preEQGain is already connected to destination and analyzer
     } else {
-      // Connect to EQ processor instead of directly to destination
+      // Connect to EQ processor directly
       const eq = eqProcessor.getEQProcessor()
       panner.connect(eq.getInputNode())
     }
@@ -656,7 +671,7 @@ class GlyphGridAudioPlayer {
       this.audioNodes.panner.connect(preEQGain)
       preEQGain.connect(analyser)
       
-      // Connect to EQ processor
+      // Connect directly to EQ processor
       const eq = eqProcessor.getEQProcessor()
       preEQGain.connect(eq.getInputNode())
     }
@@ -761,6 +776,19 @@ class GlyphGridAudioPlayer {
   // Add getter for current frequency update mode
   public isDiscreteFrequency(): boolean {
     return this.discreteFrequency
+  }
+  
+  // Add method to handle distortion gain
+  private setDistortionGain(gain: number): void {
+    // Clamp gain between 0 and 1
+    this.distortionGain = Math.max(0, Math.min(1, gain));
+    
+    // If playing, apply to active gain node
+    if (this.isPlaying && this.audioNodes.gain) {
+      // Apply directly to the gain node
+      this.audioNodes.gain.gain.value = MASTER_GAIN * this.distortionGain;
+      console.log(`🔊 Glyph Grid distortion gain set to ${this.distortionGain.toFixed(2)}`);
+    }
   }
 }
 

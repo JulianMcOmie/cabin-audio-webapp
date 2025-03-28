@@ -1,5 +1,7 @@
 import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
+import { getAudioPlayer } from './audioPlayer';
+import { useEQProfileStore } from '../stores';
 
 // Constants
 const COLUMNS = 5; // Always 5 panning positions - match the value in dot-grid.tsx (odd number ensures a middle column)
@@ -94,9 +96,23 @@ class DotGridAudioPlayer {
   private baseDbLevel: number = 0; // 0dB is reference level
   private dbOscillationRange: number = 6; // ±12dB oscillation range by default
   
+  // Add distortion gain property
+  private distortionGain: number = 1.0;
+  
   private constructor() {
     // Initialize pink noise buffer
     this.generatePinkNoiseBuffer();
+    
+    // Apply initial distortion gain from store
+    const distortionGain = useEQProfileStore.getState().distortionGain;
+    this.setDistortionGain(distortionGain);
+    
+    // Subscribe to distortion gain changes from the store
+    useEQProfileStore.subscribe(
+      (state) => {
+        this.setDistortionGain(state.distortionGain);
+      }
+    );
   }
 
   public static getInstance(): DotGridAudioPlayer {
@@ -256,12 +272,13 @@ class DotGridAudioPlayer {
       this.preEQAnalyser.fftSize = FFT_SIZE;
       this.preEQAnalyser.smoothingTimeConstant = SMOOTHING;
       
-      // Connect the gain to the analyzer
+      // Connect the gain to the analyzer - analyzer is just for visualization
       this.preEQGain.connect(this.preEQAnalyser);
       
-      // Connect to EQ processor
+      // Simply connect to EQ processor directly (no need to route through distortionGainNode)
       const eq = eqProcessor.getEQProcessor();
       this.preEQGain.connect(eq.getInputNode());
+      console.log('🔊 Connected preEQGain to EQ input');
       
       // If already playing, reconnect all sources
       if (this.isPlaying) {
@@ -337,29 +354,23 @@ class DotGridAudioPlayer {
     // Skip if no audio nodes
     if (this.audioNodes.size === 0) return;
     
-
+    // Simplify: always use preEQGain if available, otherwise connect directly to EQ
+    const destinationNode = this.preEQGain || eqProcessor.getEQProcessor().getInputNode();
     
-    // Get the destination node (either preEQGain or directly to EQ processor)
-    const destinationNode = this.preEQGain ? 
-      this.preEQGain as AudioNode : 
-      eqProcessor.getEQProcessor().getInputNode();
-    
-    // Reconnect all sources to destination
+    // Reconnect all sources to our single determined destination
     this.audioNodes.forEach((nodes, dotKey) => {
       try {
         // Disconnect gain from its current destination
         nodes.gain.disconnect();
         
         // Connect to the appropriate destination
-        if (destinationNode) {
-          nodes.gain.connect(destinationNode);
-        }
+        nodes.gain.connect(destinationNode);
       } catch (e) {
         console.error(`Error reconnecting source for dot ${dotKey}:`, e);
       }
     });
     
-    console.log(`🔊 Reconnected all sources (${this.audioNodes.size} dots) to ${this.preEQGain ? 'analyzer' : 'EQ input'}`);
+    console.log(`🔊 Reconnected all sources (${this.audioNodes.size} dots) to audio path`);
   }
 
   /**
@@ -682,23 +693,22 @@ class DotGridAudioPlayer {
       return;
     }
     
-    // Create pre-EQ gain node if needed for analyzer
+    // Simplify: use preEQGain if available, otherwise connect directly to EQ
+    const destinationNode = this.preEQGain || eqProcessor.getEQProcessor().getInputNode();
+    
+    // If we need to create a preEQGain for analyzer but don't have one yet
     if (this.preEQAnalyser && !this.preEQGain) {
       this.preEQGain = ctx.createGain();
       this.preEQGain.gain.value = 1.0;
       this.preEQGain.connect(this.preEQAnalyser);
       
-      // Connect to EQ processor
+      // Connect directly to EQ input
       const eq = eqProcessor.getEQProcessor();
       this.preEQGain.connect(eq.getInputNode());
+      console.log('🔊 NEW preEQGain connected to EQ input');
     }
     
-    // Get the destination node (either preEQGain or directly to EQ processor)
-    const destinationNode = this.preEQGain ? 
-      this.preEQGain as AudioNode : 
-      eqProcessor.getEQProcessor().getInputNode();
-    
-    // Start each source
+    // Start each source with the determined destination
     this.audioNodes.forEach((nodes, dotKey) => {
       try {
         // Create a new source
@@ -707,16 +717,18 @@ class DotGridAudioPlayer {
         source.loop = true;
         
         // Connect the audio chain - simple bandpass approach
-        // source -> filter -> panner -> envelopeGain -> gain -> destination
+        // source -> filter -> panner -> envelopeGain -> gain -> destinationNode
         source.connect(nodes.filter);
         nodes.filter.connect(nodes.panner);
         nodes.panner.connect(nodes.envelopeGain);
         nodes.envelopeGain.connect(nodes.gain);
         
-        // Connect to destination (preEQGain or directly to EQ)
-        if (destinationNode) {
-          nodes.gain.connect(destinationNode);
-        }
+        // Apply the distortion gain to each individual node's gain
+        // This directly applies the gain without routing concerns
+        nodes.gain.gain.value = MASTER_GAIN * this.distortionGain;
+        
+        // Connect to the single determined destination point
+        nodes.gain.connect(destinationNode);
         
         // Start with gain at minimum (silent)
         nodes.envelopeGain.gain.value = ENVELOPE_MIN_GAIN;
@@ -966,15 +978,18 @@ class DotGridAudioPlayer {
       console.log(`🔊 Setting volume: ${dbLevel.toFixed(1)}dB (gain: ${gainRatio.toFixed(2)})`);
     }
     
-    // Apply gain to all audio nodes
+    // Apply gain to all audio nodes, including distortion gain factor
     this.audioNodes.forEach((nodes) => {
       const ctx = audioContext.getAudioContext();
       const currentTime = ctx.currentTime;
       const TRANSITION_TIME = 0.01; // 10ms for smooth but fast transition
       
-      // Apply with smooth transition
+      // Apply with smooth transition, including distortion gain factor
       nodes.gain.gain.cancelScheduledValues(currentTime);
-      nodes.gain.gain.linearRampToValueAtTime(gainRatio * MASTER_GAIN, currentTime + TRANSITION_TIME);
+      nodes.gain.gain.linearRampToValueAtTime(
+        gainRatio * MASTER_GAIN * this.distortionGain, 
+        currentTime + TRANSITION_TIME
+      );
     });
   }
 
@@ -1051,6 +1066,19 @@ class DotGridAudioPlayer {
     
     this.audioNodes.clear();
     this.pinkNoiseBuffer = null;
+  }
+
+  // Add method to handle distortion gain
+  private setDistortionGain(gain: number): void {
+    // Clamp gain between 0 and 1
+    this.distortionGain = Math.max(0, Math.min(1, gain));
+    
+    // If playing, apply to all active gain nodes
+    if (this.isPlaying) {
+      // Apply current volume again to incorporate new distortion gain
+      this.applyVolumeInDb(this.baseDbLevel);
+      console.log(`🔊 Dot Grid distortion gain set to ${this.distortionGain.toFixed(2)}`);
+    }
   }
 }
 
