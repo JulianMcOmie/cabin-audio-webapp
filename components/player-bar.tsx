@@ -60,7 +60,7 @@ export function PlayerBar() {
     loadingState,
     loadingProgress,
     error,
-    // setCurrentTrack,
+    setCurrentTrack,
     setIsPlaying,
     setVolume,
     setIsMuted,
@@ -69,6 +69,7 @@ export function PlayerBar() {
   
   // Get track information from the track store
   const getTrackById = useTrackStore(state => state.getTrackById)
+  const getTracks = useTrackStore(state => state.getTracks)
   const currentTrack = currentTrackId ? getTrackById(currentTrackId) : null
   
   // Get artist and album info
@@ -164,17 +165,39 @@ export function PlayerBar() {
   }
 
   const handleSkipForward = () => {
-    showToast({
-      message: "Skip forward functionality would be implemented here",
-      variant: "info",
-    })
+    // Get all tracks
+    const allTracks = getTracks()
+    
+    // If no tracks or no current track, do nothing
+    if (!allTracks.length || !currentTrackId) return
+    
+    // Find the index of the current track
+    const currentIndex = allTracks.findIndex(track => track.id === currentTrackId)
+    
+    // Get the next track index, looping back to 0 if at the end
+    const nextIndex = (currentIndex + 1) % allTracks.length
+    
+    // Play the next track
+    const nextTrack = allTracks[nextIndex]
+    setCurrentTrack(nextTrack.id)
   }
 
   const handleSkipBack = () => {
-    showToast({
-      message: "Skip backward functionality would be implemented here",
-      variant: "info",
-    })
+    // Get all tracks
+    const allTracks = getTracks()
+    
+    // If no tracks or no current track, do nothing
+    if (!allTracks.length || !currentTrackId) return
+    
+    // Find the index of the current track
+    const currentIndex = allTracks.findIndex(track => track.id === currentTrackId)
+    
+    // Get the previous track index, looping back to the end if at the beginning
+    const prevIndex = (currentIndex - 1 + allTracks.length) % allTracks.length
+    
+    // Play the previous track
+    const prevTrack = allTracks[prevIndex]
+    setCurrentTrack(prevTrack.id)
   }
 
   const toggleMute = () => {

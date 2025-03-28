@@ -14,7 +14,10 @@ import {
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
 import { EQProfile } from "@/lib/models/EQProfile"
 import { CheckCircle } from "lucide-react"
-import React from "react"
+import React, { useState } from "react"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { v4 as uuidv4 } from "uuid"
 
 interface EQProfilesProps {
   onProfileClick?: () => void
@@ -23,7 +26,7 @@ interface EQProfilesProps {
 }
 
 export function EQProfiles({ onProfileClick, selectedProfile, onSelectProfile }: EQProfilesProps) {
-  const { getProfiles, deleteProfile, getActiveProfile, setActiveProfile } = useEQProfileStore()
+  const { getProfiles, deleteProfile, getActiveProfile, setActiveProfile, updateProfile, addProfile } = useEQProfileStore()
   
   // Get profiles directly from the store
   const profiles = getProfiles()
@@ -39,6 +42,11 @@ export function EQProfiles({ onProfileClick, selectedProfile, onSelectProfile }:
   // Get the active profile from the store
   const activeProfile = getActiveProfile()
   const activeProfileId = activeProfile?.id || ""
+  
+  // State for rename dialog
+  const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false)
+  const [profileToRename, setProfileToRename] = useState<string | null>(null)
+  const [newProfileName, setNewProfileName] = useState("")
   
   // Sync selected profile with active profile on initial render
   React.useEffect(() => {
@@ -79,6 +87,100 @@ export function EQProfiles({ onProfileClick, selectedProfile, onSelectProfile }:
     }
   }
 
+  const handleRenameClick = (profileId: string, e: React.MouseEvent) => {
+    e.stopPropagation() // Prevent triggering the card click
+    
+    // Find the profile to rename
+    const profile = profiles.find(p => p.id === profileId)
+    if (profile) {
+      setProfileToRename(profileId)
+      setNewProfileName(profile.name)
+      setIsRenameDialogOpen(true)
+    }
+  }
+
+  const handleRenameConfirm = () => {
+    if (profileToRename && newProfileName.trim()) {
+      // Find the profile to update
+      const profileToUpdate = profiles.find(p => p.id === profileToRename)
+      
+      if (profileToUpdate) {
+        // Create updated profile
+        const updatedProfile = {
+          ...profileToUpdate,
+          name: newProfileName.trim()
+        }
+        
+        // Update the profile in the store
+        updateProfile(profileToRename, updatedProfile)
+      }
+      
+      // Reset state
+      setIsRenameDialogOpen(false)
+      setProfileToRename(null)
+      setNewProfileName("")
+    }
+  }
+
+  const handleDuplicateProfile = (profileId: string, e: React.MouseEvent) => {
+    e.stopPropagation() // Prevent triggering the card click
+    
+    // Find the profile to duplicate
+    const profileToDuplicate = profiles.find(p => p.id === profileId)
+    
+    if (profileToDuplicate) {
+      // Create a new profile with the same properties but a new ID
+      const newProfile: EQProfile = {
+        ...profileToDuplicate,
+        id: uuidv4(),
+        name: `${profileToDuplicate.name} (Copy)`
+      }
+      
+      // Add the new profile to the store
+      addProfile(newProfile)
+    }
+  }
+
+  const handleDownloadProfile = (profileId: string, e: React.MouseEvent) => {
+    e.stopPropagation() // Prevent triggering the card click
+    
+    // Find the profile to download
+    const profile = profiles.find(p => p.id === profileId)
+    
+    if (profile && profile.bands && profile.bands.length > 0) {
+      // Generate the export content (same format as in export-view-component)
+      const formatAll = [`Preamp: ${profile.volume || 0} dB`]
+      
+      // Sort bands by frequency for consistent export
+      const sortedBands = [...profile.bands].sort((a, b) => a.frequency - b.frequency)
+      
+      // Add all bands in standard APO format
+      sortedBands.forEach((band, index) => {
+        // Determine filter type based on band type or reasonable default
+        let filterType = "PK" // Default to peaking
+        if (band.type === "lowshelf") filterType = "LSC"
+        if (band.type === "highshelf") filterType = "HSC"
+        
+        formatAll.push(`Filter ${index + 1}: ON ${filterType} Fc ${Math.round(band.frequency)} Hz Gain ${band.gain.toFixed(1)} dB Q ${band.q ? band.q.toFixed(2) : "1.00"}`)
+      })
+      
+      const content = formatAll.join('\n')
+      
+      // Trigger download
+      const fileName = `${profile.name.replace(/\s+/g, "-").toLowerCase()}_eq.txt`
+      
+      const blob = new Blob([content], { type: "text/plain" })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = fileName
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    }
+  }
+
   return (
     <div>
       <ScrollArea className="w-full whitespace-nowrap" scrollHideDelay={0}>
@@ -94,6 +196,9 @@ export function EQProfiles({ onProfileClick, selectedProfile, onSelectProfile }:
                 isActive={activeProfileId === profile.id}
                 onSelect={() => handleSelectProfile(profile.id)}
                 onDelete={(e) => handleDeleteProfile(profile.id, e)}
+                onRename={(e) => handleRenameClick(profile.id, e)}
+                onDuplicate={(e) => handleDuplicateProfile(profile.id, e)}
+                onDownload={(e) => handleDownloadProfile(profile.id, e)}
               />
             ))}
 
@@ -109,6 +214,41 @@ export function EQProfiles({ onProfileClick, selectedProfile, onSelectProfile }:
         </div>
         <ScrollBar orientation="horizontal" />
       </ScrollArea>
+      
+      {/* Rename dialog */}
+      <Dialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Rename Profile</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="space-y-2">
+              <Input
+                id="name"
+                value={newProfileName}
+                onChange={(e) => setNewProfileName(e.target.value)}
+                placeholder="Profile name"
+                className="w-full"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleRenameConfirm()
+                  }
+                }}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => setIsRenameDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleRenameConfirm}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -119,12 +259,18 @@ function ProfileCard({
   isActive,
   onSelect,
   onDelete,
+  onRename,
+  onDuplicate,
+  onDownload,
 }: {
   profile: EQProfile
   isSelected: boolean
   isActive: boolean
   onSelect: () => void
   onDelete: (e: React.MouseEvent) => void
+  onRename: (e: React.MouseEvent) => void
+  onDuplicate: (e: React.MouseEvent) => void
+  onDownload: (e: React.MouseEvent) => void
 }) {
   // Generate a simple visualization based on the profile's bands
   const generateVisualization = () => {
@@ -153,10 +299,10 @@ function ProfileCard({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem>Rename</DropdownMenuItem>
-              <DropdownMenuItem>Duplicate</DropdownMenuItem>
+              <DropdownMenuItem onClick={onRename}>Rename</DropdownMenuItem>
+              <DropdownMenuItem onClick={onDuplicate}>Duplicate</DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem>Download</DropdownMenuItem>
+              <DropdownMenuItem onClick={onDownload}>Download</DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem 
                 className="text-red-600"

@@ -19,7 +19,7 @@ export function useFileImport({ onComplete, onError }: UseFileImportOptions = {}
   const [currentFile, setCurrentFile] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [dragCounter, setDragCounter] = useState(0)
+//   const [dragCounter, setDragCounter] = useState(0)
 
   // Connect to track store
   const { addTrack } = useTrackStore()
@@ -41,21 +41,21 @@ export function useFileImport({ onComplete, onError }: UseFileImportOptions = {}
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    setDragCounter((prev) => prev + 1)
+    // setDragCounter((prev) => prev + 1)
     setDragActive(true)
   }, [])
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    setDragCounter((prev) => {
-      // Only deactivate drag state when counter reaches 0
-      if (prev <= 1) {
-        setDragActive(false)
-        return 0
-      }
-      return prev - 1
-    })
+    // setDragCounter((prev) => {
+    //   // Only deactivate drag state when counter reaches 0
+    //   if (prev <= 1) {
+    //     setDragActive(false)
+    //     return 0
+    //   }
+    //   return prev - 1
+    // })
   }, [])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -204,7 +204,7 @@ export function useFileImport({ onComplete, onError }: UseFileImportOptions = {}
     e.preventDefault()
     e.stopPropagation()
     setDragActive(false)
-    setDragCounter(0)
+    // setDragCounter(0)
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       handleFileSelect(e.dataTransfer.files)

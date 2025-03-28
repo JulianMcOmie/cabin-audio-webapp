@@ -137,7 +137,7 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
           const firstProfile = Object.values(loadedProfiles)[0];
           
           // Use savedActiveProfileId if it exists and corresponds to an actual profile
-          let activeId = savedActiveProfileId && loadedProfiles[savedActiveProfileId] 
+          const activeId = savedActiveProfileId && loadedProfiles[savedActiveProfileId] 
             ? savedActiveProfileId 
             : (defaultProfile?.id || firstProfile?.id || null);
           
