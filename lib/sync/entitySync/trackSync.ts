@@ -65,7 +65,7 @@ export const uploadTrack = async (track: Track): Promise<void> => {
     console.error(`Error uploading track ${track.id}:`, error);
     
     // Mark as conflict if there was a sync error
-    if (error.name === 'ConflictError') {
+    if (error && typeof error === 'object' && 'name' in error && error.name === 'ConflictError') {
       const conflictTrack = {
         ...track,
         syncStatus: 'conflict' as const,

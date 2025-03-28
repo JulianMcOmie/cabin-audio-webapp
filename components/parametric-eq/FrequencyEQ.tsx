@@ -10,7 +10,6 @@ import { useEQInteraction } from "./useEQInteraction"
 import { useEQProcessor, calculateBandResponse } from "./useEQProcessor"
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
 import { EQBand } from "@/lib/models/EQBand"
-import { throttle } from 'lodash';
 import { getReferenceCalibrationAudio } from '@/lib/audio/referenceCalibrationAudio';
 
 interface FrequencyEQProps {
@@ -21,23 +20,6 @@ interface FrequencyEQProps {
   onRequestEnable?: () => void
 }
 
-// Cache for pending updates to avoid redundant processing
-interface PendingUpdates {
-  bands: Record<string, {
-    frequency?: number;
-    gain?: number;
-    q?: number;
-    type?: BiquadFilterType;
-  }>;
-  volume?: number;
-  lastBatchTime: number;
-}
-
-let pendingUpdates: PendingUpdates = {
-  bands: {},
-  lastBatchTime: 0
-};
-
 // Define a type for the audio processor
 interface AudioProcessor {
   setVolume: (volume: number) => void;
@@ -45,6 +27,11 @@ interface AudioProcessor {
   setBandGain: (bandId: string, gain: number) => void;
   setBandQ: (bandId: string, q: number) => void;
   setBandType: (bandId: string, type: BiquadFilterType) => void;
+}
+
+// Extend HTMLCanvasElement with margin property
+interface CanvasWithMargin extends HTMLCanvasElement {
+  margin?: number;
 }
 
 // Direct audio update function without throttling
@@ -71,8 +58,8 @@ export function updateAudio(
 }
 
 export function FrequencyEQ({ profileId, disabled = false, className, onInstructionChange, onRequestEnable }: FrequencyEQProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const backgroundCanvasRef = useRef<HTMLCanvasElement>(null)
+  const canvasRef = useRef<CanvasWithMargin>(null)
+  const backgroundCanvasRef = useRef<CanvasWithMargin>(null)
   // Add refs for animation frame and canvas context
   const animationFrameRef = useRef<number | null>(null)
   const canvasContextRef = useRef<CanvasRenderingContext2D | null>(null)
@@ -183,21 +170,20 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     // Add global event listeners
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
-    window.addEventListener('blur', () => {
+    
+    const handleBlur = () => {
       // Stop the calibration sound when window loses focus
       setIsModifierKeyPressed(false);
       const audioPlayer = getReferenceCalibrationAudio();
       audioPlayer.setPlaying(false);
-    });
+    };
+    
+    window.addEventListener('blur', handleBlur);
     
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
-      window.removeEventListener('blur', () => {
-        setIsModifierKeyPressed(false);
-        const audioPlayer = getReferenceCalibrationAudio();
-        audioPlayer.setPlaying(false);
-      });
+      window.removeEventListener('blur', handleBlur);
     };
   }, []);
   
@@ -207,7 +193,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
-    const margin = (canvas as any).margin || 40;
+    const margin = canvas.margin || 40;
     
     // Get mouse coordinates relative to canvas
     const x = e.clientX - rect.left;
@@ -336,14 +322,9 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     if (!canvas) return;
     
     const rect = canvas.getBoundingClientRect();
-    const margin = (canvas as any).margin || 40;
+    const margin = canvas.margin || 40;
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    
-    // Check if within the inner EQ area
-    const isWithinInnerArea = 
-      x >= margin && x <= rect.width - margin &&
-      y >= margin && y <= rect.height - margin;
     
     // Calculate inner dimensions
     const innerWidth = rect.width - margin * 2;
@@ -373,7 +354,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     if (!canvas) return;
     
     const rect = canvas.getBoundingClientRect();
-    const margin = (canvas as any).margin || 40;
+    const margin = canvas.margin || 40;
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
@@ -497,7 +478,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     
     // Store margins in a ref to access in other functions
     if (!canvasRef.current) return;
-    (canvasRef.current as any).margin = margin;
+    (canvasRef.current as CanvasWithMargin).margin = margin;
 
     // Clear canvas
     ctx.clearRect(0, 0, rect.width, rect.height);
@@ -543,7 +524,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     freqPoints.push(20000);
     
     // Vertical grid lines (logarithmic frequency bands)
-    for (let freq of freqPoints) {
+    for (const freq of freqPoints) {
       const x = margin + EQCoordinateUtils.freqToX(freq, rect.width - margin * 2, freqRange);
       ctx.beginPath();
       ctx.moveTo(x, margin);
@@ -555,7 +536,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     const dbPoints = [24, 20, 16, 12, 8, 4, 0, -4, -8, -12, -16, -20, -24];
     
     // Horizontal grid lines (dB levels)
-    for (let db of dbPoints) {
+    for (const db of dbPoints) {
       const y = margin + EQCoordinateUtils.gainToY(db, rect.height - margin * 2);
       ctx.beginPath();
       ctx.moveTo(margin, y);
@@ -573,9 +554,9 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     const freqLabels = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
     const labelY = rect.height - margin + 5; // Position labels below the bottom margin
     
-    for (let freq of freqLabels) {
+    for (const freq of freqLabels) {
       const x = margin + EQCoordinateUtils.freqToX(freq, rect.width - margin * 2, freqRange);
-      let label = freq >= 1000 ? `${freq/1000}k` : `${freq}`;
+      const label = freq >= 1000 ? `${freq/1000}k` : `${freq}`;
       
       // Calculate text dimensions for background
       const textWidth = ctx.measureText(label).width;
@@ -599,7 +580,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
     
-    for (let db of dbPoints) {
+    for (const db of dbPoints) {
       // Only show every 4dB label
       if (db % 4 === 0) {
         const y = margin + EQCoordinateUtils.gainToY(db, rect.height - margin * 2);
@@ -643,7 +624,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
 
     // Get canvas dimensions and margin
     const rect = canvas.getBoundingClientRect();
-    const margin = (canvas as any).margin || 40; // Get margin from canvas or use default
+    const margin = canvas.margin || 40; // Get margin from canvas or use default
 
     // Clear canvas
     ctx.clearRect(0, 0, rect.width, rect.height);

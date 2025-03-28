@@ -41,7 +41,7 @@ export async function extractMetadata(file: File): Promise<AudioMetadata> {
 async function getAudioDuration(file: File): Promise<number> {
   return new Promise((resolve, reject) => {
     // Create temporary audio context
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)()
+    const audioContext = new AudioContext()
     
     // Create file reader to get array buffer
     const reader = new FileReader()

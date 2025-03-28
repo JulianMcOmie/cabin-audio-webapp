@@ -68,7 +68,7 @@ export const uploadEQProfile = async (profile: EQProfile): Promise<void> => {
     console.error(`Error uploading EQ profile ${profile.id}:`, error);
     
     // Mark as conflict if there was a sync error
-    if (error.name === 'ConflictError') {
+    if (error && typeof error === 'object' && 'name' in error && error.name === 'ConflictError') {
       const conflictProfile = {
         ...profile,
         syncStatus: 'conflict' as const,
@@ -175,7 +175,8 @@ const updateExistingEQProfile = async (serverProfile: EQProfile): Promise<void> 
 };
 
 // Handle conflict between server and local EQ profile
-const handleEQProfileConflict = async (serverProfile: EQProfile): Promise<void> => {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const handleEQProfileConflict = async (serverProfile: EQProfile, _localProfile: EQProfile): Promise<void> => {
   try {
     // For EQ profiles, we'll create a new version with a conflict suffix
     // This allows the user to choose which version to keep

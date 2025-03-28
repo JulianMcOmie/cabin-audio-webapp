@@ -52,9 +52,18 @@ export class EQBandRenderer {
         xOffset,
         yOffset
       );
-    } catch (e) {
+    } catch {
       // Fall back to original method if the updated one isn't available
-      (EQCurveRenderer.drawFilledFrequencyResponse as any)(
+      // The legacy version doesn't accept xOffset and yOffset parameters
+      (EQCurveRenderer.drawFilledFrequencyResponse as (
+        ctx: CanvasRenderingContext2D,
+        response: { frequency: number; magnitude: number }[],
+        width: number,
+        height: number,
+        freqRange: { min: number; max: number },
+        color: string,
+        isHovered: boolean
+      ) => void)(
         ctx,
         response,
         width,
@@ -211,7 +220,7 @@ export class EQBandRenderer {
     ctx.beginPath();
     
     // Brighter/more visible when hovered
-    let lineOpacity = isHovered || isDragging ? 0.0 : (isEnabled ? 0.0 : 0.0);
+    const lineOpacity = isHovered || isDragging ? 0.0 : (isEnabled ? 0.0 : 0.0);
     ctx.strokeStyle = `rgba(255, 255, 255, ${lineOpacity})`; // White with opacity
     ctx.lineWidth = isHovered || isDragging ? 2 : 1;
     ctx.moveTo(xOffset + startPos, yOffset + volumeY);

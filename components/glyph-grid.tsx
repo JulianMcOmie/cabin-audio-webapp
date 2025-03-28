@@ -1,12 +1,9 @@
 "use client"
 
-import { useRef, useEffect, useState, useMemo } from "react"
-import { Switch } from "@/components/ui/switch"
-import { Label } from "@/components/ui/label"
+import { useRef, useEffect, useState } from "react"
 import { Slider } from "@/components/ui/slider"
 import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
-import { Button } from "@/components/ui/button"
-import { PlaybackMode } from '@/lib/audio/glyphGridAudio'
+// import { PlaybackMode } from '@/lib/audio/glyphGridAudio'
 
 // Glyph interface for representing a shape that defines a path
 interface Glyph {
@@ -37,38 +34,23 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
   // Track the last mouse position for dragging and resizing
   const [lastMousePos, setLastMousePos] = useState<{ x: number, y: number } | null>(null)
   
-  // Track the resize handle being used (0 = none, 1-4 for corner handles)
-  const [activeHandle, setActiveHandle] = useState<number>(0)
-  
   // State for dark mode detection
   const [isDarkMode, setIsDarkMode] = useState(false)
 
   // Add to GlyphGrid component state
   const [isScrubbing, setIsScrubbing] = useState(false)
   const [manualPosition, setManualPosition] = useState(0) // 0 to 1
-  const timelineRef = useRef<HTMLDivElement>(null)
   const isDraggingTimelineRef = useRef(false)
   const subsectionTimelineRef = useRef<HTMLDivElement>(null)
 
   // Add speed state
   const [speed, setSpeed] = useState(1.0)
 
-  // Add playback mode state
-  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>(PlaybackMode.SWEEP)
-
-  // Set discrete frequency to always false (continuous mode)
-  const [discreteFrequency, setDiscreteFrequency] = useState(false)
-
   // Add hover state tracking for interactive elements
   const [hoverState, setHoverState] = useState<'none' | 'vertex1' | 'vertex2' | 'line'>('none')
 
   // Add a reference to store the animation frame ID
   const animationFrameRef = useRef<number | null>(null);
-
-  // Keep modulation state but remove from UI
-  const [isModulating] = useState(true)
-  const [modulationRate] = useState(8.0) // 8 modulations per second
-  const [modulationDepth] = useState(0.8) // 80% depth
 
   // Set up observer to detect theme changes
   useEffect(() => {
@@ -107,6 +89,9 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     
     // Enable envelope modulation by default
     audioPlayer.setModulating(true)
+    
+    // Ensure continuous frequencies (not discrete/quantized)
+    audioPlayer.setDiscreteFrequency(false)
     
     return () => {
       // Clean up audio on unmount
@@ -258,7 +243,7 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
           { x: endX, y: endY, state: 'vertex2' },     // Top-right
         ]
         
-        handles.forEach((handle, index) => {
+        handles.forEach((handle) => {
           // Add hover effect
           if (hoverState === handle.state && !isDragging && !isResizing) {
             // Draw highlight circle first
@@ -387,7 +372,6 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
       
       if (distance <= handleRadius) {
         setIsResizing(true)
-        setActiveHandle(i + 1) // 1 = bottom-left, 2 = top-right
         setDragTarget(handle.target) // Set the specific vertex being dragged
         return
       }
@@ -504,7 +488,6 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
   const handleMouseUp = () => {
     setIsDragging(false)
     setIsResizing(false)
-    setActiveHandle(0)
     setLastMousePos(null)
     setDragTarget('none') // Reset drag target when mouse is released
   }
@@ -606,18 +589,6 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     }
   }
 
-  const togglePlayback = () => {
-    if (isScrubbing) {
-      // Resume automatic movement from current position
-      const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
-      audioPlayer.resumeFromPosition(manualPosition)
-      setIsScrubbing(false)
-    } else {
-      // Switch to manual control
-      setIsScrubbing(true)
-    }
-  }
-
   // Add a useEffect to update the audio player when speed changes
   useEffect(() => {
     const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
@@ -633,25 +604,6 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
   const formatSpeed = (value: number): string => {
     return `${value.toFixed(2)}x`
   }
-
-  // Add useEffect to update playback mode when it changes
-  useEffect(() => {
-    const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
-    audioPlayer.setPlaybackMode(playbackMode)
-  }, [playbackMode])
-
-  // Add toggle handler for playback mode
-  const togglePlaybackMode = () => {
-    setPlaybackMode((prevMode: PlaybackMode) => 
-      prevMode === PlaybackMode.SWEEP ? PlaybackMode.ALTERNATE : PlaybackMode.SWEEP
-    )
-  }
-
-  // Add useEffect to update the audio player when discrete frequency mode changes
-  useEffect(() => {
-    const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
-    audioPlayer.setDiscreteFrequency(discreteFrequency)
-  }, [discreteFrequency])
 
   // Update cursor style based on hover state
   const getCursorStyle = () => {

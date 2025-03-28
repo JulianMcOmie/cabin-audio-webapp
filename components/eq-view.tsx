@@ -55,7 +55,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const [showSignupModal, setShowSignupModal] = useState(false)
   
   // State for the reference calibration audio
-  const [calibrationPlaying, setCalibrationPlaying] = useState(false)
+  const [calibrationPlaying] = useState(false)
   
   // State for the spectrum analyzer
   const [preEQAnalyser, setPreEQAnalyser] = useState<AnalyserNode | null>(null)
@@ -72,10 +72,6 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   // State for the glyph grid
   const [glyphGridPlaying, setGlyphGridPlaying] = useState(false)
   
-  // Add state for tracking current audio parameters
-  const [currentFrequency, setCurrentFrequency] = useState<number>(0);
-  const [currentPanning, setCurrentPanning] = useState<number>(0);
-
   // Add state for toggling between Glyph Grid and Dot Grid
   const [activeGrid, setActiveGrid] = useState<"line" | "dot">("dot");
 
@@ -177,29 +173,14 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     }
   }, [getActiveProfile, getProfiles, setActiveProfile]);
 
-  // Add function to format frequency
-  const formatFrequency = (freq: number): string => {
-    if (freq < 1000) {
-      return `${Math.round(freq)} Hz`;
-    } else {
-      return `${(freq / 1000).toFixed(1)} kHz`;
-    }
-  };
-
   // Add effect to update frequency and panning info
   useEffect(() => {
     if (!glyphGridPlaying) {
-      setCurrentFrequency(0);
-      setCurrentPanning(0);
       return;
     }
     
     // Function to update current audio parameters
     const updateAudioInfo = () => {
-      const audio = glyphGridAudio.getGlyphGridAudioPlayer();
-      const { frequency, panning } = audio.getAudioParameters();
-      setCurrentFrequency(frequency);
-      setCurrentPanning(panning);
       requestAnimationFrame(updateAudioInfo);
     };
     
@@ -259,9 +240,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   // Add a function to handle dot grid play/stop
   const handleDotGridPlayToggle = () => {
     if (dotGridPlaying) {
-      // If stopping, clear the dot selection
+      // Just stop playing without clearing dot selection
       setDotGridPlaying(false);
-      setSelectedDots(new Set());
     } else {
       // If starting and there are no dots selected, don't start
       // (this is handled by the DotCalibration component internally)

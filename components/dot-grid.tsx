@@ -3,10 +3,6 @@
 import type React from "react"
 import { useRef, useEffect, useState, useMemo } from "react"
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
-import { Switch } from "@/components/ui/switch"
-import { Label } from "@/components/ui/label"
-import { Waves } from "lucide-react"
-import { Slider } from "@/components/ui/slider"
 
 interface DotGridProps {
   selectedDot: [number, number] | null
@@ -135,7 +131,6 @@ interface MultiSelectionDotGridProps {
 
 // Constants for the grid
 const DEFAULT_COLUMNS = 5; // Default number of columns (odd)
-const DEFAULT_ROWS = 5; // Default number of rows (odd)
 const MIN_COLUMNS = 3; // Minimum columns (odd)
 const MAX_COLUMNS = 15; // Maximum columns (odd)
 const MIN_ROWS = 3; // Minimum rows (odd)
