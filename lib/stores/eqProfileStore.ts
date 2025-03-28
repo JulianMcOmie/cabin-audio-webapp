@@ -115,7 +115,7 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
           indexedDBManager.addItem(indexedDBManager.STORES.EQ_PROFILES, defaultProfile)
             .catch(error => console.error('Failed to save default EQ profile:', error));
             
-          // Set as active profile
+          // Set initial state
           set({ 
             profiles: loadedProfiles, 
             activeProfileId: defaultProfile.id,
@@ -123,16 +123,25 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
             distortionGain,
             isLoading: false 
           });
+          
+          // Explicitly set the active profile to ensure it's properly persisted
+          setTimeout(() => {
+            const store = get();
+            if (store.setActiveProfile) {
+              store.setActiveProfile(defaultProfile.id);
+            }
+          }, 0);
         } else {
           // Profiles exist - find default or use first available
           const defaultProfile = Object.values(loadedProfiles).find(p => p.isDefault);
           const firstProfile = Object.values(loadedProfiles)[0];
           
           // Use savedActiveProfileId if it exists and corresponds to an actual profile
-          const activeId = savedActiveProfileId && loadedProfiles[savedActiveProfileId] 
+          let activeId = savedActiveProfileId && loadedProfiles[savedActiveProfileId] 
             ? savedActiveProfileId 
             : (defaultProfile?.id || firstProfile?.id || null);
           
+          // Set initial state
           set({ 
             profiles: loadedProfiles, 
             activeProfileId: activeId,
@@ -140,6 +149,16 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
             distortionGain,
             isLoading: false 
           });
+          
+          // Explicitly set the active profile to ensure it's properly persisted
+          if (activeId) {
+            setTimeout(() => {
+              const store = get();
+              if (store.setActiveProfile) {
+                store.setActiveProfile(activeId!);
+              }
+            }, 0);
+          }
         }
         
         initialized = true;
@@ -241,6 +260,14 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
         indexedDBManager.deleteItem(indexedDBManager.STORES.EQ_PROFILES, profileId)
           .catch(error => console.error('Failed to delete EQ profile:', error));
         
+        // If active profile was deleted, persist the change to IndexedDB
+        if (state.activeProfileId === profileId) {
+          indexedDBManager.updateItem(indexedDBManager.STORES.SYNC_STATE, {
+            id: 'activeProfileId',
+            profileId: null
+          }).catch(error => console.error('Failed to update active profile ID after deletion:', error));
+        }
+        
         return {
           profiles: newProfiles,
           activeProfileId: newActiveProfileId
@@ -251,13 +278,11 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
     setActiveProfile: (profileId: string | null) => {
       set({ activeProfileId: profileId });
       
-      // Persist to IndexedDB
-      if (profileId) {
-        indexedDBManager.updateItem(indexedDBManager.STORES.SYNC_STATE, {
-          id: 'activeProfileId',
-          profileId
-        }).catch(error => console.error('Failed to save active profile ID:', error));
-      }
+      // Always persist to IndexedDB, even if null (to clear previous value)
+      indexedDBManager.updateItem(indexedDBManager.STORES.SYNC_STATE, {
+        id: 'activeProfileId',
+        profileId: profileId || null
+      }).catch(error => console.error('Failed to save active profile ID:', error));
     },
     
     setEQEnabled: (enabled: boolean) => {

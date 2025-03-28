@@ -14,6 +14,7 @@ import {
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
 import { EQProfile } from "@/lib/models/EQProfile"
 import { CheckCircle } from "lucide-react"
+import React from "react"
 
 interface EQProfilesProps {
   onProfileClick?: () => void
@@ -38,6 +39,13 @@ export function EQProfiles({ onProfileClick, selectedProfile, onSelectProfile }:
   // Get the active profile from the store
   const activeProfile = getActiveProfile()
   const activeProfileId = activeProfile?.id || ""
+  
+  // Sync selected profile with active profile on initial render
+  React.useEffect(() => {
+    if (activeProfileId && activeProfileId !== selectedProfile) {
+      onSelectProfile(activeProfileId);
+    }
+  }, [activeProfileId, selectedProfile, onSelectProfile]);
 
   const handleSelectProfile = (profileId: string) => {
     // Set this profile as the active profile in the store
