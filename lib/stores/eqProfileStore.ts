@@ -47,10 +47,10 @@ const loadProfilesFromStorage = async (): Promise<Record<string, EQProfileWithDe
 const loadEQEnabledState = async (): Promise<boolean> => {
   try {
     const state = await indexedDBManager.getItem<{enabled: boolean}>(indexedDBManager.STORES.SYNC_STATE, 'eqEnabled');
-    return state?.enabled ?? true; // Default to true if not found
+    return state?.enabled ?? false; // Default to false if not found
   } catch (error) {
     console.error('Error loading EQ enabled state:', error);
-    return true; // Default to true on error
+    return false; // Default to false on error
   }
 };
 
@@ -178,7 +178,7 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
     profiles: {},
     activeProfileId: null,
     isLoading: true, // Initially loading
-    isEQEnabled: true, // Default to enabled
+    isEQEnabled: false, // Default to disabled
     distortionGain: 0.3, // Default to 30% volume reduction
     
     addProfile: (profile: EQProfileWithDefault) => {

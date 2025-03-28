@@ -133,9 +133,12 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       type: band.type || 'peaking' // Include type in the profile band
     }
     
-    // Check if this is the first band - if so, request to enable the EQ
-    if (profile.bands.length === 0 && onRequestEnable && disabled) {
-      onRequestEnable();
+    // Check if this is the first band - if so, enable the EQ automatically
+    if (profile.bands.length === 0 && disabled) {
+      // Call the onRequestEnable function to enable the EQ
+      if (onRequestEnable) {
+        onRequestEnable();
+      }
     }
     
     // Add band to profile immediately
@@ -401,18 +404,19 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       
       document.addEventListener('mousemove', handleDocumentMouseMove);
       document.addEventListener('mouseup', handleDocumentMouseUp);
-    } else if (!disabled) {
-      // Only pass mouse down to band interaction if within inner area
+    } else {
+      // Only check if within inner area, but DON'T check disabled state here
+      // to allow band interaction even when EQ is disabled
       const isWithinInnerArea = 
         x >= margin && x <= rect.width - margin &&
         y >= margin && y <= rect.height - margin;
         
       if (isWithinInnerArea) {
-        // If not dragging volume and not disabled, pass to band handler
+        // Always pass to band handler, even when disabled
         handleBandMouseDown(e);
       }
     }
-  }, [disabled, handleBandMouseDown, profile, updateProfile, isModifierKeyPressed, updateCalibrationFromMousePosition]);
+  }, [handleBandMouseDown, profile, updateProfile, isModifierKeyPressed, updateCalibrationFromMousePosition]);
   
   // Update instruction text based on interaction state
   useEffect(() => {
