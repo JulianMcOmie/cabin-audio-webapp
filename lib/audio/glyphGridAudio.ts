@@ -12,7 +12,7 @@ const ENVELOPE_MIN_GAIN = 0.001
 const DEFAULT_MODULATION_RATE = 8.0 // modulations per second
 const DEFAULT_MODULATION_DEPTH = 0.8 // how much to modulate (0-1)
 const ENVELOPE_ATTACK_TIME = 0.005 // 5ms attack
-const ENVELOPE_RELEASE_TIME = 0.1 // 100ms release
+const ENVELOPE_RELEASE_TIME = 0.05 // 100ms release
 
 export enum PlaybackMode {
   PATH = 'path', // Follow the path continuously back and forth
@@ -72,6 +72,11 @@ class GlyphGridAudioPlayer {
   // Add preEQAnalyser property
   private preEQAnalyser: AnalyserNode | null = null
   private preEQGain: GainNode | null = null
+  
+  // Add these new properties after the existing ones
+  private subsectionStart: number = 0 // Default to full range (0-1)
+  private subsectionEnd: number = 1
+  private useSubsection: boolean = false
   
   private constructor() {
     this.generatePinkNoiseBuffer()
@@ -158,13 +163,24 @@ class GlyphGridAudioPlayer {
     // Move the path position for next frame
     this.pathPosition += 0.005 * this.pathDirection
     
-    // Reverse direction at ends
-    if (this.pathPosition >= 1) {
-      this.pathPosition = 1
-      this.pathDirection = -1
-    } else if (this.pathPosition <= 0) {
-      this.pathPosition = 0
-      this.pathDirection = 1
+    // If using subsection, check subsection boundaries instead of full range
+    if (this.useSubsection) {
+      if (this.pathPosition >= this.subsectionEnd) {
+        this.pathPosition = this.subsectionEnd
+        this.pathDirection = -1
+      } else if (this.pathPosition <= this.subsectionStart) {
+        this.pathPosition = this.subsectionStart
+        this.pathDirection = 1
+      }
+    } else {
+      // Regular full-range behavior
+      if (this.pathPosition >= 1) {
+        this.pathPosition = 1
+        this.pathDirection = -1
+      } else if (this.pathPosition <= 0) {
+        this.pathPosition = 0
+        this.pathDirection = 1
+      }
     }
   }
   
@@ -588,6 +604,39 @@ class GlyphGridAudioPlayer {
     }
     
     return { frequency, panning };
+  }
+  
+  // Add method to set subsection bounds
+  public setSubsection(start: number, end: number, enabled: boolean = true): void {
+    // Ensure valid range with start <= end
+    if (start > end) {
+      [start, end] = [end, start];
+    }
+    
+    // Clamp values between 0 and 1
+    this.subsectionStart = Math.max(0, Math.min(1, start));
+    this.subsectionEnd = Math.max(0, Math.min(1, end));
+    this.useSubsection = enabled;
+    
+    // If current position is outside the new subsection, reset to subsection start
+    if (this.pathPosition < this.subsectionStart || this.pathPosition > this.subsectionEnd) {
+      this.pathPosition = this.subsectionStart;
+      this.pathDirection = 1;
+    }
+  }
+  
+  // Get subsection info
+  public getSubsection(): { start: number, end: number, enabled: boolean } {
+    return {
+      start: this.subsectionStart,
+      end: this.subsectionEnd,
+      enabled: this.useSubsection
+    };
+  }
+  
+  // Disable subsection (return to full range)
+  public disableSubsection(): void {
+    this.useSubsection = false;
   }
 }
 

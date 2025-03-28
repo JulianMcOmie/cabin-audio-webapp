@@ -46,6 +46,11 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
   const [manualPosition, setManualPosition] = useState(0) // 0 to 1
   const timelineRef = useRef<HTMLDivElement>(null)
   const isDraggingTimelineRef = useRef(false)
+  const [subsectionStart, setSubsectionStart] = useState(0)
+  const [subsectionEnd, setSubsectionEnd] = useState(1)
+  const [isDraggingSubsectionStart, setIsDraggingSubsectionStart] = useState(false)
+  const [isDraggingSubsectionEnd, setIsDraggingSubsectionEnd] = useState(false)
+  const subsectionTimelineRef = useRef<HTMLDivElement>(null)
 
   // Set up observer to detect theme changes
   useEffect(() => {
@@ -474,6 +479,64 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     }
   }
 
+  // Add this useEffect to update the audio player when subsection changes
+  useEffect(() => {
+    const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
+    audioPlayer.setSubsection(subsectionStart, subsectionEnd, true)
+  }, [subsectionStart, subsectionEnd])
+
+  // Add these handlers for direct manipulation of subsection start/end
+  const handleSubsectionMouseDown = (e: React.MouseEvent<HTMLDivElement>, isStartHandle: boolean) => {
+    if (disabled) return
+    
+    const timeline = subsectionTimelineRef.current
+    if (!timeline) return
+    
+    if (isStartHandle) {
+      setIsDraggingSubsectionStart(true)
+    } else {
+      setIsDraggingSubsectionEnd(true)
+    }
+    
+    // Calculate position based on click position
+    updateSubsectionHandlePosition(e, isStartHandle)
+  }
+
+  const updateSubsectionHandlePosition = (e: React.MouseEvent<HTMLDivElement>, isStartHandle: boolean) => {
+    const timeline = subsectionTimelineRef.current
+    if (!timeline) return
+    
+    const rect = timeline.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const position = Math.max(0, Math.min(1, x / rect.width))
+    
+    if (isStartHandle) {
+      // Ensure start doesn't exceed end
+      setSubsectionStart(Math.min(position, subsectionEnd))
+    } else {
+      // Ensure end doesn't go below start
+      setSubsectionEnd(Math.max(position, subsectionStart))
+    }
+  }
+
+  const handleSubsectionMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (isDraggingSubsectionStart) {
+      updateSubsectionHandlePosition(e, true)
+    } else if (isDraggingSubsectionEnd) {
+      updateSubsectionHandlePosition(e, false)
+    }
+  }
+
+  const handleSubsectionMouseUp = () => {
+    setIsDraggingSubsectionStart(false)
+    setIsDraggingSubsectionEnd(false)
+  }
+
+  const handleSubsectionMouseLeave = () => {
+    setIsDraggingSubsectionStart(false)
+    setIsDraggingSubsectionEnd(false)
+  }
+
   return (
     <div className="space-y-4">
       <div className="relative bg-background/50 rounded-lg p-3">
@@ -530,6 +593,76 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
           <div className="text-xs text-muted-foreground">
             Position: {(isScrubbing ? manualPosition : glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition()).toFixed(2)}
           </div>
+        </div>
+      </div>
+      
+      {/* New separate subsection loop control */}
+      <div className="pt-3 border-t border-muted space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium">Loop Subsection</span>
+          <span className="text-xs text-muted-foreground">
+            {subsectionStart.toFixed(2)} to {subsectionEnd.toFixed(2)}
+          </span>
+        </div>
+        
+        <div 
+          ref={subsectionTimelineRef}
+          className="h-6 bg-muted rounded-md relative cursor-pointer"
+          onMouseMove={handleSubsectionMouseMove}
+          onMouseUp={handleSubsectionMouseUp}
+          onMouseLeave={handleSubsectionMouseLeave}
+        >
+          {/* Timeline background with position markers */}
+          <div className="absolute inset-0 flex justify-between px-2">
+            {[0, 0.25, 0.5, 0.75, 1].map((pos) => (
+              <div key={pos} className="h-full flex flex-col justify-center">
+                <div className="w-0.5 h-2 bg-muted-foreground/30"></div>
+              </div>
+            ))}
+          </div>
+          
+          {/* Subsection range indicator */}
+          <div 
+            className="absolute top-0 bottom-0 bg-primary/20"
+            style={{ 
+              left: `${subsectionStart * 100}%`,
+              width: `${(subsectionEnd - subsectionStart) * 100}%`
+            }}
+          ></div>
+          
+          {/* Current position marker (also shown in subsection timeline) */}
+          <div 
+            className="absolute top-0 bottom-0 w-1 bg-primary/40 rounded-full transform -translate-x-1/2"
+            style={{ 
+              left: `${(isScrubbing ? manualPosition : glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition()) * 100}%`,
+              transition: isScrubbing ? 'none' : 'left 0.1s linear'
+            }}
+          ></div>
+          
+          {/* Subsection start handle */}
+          <div 
+            className="absolute top-0 bottom-0 w-3 cursor-col-resize flex items-center justify-center group z-10"
+            style={{ left: `${subsectionStart * 100}%`, transform: 'translateX(-50%)' }}
+            onMouseDown={(e) => handleSubsectionMouseDown(e, true)}
+          >
+            <div className="w-1 h-full bg-primary/70 rounded-full group-hover:bg-primary group-active:bg-primary"></div>
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-primary/20 opacity-0 group-hover:opacity-100 group-active:opacity-100"></div>
+          </div>
+          
+          {/* Subsection end handle */}
+          <div 
+            className="absolute top-0 bottom-0 w-3 cursor-col-resize flex items-center justify-center group z-10"
+            style={{ left: `${subsectionEnd * 100}%`, transform: 'translateX(-50%)' }}
+            onMouseDown={(e) => handleSubsectionMouseDown(e, false)}
+          >
+            <div className="w-1 h-full bg-primary/70 rounded-full group-hover:bg-primary group-active:bg-primary"></div>
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-primary/20 opacity-0 group-hover:opacity-100 group-active:opacity-100"></div>
+          </div>
+        </div>
+        
+        <div className="flex text-xs text-muted-foreground justify-between">
+          <span>Start</span>
+          <span>End</span>
         </div>
       </div>
       
