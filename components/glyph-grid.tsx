@@ -59,6 +59,9 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
   // Add playback mode state
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>(PlaybackMode.SWEEP)
 
+  // Add state for discrete frequency mode
+  const [discreteFrequency, setDiscreteFrequency] = useState(true)
+
   // Set up observer to detect theme changes
   useEffect(() => {
     // Initial check
@@ -319,19 +322,16 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
         
         setGlyph(prev => {
           // Calculate new position
-          let newX = prev.position.x + normalizedDeltaX
-          let newY = prev.position.y + normalizedDeltaY
+          const newX = prev.position.x + normalizedDeltaX
+          const newY = prev.position.y + normalizedDeltaY
           
-          // Constrain to keep the glyph within visible bounds (-1 to 1)
-          const maxOffset = 1 - prev.size.width / 2
-          newX = Math.max(-maxOffset, Math.min(maxOffset, newX))
-          
-          const maxOffsetY = 1 - prev.size.height / 2
-          newY = Math.max(-maxOffsetY, Math.min(maxOffsetY, newY))
+          // Only constrain to keep center within canvas (-1 to 1)
+          const finalPosX = Math.max(-1, Math.min(1, newX))
+          const finalPosY = Math.max(-1, Math.min(1, newY))
           
           return {
             ...prev,
-            position: { x: newX, y: newY }
+            position: { x: finalPosX, y: finalPosY }
           }
         })
       } else if (isResizing) {
@@ -352,6 +352,7 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
           let endY = (1 - endY_norm) / 2 * rect.height
           
           // Update the appropriate corner based on which handle is active
+          // Move the corner freely without any restrictions
           switch (activeHandle) {
             case 1: // Bottom-left
               startX += deltaX
@@ -369,7 +370,7 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
           const new_endX_norm = (endX / rect.width) * 2 - 1
           const new_endY_norm = 1 - (endY / rect.height) * 2 // Y is inverted
           
-          // Calculate new dimensions (can be negative now)
+          // Calculate dimensions without enforcing that end > start
           const newWidth = new_endX_norm - new_startX_norm
           const newHeight = new_endY_norm - new_startY_norm
           
@@ -377,18 +378,21 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
           const newPosX = (new_startX_norm + new_endX_norm) / 2
           const newPosY = (new_startY_norm + new_endY_norm) / 2
           
-          // Calculate absolute dimensions for minimum size constraints
+          // Keep position within canvas bounds
+          const finalPosX = Math.max(-1, Math.min(1, newPosX))
+          const finalPosY = Math.max(-1, Math.min(1, newPosY))
+          
+          // Only ensure minimum absolute size to avoid invisible lines
+          const minSize = 0.1
           const absWidth = Math.abs(newWidth)
           const absHeight = Math.abs(newHeight)
           
-          // Ensure minimum size while preserving the sign
-          const minSize = 0.1
-          const finalWidth = absWidth < minSize ? (newWidth >= 0 ? minSize : -minSize) : newWidth
-          const finalHeight = absHeight < minSize ? (newHeight >= 0 ? minSize : -minSize) : newHeight
+          // If width/height is too small, set to minimum but preserve sign (direction)
+          const finalWidth = absWidth < minSize ? 
+            (newWidth >= 0 ? minSize : -minSize) : newWidth
           
-          // Constrain only the position to keep within bounds, not the corners relative to each other
-          let finalPosX = Math.max(-1, Math.min(1, newPosX))
-          let finalPosY = Math.max(-1, Math.min(1, newPosY))
+          const finalHeight = absHeight < minSize ? 
+            (newHeight >= 0 ? minSize : -minSize) : newHeight
           
           return {
             ...prev,
@@ -504,12 +508,11 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     const x = e.clientX - rect.left
     const position = Math.max(0, Math.min(1, x / rect.width))
     
+    // Allow handles to cross, just constrain to canvas bounds (0-1)
     if (isStartHandle) {
-      // Ensure start doesn't exceed end
-      setSubsectionStart(Math.min(position, subsectionEnd))
+      setSubsectionStart(position)
     } else {
-      // Ensure end doesn't go below start
-      setSubsectionEnd(Math.max(position, subsectionStart))
+      setSubsectionEnd(position)
     }
   }
 
@@ -558,6 +561,17 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     setPlaybackMode((prevMode: PlaybackMode) => 
       prevMode === PlaybackMode.SWEEP ? PlaybackMode.ALTERNATE : PlaybackMode.SWEEP
     )
+  }
+
+  // Add useEffect to update the audio player when discrete frequency mode changes
+  useEffect(() => {
+    const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
+    audioPlayer.setDiscreteFrequency(discreteFrequency)
+  }, [discreteFrequency])
+
+  // Add toggle handler for discrete frequency mode
+  const toggleDiscreteFrequency = () => {
+    setDiscreteFrequency(prev => !prev)
   }
 
   return (
@@ -648,8 +662,8 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
           <div 
             className="absolute top-0 bottom-0 bg-primary/20"
             style={{ 
-              left: `${subsectionStart * 100}%`,
-              width: `${(subsectionEnd - subsectionStart) * 100}%`
+              left: `${Math.min(subsectionStart, subsectionEnd) * 100}%`,
+              width: `${Math.abs(subsectionEnd - subsectionStart) * 100}%`
             }}
           ></div>
           
@@ -726,6 +740,24 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
         <div className="flex text-xs text-muted-foreground justify-between">
           <span>Slow</span>
           <span>Fast</span>
+        </div>
+      </div>
+      
+      {/* Discrete Frequency Toggle */}
+      <div className="pt-3 border-t border-muted space-y-2">
+        <div className="flex justify-between items-center">
+          <div className="flex items-center space-x-2">
+            <Switch 
+              id="discrete-frequency-toggle"
+              checked={discreteFrequency}
+              onCheckedChange={toggleDiscreteFrequency}
+              disabled={disabled || !isPlaying}
+            />
+            <Label htmlFor="discrete-frequency-toggle">Discrete Frequency</Label>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {discreteFrequency ? "Change frequency at hit points" : "Continuously change frequency"}
+          </div>
         </div>
       </div>
       

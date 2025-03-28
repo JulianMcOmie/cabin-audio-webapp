@@ -15,6 +15,9 @@ const ENVELOPE_ATTACK_TIME = 0.005 // 5ms attack
 const ENVELOPE_RELEASE_TIME = 0.05 // 100ms release
 const DEFAULT_SPEED = 1.0 // Default movement speed
 
+// Add constants for hit detection
+const DEFAULT_HIT_INTERVAL = 0.2 // Default interval between hits (20% of path)
+
 export enum PlaybackMode {
   PATH = 'path', // Follow the path continuously back and forth
   OSCILLATE = 'oscillate', // Oscillate through the path at varying speeds
@@ -89,6 +92,11 @@ class GlyphGridAudioPlayer {
   // Add a counter for alternating mode
   private _alternateCounter: number = 0;
   
+  // Add new properties to the class
+  private hitPoints: number[] = [] // Points along the path where "hits" occur
+  private lastHitIndex: number = -1 // Track the last hit point we passed
+  private discreteFrequency: boolean = true // Whether to use discrete or continuous frequency
+  
   private constructor() {
     this.generatePinkNoiseBuffer()
   }
@@ -161,66 +169,99 @@ class GlyphGridAudioPlayer {
     // If in manual control mode, use the manually set position
     if (this.isManualControl) {
       const position = this.manualPosition
+      // In manual mode, always update parameters (for responsive UI)
       this.updateAudioParametersFromPosition(position)
       return
     }
     
-    // Otherwise, use automatic movement logic based on playback mode
-    const position = this.pathPosition
+    // Store previous position to detect hit crossing
+    const previousPosition = this.pathPosition
     
-    // Update audio parameters based on position
-    this.updateAudioParametersFromPosition(position)
-    
-    // Determine how to update the position based on playback mode
+    // Calculate new position based on playback mode
     if (this.playbackMode === PlaybackMode.SWEEP) {
-      // Sweep mode: continuously move through the path
       // Apply speed factor to the position increment
       this.pathPosition += 0.005 * this.pathDirection * this.speed
       
       // If using subsection, check subsection boundaries
       if (this.useSubsection) {
-        if (this.pathPosition >= this.subsectionEnd) {
-          this.pathPosition = this.subsectionEnd
+        // Handle both normal and reversed subsection ranges
+        const min = Math.min(this.subsectionStart, this.subsectionEnd)
+        const max = Math.max(this.subsectionStart, this.subsectionEnd)
+        
+        if (this.pathPosition >= max) {
+          this.pathPosition = max
           this.pathDirection = -1
-        } else if (this.pathPosition <= this.subsectionStart) {
-          this.pathPosition = this.subsectionStart
+          // This is a hit point (reached end)
+          this.updateAudioParametersFromPosition(this.pathPosition)
+        } else if (this.pathPosition <= min) {
+          this.pathPosition = min
           this.pathDirection = 1
+          // This is a hit point (reached start)
+          this.updateAudioParametersFromPosition(this.pathPosition)
+        } else if (this.discreteFrequency) {
+          // Check if we crossed a hit point
+          const hitInterval = DEFAULT_HIT_INTERVAL
+          const currentInterval = Math.floor(this.pathPosition / hitInterval)
+          const previousInterval = Math.floor(previousPosition / hitInterval)
+          
+          if (currentInterval !== previousInterval) {
+            // We crossed a hit point, update audio
+            this.updateAudioParametersFromPosition(this.pathPosition)
+          }
+        } else {
+          // Continuous mode - always update
+          this.updateAudioParametersFromPosition(this.pathPosition)
         }
       } else {
         // Regular full-range behavior
         if (this.pathPosition >= 1) {
           this.pathPosition = 1
           this.pathDirection = -1
+          // This is a hit point (reached end)
+          this.updateAudioParametersFromPosition(this.pathPosition)
         } else if (this.pathPosition <= 0) {
           this.pathPosition = 0
           this.pathDirection = 1
+          // This is a hit point (reached start)
+          this.updateAudioParametersFromPosition(this.pathPosition)
+        } else if (this.discreteFrequency) {
+          // Check if we crossed a hit point
+          const hitInterval = DEFAULT_HIT_INTERVAL
+          const currentInterval = Math.floor(this.pathPosition / hitInterval)
+          const previousInterval = Math.floor(previousPosition / hitInterval)
+          
+          if (currentInterval !== previousInterval) {
+            // We crossed a hit point, update audio
+            this.updateAudioParametersFromPosition(this.pathPosition)
+          }
+        } else {
+          // Continuous mode - always update
+          this.updateAudioParametersFromPosition(this.pathPosition)
         }
       }
     } else if (this.playbackMode === PlaybackMode.ALTERNATE) {
       // Alternate mode: jump between start and end points
-      // Use pathDirection to determine which point we're at
-      // and when to switch
-      
-      // Create a threshold for how long to stay at each point
-      // based on the speed (faster = shorter duration)
-      const stayDuration = 30 / this.speed; // Number of frames to stay at each point
+      const stayDuration = 30 / this.speed // Number of frames to stay at each point
       
       // Increment a counter to track when to alternate
-      this._alternateCounter = (this._alternateCounter || 0) + 1;
+      this._alternateCounter = (this._alternateCounter || 0) + 1
       
       if (this._alternateCounter >= stayDuration) {
-        this._alternateCounter = 0;
+        this._alternateCounter = 0
         
         // Switch between start and end
         if (this.pathDirection === 1) {
           // We're at start point, move to end
-          this.pathPosition = this.useSubsection ? this.subsectionEnd : 1;
-          this.pathDirection = -1;
+          this.pathPosition = this.useSubsection ? this.subsectionEnd : 1
+          this.pathDirection = -1
         } else {
           // We're at end point, move to start
-          this.pathPosition = this.useSubsection ? this.subsectionStart : 0;
-          this.pathDirection = 1;
+          this.pathPosition = this.useSubsection ? this.subsectionStart : 0
+          this.pathDirection = 1
         }
+        
+        // Update audio parameters at each alternation point
+        this.updateAudioParametersFromPosition(this.pathPosition)
       }
     }
   }
@@ -314,7 +355,7 @@ class GlyphGridAudioPlayer {
     const filter = ctx.createBiquadFilter()
     filter.type = 'bandpass'
     filter.frequency.value = 500 // Default frequency
-    filter.Q.value = 3.0 // Default Q
+    filter.Q.value = 5.0 // Default Q
     
     // Connect the audio chain
     source.connect(gain)
@@ -649,20 +690,28 @@ class GlyphGridAudioPlayer {
   
   // Add method to set subsection bounds
   public setSubsection(start: number, end: number, enabled: boolean = true): void {
-    // Ensure valid range with start <= end
-    if (start > end) {
-      [start, end] = [end, start];
-    }
-    
-    // Clamp values between 0 and 1
+    // Clamp values between 0 and 1 but don't enforce start <= end
     this.subsectionStart = Math.max(0, Math.min(1, start));
     this.subsectionEnd = Math.max(0, Math.min(1, end));
     this.useSubsection = enabled;
     
-    // If current position is outside the new subsection, reset to subsection start
-    if (this.pathPosition < this.subsectionStart || this.pathPosition > this.subsectionEnd) {
+    // Update the path position logic to handle reversed ranges
+    this._updatePathPositionForSubsection();
+  }
+  
+  // Add helper method to update path position for subsection changes
+  private _updatePathPositionForSubsection(): void {
+    // If the path position is outside the current range (considering both orderings),
+    // reset to appropriate value
+    const min = Math.min(this.subsectionStart, this.subsectionEnd);
+    const max = Math.max(this.subsectionStart, this.subsectionEnd);
+    
+    if (this.pathPosition < min || this.pathPosition > max) {
+      // Reset to the range start (which might be subsectionEnd if subsectionStart > subsectionEnd)
       this.pathPosition = this.subsectionStart;
-      this.pathDirection = 1;
+      
+      // Set initial direction based on subsection ordering
+      this.pathDirection = this.subsectionStart <= this.subsectionEnd ? 1 : -1;
     }
   }
   
@@ -699,6 +748,16 @@ class GlyphGridAudioPlayer {
   // Add method to get current playback mode
   public getPlaybackMode(): PlaybackMode {
     return this.playbackMode;
+  }
+  
+  // Add public method to toggle between continuous and discrete frequency updates
+  public setDiscreteFrequency(useDiscrete: boolean): void {
+    this.discreteFrequency = useDiscrete
+  }
+  
+  // Add getter for current frequency update mode
+  public isDiscreteFrequency(): boolean {
+    return this.discreteFrequency
   }
 }
 
