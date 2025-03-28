@@ -175,11 +175,21 @@ class AudioPlayer {
   public play(fromPosition?: number): void {
 
     if (!this.audioBuffer) {
+      console.log('🎵 Cannot play: No audio buffer loaded');
       return;
     }
     
     if (this.isPlaying) {
+      console.log('🎵 Already playing, ignoring play request');
       return;
+    }
+    
+    // Cleanup any existing source node first
+    if (this.sourceNode) {
+      console.log('🎵 Cleaning up existing source node before play');
+      this.sourceNode.onended = null;
+      this.sourceNode.stop();
+      this.sourceNode = null;
     }
     
     // Use provided position if specified, otherwise use saved position
@@ -190,6 +200,12 @@ class AudioPlayer {
     console.log('🎵 Starting playback from position:', this.pausedTime);
     
     audioContext.resumeAudioContext().then(() => {
+      // Double-check we're still in a state to play
+      if (this.isPlaying || !this.audioBuffer) {
+        console.log('🎵 State changed during resumeAudioContext, aborting play');
+        return;
+      }
+      
       // Create and connect a new source node
       this.sourceNode = audioContext.createBufferSource();
       this.sourceNode.buffer = this.audioBuffer;
@@ -264,12 +280,15 @@ class AudioPlayer {
     // If playing, stop and restart at new position
     const wasPlaying = this.isPlaying;
     
-    if (this.isPlaying) {
-      this.sourceNode?.stop();
+    // Always clean up existing source node to prevent multiple playbacks
+    if (this.sourceNode) {
+      // Remove the onended handler before stopping to prevent it from firing unexpectedly
+      this.sourceNode.onended = null;
+      this.sourceNode.stop();
       this.sourceNode = null;
-      this.isPlaying = false;
     }
     
+    this.isPlaying = false;
     this.pausedTime = clampedTime;
     
     // Update time through callback
@@ -277,8 +296,12 @@ class AudioPlayer {
       this.timeUpdateCallback(clampedTime);
     }
     
+    // Only start playing again if it was previously playing
     if (wasPlaying) {
-      this.play();
+      // Small delay to ensure everything is cleaned up
+      setTimeout(() => {
+        this.play();
+      }, 10);
     }
   }
   

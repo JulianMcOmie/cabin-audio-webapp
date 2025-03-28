@@ -166,18 +166,20 @@ export function PlayerBar() {
     if (currentTrackId && duration > 0) {
       console.log(`[PlayerBar] Seeking to ${value[0]} seconds`);
       
+      // Reset seeking state first to prevent state conflicts
+      setIsSeeking(false);
+      
       // Perform the actual seek operation
       seekTo(value[0]);
       
-      // Resume playback if it was playing before seeking
+      // Resume playback if it was playing before seeking, with increased delay
       if (wasPlayingRef.current) {
+        // Use a longer delay to ensure the seek operation completes fully
         setTimeout(() => {
+          console.log(`[PlayerBar] Resuming playback after seek`);
           setIsPlaying(true);
-        }, 50); // Small delay to ensure the seek completes before playback resumes
+        }, 100); // Increased delay to 100ms for better reliability
       }
-      
-      // Reset seeking state
-      setIsSeeking(false);
     }
   }
 
