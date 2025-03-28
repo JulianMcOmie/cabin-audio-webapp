@@ -1,6 +1,6 @@
 import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
-import { getAudioPlayer } from './audioPlayer';
+// import { getAudioPlayer } from './audioPlayer';
 import { useEQProfileStore } from '../stores';
 
 // Constants
@@ -17,8 +17,8 @@ const MASTER_GAIN = 1.0; // Much louder master gain for calibration
 
 // Polyrhythm settings
 const BASE_CYCLE_TIME = 1.0; // Base cycle time in seconds
-const MIN_SUBDIVISION = 2; // Minimum subdivision (lower dots)
-const MAX_SUBDIVISION = 16; // Maximum subdivision (higher dots)
+// const MIN_SUBDIVISION = 2; // Minimum subdivision (lower dots)
+// const MAX_SUBDIVISION = 16; // Maximum subdivision (higher dots)
 
 // Sequential playback settings
 // const DOT_TIMING = 0.2; // Time between dots in sequential mode (seconds)
@@ -499,7 +499,7 @@ class DotGridAudioPlayer {
   /**
    * Calculate subdivision based on vertical position or use fixed value for single selection
    */
-  private calculateSubdivision(y: number): number {
+  private calculateSubdivision(): number {
     // Use fixed subdivision for ALL dots regardless of position
     // This completely decouples timing from frequency
     return 8; // Use a consistent moderate pace
@@ -608,7 +608,7 @@ class DotGridAudioPlayer {
     console.log(`🔊 Will immediately trigger all ${dotKeys.length} dots for instant feedback`);
     
     // Set up next trigger times for all dots
-    this.audioNodes.forEach((nodes, dotKey) => {
+    this.audioNodes.forEach((nodes) => {
       const baseInterval = BASE_CYCLE_TIME / nodes.subdivision;
       // Apply the offset to stagger dots in the same row
       const offsetTime = baseInterval * nodes.offset;
@@ -867,7 +867,7 @@ class DotGridAudioPlayer {
     filter.Q.value = qValue;
     
     // Calculate subdivision based on vertical position or fixed value for single selection
-    const subdivision = this.calculateSubdivision(y);
+    const subdivision = this.calculateSubdivision();
     
     // Store the nodes with addition order
     this.audioNodes.set(dotKey, {
