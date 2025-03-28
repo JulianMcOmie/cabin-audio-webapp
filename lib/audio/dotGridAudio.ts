@@ -10,11 +10,11 @@ const ENVELOPE_MAX_GAIN = 1.0; // Maximum gain during envelope cycle
 const ENVELOPE_ATTACK = 0.002; // Faster attack time in seconds - for very punchy transients
 // const ENVELOPE_RELEASE_DEFAULT = 0.2; // Default release time (for reference only)
 const ENVELOPE_RELEASE_LOW_FREQ = 0.2; // Release time for lowest frequencies (seconds)
-const ENVELOPE_RELEASE_HIGH_FREQ = 0.01; // Release time for highest frequencies (seconds)
+const ENVELOPE_RELEASE_HIGH_FREQ = 0.02; // Release time for highest frequencies (seconds)
 const MASTER_GAIN = 1.0; // Much louder master gain for calibration
 
 // Polyrhythm settings
-const BASE_CYCLE_TIME = 2.0; // Base cycle time in seconds
+const BASE_CYCLE_TIME = 1.0; // Base cycle time in seconds
 const MIN_SUBDIVISION = 2; // Minimum subdivision (lower dots)
 const MAX_SUBDIVISION = 16; // Maximum subdivision (higher dots)
 
@@ -87,6 +87,12 @@ class DotGridAudioPlayer {
   
   // Add property to track single selection mode
   private useSingleRhythm: boolean = false;
+  
+  // Volume oscillation properties
+  private volumeOscillationPhase: number = 0;
+  private volumeOscillationTimer: number | null = null;
+  private baseDbLevel: number = 0; // 0dB is reference level
+  private dbOscillationRange: number = 6; // ±12dB oscillation range by default
   
   private constructor() {
     // Initialize pink noise buffer
@@ -366,6 +372,9 @@ class DotGridAudioPlayer {
   public updateDots(dots: Set<string>, currentGridSize?: number, currentColumns?: number, useSingleRhythm: boolean = false): void {
     console.log(`🔊 Updating dots: ${dots.size} selected, singleRhythm: ${useSingleRhythm}`);
     
+    // Check if we're adding the first dot
+    const isAddingFirstDot = this.audioNodes.size === 0 && dots.size === 1;
+    
     // Update grid size if provided and changed
     if (currentGridSize && currentGridSize !== this.gridSize) {
       this.setGridSize(currentGridSize, currentColumns);
@@ -404,6 +413,17 @@ class DotGridAudioPlayer {
       this.stopAllSources();
       this.startAllSources();
       this.startAllRhythms();
+      
+      // If we just added the first dot, trigger it immediately for instant feedback
+      if (isAddingFirstDot) {
+        const firstDotKey = Array.from(dots)[0];
+        setTimeout(() => {
+          if (this.isPlaying && this.audioNodes.has(firstDotKey)) {
+            console.log('🔊 Triggering immediate sound for newly added first dot');
+            this.triggerDotEnvelope(firstDotKey);
+          }
+        }, 10);
+      }
     }
   }
   
@@ -469,6 +489,12 @@ class DotGridAudioPlayer {
    * Calculate subdivision based on vertical position or use fixed value for single selection
    */
   private calculateSubdivision(y: number): number {
+    // Use fixed subdivision for ALL dots regardless of position
+    // This completely decouples timing from frequency
+    return 8; // Use a consistent moderate pace
+
+    // Old frequency-dependent code below is no longer used
+    /*
     // If in single selection mode, use a fixed moderate subdivision
     if (this.useSingleRhythm) {
       return 8; // Fixed value for single selection - moderate repeat rate
@@ -502,6 +528,7 @@ class DotGridAudioPlayer {
     }
     
     return closestSubdivision;
+    */
   }
 
   /**
@@ -517,9 +544,41 @@ class DotGridAudioPlayer {
     if (playing) {
       this.startAllSources();
       this.startAllRhythms();
+      
+      // Start volume oscillation
+      this.startVolumeOscillation();
+      
+      // Immediately trigger all dots once for instant feedback
+      if (this.audioNodes.size > 0) {
+        // Small delay to ensure everything is set up first
+        setTimeout(() => {
+          if (this.isPlaying) {
+            console.log('🔊 Triggering immediate initial sound for all dots');
+            
+            // Get all dot keys
+            const dotKeys = Array.from(this.audioNodes.keys());
+            
+            // If we only have one dot, trigger it directly
+            if (dotKeys.length === 1) {
+              this.triggerDotEnvelope(dotKeys[0]);
+            } 
+            // Otherwise stagger slightly for a pleasing "roll" effect
+            else {
+              dotKeys.forEach((dotKey, index) => {
+                setTimeout(() => {
+                  if (this.isPlaying) {
+                    this.triggerDotEnvelope(dotKey);
+                  }
+                }, index * 30); // 30ms stagger between each dot
+              });
+            }
+          }
+        }, 20);
+      }
     } else {
       this.stopAllRhythms();
       this.stopAllSources();
+      this.stopVolumeOscillation();
     }
   }
 
@@ -533,7 +592,12 @@ class DotGridAudioPlayer {
     // Initialize next trigger times with proper offsets
     const now = performance.now() / 1000; // Current time in seconds (more precise than Date.now)
     
-    this.audioNodes.forEach((nodes) => {
+    // Always trigger all dots immediately for instant feedback
+    const dotKeys = Array.from(this.audioNodes.keys());
+    console.log(`🔊 Will immediately trigger all ${dotKeys.length} dots for instant feedback`);
+    
+    // Set up next trigger times for all dots
+    this.audioNodes.forEach((nodes, dotKey) => {
       const baseInterval = BASE_CYCLE_TIME / nodes.subdivision;
       // Apply the offset to stagger dots in the same row
       const offsetTime = baseInterval * nodes.offset;
@@ -543,7 +607,17 @@ class DotGridAudioPlayer {
     // Start the animation frame loop
     this.animationFrameId = requestAnimationFrame(this.animationFrameLoop.bind(this));
     
-    console.log(`🔊 Started polyrhythm system with cycle time: ${BASE_CYCLE_TIME}s using requestAnimationFrame`);
+    // Immediately trigger all dots with a slight stagger
+    dotKeys.forEach((dotKey, index) => {
+      setTimeout(() => {
+        if (this.isPlaying) {
+          console.log(`🔊 Immediate trigger for dot ${dotKey}`);
+          this.triggerDotEnvelope(dotKey);
+        }
+      }, index * 20); // 20ms stagger between each dot for a nice "roll" effect
+    });
+    
+    console.log(`🔊 Started rhythm system with CONSISTENT TIMING for all dots - cycle time: ${BASE_CYCLE_TIME}s`);
   }
   
   /**
@@ -834,6 +908,120 @@ class DotGridAudioPlayer {
   }
 
   /**
+   * Start volume oscillation
+   */
+  private startVolumeOscillation(): void {
+    // Stop any existing oscillation
+    this.stopVolumeOscillation();
+    
+    // Reset phase
+    this.volumeOscillationPhase = 0;
+    
+    // Start oscillation timer - 50ms updates for smooth changes
+    this.volumeOscillationTimer = window.setInterval(() => {
+      // Increment phase (2π rad/sec = 1Hz for 20 updates/sec)
+      this.volumeOscillationPhase += Math.PI / 10;
+      
+      // Calculate dB offset using sine wave (-range to +range)
+      const dbOffset = Math.sin(this.volumeOscillationPhase) * this.dbOscillationRange;
+      
+      // Apply dB-based volume with baseline
+      this.applyVolumeInDb(this.baseDbLevel + dbOffset);
+      
+      // Log volume at extremes of the cycle
+      if (Math.abs(Math.sin(this.volumeOscillationPhase)) > 0.99) {
+        console.log(`🔊 Volume cycle: ${(this.baseDbLevel + dbOffset).toFixed(1)}dB`);
+      }
+    }, 50);
+    
+    console.log(`🔊 Started volume oscillation (±${this.dbOscillationRange}dB range)`);
+  }
+  
+  /**
+   * Stop volume oscillation
+   */
+  private stopVolumeOscillation(): void {
+    if (this.volumeOscillationTimer !== null) {
+      clearInterval(this.volumeOscillationTimer);
+      this.volumeOscillationTimer = null;
+      
+      // Reset to baseline volume
+      this.applyVolumeInDb(this.baseDbLevel);
+      console.log('🔊 Stopped volume oscillation');
+    }
+  }
+  
+  /**
+   * Apply volume in decibels
+   * @param dbLevel Volume level in dB (0dB = reference level)
+   */
+  private applyVolumeInDb(dbLevel: number): void {
+    // Convert dB to gain ratio
+    const gainRatio = Math.pow(10, dbLevel / 20);
+    
+    // Apply to all gain nodes with minimal logging (to avoid console spam)
+    const shouldLog = Math.random() < 0.05; // Only log ~5% of changes
+    
+    if (shouldLog) {
+      console.log(`🔊 Setting volume: ${dbLevel.toFixed(1)}dB (gain: ${gainRatio.toFixed(2)})`);
+    }
+    
+    // Apply gain to all audio nodes
+    this.audioNodes.forEach((nodes) => {
+      const ctx = audioContext.getAudioContext();
+      const currentTime = ctx.currentTime;
+      const TRANSITION_TIME = 0.01; // 10ms for smooth but fast transition
+      
+      // Apply with smooth transition
+      nodes.gain.gain.cancelScheduledValues(currentTime);
+      nodes.gain.gain.linearRampToValueAtTime(gainRatio * MASTER_GAIN, currentTime + TRANSITION_TIME);
+    });
+  }
+
+  /**
+   * Set the dB oscillation range
+   * @param dbRange Range in dB to oscillate (±dbRange)
+   */
+  public setOscillationRange(dbRange: number): void {
+    this.dbOscillationRange = Math.max(1, Math.min(24, dbRange));
+    console.log(`🔊 Set oscillation range to ±${this.dbOscillationRange}dB`);
+  }
+
+  /**
+   * Set the master volume in dB
+   * @param dbLevel Volume level in dB (0dB = reference level)
+   */
+  public setVolumeDb(dbLevel: number): void {
+    this.baseDbLevel = dbLevel;
+    this.applyVolumeInDb(dbLevel);
+  }
+
+  /**
+   * Set the master volume (legacy method, kept for compatibility)
+   * @param volume Volume level between 0 and 1
+   */
+  public setVolume(volume: number): void {
+    // Convert from linear to dB
+    // 0 -> -Infinity dB, but we'll use -60dB as practical minimum
+    // 1 -> 0dB (reference level)
+    const minDb = -60;
+    let dbLevel = minDb;
+    
+    if (volume > 0) {
+      // Convert from linear scale to logarithmic (dB)
+      dbLevel = 20 * Math.log10(volume);
+      // Clamp to reasonable minimum
+      dbLevel = Math.max(minDb, dbLevel);
+    }
+    
+    // Set as base level and apply
+    this.baseDbLevel = dbLevel;
+    this.applyVolumeInDb(dbLevel);
+    
+    console.log(`🔊 Legacy setVolume(${volume.toFixed(2)}) converted to ${dbLevel.toFixed(1)}dB`);
+  }
+
+  /**
    * Clean up resources
    */
   public dispose(): void {
@@ -842,6 +1030,7 @@ class DotGridAudioPlayer {
     this.setPlaying(false);
     this.stopAllRhythms();
     this.stopAllSources();
+    this.stopVolumeOscillation();
     
     // Ensure animation frames are cancelled
     if (this.animationFrameId !== null) {

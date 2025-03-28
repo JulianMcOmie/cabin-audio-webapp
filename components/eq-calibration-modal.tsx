@@ -36,6 +36,7 @@ export function EQCalibrationModal({ open, onClose }: EQCalibrationModalProps) {
                     <li>Left dots sound far to the left</li>
                     <li>Right dots sound far to the right</li>
                     <li>Dots are evenly spaced</li>
+                    <li>Dots stay in the same place as they oscillate in volume</li>
                   </ul>
                 </li>
               </ol>

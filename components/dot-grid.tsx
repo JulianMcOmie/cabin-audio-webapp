@@ -444,47 +444,17 @@ export function DotCalibration({
   // Always use multiple selection mode
   const selectionMode = 'multiple';
   
-  // Track if playback was manually stopped
-  const manuallyStopped = useRef(false);
-  
-  // Auto-play/stop when dots are added/removed
-  useEffect(() => {
-    // If adding first dot, start playing (unless manually stopped)
-    if (selectedDots.size === 1 && !isPlaying && !manuallyStopped.current) {
-      setIsPlaying(true);
-      manuallyStopped.current = false;
-    }
-    
-    // If removing last dot, stop playing
-    if (selectedDots.size === 0 && isPlaying) {
-      setIsPlaying(false);
-    }
-  }, [selectedDots.size, isPlaying, setIsPlaying]);
-  
-  // Reset manuallyStopped flag when selection changes
-  useEffect(() => {
-    if (selectedDots.size > 0) {
-      manuallyStopped.current = false;
-    }
-  }, [selectedDots]);
-  
   // Update audio player when selected dots change
   useEffect(() => {
     const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
-    // Always use multiple selection (false for fixed rhythm parameter)
     audioPlayer.updateDots(selectedDots, gridSize, columnCount, false);
   }, [selectedDots, gridSize, columnCount]);
   
-  // Update audio player when playing state changes
+  // Direct control of audio player playback state - no fancy logic
   useEffect(() => {
     const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
     audioPlayer.setPlaying(isPlaying);
-    
-    // Track when playback is manually stopped
-    if (!isPlaying && selectedDots.size > 0) {
-      manuallyStopped.current = true;
-    }
-  }, [isPlaying, selectedDots.size]);
+  }, [isPlaying]);
   
   // Connect the pre-EQ analyzer if provided
   useEffect(() => {
@@ -498,8 +468,8 @@ export function DotCalibration({
     }
   }, [preEQAnalyser, isPlaying]);
   
+  // Simple dot toggle handler
   const handleDotToggle = (x: number, y: number) => {
-    // Always use multiple selection mode
     const newSelectedDots = new Set(selectedDots);
     const dotKey = `${x},${y}`;
     
@@ -511,10 +481,14 @@ export function DotCalibration({
     
     setSelectedDots(newSelectedDots);
     
-    // Start playing if adding the first dot and currently not playing
-    if (newSelectedDots.size === 1 && selectedDots.size === 0 && !isPlaying) {
+    // Auto-start when adding first dot
+    if (newSelectedDots.size === 1 && selectedDots.size === 0) {
       setIsPlaying(true);
-      manuallyStopped.current = false;
+    }
+    
+    // Auto-stop when removing last dot
+    if (newSelectedDots.size === 0 && selectedDots.size > 0) {
+      setIsPlaying(false);
     }
   };
   
@@ -612,6 +586,7 @@ export function DotCalibration({
     }
   };
   
+  // Simple clear selection
   const clearSelection = () => {
     setSelectedDots(new Set());
     if (isPlaying) {
