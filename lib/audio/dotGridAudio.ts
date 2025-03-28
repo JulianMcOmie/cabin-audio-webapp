@@ -141,18 +141,24 @@ class DotGridAudioPlayer {
     
     this.gridSize = rows;
     
-    let columnsChanged = false;
-    if (columns !== undefined && columns !== this.columnCount) {
+    // let columnsChanged = false;
+    // if (columns !== undefined && columns !== this.columnCount) {
+    //   this.columnCount = columns;
+    //   columnsChanged = true;
+    // }
+
+    if (columns !== undefined) {
       this.columnCount = columns;
-      columnsChanged = true;
+      this.updateAllDotPanning();
     }
+    
     
     console.log(`🔊 Grid size set to ${this.gridSize} rows × ${this.columnCount} columns`);
     
-    // Update panning for all dots if column count changed
-    if (columnsChanged) {
-      this.updateAllDotPanning();
-    }
+    // // Update panning for all dots if column count changed
+    // if (columnsChanged) {
+    //   this.updateAllDotPanning();
+    // }
     
     // Update playback based on current mode
     if (this.isPlaying) {
@@ -362,9 +368,13 @@ class DotGridAudioPlayer {
   public updateDots(dots: Set<string>, currentGridSize?: number, currentColumns?: number, useSingleRhythm: boolean = false): void {
     console.log(`🔊 Updating dots: ${dots.size} selected, singleRhythm: ${useSingleRhythm}`);
     
-    // Update grid size if provided
+    // Update grid size if provided and changed
     if (currentGridSize && currentGridSize !== this.gridSize) {
       this.setGridSize(currentGridSize, currentColumns);
+    }
+    // Also update column count if only it changed but grid size didn't
+    else if (currentColumns && currentColumns !== this.columnCount) {
+      this.setGridSize(this.gridSize, currentColumns);
     }
     
     // Update single rhythm flag

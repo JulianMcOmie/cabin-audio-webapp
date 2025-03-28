@@ -79,6 +79,9 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   // Add state for toggling between Glyph Grid and Dot Grid
   const [activeGrid, setActiveGrid] = useState<"line" | "dot">("dot");
 
+  // New state to track selected dots for dot grid
+  const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set());
+
   // Measure the EQ component's width when it changes
   useEffect(() => {
     if (!eqContainerRef.current) return
@@ -253,6 +256,22 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   // Comment out auto-calibration related state
   // const [showCalibrationProcess, setShowCalibrationProcess] = useState(false)
 
+  // Add a function to handle dot grid play/stop
+  const handleDotGridPlayToggle = () => {
+    if (dotGridPlaying) {
+      // If stopping, clear the dot selection
+      setDotGridPlaying(false);
+      setSelectedDots(new Set());
+    } else {
+      // If starting and there are no dots selected, don't start
+      // (this is handled by the DotCalibration component internally)
+      setDotGridPlaying(true);
+    }
+    
+    // Stop the glyph grid if it's playing
+    if (glyphGridPlaying) setGlyphGridPlaying(false);
+  };
+
   return (
     <div className="mx-auto space-y-8 pb-24">
       <div className="flex justify-between items-center mb-2">
@@ -375,6 +394,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   setIsPlaying={setDotGridPlaying}
                   disabled={false}
                   preEQAnalyser={preEQAnalyser}
+                  selectedDots={selectedDots}
+                  setSelectedDots={setSelectedDots}
                 />
               )}
             </div>
@@ -390,8 +411,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                     setGlyphGridPlaying(!glyphGridPlaying);
                     if (dotGridPlaying) setDotGridPlaying(false);
                   } else {
-                    setDotGridPlaying(!dotGridPlaying);
-                    if (glyphGridPlaying) setGlyphGridPlaying(false);
+                    handleDotGridPlayToggle();
                   }
                 }}
               >

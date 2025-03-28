@@ -130,6 +130,7 @@ interface MultiSelectionDotGridProps {
   onDotToggle: (x: number, y: number) => void;
   disabled?: boolean;
   isPlaying?: boolean;
+  selectionMode?: 'single' | 'multiple';
 }
 
 // Constants for the grid
@@ -148,13 +149,16 @@ export function DotGrid({
   onDotToggle,
   disabled = false,
   isPlaying = false,
-  columnCount = DEFAULT_COLUMNS
-}: MultiSelectionDotGridProps & { columnCount?: number }) {
+  columnCount = DEFAULT_COLUMNS,
+  selectionMode = 'multiple'
+}: MultiSelectionDotGridProps & { columnCount?: number, selectionMode?: 'single' | 'multiple' }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 })
   const [lastClickedDot, setLastClickedDot] = useState<{x: number, y: number} | null>(null)
   const [isDragging, setIsDragging] = useState(false)
+  const [hasMoved, setHasMoved] = useState(false)
+  const [clickStartPos, setClickStartPos] = useState<{x: number, y: number} | null>(null)
   
   // Set up observer to detect theme changes
   useEffect(() => {
@@ -312,13 +316,37 @@ export function DotGrid({
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (disabled) return
     
-    handleDotSelection(e)
-    setIsDragging(true)
+    // Record the start position for later comparison
+    setClickStartPos({
+      x: e.clientX,
+      y: e.clientY
+    });
+    
+    setHasMoved(false); // Reset move tracking
+    setIsDragging(true);
+    
+    // Call handleDotSelection immediately for better responsiveness
+    handleDotSelection(e);
   }
   
   const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!isDragging || disabled) return
-    handleDotSelection(e)
+    
+    // Check if we've moved enough to consider this a drag
+    if (clickStartPos) {
+      const deltaX = Math.abs(e.clientX - clickStartPos.x);
+      const deltaY = Math.abs(e.clientY - clickStartPos.y);
+      
+      // If moved more than a few pixels, consider it a drag
+      if (deltaX > 3 || deltaY > 3) {
+        setHasMoved(true);
+      }
+    }
+    
+    // Only process selection during drag if actually moving AND in multiple selection mode
+    if (hasMoved && selectionMode === 'multiple') {
+      handleDotSelection(e);
+    }
   }
   
   const handleCanvasMouseUp = () => {
@@ -333,7 +361,7 @@ export function DotGrid({
   const handleDotSelection = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current
     if (!canvas) return
-
+    
     const rect = canvas.getBoundingClientRect()
     const clickX = e.clientX - rect.left
     const clickY = e.clientY - rect.top
@@ -364,14 +392,15 @@ export function DotGrid({
     }
     
     // Save the last clicked dot
-    setLastClickedDot(closestDot);
+    const isSameAsPrevious = lastClickedDot && 
+      lastClickedDot.x === closestDot.x && 
+      lastClickedDot.y === closestDot.y;
     
-    // Toggle the closest dot
-    // Only call onDotToggle if the dot is different from the last one
-    // to avoid toggling the same dot multiple times during drag
-    if (!lastClickedDot || 
-        lastClickedDot.x !== closestDot.x || 
-        lastClickedDot.y !== closestDot.y) {
+    // Only update if:
+    // 1. We're doing the initial click and not dragging, OR
+    // 2. We're dragging and this is a new dot (different from the last clicked)
+    if ((!isDragging || !isSameAsPrevious)) {
+      setLastClickedDot(closestDot);
       onDotToggle(closestDot.x, closestDot.y);
     }
   }
@@ -391,25 +420,44 @@ export function DotGrid({
 // Create a DotCalibration component that wraps DotGrid with state and controls
 interface DotCalibrationProps {
   isPlaying: boolean;
-  setIsPlaying: (isPlaying: boolean) => void; // Changed to require setIsPlaying for auto-play/stop
+  setIsPlaying: (isPlaying: boolean) => void;
   disabled?: boolean;
-  preEQAnalyser?: AnalyserNode | null; // Added to receive analyzer from parent
+  preEQAnalyser?: AnalyserNode | null;
+  selectedDots?: Set<string>;
+  setSelectedDots?: React.Dispatch<React.SetStateAction<Set<string>>>;
 }
 
-export function DotCalibration({ isPlaying, setIsPlaying, disabled = false, preEQAnalyser = null }: DotCalibrationProps) {
+export function DotCalibration({ 
+  isPlaying, 
+  setIsPlaying, 
+  disabled = false, 
+  preEQAnalyser = null,
+  selectedDots: externalSelectedDots,
+  setSelectedDots: externalSetSelectedDots 
+}: DotCalibrationProps) {
   // Always use odd numbers for grid dimensions
   const [gridSize, setGridSize] = useState(5); // Start with 5 rows (odd number)
   const [columnCount, setColumnCount] = useState(5); // Start with 5 columns (odd number)
-  const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set()); // Start with no dots selected
+  
+  // Use either external or internal state for selected dots
+  const [internalSelectedDots, setInternalSelectedDots] = useState<Set<string>>(new Set()); // Start with no dots selected
+  
+  // Use either external or internal state
+  const selectedDots = externalSelectedDots !== undefined ? externalSelectedDots : internalSelectedDots;
+  const setSelectedDots = externalSetSelectedDots !== undefined ? externalSetSelectedDots : setInternalSelectedDots;
   
   // New selection mode - single vs multiple
   const [selectionMode, setSelectionMode] = useState<'single' | 'multiple'>('single');
   
+  // Track if playback was manually stopped
+  const manuallyStopped = useRef(false);
+  
   // Auto-play/stop when dots are added/removed
   useEffect(() => {
-    // If adding first dot, start playing
-    if (selectedDots.size === 1 && !isPlaying) {
+    // If adding first dot, start playing (unless manually stopped)
+    if (selectedDots.size === 1 && !isPlaying && !manuallyStopped.current) {
       setIsPlaying(true);
+      manuallyStopped.current = false;
     }
     
     // If removing last dot, stop playing
@@ -417,6 +465,13 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false, preE
       setIsPlaying(false);
     }
   }, [selectedDots.size, isPlaying, setIsPlaying]);
+  
+  // Reset manuallyStopped flag when selection changes
+  useEffect(() => {
+    if (selectedDots.size > 0) {
+      manuallyStopped.current = false;
+    }
+  }, [selectedDots]);
   
   // Update audio player when selected dots change
   useEffect(() => {
@@ -429,7 +484,12 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false, preE
   useEffect(() => {
     const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
     audioPlayer.setPlaying(isPlaying);
-  }, [isPlaying]);
+    
+    // Track when playback is manually stopped
+    if (!isPlaying && selectedDots.size > 0) {
+      manuallyStopped.current = true;
+    }
+  }, [isPlaying, selectedDots.size]);
   
   // Connect the pre-EQ analyzer if provided
   useEffect(() => {
@@ -448,13 +508,17 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false, preE
       // In single selection mode, only allow one dot at a time
       const dotKey = `${x},${y}`;
       if (selectedDots.has(dotKey)) {
-        // If clicking on the already selected dot, deselect it
+        // If clicking on the already selected dot, deselect it and stop playback
         const newSelectedDots = new Set<string>();
         setSelectedDots(newSelectedDots);
+        if (isPlaying) {
+          setIsPlaying(false);
+        }
       } else {
         // Otherwise, select only this dot
         const newSelectedDots = new Set<string>([dotKey]);
         setSelectedDots(newSelectedDots);
+        manuallyStopped.current = false; // Reset the manual stop flag when selecting a new dot
       }
     } else {
       // In multiple selection mode, toggle individual dots
@@ -475,6 +539,7 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false, preE
     setSelectionMode(prev => prev === 'single' ? 'multiple' : 'single');
     // Clear selection when switching modes
     setSelectedDots(new Set());
+    setIsPlaying(false);
   };
   
   // Modify row adjustment to preserve relative dot positions
@@ -573,6 +638,9 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false, preE
   
   const clearSelection = () => {
     setSelectedDots(new Set());
+    if (isPlaying) {
+      setIsPlaying(false);
+    }
   };
   
   return (
@@ -586,6 +654,7 @@ export function DotCalibration({ isPlaying, setIsPlaying, disabled = false, preE
           onDotToggle={handleDotToggle}
           disabled={disabled}
           isPlaying={isPlaying}
+          selectionMode={selectionMode}
         />
       </div>
       
