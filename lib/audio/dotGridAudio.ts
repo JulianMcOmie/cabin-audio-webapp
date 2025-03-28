@@ -19,30 +19,23 @@ const MIN_SUBDIVISION = 2; // Minimum subdivision (lower dots)
 const MAX_SUBDIVISION = 16; // Maximum subdivision (higher dots)
 
 // Sequential playback settings
-const DOT_TIMING = 0.2; // Time between dots in sequential mode (seconds)
+// const DOT_TIMING = 0.2; // Time between dots in sequential mode (seconds)
 
 // Analyzer settings
 const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
 const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
 
 // Updated constants for frequency multiplier
-const DEFAULT_FREQ_MULTIPLIER = 1.0; // Default is no change (1.0)
-const MIN_FREQ_MULTIPLIER = 0.5; // Half the frequency (lower pitch)
-const MAX_FREQ_MULTIPLIER = 2.0; // Double the frequency (higher pitch)
+// const DEFAULT_FREQ_MULTIPLIER = 1.0; // Default is no change (1.0)
+// const MIN_FREQ_MULTIPLIER = 0.5; // Half the frequency (lower pitch)
+// const MAX_FREQ_MULTIPLIER = 2.0; // Double the frequency (higher pitch)
 const DEFAULT_SWEEP_DURATION = 8.0; // Default sweep cycle duration in seconds
-const MIN_SWEEP_DURATION = 2.0; // Minimum sweep cycle duration
-const MAX_SWEEP_DURATION = 30.0; // Maximum sweep cycle duration
+// const MIN_SWEEP_DURATION = 2.0; // Minimum sweep cycle duration
+// const MAX_SWEEP_DURATION = 30.0; // Maximum sweep cycle duration
 
 // Playback mode enum
 export enum PlaybackMode {
-  POLYRHYTHM = 'polyrhythm',
-  SEQUENTIAL = 'sequential'
-}
-
-// Filter mode enum
-export enum FilterMode {
-  BANDPASS = 'bandpass',
-  HIGHPASS_LOWPASS = 'highpass_lowpass'
+  POLYRHYTHM = 'polyrhythm' // Only keeping polyrhythm mode
 }
 
 class DotGridAudioPlayer {
@@ -55,17 +48,13 @@ class DotGridAudioPlayer {
     envelopeGain: GainNode;
     panner: StereoPannerNode;
     filter: BiquadFilterNode;
-    highpassFilter?: BiquadFilterNode; // Optional highpass filter
-    lowpassFilter?: BiquadFilterNode;  // Optional lowpass filter
     position: number; // Position for sorting
     rhythmInterval: number | null; // Rhythm interval ID
     subdivision: number; // Rhythm subdivision
     nextTriggerTime: number; // Next time to trigger this dot
     offset: number; // Offset within the row's rhythm (0-1)
     originalFrequency: number; // This NEVER changes
-    notchFilter: BiquadFilterNode;  // Add this new property for notch filter
-    notchOffsetRatio: number;       // Add this to track the notch offset ratio from center frequency
-    additionOrder: number;          // Track the order in which dots are added
+    additionOrder: number; // Track the order in which dots are added
   }> = new Map();
   private gridSize: number = 3; // Default row count
   private columnCount: number = COLUMNS; // Default column count
@@ -76,13 +65,12 @@ class DotGridAudioPlayer {
   
   // Sequential playback properties
   private playbackMode: PlaybackMode = PlaybackMode.POLYRHYTHM; // Default to polyrhythm mode
-  private filterMode: FilterMode = FilterMode.BANDPASS; // Default to bandpass filter
   private sequenceTimer: number | null = null; // Timer for sequential playback
   private sequenceIndex: number = 0; // Current index in the sequence
   private orderedDots: string[] = []; // Dots ordered for sequential playback
   
   // Replace freqOffset with freqMultiplier
-  private freqMultiplier: number = DEFAULT_FREQ_MULTIPLIER;
+  private freqMultiplier: number = 1.0; // Use fixed value
   private isSweeping: boolean = false;
   private sweepDuration: number = DEFAULT_SWEEP_DURATION;
   private sweepTimeoutId: number | null = null;
@@ -96,6 +84,9 @@ class DotGridAudioPlayer {
   // Sequence repetition tracking
   private sequenceRepeatCount: number = 0;
   private sequenceGroupStart: number = 0;
+  
+  // Add property to track single selection mode
+  private useSingleRhythm: boolean = false;
   
   private constructor() {
     // Initialize pink noise buffer
@@ -145,24 +136,48 @@ class DotGridAudioPlayer {
    * Set the current grid size
    */
   public setGridSize(rows: number, columns?: number): void {
+    const oldGridSize = this.gridSize;
+    const oldColumnCount = this.columnCount;
+    
     this.gridSize = rows;
     
+    let columnsChanged = false;
     if (columns !== undefined && columns !== this.columnCount) {
       this.columnCount = columns;
+      columnsChanged = true;
     }
     
     console.log(`🔊 Grid size set to ${this.gridSize} rows × ${this.columnCount} columns`);
     
+    // Update panning for all dots if column count changed
+    if (columnsChanged) {
+      this.updateAllDotPanning();
+    }
+    
     // Update playback based on current mode
     if (this.isPlaying) {
-      if (this.playbackMode === PlaybackMode.POLYRHYTHM) {
-        this.stopAllRhythms();
-        this.startAllRhythms();
-      } else {
-        // For sequential mode, update the ordered dots
-        this.updateOrderedDots();
-      }
+      this.stopAllRhythms();
+      this.startAllRhythms();
     }
+  }
+  
+  /**
+   * Update panning for all dots based on current column count
+   */
+  private updateAllDotPanning(): void {
+    this.audioNodes.forEach((nodes, dotKey) => {
+      const [x, y] = dotKey.split(',').map(Number);
+      
+      // Recalculate panning based on new column count
+      // Simple panning calculation that evenly distributes columns from -1 to 1
+      // First column (x=0) will be -1 (full left), last column will be 1 (full right)
+      const panPosition = this.columnCount <= 1 ? 0 : (2 * (x / (this.columnCount - 1)) - 1);
+      
+      // Update panner value
+      nodes.panner.pan.value = panPosition;
+      
+      console.log(`🔊 Updated panning for dot ${dotKey}: ${panPosition.toFixed(2)} (column ${x+1} of ${this.columnCount})`);
+    });
   }
 
   /**
@@ -255,36 +270,105 @@ class DotGridAudioPlayer {
   }
   
   /**
+   * Connect to an existing external analyzer
+   * @param analyser The analyzer node to connect to
+   */
+  public connectToAnalyser(analyser: AnalyserNode): void {
+    const ctx = audioContext.getAudioContext();
+    
+    // Clean up any existing connections first
+    if (this.preEQGain) {
+      this.preEQGain.disconnect();
+    }
+    
+    // Create a gain node if needed to connect to the analyzer
+    if (!this.preEQGain) {
+      this.preEQGain = ctx.createGain();
+      this.preEQGain.gain.value = 1.0;
+    }
+    
+    // Store the analyzer reference
+    this.preEQAnalyser = analyser;
+    
+    // Connect gain to analyzer and to EQ processor
+    const eq = eqProcessor.getEQProcessor();
+    this.preEQGain.connect(this.preEQAnalyser);
+    this.preEQGain.connect(eq.getInputNode());
+    
+    // Reconnect all sources to include analyzer in the signal chain
+    this.reconnectAllSources();
+    
+    console.log('🔊 Connected to external analyzer');
+  }
+  
+  /**
+   * Disconnect from the external analyzer
+   */
+  public disconnectFromAnalyser(): void {
+    // Clear the analyzer reference
+    this.preEQAnalyser = null;
+    
+    // Reconnect all sources directly to destination
+    if (this.preEQGain) {
+      this.preEQGain.disconnect();
+      this.preEQGain = null;
+      
+      // Reconnect without the analyzer
+      this.reconnectAllSources();
+    }
+    
+    console.log('🔊 Disconnected from external analyzer');
+  }
+  
+  /**
    * Reconnect all sources to include the analyzer in the signal chain
    */
   private reconnectAllSources(): void {
-    // Skip if analyzer not created or no gain node
-    if (!this.preEQGain) return;
+    // Skip if no audio nodes
+    if (this.audioNodes.size === 0) return;
     
-    // Reconnect all sources to include analyzer
-    this.audioNodes.forEach((nodes) => {
-      // Disconnect gain from its current destination
-      nodes.gain.disconnect();
-      
-      // Connect to the pre-EQ gain node
-      if (this.preEQGain) {
-        nodes.gain.connect(this.preEQGain);
+    const ctx = audioContext.getAudioContext();
+    
+    // Get the destination node (either preEQGain or directly to EQ processor)
+    const destinationNode = this.preEQGain ? 
+      this.preEQGain as AudioNode : 
+      eqProcessor.getEQProcessor().getInputNode();
+    
+    // Reconnect all sources to destination
+    this.audioNodes.forEach((nodes, dotKey) => {
+      try {
+        // Disconnect gain from its current destination
+        nodes.gain.disconnect();
+        
+        // Connect to the appropriate destination
+        if (destinationNode) {
+          nodes.gain.connect(destinationNode);
+        }
+      } catch (e) {
+        console.error(`Error reconnecting source for dot ${dotKey}:`, e);
       }
     });
     
-    console.log('🔊 Reconnected all sources to include analyzer');
+    console.log(`🔊 Reconnected all sources (${this.audioNodes.size} dots) to ${this.preEQGain ? 'analyzer' : 'EQ input'}`);
   }
 
   /**
    * Update the set of active dots
+   * @param dots Set of dot coordinates
+   * @param currentGridSize Optional grid size update
+   * @param currentColumns Optional column count update
+   * @param useSingleRhythm Whether to use a fixed rhythm for all dots (single selection mode)
    */
-  public updateDots(dots: Set<string>, currentGridSize?: number, currentColumns?: number): void {
-    console.log(`🔊 Updating dots: ${dots.size} selected`);
+  public updateDots(dots: Set<string>, currentGridSize?: number, currentColumns?: number, useSingleRhythm: boolean = false): void {
+    console.log(`🔊 Updating dots: ${dots.size} selected, singleRhythm: ${useSingleRhythm}`);
     
     // Update grid size if provided
     if (currentGridSize && currentGridSize !== this.gridSize) {
       this.setGridSize(currentGridSize, currentColumns);
     }
+    
+    // Update single rhythm flag
+    this.useSingleRhythm = useSingleRhythm;
     
     // Get current dots
     const currentDots = new Set(this.audioNodes.keys());
@@ -306,22 +390,12 @@ class DotGridAudioPlayer {
     // Calculate offsets for dots in the same row
     this.calculateRowOffsets();
     
-    // Update ordered dots for sequential playback
-    this.updateOrderedDots();
-    
-    // If playing, restart based on playback mode
+    // If playing, restart rhythm
     if (this.isPlaying) {
-      if (this.playbackMode === PlaybackMode.POLYRHYTHM) {
-        this.stopAllRhythms();
-        this.stopAllSources();
-        this.startAllSources();
-        this.startAllRhythms();
-      } else {
-        this.stopSequence();
-        this.stopAllSources();
-        this.startAllSources();
-        this.startSequence();
-      }
+      this.stopAllRhythms();
+      this.stopAllSources();
+      this.startAllSources();
+      this.startAllRhythms();
     }
   }
   
@@ -384,35 +458,15 @@ class DotGridAudioPlayer {
   }
 
   /**
-   * Update the ordered dots for sequential playback
-   */
-  private updateOrderedDots(): void {
-    // Get all dot keys
-    const dotKeys = Array.from(this.audioNodes.keys());
-    
-    // Sort by addition order instead of spatial position
-    const dots = dotKeys.map(key => {
-      const node = this.audioNodes.get(key);
-      return { 
-        key, 
-        additionOrder: node ? node.additionOrder : 0 
-      };
-    });
-    
-    // Sort by addition order (lowest to highest)
-    dots.sort((a, b) => a.additionOrder - b.additionOrder);
-    
-    // Extract the sorted keys
-    this.orderedDots = dots.map(dot => dot.key);
-    
-    console.log(`🔊 Updated ordered dots for sequential playback: ${this.orderedDots.length} dots (sorted by addition order)`);
-  }
-
-  /**
-   * Calculate subdivision based on vertical position
-   * Higher dots (smaller y values) get more subdivisions
+   * Calculate subdivision based on vertical position or use fixed value for single selection
    */
   private calculateSubdivision(y: number): number {
+    // If in single selection mode, use a fixed moderate subdivision
+    if (this.useSingleRhythm) {
+      return 8; // Fixed value for single selection - moderate repeat rate
+    }
+
+    // For multiple selection mode, use position-based subdivision
     // Invert y to make higher dots have more subdivisions
     // Normalize to 0-1 range
     const normalizedY = 1 - (y / (this.gridSize - 1));
@@ -448,119 +502,12 @@ class DotGridAudioPlayer {
     this.isPlaying = playing;
     
     if (playing) {
-    //   this.startTime = Date.now() / 1000; // Start time in seconds
       this.startAllSources();
-      
-      // Start the appropriate playback based on mode
-      if (this.playbackMode === PlaybackMode.POLYRHYTHM) {
-        this.startAllRhythms();
-      } else {
-        this.startSequence();
-      }
-      
-      // Start frequency sweep if enabled
-      if (this.isSweeping) {
-        this.startSweep();
-      }
+      this.startAllRhythms();
     } else {
-      // Stop the appropriate playback based on mode
-      if (this.playbackMode === PlaybackMode.POLYRHYTHM) {
-        this.stopAllRhythms();
-      } else {
-        this.stopSequence();
-      }
-      
-      // Stop frequency sweep if enabled
-      if (this.isSweeping) {
-        this.stopSweep();
-      }
-      
+      this.stopAllRhythms();
       this.stopAllSources();
     }
-  }
-
-  /**
-   * Start sequential playback
-   */
-  private startSequence(): void {
-    // Reset sequence index and repetition tracking
-    this.sequenceIndex = 0;
-    this.sequenceRepeatCount = 0;
-    this.sequenceGroupStart = 0;
-    
-    // If no dots, do nothing
-    if (this.orderedDots.length === 0) return;
-    
-    console.log(`🔊 Starting sequential playback with ${this.orderedDots.length} dots`);
-    
-    // Start the sequence timer
-    this.advanceSequence(); // Play the first dot immediately
-    
-    // Set up timer for subsequent dots
-    this.sequenceTimer = window.setInterval(() => {
-      this.advanceSequence();
-    }, DOT_TIMING * 1000);
-  }
-  
-  /**
-   * Advance the sequence to the next dot
-   */
-  private advanceSequence(): void {
-    // If no dots, do nothing
-    if (this.orderedDots.length === 0) return;
-    
-    // Special case for exactly two dots - implement "1 - both - 2 - both" pattern
-    if (this.orderedDots.length === 2) {
-      // Pattern: 0 (first dot) - 2 (both) - 1 (second dot) - 2 (both)
-      // Where "2" is our special code for triggering both dots
-      
-      if (this.sequenceIndex % 4 === 0) {
-        // First dot solo
-        this.triggerDotEnvelope(this.orderedDots[0]);
-      } else if (this.sequenceIndex % 4 === 1) {
-        // Both dots
-        this.triggerDotEnvelope(this.orderedDots[0]);
-        this.triggerDotEnvelope(this.orderedDots[1]);
-      } else if (this.sequenceIndex % 4 === 2) {
-        // Second dot solo
-        this.triggerDotEnvelope(this.orderedDots[1]);
-      } else {
-        // Both dots again
-        this.triggerDotEnvelope(this.orderedDots[0]);
-        this.triggerDotEnvelope(this.orderedDots[1]);
-      }
-      
-      // Advance to next step in pattern
-      this.sequenceIndex = (this.sequenceIndex + 1) % 4;
-      return;
-    }
-    
-    // Regular sequence behavior for any other number of dots
-    // Get the current dot key
-    const dotKey = this.orderedDots[this.sequenceIndex];
-    
-    // Trigger the envelope for this dot
-    this.triggerDotEnvelope(dotKey);
-    
-    // Simply advance to the next dot in sequence
-    this.sequenceIndex++;
-    
-    // If we reach the end, wrap around
-    if (this.sequenceIndex >= this.orderedDots.length) {
-      this.sequenceIndex = 0;
-    }
-  }
-  
-  /**
-   * Stop sequential playback
-   */
-  private stopSequence(): void {
-    if (this.sequenceTimer !== null) {
-      window.clearInterval(this.sequenceTimer);
-      this.sequenceTimer = null;
-    }
-    
-    this.sequenceIndex = 0;
   }
 
   /**
@@ -672,26 +619,10 @@ class DotGridAudioPlayer {
         source.buffer = this.pinkNoiseBuffer;
         source.loop = true;
         
-        // Connect the audio chain based on filter mode
-        if (this.filterMode === FilterMode.BANDPASS) {
-          // Bandpass approach (without notch filter):
-          // source -> filter -> panner -> envelopeGain -> gain -> destination
-          source.connect(nodes.filter);
-          nodes.filter.connect(nodes.panner);
-        } else {
-          // Highpass+Lowpass approach (without notch filter):
-          // source -> highpass -> lowpass -> panner -> envelopeGain -> gain -> destination
-          if (nodes.highpassFilter && nodes.lowpassFilter) {
-            source.connect(nodes.highpassFilter);
-            nodes.highpassFilter.connect(nodes.lowpassFilter);
-            nodes.lowpassFilter.connect(nodes.panner);
-          } else {
-            // Fallback to bandpass if the filters aren't available
-            source.connect(nodes.filter);
-            nodes.filter.connect(nodes.panner);
-          }
-        }
-        
+        // Connect the audio chain - simple bandpass approach
+        // source -> filter -> panner -> envelopeGain -> gain -> destination
+        source.connect(nodes.filter);
+        nodes.filter.connect(nodes.panner);
         nodes.panner.connect(nodes.envelopeGain);
         nodes.envelopeGain.connect(nodes.gain);
         
@@ -788,62 +719,6 @@ class DotGridAudioPlayer {
   }
 
   /**
-   * Set the filter mode
-   */
-  public setFilterMode(mode: FilterMode): void {
-    if (this.filterMode === mode) return;
-    
-    console.log(`🔊 Switching filter mode to: ${mode}`);
-    
-    // Store the previous playing state
-    const wasPlaying = this.isPlaying;
-    
-    // Stop current playback
-    if (wasPlaying) {
-      this.setPlaying(false);
-    }
-    
-    // Update mode
-    this.filterMode = mode;
-    
-    // Recreate all dots with the new filter mode
-    this.rebuildDots();
-    
-    // Resume playback if it was playing
-    if (wasPlaying) {
-      this.setPlaying(true);
-    }
-  }
-  
-  /**
-   * Get the current filter mode
-   */
-  public getFilterMode(): FilterMode {
-    return this.filterMode;
-  }
-  
-  /**
-   * Rebuild all dots with current filter mode
-   */
-  private rebuildDots(): void {
-    // Store the current dots
-    const currentDots = new Set(this.audioNodes.keys());
-    
-    // Clear all dots
-    this.audioNodes.clear();
-    
-    // Re-add all dots with the new filter mode
-    currentDots.forEach(dotKey => {
-      this.addDot(dotKey);
-    });
-    
-    // Recalculate row offsets
-    this.calculateRowOffsets();
-    
-    console.log(`🔊 Rebuilt all dots with filter mode: ${this.filterMode}`);
-  }
-
-  /**
    * Add a new dot to the audio system
    */
   private addDot(dotKey: string): void {
@@ -883,65 +758,16 @@ class DotGridAudioPlayer {
     
     console.log(`   Pan: ${panner.pan.value.toFixed(2)} (column ${x+1} of ${this.columnCount})`);
     
-    // Calculate Q (bandwidth)
-    // const distFromCenter = Math.abs(normalizedY - 0.5) * 2;
-    // const minQ = 1.0;
-    // const maxQ = 4.0;
-    const qValue = 3.0;//minQ + (1 - distFromCenter) * (maxQ - minQ);
+    // Set Q value
+    const qValue = 3.0;
     
-    // Create filter(s) based on the filter mode
+    // Create filter
     const filter = ctx.createBiquadFilter();
     filter.type = 'bandpass';
     filter.frequency.value = centerFreq;
     filter.Q.value = qValue;
     
-    // Create a unique notch filter for this dot
-    const notchFilter = ctx.createBiquadFilter();
-    notchFilter.type = 'notch';
-    
-    // Generate a deterministic but unique offset ratio based on the dot's position
-    // This creates a consistent "character" for each dot
-    // Use the dot position to create a pseudo-random but deterministic value
-    const hashValue = (x * 73 + y * 151) % 100; // Simple hash using prime numbers
-    const notchOffsetRatio = 0.85 + (hashValue / 100) * 0.3; // Range from 0.85 to 1.15 (±15%)
-    
-    // Calculate notch filter frequency based on offset ratio
-    const notchFreq = centerFreq * notchOffsetRatio;
-    
-    // Set notch filter parameters
-    notchFilter.frequency.value = notchFreq;
-    notchFilter.Q.value = 8.0; // Narrow notch for subtle effect
-    
-    // For highpass+lowpass mode, create additional filters
-    let highpassFilter: BiquadFilterNode | undefined = undefined;
-    let lowpassFilter: BiquadFilterNode | undefined = undefined;
-    
-    if (this.filterMode === FilterMode.HIGHPASS_LOWPASS) {
-      // Convert Q to bandwidth in octaves
-      // Approximate formula: BW = 2/Q
-      const bandwidthInOctaves = 2 / qValue;
-      
-      // Calculate cutoff frequencies (approximately centerFreq * 2^(±bw/2))
-      const lowCutoff = centerFreq * Math.pow(2, -bandwidthInOctaves/2);
-      const highCutoff = centerFreq * Math.pow(2, bandwidthInOctaves/2);
-      
-      // Create highpass filter
-      highpassFilter = ctx.createBiquadFilter();
-      highpassFilter.type = 'highpass';
-      highpassFilter.frequency.value = lowCutoff;
-      highpassFilter.Q.value = 0.7071; // Butterworth response
-      
-      // Create lowpass filter
-      lowpassFilter = ctx.createBiquadFilter();
-      lowpassFilter.type = 'lowpass';
-      lowpassFilter.frequency.value = highCutoff;
-      lowpassFilter.Q.value = 0.7071; // Butterworth response
-    }
-    
-    // Calculate position for sorting
-    const position = y * this.columnCount + x;
-    
-    // Calculate subdivision based on vertical position
+    // Calculate subdivision based on vertical position or fixed value for single selection
     const subdivision = this.calculateSubdivision(y);
     
     // Store the nodes with addition order
@@ -951,24 +777,19 @@ class DotGridAudioPlayer {
       envelopeGain: ctx.createGain(),
       panner,
       filter,
-      notchFilter,
-      notchOffsetRatio,
-      highpassFilter,
-      lowpassFilter,
-      position, // Store position for sorting
+      position: y * this.columnCount + x, // Store position for sorting
       rhythmInterval: null, // Rhythm interval ID
       subdivision, // Subdivision for this dot
       nextTriggerTime: 0, // Will be set when playback starts
       offset: 0, // Default offset, will be updated by calculateRowOffsets
-      originalFrequency: originalFrequency, // This NEVER changes
+      originalFrequency, // This NEVER changes
       additionOrder: this.dotAdditionCounter++ // Assign and increment counter
     });
     
-    // Log filter information including notch filter details
+    // Log filter information
     console.log(`🔊 Added dot ${dotKey} at position (${x},${y})`);
     console.log(`   Position: ${normalizedY.toFixed(2)}`);
-    console.log(`   Main Filter: ${centerFreq.toFixed(0)}Hz (Q=${qValue.toFixed(2)})`);
-    console.log(`   Notch Filter: ${notchFreq.toFixed(0)}Hz (offset ratio=${notchOffsetRatio.toFixed(3)})`);
+    console.log(`   Filter: ${centerFreq.toFixed(0)}Hz (Q=${qValue.toFixed(2)})`);
     console.log(`   Subdivision: ${subdivision}`);
     console.log(`   Rhythm: ${(BASE_CYCLE_TIME / subdivision).toFixed(3)}s intervals`);
   }
@@ -998,202 +819,7 @@ class DotGridAudioPlayer {
     
     console.log(`🔊 Removed dot ${dotKey}`);
   }
-  
-  /**
-   * Set frequency multiplier for all dots
-   * @param multiplier Frequency multiplier (0.5 to 2.0)
-   */
-  public setFrequencyMultiplier(multiplier: number): void {
-    // Limit to range
-    multiplier = Math.max(MIN_FREQ_MULTIPLIER, Math.min(MAX_FREQ_MULTIPLIER, multiplier));
-    
-    if (multiplier === this.freqMultiplier) return;
-    
-    console.log(`🔊 Setting frequency multiplier: ${multiplier.toFixed(2)}×`);
-    this.freqMultiplier = multiplier;
-    
-    // Update filters if playing - immediately apply to all dots
-    if (this.isPlaying) {
-      this.updateAllFilterFrequencies();
-    }
-  }
-  
-  /**
-   * Get the current frequency multiplier
-   */
-  public getFrequencyMultiplier(): number {
-    return this.freqMultiplier;
-  }
-  
-  /**
-   * Set whether frequency multiplier is sweeping
-   */
-  public setSweeping(enabled: boolean): void {
-    if (enabled === this.isSweeping) return;
-    
-    console.log(`🔊 Setting frequency sweep: ${enabled ? 'enabled' : 'disabled'}`);
-    this.isSweeping = enabled;
-    
-    if (this.isPlaying) {
-      if (enabled) {
-        this.startSweep();
-      } else {
-        this.stopSweep();
-      }
-    }
-  }
-  
-  /**
-   * Get whether frequency multiplier is sweeping
-   */
-  public isSweepEnabled(): boolean {
-    return this.isSweeping;
-  }
-  
-  /**
-   * Set sweep duration (time for a complete cycle)
-   */
-  public setSweepDuration(duration: number): void {
-    // Limit to range
-    duration = Math.max(MIN_SWEEP_DURATION, Math.min(MAX_SWEEP_DURATION, duration));
-    
-    if (duration === this.sweepDuration) return;
-    
-    console.log(`🔊 Setting sweep duration: ${duration.toFixed(1)}s`);
-    this.sweepDuration = duration;
-    
-    // Restart sweep if already sweeping
-    if (this.isPlaying && this.isSweeping) {
-      this.stopSweep();
-      this.startSweep();
-    }
-  }
-  
-  /**
-   * Get the current sweep duration
-   */
-  public getSweepDuration(): number {
-    return this.sweepDuration;
-  }
-  
-  /**
-   * Start frequency sweep
-   */
-  private startSweep(): void {
-    // Clear any existing sweep
-    this.stopSweep();
-    
-    const ctx = audioContext.getAudioContext();
-    const sweepTime = this.sweepDuration / 2; // Half cycle time
-    
-    // Schedule the sweep (runs continuously)
-    const scheduleNextSweep = () => {
-      if (!this.isPlaying || !this.isSweeping) {
-        return; // Exit if we're no longer playing or sweeping
-      }
-      
-      const startTime = ctx.currentTime;
-      
-      // Animate the frequency multiplier from minimum to maximum and back
-      this.audioNodes.forEach((nodes) => {
-        // Always use the stored original frequency as our baseline
-        const originalFreq = nodes.originalFrequency;
-        
-        // For bandpass, update the center frequency with a multiplier
-        if (this.filterMode === FilterMode.BANDPASS) {
-          // Update bandpass filter
-          nodes.filter.frequency.cancelScheduledValues(startTime);
-          nodes.filter.frequency.setValueAtTime(
-            originalFreq * this.freqMultiplier, 
-            startTime
-          );
-          
-          // Sweep from current to max multiplier
-          nodes.filter.frequency.exponentialRampToValueAtTime(
-            originalFreq * MAX_FREQ_MULTIPLIER,
-            startTime + sweepTime
-          );
-          
-          // Sweep from max to min multiplier
-          nodes.filter.frequency.exponentialRampToValueAtTime(
-            originalFreq * MIN_FREQ_MULTIPLIER,
-            startTime + sweepTime * 2
-          );
-          
-          // Also update notch filter to maintain relationship
-          nodes.notchFilter.frequency.cancelScheduledValues(startTime);
-          nodes.notchFilter.frequency.setValueAtTime(
-            originalFreq * this.freqMultiplier * nodes.notchOffsetRatio, 
-            startTime
-          );
-          
-          // Sweep from current to max multiplier (maintaining offset ratio)
-          nodes.notchFilter.frequency.exponentialRampToValueAtTime(
-            originalFreq * MAX_FREQ_MULTIPLIER * nodes.notchOffsetRatio,
-            startTime + sweepTime
-          );
-          
-          // Sweep from max to min multiplier (maintaining offset ratio)
-          nodes.notchFilter.frequency.exponentialRampToValueAtTime(
-            originalFreq * MIN_FREQ_MULTIPLIER * nodes.notchOffsetRatio,
-            startTime + sweepTime * 2
-          );
-        } else if (nodes.highpassFilter && nodes.lowpassFilter) {
-          // For highpass+lowpass, update both filters with a multiplier
-          // ... and also update the notch filter
-          // ... (similar implementation for both filters and notch)
-        }
-      });
-      
-      // Schedule the next sweep cycle
-      this.sweepTimeoutId = window.setTimeout(() => {
-        // Only proceed if we're still playing and sweeping
-        if (this.isPlaying && this.isSweeping) {
-          scheduleNextSweep();
-        }
-      }, sweepTime * 2 * 1000 - 50); // Schedule slightly before end
-    };
-    
-    // Start the first sweep cycle
-    scheduleNextSweep();
-    
-    console.log(`🔊 Started frequency sweep: ${MIN_FREQ_MULTIPLIER}× - ${MAX_FREQ_MULTIPLIER}×, duration: ${this.sweepDuration.toFixed(1)}s`);
-  }
-  
-  /**
-   * Stop frequency sweep
-   */
-  private stopSweep(): void {
-    // Clear the timeout if one exists
-    if (this.sweepTimeoutId !== null) {
-      window.clearTimeout(this.sweepTimeoutId);
-      this.sweepTimeoutId = null;
-    }
-    
-    // Reset all filter frequencies to base + current multiplier
-    if (this.isPlaying) {
-      this.updateAllFilterFrequencies();
-    }
-    
-    console.log('🔊 Stopped frequency sweep');
-  }
-  
-  /**
-   * Update all filter frequencies based on the current multiplier
-   * This is called any time the frequency multiplier changes
-   */
-  private updateAllFilterFrequencies(): void {
-    this.audioNodes.forEach((nodes) => {
-      // Use the stored original frequency for bandpass filter
-      const newFreq = nodes.originalFrequency * this.freqMultiplier;
-      nodes.filter.frequency.value = newFreq;
-      
-      // No longer updating notch filter as it's been removed from the chain
-    });
-    
-    console.log(`🔊 Updated all filter frequencies with multiplier: ${this.freqMultiplier.toFixed(2)}×`);
-  }
-  
+
   /**
    * Clean up resources
    */
@@ -1202,8 +828,6 @@ class DotGridAudioPlayer {
     
     this.setPlaying(false);
     this.stopAllRhythms();
-    this.stopSequence();
-    this.stopSweep();
     this.stopAllSources();
     
     // Ensure animation frames are cancelled

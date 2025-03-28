@@ -4,11 +4,11 @@ import { getAudioContext } from '@/lib/audio/audioContext'
 const DEFAULT_FREQ_MULTIPLIER = 1.0
 const DEFAULT_SWEEP_DURATION = 8.0 // 8 seconds per cycle
 const MASTER_GAIN = 0.5
-const ENVELOPE_ATTACK = 0.01 // 10ms
-const ENVELOPE_RELEASE_LOW_FREQ = 0.8 // 800ms for low frequencies
-const ENVELOPE_RELEASE_HIGH_FREQ = 0.2 // 200ms for high frequencies
+// const ENVELOPE_ATTACK = 0.01 // 10ms
+// const ENVELOPE_RELEASE_LOW_FREQ = 0.8 // 800ms for low frequencies
+// const ENVELOPE_RELEASE_HIGH_FREQ = 0.2 // 200ms for high frequencies
 const ENVELOPE_MAX_GAIN = 1.0
-const ENVELOPE_MIN_GAIN = 0.001
+// const ENVELOPE_MIN_GAIN = 0.001
 const DEFAULT_MODULATION_RATE = 8.0 // modulations per second
 const DEFAULT_MODULATION_DEPTH = 0.8 // how much to modulate (0-1)
 const ENVELOPE_ATTACK_TIME = 0.005 // 5ms attack
@@ -134,6 +134,7 @@ class GlyphGridAudioPlayer {
       b3 = 0.86650 * b3 + white * 0.3104856
       b4 = 0.55000 * b4 + white * 0.5329522
       b5 = -0.7616 * b5 - white * 0.0168980
+      b6 = white * 0.5362
       
       // Mix pink noise components
       const pink = b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362
@@ -269,8 +270,6 @@ class GlyphGridAudioPlayer {
   // New method to update audio parameters from a position
   private updateAudioParametersFromPosition(position: number): void {
     if (!this.currentGlyph) return
-    
-    const ctx = getAudioContext()
     
     // Get the glyph's position and size
     const { position: glyphPos, size: glyphSize } = this.currentGlyph
@@ -489,7 +488,6 @@ class GlyphGridAudioPlayer {
     }
     
     const startTime = Date.now()
-    const startMultiplier = this.freqMultiplier
     
     const updateSweep = () => {
       const elapsed = (Date.now() - startTime) / 1000 // seconds

@@ -133,12 +133,12 @@ interface MultiSelectionDotGridProps {
 }
 
 // Constants for the grid
-const DEFAULT_COLUMNS = 5; // Default number of columns
-const DEFAULT_ROWS = 5; // Changed from 3 to 5 as requested
-const MIN_COLUMNS = 2; // Minimum columns
-const MAX_COLUMNS = 10; // Maximum columns
-const MIN_ROWS = 3; // Minimum rows
-const MAX_ROWS = 9; // Maximum rows
+const DEFAULT_COLUMNS = 5; // Default number of columns (odd)
+const DEFAULT_ROWS = 5; // Default number of rows (odd)
+const MIN_COLUMNS = 3; // Minimum columns (odd)
+const MAX_COLUMNS = 15; // Maximum columns (odd)
+const MIN_ROWS = 3; // Minimum rows (odd)
+const MAX_ROWS = 15; // Maximum rows (odd)
 const BASE_DOT_RADIUS = 6; // Base dot size, will be adjusted as needed
 
 // New DotGrid component with multiple selection support
@@ -153,6 +153,8 @@ export function DotGrid({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 })
+  const [lastClickedDot, setLastClickedDot] = useState<{x: number, y: number} | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
   
   // Set up observer to detect theme changes
   useEffect(() => {
@@ -306,9 +308,29 @@ export function DotGrid({
     }
   }, [selectedDots, gridSize, disabled, isDarkMode, canvasSize, isPlaying, gridDimensions])
 
-  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  // Track drag events for continuous selection
+  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (disabled) return
-
+    
+    handleDotSelection(e)
+    setIsDragging(true)
+  }
+  
+  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isDragging || disabled) return
+    handleDotSelection(e)
+  }
+  
+  const handleCanvasMouseUp = () => {
+    setIsDragging(false)
+  }
+  
+  const handleCanvasMouseLeave = () => {
+    setIsDragging(false)
+  }
+  
+  // Function to handle dot selection (used by both click and drag)
+  const handleDotSelection = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current
     if (!canvas) return
 
@@ -341,15 +363,27 @@ export function DotGrid({
       }
     }
     
+    // Save the last clicked dot
+    setLastClickedDot(closestDot);
+    
     // Toggle the closest dot
-    onDotToggle(closestDot.x, closestDot.y);
+    // Only call onDotToggle if the dot is different from the last one
+    // to avoid toggling the same dot multiple times during drag
+    if (!lastClickedDot || 
+        lastClickedDot.x !== closestDot.x || 
+        lastClickedDot.y !== closestDot.y) {
+      onDotToggle(closestDot.x, closestDot.y);
+    }
   }
 
   return (
     <canvas
       ref={canvasRef}
       className={`w-full aspect-[4/3] cursor-pointer ${disabled ? "opacity-70 cursor-not-allowed" : ""}`}
-      onClick={handleCanvasClick}
+      onMouseDown={handleCanvasMouseDown}
+      onMouseMove={handleCanvasMouseMove}
+      onMouseUp={handleCanvasMouseUp}
+      onMouseLeave={handleCanvasMouseLeave}
     />
   )
 }
@@ -357,65 +391,39 @@ export function DotGrid({
 // Create a DotCalibration component that wraps DotGrid with state and controls
 interface DotCalibrationProps {
   isPlaying: boolean;
-  // setIsPlaying: (isPlaying: boolean) => void;
+  setIsPlaying: (isPlaying: boolean) => void; // Changed to require setIsPlaying for auto-play/stop
   disabled?: boolean;
+  preEQAnalyser?: AnalyserNode | null; // Added to receive analyzer from parent
 }
 
-export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationProps) {
-  const [gridSize, setGridSize] = useState(DEFAULT_ROWS);
-  const [columnCount, setColumnCount] = useState(DEFAULT_COLUMNS);
-  const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set());
-  const [playbackMode, setPlaybackMode] = useState<dotGridAudio.PlaybackMode>(
-    dotGridAudio.PlaybackMode.POLYRHYTHM
-  );
-  const [selectMode, setSelectMode] = useState<'row' | 'individual'>('row'); // Selection mode
+export function DotCalibration({ isPlaying, setIsPlaying, disabled = false, preEQAnalyser = null }: DotCalibrationProps) {
+  // Always use odd numbers for grid dimensions
+  const [gridSize, setGridSize] = useState(5); // Start with 5 rows (odd number)
+  const [columnCount, setColumnCount] = useState(5); // Start with 5 columns (odd number)
+  const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set()); // Start with no dots selected
   
-  // Change from fixed Hz offset to scalar multiplier
-  const [freqMultiplier, setFreqMultiplier] = useState(1.0); // Default 1.0 (no change)
-  const [isSweeping, setIsSweeping] = useState(false); // Default sweep off
-  const [sweepDuration] = useState(8); // Default 8 seconds per cycle
+  // New selection mode - single vs multiple
+  const [selectionMode, setSelectionMode] = useState<'single' | 'multiple'>('single');
   
-  // Initialize with all dots selected
+  // Auto-play/stop when dots are added/removed
   useEffect(() => {
-    // Select all dots by default when component mounts
-    const allDots = new Set<string>();
-    for (let y = 0; y < gridSize; y++) {
-      for (let x = 0; x < columnCount; x++) {
-        allDots.add(`${x},${y}`);
-      }
+    // If adding first dot, start playing
+    if (selectedDots.size === 1 && !isPlaying) {
+      setIsPlaying(true);
     }
-    setSelectedDots(allDots);
-  }, [columnCount, gridSize]);
-  
-  // Update audio player when grid dimensions change - reselect all dots
-  useEffect(() => {
-    // Update all dots when dimensions change
-    const newSelectedDots = new Set<string>();
-    for (let y = 0; y < gridSize; y++) {
-      for (let x = 0; x < columnCount; x++) {
-        if (selectedDots.has(`${x},${y}`) || selectedDots.size === 0) {
-          newSelectedDots.add(`${x},${y}`);
-        }
-      }
-    }
-    setSelectedDots(newSelectedDots);
-  }, [gridSize]);
-  
-  // Initialize the audio player
-  useEffect(() => {
-    const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
     
-    return () => {
-      // Clean up audio on unmount
-      audioPlayer.setPlaying(false);
-    };
-  }, []);
+    // If removing last dot, stop playing
+    if (selectedDots.size === 0 && isPlaying) {
+      setIsPlaying(false);
+    }
+  }, [selectedDots.size, isPlaying, setIsPlaying]);
   
   // Update audio player when selected dots change
   useEffect(() => {
     const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
-    audioPlayer.updateDots(selectedDots, gridSize, columnCount);
-  }, [selectedDots, gridSize, columnCount]);
+    // Pass the current selection mode to use fixed rhythm for single selection
+    audioPlayer.updateDots(selectedDots, gridSize, columnCount, selectionMode === 'single');
+  }, [selectedDots, gridSize, columnCount, selectionMode]);
   
   // Update audio player when playing state changes
   useEffect(() => {
@@ -423,123 +431,138 @@ export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationPr
     audioPlayer.setPlaying(isPlaying);
   }, [isPlaying]);
   
-  // Update audio player when playback mode changes
+  // Connect the pre-EQ analyzer if provided
   useEffect(() => {
-    const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
-    audioPlayer.setPlaybackMode(playbackMode);
-  }, [playbackMode]);
-  
-  // Update audio player when frequency multiplier changes
-  useEffect(() => {
-    const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
-    audioPlayer.setFrequencyMultiplier(freqMultiplier);
-  }, [freqMultiplier]);
-  
-  // Update audio player when frequency sweep state changes
-  useEffect(() => {
-    const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
-    audioPlayer.setSweeping(isSweeping);
-  }, [isSweeping]);
-  
-  // Update audio player when sweep duration changes
-  useEffect(() => {
-    const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
-    audioPlayer.setSweepDuration(sweepDuration);
-  }, [sweepDuration]);
+    if (preEQAnalyser && isPlaying) {
+      const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
+      audioPlayer.connectToAnalyser(preEQAnalyser);
+      
+      return () => {
+        audioPlayer.disconnectFromAnalyser();
+      };
+    }
+  }, [preEQAnalyser, isPlaying]);
   
   const handleDotToggle = (x: number, y: number) => {
-    const newSelectedDots = new Set(selectedDots);
-    
-    // Different behavior based on selection mode
-    if (selectMode === 'row') {
-      // Get all dots in the row
-      const rowDots = [];
-      let rowSelected = true;
-      
-      // Check if all dots in this row are already selected
-      for (let col = 0; col < columnCount; col++) {
-        const dotKey = `${col},${y}`;
-        rowDots.push(dotKey);
-        if (!newSelectedDots.has(dotKey)) {
-          rowSelected = false;
-        }
-      }
-      
-      // Toggle all dots in the row
-      for (const dotKey of rowDots) {
-        if (rowSelected) {
-          newSelectedDots.delete(dotKey);
-        } else {
-          newSelectedDots.add(dotKey);
-        }
+    if (selectionMode === 'single') {
+      // In single selection mode, only allow one dot at a time
+      const dotKey = `${x},${y}`;
+      if (selectedDots.has(dotKey)) {
+        // If clicking on the already selected dot, deselect it
+        const newSelectedDots = new Set<string>();
+        setSelectedDots(newSelectedDots);
+      } else {
+        // Otherwise, select only this dot
+        const newSelectedDots = new Set<string>([dotKey]);
+        setSelectedDots(newSelectedDots);
       }
     } else {
-      // Individual dot selection mode
+      // In multiple selection mode, toggle individual dots
+      const newSelectedDots = new Set(selectedDots);
       const dotKey = `${x},${y}`;
+      
       if (newSelectedDots.has(dotKey)) {
         newSelectedDots.delete(dotKey);
       } else {
         newSelectedDots.add(dotKey);
       }
+      
+      setSelectedDots(newSelectedDots);
     }
-    
-    setSelectedDots(newSelectedDots);
-  };
-  
-  const togglePlaybackMode = () => {
-    setPlaybackMode(prevMode => 
-      prevMode === dotGridAudio.PlaybackMode.POLYRHYTHM
-        ? dotGridAudio.PlaybackMode.SEQUENTIAL
-        : dotGridAudio.PlaybackMode.POLYRHYTHM
-    );
   };
   
   const toggleSelectionMode = () => {
-    setSelectMode(prev => prev === 'row' ? 'individual' : 'row');
+    setSelectionMode(prev => prev === 'single' ? 'multiple' : 'single');
+    // Clear selection when switching modes
+    setSelectedDots(new Set());
   };
   
+  // Modify row adjustment to preserve relative dot positions
   const increaseRows = () => {
     if (gridSize < MAX_ROWS) {
-      setGridSize(gridSize + 1);
+      const oldGridSize = gridSize;
+      const newGridSize = gridSize + 2; // Add 2 to maintain odd number
+      
+      // Remap dots to preserve relative positions
+      const newSelectedDots = new Set<string>();
+      selectedDots.forEach(dot => {
+        const [x, y] = dot.split(',').map(Number);
+        if (x < columnCount) {
+          // Calculate the relative position in the old grid (0-1)
+          const relativePos = y / (oldGridSize - 1);
+          // Map to the same relative position in the new grid
+          const newY = Math.round(relativePos * (newGridSize - 1));
+          newSelectedDots.add(`${x},${newY}`);
+        }
+      });
+      
+      setGridSize(newGridSize);
+      setSelectedDots(newSelectedDots);
     }
   };
   
   const decreaseRows = () => {
     if (gridSize > MIN_ROWS) {
-      // Clean up any dots outside new grid size
-      const newSelectedDots = new Set<string>();
+      const oldGridSize = gridSize;
+      const newGridSize = gridSize - 2; // Subtract 2 to maintain odd number
       
+      // Remap dots to preserve relative positions
+      const newSelectedDots = new Set<string>();
       selectedDots.forEach(dot => {
         const [x, y] = dot.split(',').map(Number);
-        if (x < columnCount && y < gridSize - 1) {
-          newSelectedDots.add(dot);
+        if (x < columnCount) {
+          // Calculate the relative position in the old grid (0-1)
+          const relativePos = y / (oldGridSize - 1);
+          // Map to the same relative position in the new grid
+          const newY = Math.round(relativePos * (newGridSize - 1));
+          newSelectedDots.add(`${x},${newY}`);
         }
       });
       
-      setGridSize(gridSize - 1);
+      setGridSize(newGridSize);
       setSelectedDots(newSelectedDots);
     }
   };
 
+  // Modify column adjustment to preserve relative dot positions
   const increaseColumns = () => {
     if (columnCount < MAX_COLUMNS) {
-      // Increment by 1 (no need to maintain odd numbers anymore)
-      setColumnCount(columnCount + 1);
+      const oldColumnCount = columnCount;
+      const newColumnCount = columnCount + 2; // Add 2 to maintain odd number
+      
+      // Remap dots to preserve relative positions
+      const newSelectedDots = new Set<string>();
+      selectedDots.forEach(dot => {
+        const [x, y] = dot.split(',').map(Number);
+        if (y < gridSize) {
+          // Calculate the relative position in the old grid (0-1)
+          const relativePos = x / (oldColumnCount - 1);
+          // Map to the same relative position in the new grid
+          const newX = Math.round(relativePos * (newColumnCount - 1));
+          newSelectedDots.add(`${newX},${y}`);
+        }
+      });
+      
+      setColumnCount(newColumnCount);
+      setSelectedDots(newSelectedDots);
     }
   };
   
   const decreaseColumns = () => {
     if (columnCount > MIN_COLUMNS) {
-      // Decrement by 1 (no need to maintain odd numbers anymore)
-      const newColumnCount = columnCount - 1;
+      const oldColumnCount = columnCount;
+      const newColumnCount = columnCount - 2; // Subtract 2 to maintain odd number
       
-      // Clean up any dots that would be outside the new grid dimensions
+      // Remap dots to preserve relative positions
       const newSelectedDots = new Set<string>();
-      
       selectedDots.forEach(dot => {
         const [x, y] = dot.split(',').map(Number);
-        if (x < newColumnCount && y < gridSize) {
-          newSelectedDots.add(dot);
+        if (y < gridSize) {
+          // Calculate the relative position in the old grid (0-1)
+          const relativePos = x / (oldColumnCount - 1);
+          // Map to the same relative position in the new grid
+          const newX = Math.round(relativePos * (newColumnCount - 1));
+          newSelectedDots.add(`${newX},${y}`);
         }
       });
       
@@ -550,22 +573,6 @@ export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationPr
   
   const clearSelection = () => {
     setSelectedDots(new Set());
-  };
-  
-  // Update handler function for frequency multiplier slider
-  const handleFreqMultiplierChange = (value: number[]) => {
-    setFreqMultiplier(value[0]);
-  };
-  
-  // Format multiplier for display
-  const formatMultiplier = (multiplier: number) => {
-    if (multiplier === 1.0) {
-      return "1.0× (no change)";
-    } else if (multiplier < 1.0) {
-      return `${multiplier.toFixed(2)}× (lower)`;
-    } else {
-      return `${multiplier.toFixed(2)}× (higher)`;
-    }
   };
   
   return (
@@ -589,72 +596,18 @@ export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationPr
       
       {/* Controls */}
       <div className="space-y-3">
-        {/* Frequency Multiplier */}
-        <div className="flex flex-col space-y-1">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium">Frequency Multiplier</span>
-            <span className="text-xs text-muted-foreground">
-              {formatMultiplier(freqMultiplier)}
-            </span>
-          </div>
-          <Slider
-            disabled={disabled || isSweeping}
-            min={0.5}
-            max={2.0}
-            step={0.01}
-            value={[freqMultiplier]}
-            onValueChange={handleFreqMultiplierChange}
-            className={`${disabled || isSweeping ? "opacity-70" : ""} py-0`}
-          />
-          <div className="flex justify-between text-[10px] text-muted-foreground">
-            <span>0.5×</span>
-            <span>1.0×</span>
-            <span>2.0×</span>
-          </div>
-        </div>
-        
-        {/* Frequency Sweep Toggle */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <Switch 
-              checked={isSweeping}
-              onCheckedChange={setIsSweeping}
-              disabled={disabled}
-            />
-            <Label className="text-xs">Frequency Sweep</Label>
-          </div>
-          <div className="text-xs text-muted-foreground">
-            {isSweeping ? "Auto" : "Fixed"}
-          </div>
-        </div>
-        
-        {/* Playback mode toggle */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <Switch
-              checked={playbackMode === dotGridAudio.PlaybackMode.SEQUENTIAL}
-              onCheckedChange={togglePlaybackMode}
-              disabled={disabled}
-            />
-            <Label className="text-xs">Sequential Mode</Label>
-          </div>
-          <div className="text-xs text-muted-foreground">
-            {playbackMode === dotGridAudio.PlaybackMode.POLYRHYTHM ? "All" : "One"}
-          </div>
-        </div>
-        
         {/* Selection mode toggle */}
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
             <Switch
-              checked={selectMode === 'individual'}
+              checked={selectionMode === 'multiple'}
               onCheckedChange={toggleSelectionMode}
               disabled={disabled}
             />
-            <Label className="text-xs">Individual Selection</Label>
+            <Label className="text-xs">Multiple Selection</Label>
           </div>
           <div className="text-xs text-muted-foreground">
-            {selectMode === 'row' ? "Row" : "Dot"}
+            {selectionMode === 'single' ? "Single" : "Multiple"}
           </div>
         </div>
         

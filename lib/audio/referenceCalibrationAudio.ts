@@ -1,4 +1,3 @@
-import { M_PLUS_1 } from 'next/font/google';
 import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
 import { useEQProfileStore } from '../stores';
@@ -23,20 +22,11 @@ const ROW_PAUSE = 0.3; // pause between rows
 
 // Filter settings
 const DEFAULT_Q = 3.0; // Q for bandwidth
-const BANDWIDTH_OCTAVE = 1.5; // Width of the band in octaves (0.5 = half octave)
-const FILTER_SLOPE = 24; // Filter slope in dB/octave (24 = steep filter)
 const FIXED_BANDWIDTH = 0.05; // Fixed bandwidth for noise bursts in octaves
 
 // Effective frequency range accounting for bandwidth
 const EFFECTIVE_MIN_FREQ = MIN_FREQ * Math.pow(2, FIXED_BANDWIDTH); // Min center freq to avoid HP cutoff
 const EFFECTIVE_MAX_FREQ = MAX_FREQ / Math.pow(2, FIXED_BANDWIDTH); // Max center freq to avoid LP cutoff
-
-// Bandwidth for different stages
-const STAGE_BANDWIDTH = [
-  1.0,  // Stage 1: Wide bandwidth (1 octave)
-  0.5,  // Stage 2: Medium bandwidth (half octave)
-  0.25  // Stage 3: Narrow bandwidth (quarter octave)
-];
 
 // Panning positions
 const PANNING_POSITIONS = [-1.0, -0.33, 0.33, 1.0]; // Full left to full right

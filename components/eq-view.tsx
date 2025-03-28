@@ -1,15 +1,13 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { HelpCircle, Play, Power, Volume2, Sliders } from "lucide-react"
+import { HelpCircle, Play, Power, Volume2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { FrequencyGraph } from "@/components/frequency-graph"
-import { ReferenceCalibration } from "@/components/reference-calibration"
 import { EQProfiles } from "@/components/eq-profiles"
 import { EQCalibrationModal } from "@/components/eq-calibration-modal"
 import { LoginModal } from "@/components/login-modal"
 import { SignupModal } from "@/components/signup-modal"
-import { InfoCircle } from "@/components/ui/info-circle"
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
 import { Slider } from "@/components/ui/slider"
 import { Input } from "@/components/ui/input"
@@ -21,8 +19,7 @@ import { getReferenceCalibrationAudio } from "@/lib/audio/referenceCalibrationAu
 import { DotCalibration } from "@/components/dot-grid"
 import { GlyphGrid } from "@/components/glyph-grid"
 import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
-// Comment out EQCalibrationProcess import
-// import { EQCalibrationProcess } from "@/components/eq-calibration-process"
+import * as dotGridAudio from '@/lib/audio/dotGridAudio'
 
 interface EQViewProps {
 //   isPlaying: boolean
@@ -135,14 +132,32 @@ export function EQView({ setEqEnabled }: EQViewProps) {
       const glyphAudio = glyphGridAudio.getGlyphGridAudioPlayer();
       const analyser = glyphAudio.createPreEQAnalyser();
       setPreEQAnalyser(analyser);
-    } else if (calibrationPlaying) {
-      // Do nothing, handled by the calibration effect
-      // This prevents clearing analyzer if glyph stops but calibration is playing
+    } else if (calibrationPlaying || dotGridPlaying) {
+      // Do nothing, handled by the calibration effect or dot grid effect
+      // This prevents clearing analyzer if glyph stops but others are playing
     } else {
       // Clean up when not playing
       setPreEQAnalyser(null);
     }
-  }, [glyphGridPlaying, calibrationPlaying]);
+  }, [glyphGridPlaying, calibrationPlaying, dotGridPlaying]);
+
+  // Add a new effect to handle the analyzer for dot grid
+  useEffect(() => {
+    if (dotGridPlaying) {
+      // Create and connect the analyzer for dot grid
+      const dotAudio = dotGridAudio.getDotGridAudioPlayer();
+      const analyser = dotAudio.createPreEQAnalyser();
+      setPreEQAnalyser(analyser);
+      
+      console.log("🎯 Connected dot grid to FFT analyzer");
+    } else if (calibrationPlaying || glyphGridPlaying) {
+      // Do nothing, handled by other effects
+      // This prevents clearing analyzer if dot grid stops but others are playing
+    } else {
+      // Clean up when not playing
+      setPreEQAnalyser(null);
+    }
+  }, [dotGridPlaying, calibrationPlaying, glyphGridPlaying]);
 
   // Initialize selected profile from the active profile and keep it synced
   useEffect(() => {
@@ -272,7 +287,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
           {/* EQ Section - Now takes more of the width */}
           <div className="w-3/4 relative" ref={eqContainerRef}>
             {/* FFT Visualizer should always be visible during audio playback */}
-            {(calibrationPlaying || glyphGridPlaying) && preEQAnalyser && (
+            {(calibrationPlaying || glyphGridPlaying || dotGridPlaying) && preEQAnalyser && (
               <div className="absolute inset-0 z-0">
                 <div className="w-full aspect-[2/1] frequency-graph rounded-lg border dark:border-gray-700 overflow-hidden opacity-80 relative pointer-events-none">
                   {/* The actual EQ visualization area has 40px margins on all sides */}
@@ -357,7 +372,9 @@ export function EQView({ setEqEnabled }: EQViewProps) {
               ) : (
                 <DotCalibration
                   isPlaying={dotGridPlaying}
+                  setIsPlaying={setDotGridPlaying}
                   disabled={false}
+                  preEQAnalyser={preEQAnalyser}
                 />
               )}
             </div>

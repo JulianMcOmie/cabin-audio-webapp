@@ -64,10 +64,10 @@ export function EQCalibrationModal({ open, onClose }: EQCalibrationModalProps) {
                   <h3 className="font-medium">How to Use the Calibration:</h3>
                   <ol className="space-y-2 text-sm text-muted-foreground list-decimal pl-5">
                     <li>Press <strong>Start</strong> in the Calibration panel to begin playing the test sounds</li>
-                    <li>You'll hear two rows of sound bursts:
+                    <li>You&apos;ll hear two rows of sound bursts:
                       <ul className="list-disc pl-5 mt-1">
                         <li><strong>Reference row</strong> (top): Always plays at 800Hz</li>
-                        <li><strong>Test row</strong> (bottom): Plays at the frequency you're adjusting with EQ</li>
+                        <li><strong>Test row</strong> (bottom): Plays at the frequency you&apos;re adjusting with EQ</li>
                       </ul>
                     </li>
                     <li>Adjust your EQ at different frequencies until both rows sound equally wide/spacious in your headphones</li>

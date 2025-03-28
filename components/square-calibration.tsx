@@ -3,8 +3,8 @@
 import { useRef, useEffect, useState } from "react"
 import * as squareCalibrationAudio from '@/lib/audio/squareCalibrationAudio'
 import { Corner } from '@/lib/audio/squareCalibrationAudio'
-import { Button } from "@/components/ui/button"
-import { Play } from "lucide-react"
+// import { Button } from "@/components/ui/button"
+// import { Play } from "lucide-react"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Label } from "@/components/ui/label"
 
@@ -119,7 +119,7 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
   useEffect(() => {
     const audioPlayer = squareCalibrationAudio.getSquareCalibrationAudio();
     
-    const handlePositionActivation = (position: DiagonalPosition, isCorner: boolean, diagonalIndex: number) => {
+    const handlePositionActivation = (position: DiagonalPosition, isCorner: boolean) => {
       // Only highlight intermediate positions (corners are handled by the corner listener)
       if (!isCorner) {
         setActivePosition(position);
@@ -245,13 +245,13 @@ export function SquareCalibration({ isPlaying, disabled = false, className = "" 
     
   }, [canvasSize, isDarkMode, squarePosition, squareSize, activeCorner, activePosition, isDragging, currentHandle, dotDensity]);
   
-  // Convert screen Y coordinates to our bottom-left origin system
-  const convertScreenYToNormalizedY = (screenY: number, height: number): number => {
-    if (!canvasRef.current) return 0;
-    const rect = canvasRef.current.getBoundingClientRect();
-    // Convert screen Y (where top is 0) to our normalized Y (where bottom is 0)
-    return 1 - ((screenY - rect.top) / rect.height) - height;
-  };
+//   // Convert screen Y coordinates to our bottom-left origin system
+//   const convertScreenYToNormalizedY = (screenY: number, height: number): number => {
+//     if (!canvasRef.current) return 0;
+//     const rect = canvasRef.current.getBoundingClientRect();
+//     // Convert screen Y (where top is 0) to our normalized Y (where bottom is 0)
+//     return 1 - ((screenY - rect.top) / rect.height) - height;
+//   };
 
   // Convert normalized Y (bottom origin) to screen Y (top origin)
   const convertNormalizedYToScreenY = (normalizedY: number, height: number): number => {

@@ -2,13 +2,13 @@
 
 import { useRef, useEffect, useState } from "react"
 import * as referenceCalibrationAudio from '@/lib/audio/referenceCalibrationAudio'
-import { Button } from "@/components/ui/button"
-import { Play } from "lucide-react"
+// import { Button } from "@/components/ui/button"
+// import { Play } from "lucide-react"
 import { Slider } from "@/components/ui/slider"
 
 // Constants
-const HANDLE_SIZE = 8; // Size of the frequency control handle in pixels
-const HANDLE_TOUCH_SIZE = 24; // Size of touch area for handles
+// const HANDLE_SIZE = 8; // Size of the frequency control handle in pixels
+// const HANDLE_TOUCH_SIZE = 24; // Size of touch area for handles
 const LINE_HIT_TOLERANCE = 15; // pixels of vertical tolerance for line hit detection
 
 interface ReferenceCalibrationProps {
@@ -30,8 +30,8 @@ export function ReferenceCalibration({ isPlaying, disabled = false, className = 
   
   // State for dragging
   const [isDragging, setIsDragging] = useState(false);
-  const [dragStartY, setDragStartY] = useState(0);
-  const [initialFrequency, setInitialFrequency] = useState(0);
+//   const [dragStartY, setDragStartY] = useState(0);
+//   const [initialFrequency, setInitialFrequency] = useState(0);
   
   // State for active positions
   const [activePosition, setActivePosition] = useState<number | null>(null);

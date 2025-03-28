@@ -9,7 +9,7 @@ import { ReferenceCalibration } from "@/components/reference-calibration"
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
 import { getReferenceCalibrationAudio } from "@/lib/audio/referenceCalibrationAudio"
 import { EQBand } from "@/lib/models/EQBand"
-import { AlertCircle, ArrowLeft, ArrowRight, Check, Play, RefreshCw, ThumbsUp, TrendingUp, TrendingDown } from "lucide-react"
+import { AlertCircle, ArrowLeft, ArrowRight, Check, Play, ThumbsUp, TrendingUp, TrendingDown } from "lucide-react"
 import * as eqProcessor from "@/lib/audio/eqProcessor"
 
 // Define the center frequency and total number of bands
@@ -363,11 +363,11 @@ export function EQCalibrationProcess({ onComplete, onCancel }: EQCalibrationProc
         <div className="bg-muted/50 p-4 rounded-lg mb-6">
           <h4 className="font-medium mb-2">What We Did</h4>
           <p className="text-sm text-muted-foreground">
-            We've carefully adjusted {bandCount} frequency bands across the audible spectrum to optimize your audio experience.
+            We&apos;ve carefully adjusted {bandCount} frequency bands across the audible spectrum to optimize your audio experience.
             These adjustments were made based on your preferences for each frequency.
           </p>
           
-          <h4 className="font-medium mt-4 mb-2">What's Next</h4>
+          <h4 className="font-medium mt-4 mb-2">What&apos;s Next</h4>
           <p className="text-sm text-muted-foreground">
             Your calibrated EQ profile is now active. You can:
           </p>
