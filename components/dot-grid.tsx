@@ -441,8 +441,8 @@ export function DotCalibration({
   const selectedDots = externalSelectedDots !== undefined ? externalSelectedDots : internalSelectedDots;
   const setSelectedDots = externalSetSelectedDots !== undefined ? externalSetSelectedDots : setInternalSelectedDots;
   
-  // Always use multiple selection mode
-  const selectionMode = 'multiple';
+  // Always use single selection mode
+  const selectionMode = 'single';
   
   // Update audio player when selected dots change
   useEffect(() => {
@@ -468,26 +468,28 @@ export function DotCalibration({
     }
   }, [preEQAnalyser, isPlaying]);
   
-  // Simple dot toggle handler
+  // Modified dot toggle handler for single selection behavior
   const handleDotToggle = (x: number, y: number) => {
-    const newSelectedDots = new Set(selectedDots);
     const dotKey = `${x},${y}`;
+    const newSelectedDots = new Set<string>();
     
-    if (newSelectedDots.has(dotKey)) {
-      newSelectedDots.delete(dotKey);
+    // If the clicked dot is already selected, deselect it (toggle off)
+    if (selectedDots.has(dotKey)) {
+      // Leave newSelectedDots empty to clear the selection
     } else {
+      // Otherwise, select only this dot (replacing any previously selected dot)
       newSelectedDots.add(dotKey);
     }
     
     setSelectedDots(newSelectedDots);
     
-    // Auto-start when adding first dot
-    if (newSelectedDots.size === 1 && selectedDots.size === 0) {
+    // Auto-start when selecting a dot
+    if (newSelectedDots.size === 1) {
       setIsPlaying(true);
     }
     
-    // Auto-stop when removing last dot
-    if (newSelectedDots.size === 0 && selectedDots.size > 0) {
+    // Auto-stop when deselecting the dot
+    if (newSelectedDots.size === 0) {
       setIsPlaying(false);
     }
   };
