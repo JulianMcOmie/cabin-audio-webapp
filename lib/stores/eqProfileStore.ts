@@ -6,6 +6,7 @@ import * as indexedDBManager from '../storage/indexedDBManager';
 // Extend EQProfile for our internal use, adding isDefault property
 interface EQProfileWithDefault extends EQProfile {
   isDefault?: boolean;
+  dateCreated?: number;
 }
 
 interface EQProfileState {
@@ -64,6 +65,17 @@ const loadDistortionGainState = async (): Promise<number> => {
   }
 };
 
+// Helper to load active profile ID from storage
+const loadActiveProfileId = async (): Promise<string | null> => {
+  try {
+    const state = await indexedDBManager.getItem<{profileId: string}>(indexedDBManager.STORES.SYNC_STATE, 'activeProfileId');
+    return state?.profileId ?? null;
+  } catch (error) {
+    console.error('Error loading active profile ID:', error);
+    return null;
+  }
+};
+
 export const useEQProfileStore = create<EQProfileState>((set, get) => {
   // Track initialization state
   let initialized = false;
@@ -80,9 +92,10 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
     initialLoadPromise = Promise.all([
       loadProfilesFromStorage(),
       loadEQEnabledState(),
-      loadDistortionGainState()
+      loadDistortionGainState(),
+      loadActiveProfileId()
     ])
-      .then(([loadedProfiles, isEQEnabled, distortionGain]) => {
+      .then(([loadedProfiles, isEQEnabled, distortionGain, savedActiveProfileId]) => {
         // Create default flat profile ONLY if no profiles exist at all
         if (Object.keys(loadedProfiles).length === 0) {
           const defaultProfile: EQProfileWithDefault = {
@@ -92,6 +105,7 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
             volume: 0,
             isDefault: true,
             lastModified: Date.now(),
+            dateCreated: Date.now(),
             syncStatus: 'modified'
           };
           
@@ -114,9 +128,14 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
           const defaultProfile = Object.values(loadedProfiles).find(p => p.isDefault);
           const firstProfile = Object.values(loadedProfiles)[0];
           
+          // Use savedActiveProfileId if it exists and corresponds to an actual profile
+          const activeId = savedActiveProfileId && loadedProfiles[savedActiveProfileId] 
+            ? savedActiveProfileId 
+            : (defaultProfile?.id || firstProfile?.id || null);
+          
           set({ 
             profiles: loadedProfiles, 
-            activeProfileId: get().activeProfileId || (defaultProfile?.id || firstProfile?.id || null),
+            activeProfileId: activeId,
             isEQEnabled,
             distortionGain,
             isLoading: false 
@@ -144,6 +163,11 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
     distortionGain: 1.0, // Default to no reduction
     
     addProfile: (profile: EQProfileWithDefault) => {
+      // Ensure dateCreated is set
+      if (!profile.dateCreated) {
+        profile.dateCreated = Date.now();
+      }
+      
       // Update local state first for immediate UI feedback
       set((state) => ({
         profiles: {
@@ -226,6 +250,14 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
     
     setActiveProfile: (profileId: string | null) => {
       set({ activeProfileId: profileId });
+      
+      // Persist to IndexedDB
+      if (profileId) {
+        indexedDBManager.updateItem(indexedDBManager.STORES.SYNC_STATE, {
+          id: 'activeProfileId',
+          profileId
+        }).catch(error => console.error('Failed to save active profile ID:', error));
+      }
     },
     
     setEQEnabled: (enabled: boolean) => {

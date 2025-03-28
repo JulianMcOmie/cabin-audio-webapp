@@ -27,6 +27,14 @@ export function EQProfiles({ onProfileClick, selectedProfile, onSelectProfile }:
   // Get profiles directly from the store
   const profiles = getProfiles()
   
+  // Sort profiles by dateCreated (oldest first)
+  const sortedProfiles = [...profiles].sort((a, b) => {
+    // If dateCreated is missing, treat as oldest (beginning of time)
+    const dateA = a.dateCreated || 0;
+    const dateB = b.dateCreated || 0;
+    return dateA - dateB;
+  });
+  
   // Get the active profile from the store
   const activeProfile = getActiveProfile()
   const activeProfileId = activeProfile?.id || ""
@@ -70,7 +78,7 @@ export function EQProfiles({ onProfileClick, selectedProfile, onSelectProfile }:
           {" "}
           {/* Add padding to bottom to ensure no vertical scrolling */}
           <div className="flex w-max space-x-4 p-1">
-            {profiles.map((profile) => (
+            {sortedProfiles.map((profile) => (
               <ProfileCard
                 key={profile.id}
                 profile={profile}

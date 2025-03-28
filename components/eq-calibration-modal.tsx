@@ -51,6 +51,7 @@ export function EQCalibrationModal({ open, onClose }: EQCalibrationModalProps) {
               <ul className="space-y-2 text-sm text-muted-foreground list-disc pl-5">
                 <li>Don't be afraid to make dramatic EQ changes - especially boosting highs and lows</li>
                 <li>You might need to add weird, random dips and peaks to create spatial changes</li>
+                <li>To get the bass to move down and the highs to move up, you might need to add random peaks and dips in the high end</li>
                 <li>Focus on creating maximum height (vertical separation) - this is what most headphones lack</li>
                 <li>The line tool is an alternative view showing the same effect - use whichever makes more sense to you</li>
                 <li>Trust your ears - when the dots are obviously at different heights, you've got it right</li>
