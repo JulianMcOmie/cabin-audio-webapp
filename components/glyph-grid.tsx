@@ -228,11 +228,10 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
       // Draw resize handles at corners if not disabled
       if (!disabled) {
         const handleRadius = 6
+        // Only show bottom-left and top-right corners
         const handles = [
           { x: startX, y: startY }, // Bottom-left
           { x: endX, y: endY },     // Top-right
-          { x: startX, y: endY },   // Top-left
-          { x: endX, y: startY }    // Bottom-right
         ]
         
         handles.forEach((handle, index) => {
@@ -272,11 +271,10 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     
     // Check if we're near a resize handle
     const handleRadius = 10
+    // Only check bottom-left and top-right corners
     const handles = [
       { x: startX, y: startY }, // Bottom-left
       { x: endX, y: endY },     // Top-right
-      { x: startX, y: endY },   // Top-left
-      { x: endX, y: startY }    // Bottom-right
     ]
     
     for (let i = 0; i < handles.length; i++) {
@@ -288,7 +286,7 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
       
       if (distance <= handleRadius) {
         setIsResizing(true)
-        setActiveHandle(i + 1)
+        setActiveHandle(i + 1) // 1 = bottom-left, 2 = top-right
         return
       }
     }
@@ -359,14 +357,6 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
               endX += deltaX
               endY += deltaY
               break
-            case 3: // Top-left
-              startX += deltaX
-              endY += deltaY
-              break
-            case 4: // Bottom-right
-              endX += deltaX
-              startY += deltaY
-              break
           }
           
           // Convert back to normalized coordinates
@@ -375,29 +365,32 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
           const new_endX_norm = (endX / rect.width) * 2 - 1
           const new_endY_norm = 1 - (endY / rect.height) * 2 // Y is inverted
           
-          // Calculate new dimensions and position
-          const newWidth = Math.abs(new_endX_norm - new_startX_norm)
-          const newHeight = Math.abs(new_endY_norm - new_startY_norm)
+          // Calculate new dimensions (can be negative now)
+          const newWidth = new_endX_norm - new_startX_norm
+          const newHeight = new_endY_norm - new_startY_norm
+          
+          // Calculate the new center position (midpoint of the two corners)
           const newPosX = (new_startX_norm + new_endX_norm) / 2
           const newPosY = (new_startY_norm + new_endY_norm) / 2
           
-          // Constrain to keep within bounds (-1 to 1)
-          const constrainedWidth = Math.min(newWidth, 2)
-          const constrainedHeight = Math.min(newHeight, 2)
+          // Constrain position to keep the line within the canvas bounds
+          let finalPosX = Math.max(-1, Math.min(1, newPosX))
+          let finalPosY = Math.max(-1, Math.min(1, newPosY))
+          
+          // Constrain width and height to ensure line remains within canvas
+          // but still allowing for negative values
+          const absWidth = Math.abs(newWidth)
+          const absHeight = Math.abs(newHeight)
           
           // Ensure minimum size
-          const finalWidth = Math.max(0.1, constrainedWidth)
-          const finalHeight = Math.max(0.1, constrainedHeight)
+          const minSize = 0.1
+          const finalWidth = newWidth === 0 ? 
+            (newWidth >= 0 ? minSize : -minSize) : 
+            (absWidth < minSize ? (newWidth >= 0 ? minSize : -minSize) : newWidth)
           
-          // Recalculate position to ensure we stay within bounds
-          let finalPosX = newPosX
-          let finalPosY = newPosY
-          
-          const maxOffsetX = 1 - finalWidth / 2
-          const maxOffsetY = 1 - finalHeight / 2
-          
-          finalPosX = Math.max(-maxOffsetX, Math.min(maxOffsetX, finalPosX))
-          finalPosY = Math.max(-maxOffsetY, Math.min(maxOffsetY, finalPosY))
+          const finalHeight = newHeight === 0 ? 
+            (newHeight >= 0 ? minSize : -minSize) : 
+            (absHeight < minSize ? (newHeight >= 0 ? minSize : -minSize) : newHeight)
           
           return {
             ...prev,
