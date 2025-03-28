@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger 
 } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
+import { useTheme } from "@/components/theme-provider"
 
 interface Track {
   id: string
@@ -40,6 +41,14 @@ export function TrackItem({
   isLastItem = false
 }: TrackItemProps) {
   const [isHovered, setIsHovered] = useState(false);
+  const { theme } = useTheme();
+  
+  // Get the default cover image based on theme
+  const getDefaultCoverImage = () => {
+    const timestamp = Date.now(); // Add timestamp to prevent caching
+    const basePath = theme === 'dark' ? '/default_img_dark.jpg' : '/default_img_light.jpg';
+    return `${basePath}?t=${timestamp}`;
+  };
   
   const formatDuration = (seconds: number) => {
     if (!seconds || isNaN(seconds)) return "0:00";
@@ -72,9 +81,13 @@ export function TrackItem({
       >
         <div className="flex-shrink-0 mr-4 relative group">
           <img
-            src={track.coverUrl || "/placeholder.svg"}
+            src={track.coverUrl || getDefaultCoverImage()}
             alt={`${track.album} cover`}
             className="h-12 w-12 rounded-md object-cover"
+            onError={(e) => {
+              // If image fails to load, use default
+              (e.target as HTMLImageElement).src = getDefaultCoverImage();
+            }}
           />
           {isCurrentTrack ? (
             <div
