@@ -26,6 +26,7 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [isResizing, setIsResizing] = useState(false)
+  const [dragTarget, setDragTarget] = useState<'none' | 'vertex1' | 'vertex2' | 'line'>('none')
   const [glyph, setGlyph] = useState<Glyph>({
     id: 'diagonal-line',
     type: 'line',
@@ -365,8 +366,8 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     const handleRadius = 10
     // Only check bottom-left and top-right corners
     const handles = [
-      { x: startX, y: startY }, // Bottom-left
-      { x: endX, y: endY },     // Top-right
+      { x: startX, y: startY, target: 'vertex1' as const }, // Bottom-left
+      { x: endX, y: endY, target: 'vertex2' as const },     // Top-right
     ]
     
     for (let i = 0; i < handles.length; i++) {
@@ -379,6 +380,7 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
       if (distance <= handleRadius) {
         setIsResizing(true)
         setActiveHandle(i + 1) // 1 = bottom-left, 2 = top-right
+        setDragTarget(handle.target) // Set the specific vertex being dragged
         return
       }
     }
@@ -387,6 +389,7 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     const hoverTarget = checkHoverTarget(mouseX, mouseY)
     if (hoverTarget === 'line') {
       setIsDragging(true)
+      setDragTarget('line')
     }
   }
   
@@ -398,7 +401,7 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     const mouseX = e.clientX - rect.left
     const mouseY = e.clientY - rect.top
     
-    // Update hover state
+    // Only update hover state when not actively dragging or resizing
     if (!isDragging && !isResizing) {
       const target = checkHoverTarget(mouseX, mouseY)
       setHoverState(target)
@@ -410,7 +413,7 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
       const deltaY = mouseY - lastMousePos.y
       
       if (isDragging) {
-        // Move the entire glyph
+        // Move the entire glyph - using stored dragTarget instead of checking hover
         // Convert delta from canvas pixels to normalized coordinates
         const normalizedDeltaX = deltaX / rect.width * 2  // Scale to normalized space
         const normalizedDeltaY = -deltaY / rect.height * 2  // Y is inverted in normalized space
@@ -446,17 +449,14 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
           let endX = (endX_norm + 1) / 2 * rect.width
           let endY = (1 - endY_norm) / 2 * rect.height
           
-          // Update the appropriate corner based on which handle is active
-          // Move the corner freely without any restrictions
-          switch (activeHandle) {
-            case 1: // Bottom-left
-              startX += deltaX
-              startY += deltaY
-              break
-            case 2: // Top-right
-              endX += deltaX
-              endY += deltaY
-              break
+          // Use the stored dragTarget instead of activeHandle for clarity
+          // Ensuring consistent behavior throughout the drag
+          if (dragTarget === 'vertex1') {
+            startX += deltaX
+            startY += deltaY
+          } else if (dragTarget === 'vertex2') {
+            endX += deltaX
+            endY += deltaY
           }
           
           // Convert back to normalized coordinates
@@ -478,22 +478,12 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
           const finalPosX = Math.max(-1, Math.min(1, newPosX))
           const finalPosY = Math.max(-1, Math.min(1, newPosY))
           
-          // Only ensure minimum absolute size to avoid invisible lines
-          const minSize = 0.1
-          const absWidth = Math.abs(newWidth)
-          const absHeight = Math.abs(newHeight)
-          
-          // If width/height is too small, set to minimum but preserve sign (direction)
-          const finalWidth = absWidth < minSize ? 
-            (newWidth >= 0 ? minSize : -minSize) : newWidth
-          
-          const finalHeight = absHeight < minSize ? 
-            (newHeight >= 0 ? minSize : -minSize) : newHeight
-          
+          // Remove minimum size enforcement
+          // Use the calculated dimensions directly
           return {
             ...prev,
             position: { x: finalPosX, y: finalPosY },
-            size: { width: finalWidth, height: finalHeight }
+            size: { width: newWidth, height: newHeight }
           }
         })
       }
@@ -508,6 +498,7 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     setIsResizing(false)
     setActiveHandle(0)
     setLastMousePos(null)
+    setDragTarget('none') // Reset drag target when mouse is released
   }
   
   // Add this useEffect to update the audio player with the manual position
