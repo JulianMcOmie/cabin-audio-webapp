@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
 import { Button } from "@/components/ui/button"
+import { PlaybackMode } from '@/lib/audio/glyphGridAudio'
 
 // Glyph interface for representing a shape that defines a path
 interface Glyph {
@@ -54,6 +55,9 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
 
   // Add speed state
   const [speed, setSpeed] = useState(1.0)
+
+  // Add playback mode state
+  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>(PlaybackMode.SWEEP)
 
   // Set up observer to detect theme changes
   useEffect(() => {
@@ -549,6 +553,19 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     return `${value.toFixed(2)}x`
   }
 
+  // Add useEffect to update playback mode when it changes
+  useEffect(() => {
+    const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
+    audioPlayer.setPlaybackMode(playbackMode)
+  }, [playbackMode])
+
+  // Add toggle handler for playback mode
+  const togglePlaybackMode = () => {
+    setPlaybackMode((prevMode: PlaybackMode) => 
+      prevMode === PlaybackMode.SWEEP ? PlaybackMode.ALTERNATE : PlaybackMode.SWEEP
+    )
+  }
+
   return (
     <div className="space-y-4">
       <div className="relative bg-background/50 rounded-lg p-3">
@@ -675,6 +692,22 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
         <div className="flex text-xs text-muted-foreground justify-between">
           <span>Start</span>
           <span>End</span>
+        </div>
+        
+        {/* Add playback mode toggle */}
+        <div className="flex justify-between items-center mt-2">
+          <div className="flex items-center space-x-2">
+            <Switch 
+              id="playback-mode-toggle"
+              checked={playbackMode === PlaybackMode.ALTERNATE}
+              onCheckedChange={togglePlaybackMode}
+              disabled={disabled || !isPlaying}
+            />
+            <Label htmlFor="playback-mode-toggle">Alternate Mode</Label>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {playbackMode === PlaybackMode.SWEEP ? "Sweep through path" : "Jump between start/end"}
+          </div>
         </div>
       </div>
       

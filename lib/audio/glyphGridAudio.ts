@@ -17,7 +17,9 @@ const DEFAULT_SPEED = 1.0 // Default movement speed
 
 export enum PlaybackMode {
   PATH = 'path', // Follow the path continuously back and forth
-  OSCILLATE = 'oscillate' // Oscillate through the path at varying speeds
+  OSCILLATE = 'oscillate', // Oscillate through the path at varying speeds
+  SWEEP = 'sweep',    // Smoothly sweep through the path
+  ALTERNATE = 'alternate'  // Alternate between start and end points
 }
 
 // Simple glyph representation
@@ -81,6 +83,11 @@ class GlyphGridAudioPlayer {
   
   // Add speed property
   private speed: number = DEFAULT_SPEED
+  
+  private playbackMode: PlaybackMode = PlaybackMode.SWEEP;
+  
+  // Add a counter for alternating mode
+  private _alternateCounter: number = 0;
   
   private constructor() {
     this.generatePinkNoiseBuffer()
@@ -158,33 +165,62 @@ class GlyphGridAudioPlayer {
       return
     }
     
-    // Otherwise, use automatic movement logic
+    // Otherwise, use automatic movement logic based on playback mode
     const position = this.pathPosition
     
     // Update audio parameters based on position
     this.updateAudioParametersFromPosition(position)
     
-    // Move the path position for next frame
-    // Apply speed factor to the position increment
-    this.pathPosition += 0.005 * this.pathDirection * this.speed
-    
-    // If using subsection, check subsection boundaries instead of full range
-    if (this.useSubsection) {
-      if (this.pathPosition >= this.subsectionEnd) {
-        this.pathPosition = this.subsectionEnd
-        this.pathDirection = -1
-      } else if (this.pathPosition <= this.subsectionStart) {
-        this.pathPosition = this.subsectionStart
-        this.pathDirection = 1
+    // Determine how to update the position based on playback mode
+    if (this.playbackMode === PlaybackMode.SWEEP) {
+      // Sweep mode: continuously move through the path
+      // Apply speed factor to the position increment
+      this.pathPosition += 0.005 * this.pathDirection * this.speed
+      
+      // If using subsection, check subsection boundaries
+      if (this.useSubsection) {
+        if (this.pathPosition >= this.subsectionEnd) {
+          this.pathPosition = this.subsectionEnd
+          this.pathDirection = -1
+        } else if (this.pathPosition <= this.subsectionStart) {
+          this.pathPosition = this.subsectionStart
+          this.pathDirection = 1
+        }
+      } else {
+        // Regular full-range behavior
+        if (this.pathPosition >= 1) {
+          this.pathPosition = 1
+          this.pathDirection = -1
+        } else if (this.pathPosition <= 0) {
+          this.pathPosition = 0
+          this.pathDirection = 1
+        }
       }
-    } else {
-      // Regular full-range behavior
-      if (this.pathPosition >= 1) {
-        this.pathPosition = 1
-        this.pathDirection = -1
-      } else if (this.pathPosition <= 0) {
-        this.pathPosition = 0
-        this.pathDirection = 1
+    } else if (this.playbackMode === PlaybackMode.ALTERNATE) {
+      // Alternate mode: jump between start and end points
+      // Use pathDirection to determine which point we're at
+      // and when to switch
+      
+      // Create a threshold for how long to stay at each point
+      // based on the speed (faster = shorter duration)
+      const stayDuration = 30 / this.speed; // Number of frames to stay at each point
+      
+      // Increment a counter to track when to alternate
+      this._alternateCounter = (this._alternateCounter || 0) + 1;
+      
+      if (this._alternateCounter >= stayDuration) {
+        this._alternateCounter = 0;
+        
+        // Switch between start and end
+        if (this.pathDirection === 1) {
+          // We're at start point, move to end
+          this.pathPosition = this.useSubsection ? this.subsectionEnd : 1;
+          this.pathDirection = -1;
+        } else {
+          // We're at end point, move to start
+          this.pathPosition = this.useSubsection ? this.subsectionStart : 0;
+          this.pathDirection = 1;
+        }
       }
     }
   }
@@ -652,6 +688,17 @@ class GlyphGridAudioPlayer {
   
   public getSpeed(): number {
     return this.speed
+  }
+  
+  // Add method to set playback mode
+  public setPlaybackMode(mode: PlaybackMode): void {
+    this.playbackMode = mode;
+    this._alternateCounter = 0; // Reset counter when changing modes
+  }
+  
+  // Add method to get current playback mode
+  public getPlaybackMode(): PlaybackMode {
+    return this.playbackMode;
   }
 }
 
