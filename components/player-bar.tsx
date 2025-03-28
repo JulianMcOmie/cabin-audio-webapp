@@ -7,6 +7,8 @@ import { Slider } from "@/components/ui/slider"
 import { useToast } from "@/components/common/ToastManager"
 import { usePlayerStore, useTrackStore } from "@/lib/stores"
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
+import { useArtistStore } from "@/lib/stores/artistStore"
+import { useAlbumStore } from "@/lib/stores/albumStore"
 import { cn } from "@/lib/utils"
 
 // // Dummy track interface
@@ -256,9 +258,17 @@ export function PlayerBar() {
   }
 
   // Get display values for the track
-  const artistName = currentTrack.artistId || "Unknown Artist"
-  const albumName = currentTrack.albumId || "Unknown Album"
-  const coverUrl = currentTrack.coverStorageKey || "/placeholder.svg?height=48&width=48"
+  const artistName = currentTrack?.artistId ? 
+    useArtistStore.getState().getArtistById(currentTrack.artistId)?.name || "Unknown Artist"
+    : "Unknown Artist";
+  
+  const albumName = currentTrack?.albumId ? 
+    useAlbumStore.getState().getAlbumById(currentTrack.albumId)?.title || "Unknown Album"
+    : "Unknown Album";
+  
+  const coverUrl = currentTrack?.coverStorageKey ? 
+    `/Xenogenesis.jpg` 
+    : "/placeholder.svg?height=48&width=48";
 
   // Render normal state with track
   return (

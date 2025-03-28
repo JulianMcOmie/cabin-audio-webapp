@@ -58,10 +58,10 @@ const loadEQEnabledState = async (): Promise<boolean> => {
 const loadDistortionGainState = async (): Promise<number> => {
   try {
     const state = await indexedDBManager.getItem<{gain: number}>(indexedDBManager.STORES.SYNC_STATE, 'distortionGain');
-    return state?.gain ?? 1.0; // Default to 1.0 (no reduction) if not found
+    return state?.gain ?? 0.3; // Default to 0.3 (30%) if not found
   } catch (error) {
     console.error('Error loading distortion gain state:', error);
-    return 1.0; // Default to 1.0 on error
+    return 0.3; // Default to 0.3 on error
   }
 };
 
@@ -179,7 +179,7 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
     activeProfileId: null,
     isLoading: true, // Initially loading
     isEQEnabled: true, // Default to enabled
-    distortionGain: 1.0, // Default to no reduction
+    distortionGain: 0.3, // Default to 30% volume reduction
     
     addProfile: (profile: EQProfileWithDefault) => {
       // Ensure dateCreated is set

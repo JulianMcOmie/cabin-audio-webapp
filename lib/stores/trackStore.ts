@@ -1,6 +1,11 @@
 import { create } from 'zustand';
 import { Track } from '../models/Track';
+import { Artist } from '../models/Artist';
+import { Album } from '../models/Album';
 import * as indexedDBManager from '../storage/indexedDBManager';
+import { v4 as uuidv4 } from 'uuid';
+import { useArtistStore } from './artistStore';
+import { useAlbumStore } from './albumStore';
 
 interface TrackState {
   tracks: Record<string, Track>;
@@ -18,18 +23,109 @@ interface TrackState {
   getTrackById: (trackId: string) => Track | undefined;
 }
 
+// Create default artist, album and track
+const createDefaultContent = async (): Promise<{track: Track, artistId: string, albumId: string}> => {
+  // Create the artist
+  const artistId = uuidv4();
+  const artist: Artist = {
+    id: artistId,
+    name: "TheFatRat",
+    lastModified: Date.now(),
+    syncStatus: "synced"
+  };
+  
+  // Create the album
+  const albumId = uuidv4();
+  const album: Album = {
+    id: albumId,
+    title: "Xenogenesis",
+    artistId: artistId,
+    year: 2014,
+    coverStorageKey: "default-xenogenesis-cover",
+    lastModified: Date.now(),
+    syncStatus: "synced"
+  };
+  
+  // Create the track
+  const track: Track = {
+    id: uuidv4(),
+    title: "Xenogenesis",
+    artistId: artistId,
+    albumId: albumId,
+    duration: 0, // This will be updated when audio is loaded
+    trackNumber: 1,
+    year: 2014,
+    genre: "Electronic",
+    storageKey: "default-xenogenesis",
+    coverStorageKey: "default-xenogenesis-cover",
+    lastModified: Date.now(),
+    syncStatus: "synced"
+  };
+  
+  // Store artist and album in IndexedDB
+  await indexedDBManager.addItem(indexedDBManager.STORES.ARTISTS, artist);
+  await indexedDBManager.addItem(indexedDBManager.STORES.ALBUMS, album);
+  
+  // Add to respective stores
+  useArtistStore.getState().addArtist(artist);
+  useAlbumStore.getState().addAlbum(album);
+  
+  return { track, artistId, albumId };
+};
+
 // Helper function to load tracks from IndexedDB
-const loadTracksFromStorage = async (): Promise<Record<string, Track>> => {
+const loadTracksFromStorage = async (): Promise<{tracks: Record<string, Track>, defaultTrackId?: string}> => {
   try {
     const tracks = await indexedDBManager.getAllItems<Track>(indexedDBManager.STORES.TRACKS);
     const tracksMap: Record<string, Track> = {};
+    let defaultTrackId: string | undefined;
+    
     tracks.forEach(track => {
       tracksMap[track.id] = track;
     });
-    return tracksMap;
+    
+    // If no tracks exist, add the default track
+    if (Object.keys(tracksMap).length === 0) {
+      // Create default content (artist, album, track)
+      const { track: defaultTrack } = await createDefaultContent();
+      tracksMap[defaultTrack.id] = defaultTrack;
+      defaultTrackId = defaultTrack.id;
+      
+      // Store the default track in IndexedDB
+      await indexedDBManager.addItem(indexedDBManager.STORES.TRACKS, defaultTrack);
+      
+      // Also store the audio file and cover art references
+      try {
+        // Load audio file
+        const audioResponse = await fetch('/Xenogenesis.wav');
+        if (audioResponse.ok) {
+          const audioBlob = await audioResponse.blob();
+          await indexedDBManager.storeFile(
+            indexedDBManager.STORES.AUDIO_FILES, 
+            defaultTrack.storageKey, 
+            audioBlob
+          );
+        }
+        
+        // Load cover art
+        const coverResponse = await fetch('/Xenogenesis.jpg');
+        if (coverResponse.ok) {
+          const coverBlob = await coverResponse.blob();
+          await indexedDBManager.storeFile(
+            indexedDBManager.STORES.IMAGES, 
+            defaultTrack.coverStorageKey!, 
+            coverBlob
+          );
+        }
+      } catch (error) {
+        console.error('Error loading default track assets:', error);
+      }
+    }
+    
+    return { tracks: tracksMap, defaultTrackId };
   } catch (error) {
     console.error('Error loading tracks from storage:', error);
-    return {};
+    return { tracks: {} };
   }
 };
 
@@ -47,8 +143,12 @@ export const useTrackStore = create<TrackState>((set, get) => {
     
     // Load tracks from storage
     initialLoadPromise = loadTracksFromStorage()
-      .then(loadedTracks => {
-        set({ tracks: loadedTracks, isLoading: false });
+      .then(({ tracks: loadedTracks, defaultTrackId }) => {
+        set({ 
+          tracks: loadedTracks, 
+          isLoading: false,
+          currentTrackId: defaultTrackId || get().currentTrackId
+        });
         initialized = true;
       })
       .catch(error => {

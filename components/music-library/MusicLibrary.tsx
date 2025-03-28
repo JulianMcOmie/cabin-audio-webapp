@@ -8,6 +8,8 @@ import { useFileImport } from "@/lib/hooks/useFileImport"
 import { FileImportOverlay } from "@/components/import/FileImportOverlay"
 import { useTrackStore, usePlayerStore, useEQProfileStore } from "@/lib/stores"
 import { Track as TrackModel } from "@/lib/models/Track"
+import { useArtistStore } from "@/lib/stores/artistStore"
+import { useAlbumStore } from "@/lib/stores/albumStore"
 
 // Import the extracted components
 import { EQStatusAlert } from "./EQStatusAlert"
@@ -54,16 +56,36 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
   const convertStoreTracksToUI = () => {
     console.log(`[convertStoreTracksToUI] Getting tracks from store`);
     const storeTracks = getTracks();
+    const artists = useArtistStore.getState().getArtists();
+    const albums = useAlbumStore.getState().getAlbums();
     console.log(`[convertStoreTracksToUI] Retrieved ${storeTracks.length} tracks from store`);
     
-    const uiTracks = storeTracks.map((storeTrack): Track => ({
-      id: storeTrack.id,
-      title: storeTrack.title,
-      artist: storeTrack.artistId || "Unknown Artist",
-      album: storeTrack.albumId || "Unknown Album",
-      duration: storeTrack.duration,
-      coverUrl: storeTrack.coverStorageKey || "/placeholder.svg?height=48&width=48",
-    }));
+    const uiTracks = storeTracks.map((storeTrack): Track => {
+      // Resolve artist name from ID
+      const artist = storeTrack.artistId ? 
+        artists.find(a => a.id === storeTrack.artistId)?.name || "Unknown Artist" 
+        : "Unknown Artist";
+      
+      // Resolve album name from ID
+      const album = storeTrack.albumId ? 
+        albums.find(a => a.id === storeTrack.albumId)?.title || "Unknown Album" 
+        : "Unknown Album";
+      
+      // For cover URLs, use the actual file URL
+      let coverUrl = "/placeholder.svg?height=48&width=48";
+      if (storeTrack.coverStorageKey) {
+        coverUrl = `/Xenogenesis.jpg`; // For now, hardcode to the actual file
+      }
+      
+      return {
+        id: storeTrack.id,
+        title: storeTrack.title,
+        artist: artist,
+        album: album,
+        duration: storeTrack.duration,
+        coverUrl: coverUrl,
+      };
+    });
     
     console.log(`[convertStoreTracksToUI] Converted ${uiTracks.length} tracks to UI format`);
     return uiTracks;
