@@ -568,29 +568,27 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
   }, [discreteFrequency])
 
   return (
-    <div className="flex flex-col md:flex-row gap-4">
-      {/* Left side: Canvas */}
-      <div className="md:w-1/2">
-        <div className="relative bg-background/50 rounded-lg p-3">
-          <canvas
-            ref={canvasRef}
-            className={`w-full aspect-square ${disabled ? "opacity-70 cursor-not-allowed" : ""}`}
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp}
-          />
-        </div>
-        
-        {/* Basic glyph information */}
-        <div className="text-xs text-center text-muted-foreground mt-2">
-          X: {glyph.position.x.toFixed(2)}, Y: {glyph.position.y.toFixed(2)} • 
-          W: {glyph.size.width.toFixed(2)}, H: {glyph.size.height.toFixed(2)}
-        </div>
+    <div className="space-y-4">
+      {/* Canvas Area */}
+      <div className="relative bg-background/50 rounded-lg p-3">
+        <canvas
+          ref={canvasRef}
+          className={`w-full aspect-square ${disabled ? "opacity-70 cursor-not-allowed" : ""}`}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+        />
       </div>
       
-      {/* Right side: Controls */}
-      <div className="md:w-1/2 space-y-4">
+      {/* Basic glyph information */}
+      <div className="text-xs text-center text-muted-foreground">
+        X: {glyph.position.x.toFixed(2)}, Y: {glyph.position.y.toFixed(2)} • 
+        W: {glyph.size.width.toFixed(2)}, H: {glyph.size.height.toFixed(2)}
+      </div>
+      
+      {/* Controls */}
+      <div className="space-y-4">
         {/* Timeline visualization */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">

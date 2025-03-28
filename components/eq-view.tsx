@@ -267,129 +267,132 @@ export function EQView({ setEqEnabled }: EQViewProps) {
 
       {/* Main EQ View */}
       <div className="space-y-6">
-        {/* EQ Section - Now takes full width */}
-        <div className="w-full relative" ref={eqContainerRef}>
-          {/* FFT Visualizer should always be visible during audio playback */}
-          {(calibrationPlaying || glyphGridPlaying) && preEQAnalyser && (
-            <div className="absolute inset-0 z-0 w-full aspect-[2/1]">
-              <FFTVisualizer 
-                analyser={preEQAnalyser} 
-                width={eqWidth} 
-                height={eqWidth / 2} 
-                className="w-full h-full"
-              />
-            </div>
-          )}
-          
-          {/* FrequencyEQ component overlaid on top */}
-          <div className="relative z-10">
-            <FrequencyGraph 
-              selectedDot={selectedDot} 
-              disabled={!isEQEnabled} 
-              className="w-full" 
-              onInstructionChange={setInstruction}
-              onRequestEnable={() => setEQEnabled(true)}
-            />
-          </div>
-
-          {/* Contextual Instructions */}
-          <div className="mt-1 mb-3 px-2 py-1.5 bg-muted/40 rounded text-sm text-muted-foreground border-l-2 border-electric-blue">
-            {instruction}
-          </div>
-
-          {/* EQ Toggle Button - Updated for consistency */}
-          <div className="eq-toggle-container">
-            <Button
-              variant={isEQEnabled ? "default" : "outline"}
-              size="sm"
-              className={isEQEnabled ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : ""}
-              onClick={toggleEQ}
-              title={isEQEnabled ? "Turn EQ Off" : "Turn EQ On"}
-            >
-              <Power className="h-4 w-4 mr-2" />
-              {isEQEnabled ? "EQ On" : "EQ Off"}
-            </Button>
-          </div>
-          
-          {/* Audio Parameters Display for Glyph Grid */}
-          {glyphGridPlaying && (
-            <div className="mt-4 flex justify-between text-sm">
-              <div className="px-3 py-1.5 bg-muted/40 rounded-md">
-                <span className="font-medium">Frequency:</span> {formatFrequency(currentFrequency)}
+        {/* Combined EQ and Grid Layout */}
+        <div className="flex flex-row gap-6">
+          {/* EQ Section - Now takes only part of the width */}
+          <div className="w-2/3 relative" ref={eqContainerRef}>
+            {/* FFT Visualizer should always be visible during audio playback */}
+            {(calibrationPlaying || glyphGridPlaying) && preEQAnalyser && (
+              <div className="absolute inset-0 z-0 w-full aspect-[2/1]">
+                <FFTVisualizer 
+                  analyser={preEQAnalyser} 
+                  width={eqWidth} 
+                  height={eqWidth / 2} 
+                  className="w-full h-full"
+                />
               </div>
-              <div className="px-3 py-1.5 bg-muted/40 rounded-md">
-                <span className="font-medium">Pan Position:</span> {currentPanning.toFixed(2)}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Glyph Grid - Now below the EQ section with new layout */}
-        <div className="mt-8 border rounded-lg p-6 bg-card">
-          <div className="flex flex-col space-y-4">
-            <h3 className="text-lg font-medium">Grid Visualizer</h3>
+            )}
             
-            {/* Add segmented control for switching between grid types */}
-            <div className="flex border rounded-md overflow-hidden w-fit">
-              <button
-                className={`px-4 py-2 text-sm font-medium ${
-                  activeGrid === "glyph" 
-                    ? "bg-electric-blue text-white" 
-                    : "bg-background hover:bg-muted"
-                }`}
-                onClick={() => setActiveGrid("glyph")}
-              >
-                Glyph Grid
-              </button>
-              <button
-                className={`px-4 py-2 text-sm font-medium ${
-                  activeGrid === "dot" 
-                    ? "bg-electric-blue text-white" 
-                    : "bg-background hover:bg-muted"
-                }`}
-                onClick={() => setActiveGrid("dot")}
-              >
-                Dot Grid
-              </button>
+            {/* FrequencyEQ component overlaid on top */}
+            <div className="relative z-10">
+              <FrequencyGraph 
+                selectedDot={selectedDot} 
+                disabled={!isEQEnabled} 
+                className="w-full" 
+                onInstructionChange={setInstruction}
+                onRequestEnable={() => setEQEnabled(true)}
+              />
             </div>
-          </div>
-          
-          {/* Main grid content area */}
-          <div className="mt-4">
-            {activeGrid === "glyph" ? (
-              <GlyphGrid
-                isPlaying={glyphGridPlaying}
-                disabled={false}
-              />
-            ) : (
-              <DotCalibration
-                isPlaying={dotGridPlaying}
-                disabled={false}
-              />
+
+            {/* Contextual Instructions */}
+            <div className="mt-1 mb-3 px-2 py-1.5 bg-muted/40 rounded text-sm text-muted-foreground border-l-2 border-electric-blue">
+              {instruction}
+            </div>
+
+            {/* EQ Toggle Button */}
+            <div className="eq-toggle-container">
+              <Button
+                variant={isEQEnabled ? "default" : "outline"}
+                size="sm"
+                className={isEQEnabled ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : ""}
+                onClick={toggleEQ}
+                title={isEQEnabled ? "Turn EQ Off" : "Turn EQ On"}
+              >
+                <Power className="h-4 w-4 mr-2" />
+                {isEQEnabled ? "EQ On" : "EQ Off"}
+              </Button>
+            </div>
+            
+            {/* Audio Parameters Display for Glyph Grid */}
+            {glyphGridPlaying && (
+              <div className="mt-4 flex justify-between text-sm">
+                <div className="px-3 py-1.5 bg-muted/40 rounded-md">
+                  <span className="font-medium">Frequency:</span> {formatFrequency(currentFrequency)}
+                </div>
+                <div className="px-3 py-1.5 bg-muted/40 rounded-md">
+                  <span className="font-medium">Pan Position:</span> {currentPanning.toFixed(2)}
+                </div>
+              </div>
             )}
           </div>
-          
-          {/* Play button moved to bottom right */}
-          <div className="flex justify-end mt-6">
-            <Button
-              size="lg"
-              variant={activeGrid === "glyph" ? (glyphGridPlaying ? "default" : "outline") : (dotGridPlaying ? "default" : "outline")}
-              className={activeGrid === "glyph" ? (glyphGridPlaying ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : "") : (dotGridPlaying ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : "")}
-              onClick={() => {
-                if (activeGrid === "glyph") {
-                  setGlyphGridPlaying(!glyphGridPlaying);
-                  if (dotGridPlaying) setDotGridPlaying(false);
-                } else {
-                  setDotGridPlaying(!dotGridPlaying);
-                  if (glyphGridPlaying) setGlyphGridPlaying(false);
-                }
-              }}
-            >
-              <Play className="mr-2 h-5 w-5" />
-              {activeGrid === "glyph" 
-                ? (glyphGridPlaying ? "Stop" : "Play") 
-                : (dotGridPlaying ? "Stop" : "Play")}
-            </Button>
+
+          {/* Grid Visualizer - Now side by side with EQ */}
+          <div className="w-1/3 bg-card rounded-lg p-4">
+            <div className="flex flex-col space-y-4">
+              <h3 className="text-lg font-medium">Calibration</h3>
+              
+              {/* Add segmented control for switching between grid types */}
+              <div className="flex border rounded-md overflow-hidden w-fit">
+                <button
+                  className={`px-4 py-2 text-sm font-medium ${
+                    activeGrid === "glyph" 
+                      ? "bg-electric-blue text-white" 
+                      : "bg-background hover:bg-muted"
+                  }`}
+                  onClick={() => setActiveGrid("glyph")}
+                >
+                  Glyph Grid
+                </button>
+                <button
+                  className={`px-4 py-2 text-sm font-medium ${
+                    activeGrid === "dot" 
+                      ? "bg-electric-blue text-white" 
+                      : "bg-background hover:bg-muted"
+                  }`}
+                  onClick={() => setActiveGrid("dot")}
+                >
+                  Dot Grid
+                </button>
+              </div>
+            </div>
+            
+            {/* Grid content area */}
+            <div className="mt-4">
+              {activeGrid === "glyph" ? (
+                <GlyphGrid
+                  isPlaying={glyphGridPlaying}
+                  disabled={false}
+                />
+              ) : (
+                <DotCalibration
+                  isPlaying={dotGridPlaying}
+                  disabled={false}
+                />
+              )}
+            </div>
+            
+            {/* Play button moved to bottom of grid section */}
+            <div className="flex justify-center mt-6">
+              <Button
+                size="lg"
+                variant={activeGrid === "glyph" ? (glyphGridPlaying ? "default" : "outline") : (dotGridPlaying ? "default" : "outline")}
+                className={activeGrid === "glyph" ? (glyphGridPlaying ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : "") : (dotGridPlaying ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : "")}
+                onClick={() => {
+                  if (activeGrid === "glyph") {
+                    setGlyphGridPlaying(!glyphGridPlaying);
+                    if (dotGridPlaying) setDotGridPlaying(false);
+                  } else {
+                    setDotGridPlaying(!dotGridPlaying);
+                    if (glyphGridPlaying) setGlyphGridPlaying(false);
+                  }
+                }}
+              >
+                <Play className="mr-2 h-5 w-5" />
+                {activeGrid === "glyph" 
+                  ? (glyphGridPlaying ? "Stop" : "Play") 
+                  : (dotGridPlaying ? "Stop" : "Play")}
+              </Button>
+            </div>
           </div>
         </div>
 

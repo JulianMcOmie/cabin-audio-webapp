@@ -569,9 +569,8 @@ export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationPr
   };
   
   return (
-    <div className="flex flex-col md:flex-row gap-4">
-      {/* Left side: Canvas */}
-      <div className="md:w-1/2">
+    <div className="space-y-4">
+      {/* Canvas */}
         <div className="relative bg-background/50 rounded-lg p-3">
           <DotGrid
             gridSize={gridSize}
@@ -584,13 +583,12 @@ export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationPr
         </div>
         
         {/* Grid info */}
-        <div className="text-xs text-center text-muted-foreground mt-2">
+      <div className="text-xs text-center text-muted-foreground">
           Grid: {gridSize}×{columnCount} • Selected: {selectedDots.size} dot{selectedDots.size !== 1 ? 's' : ''}
-        </div>
       </div>
       
-      {/* Right side: Controls */}
-      <div className="md:w-1/2 space-y-4">
+      {/* Controls */}
+      <div className="space-y-4">
         {/* Frequency Multiplier */}
         <div className="flex flex-col space-y-1">
           <div className="flex items-center justify-between">
