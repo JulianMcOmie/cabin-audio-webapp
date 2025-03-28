@@ -354,49 +354,42 @@ export function EQView({ setEqEnabled }: EQViewProps) {
             </div>
           </div>
           
-          <div className="flex flex-col md:flex-row gap-6 mt-4">
-            {/* Left side: Grid Canvas */}
-            <div className="md:w-1/2">
-              <div className="bg-muted/30 p-4 rounded-lg">
-                {activeGrid === "glyph" ? (
-                  <GlyphGrid
-                    isPlaying={glyphGridPlaying}
-                    disabled={false}
-                  />
-                ) : (
-                  <DotCalibration
-                    isPlaying={dotGridPlaying}
-                    disabled={false}
-                  />
-                )}
-              </div>
-            </div>
-            
-            {/* Right side: Controls */}
-            <div className="md:w-1/2 flex flex-col justify-between">
-              {/* Play button is now in the right column but at the bottom */}
-              <div className="flex justify-center mt-4">
-                <Button
-                  size="lg"
-                  variant={activeGrid === "glyph" ? (glyphGridPlaying ? "default" : "outline") : (dotGridPlaying ? "default" : "outline")}
-                  className={activeGrid === "glyph" ? (glyphGridPlaying ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : "") : (dotGridPlaying ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : "")}
-                  onClick={() => {
-                    if (activeGrid === "glyph") {
-                      setGlyphGridPlaying(!glyphGridPlaying);
-                      if (dotGridPlaying) setDotGridPlaying(false);
-                    } else {
-                      setDotGridPlaying(!dotGridPlaying);
-                      if (glyphGridPlaying) setGlyphGridPlaying(false);
-                    }
-                  }}
-                >
-                  <Play className="mr-2 h-5 w-5" />
-                  {activeGrid === "glyph" 
-                    ? (glyphGridPlaying ? "Stop" : "Play") 
-                    : (dotGridPlaying ? "Stop" : "Play")}
-                </Button>
-              </div>
-            </div>
+          {/* Main grid content area */}
+          <div className="mt-4">
+            {activeGrid === "glyph" ? (
+              <GlyphGrid
+                isPlaying={glyphGridPlaying}
+                disabled={false}
+              />
+            ) : (
+              <DotCalibration
+                isPlaying={dotGridPlaying}
+                disabled={false}
+              />
+            )}
+          </div>
+          
+          {/* Play button moved to bottom right */}
+          <div className="flex justify-end mt-6">
+            <Button
+              size="lg"
+              variant={activeGrid === "glyph" ? (glyphGridPlaying ? "default" : "outline") : (dotGridPlaying ? "default" : "outline")}
+              className={activeGrid === "glyph" ? (glyphGridPlaying ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : "") : (dotGridPlaying ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : "")}
+              onClick={() => {
+                if (activeGrid === "glyph") {
+                  setGlyphGridPlaying(!glyphGridPlaying);
+                  if (dotGridPlaying) setDotGridPlaying(false);
+                } else {
+                  setDotGridPlaying(!dotGridPlaying);
+                  if (glyphGridPlaying) setGlyphGridPlaying(false);
+                }
+              }}
+            >
+              <Play className="mr-2 h-5 w-5" />
+              {activeGrid === "glyph" 
+                ? (glyphGridPlaying ? "Stop" : "Play") 
+                : (dotGridPlaying ? "Stop" : "Play")}
+            </Button>
           </div>
         </div>
 

@@ -569,23 +569,32 @@ export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationPr
   };
   
   return (
-    <div className="space-y-4">
-      <div className="relative bg-background/50 rounded-lg p-3">
-        <DotGrid
-          gridSize={gridSize}
-          columnCount={columnCount}
-          selectedDots={selectedDots}
-          onDotToggle={handleDotToggle}
-          disabled={disabled}
-          isPlaying={isPlaying}
-        />
+    <div className="flex flex-col md:flex-row gap-4">
+      {/* Left side: Canvas */}
+      <div className="md:w-1/2">
+        <div className="relative bg-background/50 rounded-lg p-3">
+          <DotGrid
+            gridSize={gridSize}
+            columnCount={columnCount}
+            selectedDots={selectedDots}
+            onDotToggle={handleDotToggle}
+            disabled={disabled}
+            isPlaying={isPlaying}
+          />
+        </div>
+        
+        {/* Grid info */}
+        <div className="text-xs text-center text-muted-foreground mt-2">
+          Grid: {gridSize}×{columnCount} • Selected: {selectedDots.size} dot{selectedDots.size !== 1 ? 's' : ''}
+        </div>
       </div>
       
-      <div className="flex flex-col space-y-2">
-        {/* Replace Frequency Offset with Frequency Multiplier */}
+      {/* Right side: Controls */}
+      <div className="md:w-1/2 space-y-4">
+        {/* Frequency Multiplier */}
         <div className="flex flex-col space-y-1">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium">Frequency Multiplier:</span>
+            <span className="text-sm font-medium">Frequency Multiplier</span>
             <span className="text-xs text-muted-foreground">
               {formatMultiplier(freqMultiplier)}
             </span>
@@ -606,138 +615,117 @@ export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationPr
           </div>
         </div>
         
-        {/* Update Frequency Sweep Toggle description */}
+        {/* Frequency Sweep Toggle */}
         <div className="flex items-center justify-between">
-          <div className="space-y-0.5">
-            <div className="flex items-center gap-2">
-              <Waves className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm">Frequency Sweep</span>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Automatically sweep the frequency multiplier up and down
-            </p>
+          <div className="flex items-center space-x-2">
+            <Switch 
+              checked={isSweeping}
+              onCheckedChange={setIsSweeping}
+              disabled={disabled}
+            />
+            <Label>Frequency Sweep</Label>
           </div>
-          <Switch 
-            checked={isSweeping}
-            onCheckedChange={setIsSweeping}
-            disabled={disabled}
-          />
+          <div className="text-xs text-muted-foreground">
+            {isSweeping ? "Auto sweep on" : "Fixed frequency"}
+          </div>
         </div>
         
         {/* Playback mode toggle */}
-        <div className="flex items-center justify-between space-x-2">
-          <div className="flex flex-col space-y-0.5">
-            <span className="text-xs font-medium">Playback Mode:</span>
-            <span className="text-xs text-muted-foreground">
-              {playbackMode === dotGridAudio.PlaybackMode.POLYRHYTHM 
-                ? "Polyrhythm (each dot has its own rhythm)" 
-                : "Sequential (one dot at a time, in order)"}
-            </span>
-          </div>
+        <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
-            <Label htmlFor="mode-toggle" className="text-xs">
-              {playbackMode === dotGridAudio.PlaybackMode.SEQUENTIAL ? "Sequential" : "Polyrhythm"}
-            </Label>
             <Switch
-              id="mode-toggle"
               checked={playbackMode === dotGridAudio.PlaybackMode.SEQUENTIAL}
               onCheckedChange={togglePlaybackMode}
               disabled={disabled}
             />
+            <Label>Sequential Mode</Label>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {playbackMode === dotGridAudio.PlaybackMode.POLYRHYTHM ? "All dots play" : "One at a time"}
           </div>
         </div>
         
         {/* Selection mode toggle */}
-        <div className="flex items-center justify-between space-x-2">
-          <div className="flex flex-col space-y-0.5">
-            <span className="text-xs font-medium">Selection Mode:</span>
-            <span className="text-xs text-muted-foreground">
-              {selectMode === 'row' 
-                ? "Row (click any dot to toggle entire row)" 
-                : "Individual (select dots one by one)"}
-            </span>
-          </div>
+        <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
-            <Label htmlFor="select-mode-toggle" className="text-xs">
-              {selectMode === 'individual' ? "Individual" : "Row"}
-            </Label>
             <Switch
-              id="select-mode-toggle"
               checked={selectMode === 'individual'}
               onCheckedChange={toggleSelectionMode}
               disabled={disabled}
             />
+            <Label>Individual Selection</Label>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {selectMode === 'row' ? "Select by row" : "Select individual dots"}
           </div>
         </div>
         
-        {/* Grid dimensions display */}
-        <span className="text-xs text-muted-foreground text-center">
-          Grid Size: {gridSize}×{columnCount}
-        </span>
-        
-        {/* Row controls */}
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-muted-foreground">Rows:</span>
-          <div className="flex items-center space-x-2">
-            <button
-              className={`h-7 w-7 rounded flex items-center justify-center border ${
-                gridSize <= MIN_ROWS || disabled
-                  ? 'opacity-50 cursor-not-allowed'
-                  : 'hover:bg-muted'
-              }`}
-              onClick={decreaseRows}
-              disabled={gridSize <= MIN_ROWS || disabled}
-            >
-              <span className="text-sm">-</span>
-            </button>
-            <span className="w-5 text-center text-sm">{gridSize}</span>
-            <button
-              className={`h-7 w-7 rounded flex items-center justify-center border ${
-                gridSize >= MAX_ROWS || disabled
-                  ? 'opacity-50 cursor-not-allowed'
-                  : 'hover:bg-muted'
-              }`}
-              onClick={increaseRows}
-              disabled={gridSize >= MAX_ROWS || disabled}
-            >
-              <span className="text-sm">+</span>
-            </button>
+        {/* Row and Column Controls */}
+        <div className="flex justify-between gap-4">
+          {/* Row controls */}
+          <div className="flex-1 space-y-1">
+            <span className="text-xs font-medium">Rows</span>
+            <div className="flex items-center space-x-2">
+              <button
+                className={`h-7 w-7 rounded flex items-center justify-center border ${
+                  gridSize <= MIN_ROWS || disabled
+                    ? 'opacity-50 cursor-not-allowed'
+                    : 'hover:bg-muted'
+                }`}
+                onClick={decreaseRows}
+                disabled={gridSize <= MIN_ROWS || disabled}
+              >
+                <span className="text-sm">-</span>
+              </button>
+              <span className="w-5 text-center text-sm">{gridSize}</span>
+              <button
+                className={`h-7 w-7 rounded flex items-center justify-center border ${
+                  gridSize >= MAX_ROWS || disabled
+                    ? 'opacity-50 cursor-not-allowed'
+                    : 'hover:bg-muted'
+                }`}
+                onClick={increaseRows}
+                disabled={gridSize >= MAX_ROWS || disabled}
+              >
+                <span className="text-sm">+</span>
+              </button>
+            </div>
           </div>
-        </div>
-        
-        {/* Column controls */}
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-muted-foreground">Columns:</span>
-          <div className="flex items-center space-x-2">
-            <button
-              className={`h-7 w-7 rounded flex items-center justify-center border ${
-                columnCount <= MIN_COLUMNS || disabled
-                  ? 'opacity-50 cursor-not-allowed'
-                  : 'hover:bg-muted'
-              }`}
-              onClick={decreaseColumns}
-              disabled={columnCount <= MIN_COLUMNS || disabled}
-            >
-              <span className="text-sm">-</span>
-            </button>
-            <span className="w-5 text-center text-sm">{columnCount}</span>
-            <button
-              className={`h-7 w-7 rounded flex items-center justify-center border ${
-                columnCount >= MAX_COLUMNS || disabled
-                  ? 'opacity-50 cursor-not-allowed'
-                  : 'hover:bg-muted'
-              }`}
-              onClick={increaseColumns}
-              disabled={columnCount >= MAX_COLUMNS || disabled}
-            >
-              <span className="text-sm">+</span>
-            </button>
+          
+          {/* Column controls */}
+          <div className="flex-1 space-y-1">
+            <span className="text-xs font-medium">Columns</span>
+            <div className="flex items-center space-x-2">
+              <button
+                className={`h-7 w-7 rounded flex items-center justify-center border ${
+                  columnCount <= MIN_COLUMNS || disabled
+                    ? 'opacity-50 cursor-not-allowed'
+                    : 'hover:bg-muted'
+                }`}
+                onClick={decreaseColumns}
+                disabled={columnCount <= MIN_COLUMNS || disabled}
+              >
+                <span className="text-sm">-</span>
+              </button>
+              <span className="w-5 text-center text-sm">{columnCount}</span>
+              <button
+                className={`h-7 w-7 rounded flex items-center justify-center border ${
+                  columnCount >= MAX_COLUMNS || disabled
+                    ? 'opacity-50 cursor-not-allowed'
+                    : 'hover:bg-muted'
+                }`}
+                onClick={increaseColumns}
+                disabled={columnCount >= MAX_COLUMNS || disabled}
+              >
+                <span className="text-sm">+</span>
+              </button>
+            </div>
           </div>
         </div>
         
         {/* Clear button */}
         <button
-          className={`px-2 h-7 rounded flex items-center justify-center text-xs border ${
+          className={`px-2 py-1 rounded flex items-center justify-center text-xs border ${
             selectedDots.size === 0 || disabled
               ? 'opacity-50 cursor-not-allowed'
               : 'hover:bg-muted'
@@ -747,10 +735,6 @@ export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationPr
         >
           Clear Selection
         </button>
-      </div>
-      
-      <div className="text-xs text-center text-muted-foreground">
-        Selected: {selectedDots.size} dot{selectedDots.size !== 1 ? 's' : ''}
       </div>
     </div>
   );

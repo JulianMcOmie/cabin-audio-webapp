@@ -297,8 +297,6 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
         return
       }
     }
-    
-    setIsDragging(true)
   }
   
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -576,7 +574,7 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
         <div className="relative bg-background/50 rounded-lg p-3">
           <canvas
             ref={canvasRef}
-            className={`w-full aspect-square cursor-move ${disabled ? "opacity-70 cursor-not-allowed" : ""}`}
+            className={`w-full aspect-square ${disabled ? "opacity-70 cursor-not-allowed" : ""}`}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
@@ -593,23 +591,16 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
       
       {/* Right side: Controls */}
       <div className="md:w-1/2 space-y-4">
-        {/* Timeline scrubber */}
+        {/* Timeline visualization */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <h4 className="text-sm font-medium">Playback Position</h4>
             <div className="text-xs text-muted-foreground">
-              Position: {(isScrubbing ? manualPosition : glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition()).toFixed(2)}
+              Position: {glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition().toFixed(2)}
             </div>
           </div>
           
-          <div 
-            ref={timelineRef}
-            className="h-6 bg-muted rounded-md relative cursor-pointer"
-            onMouseDown={handleTimelineMouseDown}
-            onMouseMove={handleTimelineMouseMove}
-            onMouseUp={handleTimelineMouseUp}
-            onMouseLeave={handleTimelineMouseLeave}
-          >
+          <div className="h-6 bg-muted rounded-md relative">
             {/* Timeline background with position markers */}
             <div className="absolute inset-0 flex justify-between px-2">
               {[0, 0.25, 0.5, 0.75, 1].map((pos) => (
@@ -623,21 +614,11 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
             <div 
               className="absolute top-0 bottom-0 w-1 bg-primary rounded-full transform -translate-x-1/2"
               style={{ 
-                left: `${(isScrubbing ? manualPosition : glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition()) * 100}%`,
-                transition: isScrubbing ? 'none' : 'left 0.1s linear'
+                left: `${glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition() * 100}%`,
+                transition: 'left 0.1s linear'
               }}
             ></div>
           </div>
-          
-          {/* Scrub button */}
-          <Button 
-            variant="outline" 
-            size="sm"
-            onClick={togglePlayback}
-            disabled={disabled || !isPlaying}
-          >
-            {isScrubbing ? "Resume Auto" : "Scrub"}
-          </Button>
         </div>
         
         {/* Loop subsection control */}
@@ -678,8 +659,8 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
             <div 
               className="absolute top-0 bottom-0 w-1 bg-primary/40 rounded-full transform -translate-x-1/2"
               style={{ 
-                left: `${(isScrubbing ? manualPosition : glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition()) * 100}%`,
-                transition: isScrubbing ? 'none' : 'left 0.1s linear'
+                left: `${glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition() * 100}%`,
+                transition: 'left 0.1s linear'
               }}
             ></div>
             
@@ -702,22 +683,6 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
               <div className="w-1 h-full bg-primary/70 rounded-full group-hover:bg-primary group-active:bg-primary"></div>
               <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-primary/20 opacity-0 group-hover:opacity-100 group-active:opacity-100"></div>
             </div>
-          </div>
-        </div>
-        
-        {/* Playback mode toggle */}
-        <div className="flex justify-between items-center">
-          <div className="flex items-center space-x-2">
-            <Switch 
-              id="playback-mode-toggle"
-              checked={playbackMode === PlaybackMode.ALTERNATE}
-              onCheckedChange={togglePlaybackMode}
-              disabled={disabled || !isPlaying}
-            />
-            <Label htmlFor="playback-mode-toggle">Alternate Mode</Label>
-          </div>
-          <div className="text-xs text-muted-foreground">
-            {playbackMode === PlaybackMode.SWEEP ? "Sweep through path" : "Jump between start/end"}
           </div>
         </div>
         
