@@ -348,7 +348,7 @@ export function DotGrid({
   return (
     <canvas
       ref={canvasRef}
-      className={`w-full aspect-square cursor-pointer ${disabled ? "opacity-70 cursor-not-allowed" : ""}`}
+      className={`w-full aspect-[4/3] cursor-pointer ${disabled ? "opacity-70 cursor-not-allowed" : ""}`}
       onClick={handleCanvasClick}
     />
   )
@@ -569,30 +569,30 @@ export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationPr
   };
   
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* Canvas */}
-        <div className="relative bg-background/50 rounded-lg p-3">
-          <DotGrid
-            gridSize={gridSize}
-            columnCount={columnCount}
-            selectedDots={selectedDots}
-            onDotToggle={handleDotToggle}
-            disabled={disabled}
-            isPlaying={isPlaying}
-          />
-        </div>
-        
-        {/* Grid info */}
+      <div className="relative bg-background/50 rounded-lg p-2">
+        <DotGrid
+          gridSize={gridSize}
+          columnCount={columnCount}
+          selectedDots={selectedDots}
+          onDotToggle={handleDotToggle}
+          disabled={disabled}
+          isPlaying={isPlaying}
+        />
+      </div>
+      
+      {/* Grid info */}
       <div className="text-xs text-center text-muted-foreground">
-          Grid: {gridSize}×{columnCount} • Selected: {selectedDots.size} dot{selectedDots.size !== 1 ? 's' : ''}
+        Grid: {gridSize}×{columnCount} • Selected: {selectedDots.size} dot{selectedDots.size !== 1 ? 's' : ''}
       </div>
       
       {/* Controls */}
-      <div className="space-y-4">
+      <div className="space-y-3">
         {/* Frequency Multiplier */}
         <div className="flex flex-col space-y-1">
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium">Frequency Multiplier</span>
+            <span className="text-xs font-medium">Frequency Multiplier</span>
             <span className="text-xs text-muted-foreground">
               {formatMultiplier(freqMultiplier)}
             </span>
@@ -604,12 +604,12 @@ export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationPr
             step={0.01}
             value={[freqMultiplier]}
             onValueChange={handleFreqMultiplierChange}
-            className={disabled || isSweeping ? "opacity-70" : ""}
+            className={`${disabled || isSweeping ? "opacity-70" : ""} py-0`}
           />
           <div className="flex justify-between text-[10px] text-muted-foreground">
-            <span>0.5× (lower)</span>
+            <span>0.5×</span>
             <span>1.0×</span>
-            <span>2.0× (higher)</span>
+            <span>2.0×</span>
           </div>
         </div>
         
@@ -621,10 +621,10 @@ export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationPr
               onCheckedChange={setIsSweeping}
               disabled={disabled}
             />
-            <Label>Frequency Sweep</Label>
+            <Label className="text-xs">Frequency Sweep</Label>
           </div>
           <div className="text-xs text-muted-foreground">
-            {isSweeping ? "Auto sweep on" : "Fixed frequency"}
+            {isSweeping ? "Auto" : "Fixed"}
           </div>
         </div>
         
@@ -636,10 +636,10 @@ export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationPr
               onCheckedChange={togglePlaybackMode}
               disabled={disabled}
             />
-            <Label>Sequential Mode</Label>
+            <Label className="text-xs">Sequential Mode</Label>
           </div>
           <div className="text-xs text-muted-foreground">
-            {playbackMode === dotGridAudio.PlaybackMode.POLYRHYTHM ? "All dots play" : "One at a time"}
+            {playbackMode === dotGridAudio.PlaybackMode.POLYRHYTHM ? "All" : "One"}
           </div>
         </div>
         
@@ -651,21 +651,21 @@ export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationPr
               onCheckedChange={toggleSelectionMode}
               disabled={disabled}
             />
-            <Label>Individual Selection</Label>
+            <Label className="text-xs">Individual Selection</Label>
           </div>
           <div className="text-xs text-muted-foreground">
-            {selectMode === 'row' ? "Select by row" : "Select individual dots"}
+            {selectMode === 'row' ? "Row" : "Dot"}
           </div>
         </div>
         
         {/* Row and Column Controls */}
-        <div className="flex justify-between gap-4">
+        <div className="flex justify-between gap-3">
           {/* Row controls */}
           <div className="flex-1 space-y-1">
             <span className="text-xs font-medium">Rows</span>
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-1">
               <button
-                className={`h-7 w-7 rounded flex items-center justify-center border ${
+                className={`h-6 w-6 rounded flex items-center justify-center border ${
                   gridSize <= MIN_ROWS || disabled
                     ? 'opacity-50 cursor-not-allowed'
                     : 'hover:bg-muted'
@@ -673,11 +673,11 @@ export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationPr
                 onClick={decreaseRows}
                 disabled={gridSize <= MIN_ROWS || disabled}
               >
-                <span className="text-sm">-</span>
+                <span className="text-xs">-</span>
               </button>
-              <span className="w-5 text-center text-sm">{gridSize}</span>
+              <span className="w-4 text-center text-xs">{gridSize}</span>
               <button
-                className={`h-7 w-7 rounded flex items-center justify-center border ${
+                className={`h-6 w-6 rounded flex items-center justify-center border ${
                   gridSize >= MAX_ROWS || disabled
                     ? 'opacity-50 cursor-not-allowed'
                     : 'hover:bg-muted'
@@ -685,7 +685,7 @@ export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationPr
                 onClick={increaseRows}
                 disabled={gridSize >= MAX_ROWS || disabled}
               >
-                <span className="text-sm">+</span>
+                <span className="text-xs">+</span>
               </button>
             </div>
           </div>
@@ -693,9 +693,9 @@ export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationPr
           {/* Column controls */}
           <div className="flex-1 space-y-1">
             <span className="text-xs font-medium">Columns</span>
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-1">
               <button
-                className={`h-7 w-7 rounded flex items-center justify-center border ${
+                className={`h-6 w-6 rounded flex items-center justify-center border ${
                   columnCount <= MIN_COLUMNS || disabled
                     ? 'opacity-50 cursor-not-allowed'
                     : 'hover:bg-muted'
@@ -703,11 +703,11 @@ export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationPr
                 onClick={decreaseColumns}
                 disabled={columnCount <= MIN_COLUMNS || disabled}
               >
-                <span className="text-sm">-</span>
+                <span className="text-xs">-</span>
               </button>
-              <span className="w-5 text-center text-sm">{columnCount}</span>
+              <span className="w-4 text-center text-xs">{columnCount}</span>
               <button
-                className={`h-7 w-7 rounded flex items-center justify-center border ${
+                className={`h-6 w-6 rounded flex items-center justify-center border ${
                   columnCount >= MAX_COLUMNS || disabled
                     ? 'opacity-50 cursor-not-allowed'
                     : 'hover:bg-muted'
@@ -715,7 +715,7 @@ export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationPr
                 onClick={increaseColumns}
                 disabled={columnCount >= MAX_COLUMNS || disabled}
               >
-                <span className="text-sm">+</span>
+                <span className="text-xs">+</span>
               </button>
             </div>
           </div>
@@ -731,7 +731,7 @@ export function DotCalibration({ isPlaying, disabled = false }: DotCalibrationPr
           onClick={clearSelection}
           disabled={selectedDots.size === 0 || disabled}
         >
-          Clear Selection
+          Clear
         </button>
       </div>
     </div>

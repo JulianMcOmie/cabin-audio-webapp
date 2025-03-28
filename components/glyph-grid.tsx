@@ -47,10 +47,6 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
   const [manualPosition, setManualPosition] = useState(0) // 0 to 1
   const timelineRef = useRef<HTMLDivElement>(null)
   const isDraggingTimelineRef = useRef(false)
-  const [subsectionStart, setSubsectionStart] = useState(0)
-  const [subsectionEnd, setSubsectionEnd] = useState(1)
-  const [isDraggingSubsectionStart, setIsDraggingSubsectionStart] = useState(false)
-  const [isDraggingSubsectionEnd, setIsDraggingSubsectionEnd] = useState(false)
   const subsectionTimelineRef = useRef<HTMLDivElement>(null)
 
   // Add speed state
@@ -61,6 +57,9 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
 
   // Set discrete frequency to always false (continuous mode)
   const [discreteFrequency, setDiscreteFrequency] = useState(false)
+
+  // Add hover state tracking for interactive elements
+  const [hoverState, setHoverState] = useState<'none' | 'vertex1' | 'vertex2' | 'line'>('none')
 
   // Set up observer to detect theme changes
   useEffect(() => {
@@ -96,6 +95,9 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
       size: glyph.size,
       angle: glyph.angle
     })
+    
+    // Disable envelope modulation (no gain envelope)
+    audioPlayer.setModulating(false)
     
     return () => {
       // Clean up audio on unmount
@@ -187,10 +189,6 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
       // In the audio system, (-1,-1) is bottom-left and (1,1) is top-right
       // In the canvas, (0,0) is top-left and (width,height) is bottom-right
       
-      // Convert from glyph normalized coords to canvas coords
-      // startX maps from -1 to 0, and 1 to width
-      // startY maps from -1 to height, and 1 to 0 (Y is inverted)
-      
       // Calculate glyph corners in normalized space
       const startX_norm = glyph.position.x - glyph.size.width / 2
       const startY_norm = glyph.position.y - glyph.size.height / 2
@@ -198,11 +196,21 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
       const endY_norm = glyph.position.y + glyph.size.height / 2
       
       // Convert normalized coordinates to canvas pixels
-      // Map from normalized -1,1 to canvas 0,width or 0,height
       const startX = (startX_norm + 1) / 2 * rect.width
       const startY = (1 - startY_norm) / 2 * rect.height // Y is inverted
       const endX = (endX_norm + 1) / 2 * rect.width
       const endY = (1 - endY_norm) / 2 * rect.height // Y is inverted
+      
+      // Draw the path line with hover effect if needed
+      if (hoverState === 'line' && !isDragging && !isResizing) {
+        // Draw a highlight underneath for hover state
+        ctx.strokeStyle = isDarkMode ? 'rgba(56, 189, 248, 0.3)' : 'rgba(2, 132, 199, 0.3)'
+        ctx.lineWidth = 8
+        ctx.beginPath()
+        ctx.moveTo(startX, startY)
+        ctx.lineTo(endX, endY)
+        ctx.stroke()
+      }
       
       // Draw the path that the noise will follow
       ctx.strokeStyle = isDarkMode ? '#38bdf8' : '#0284c7'
@@ -237,11 +245,21 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
         const handleRadius = 6
         // Only show bottom-left and top-right corners
         const handles = [
-          { x: startX, y: startY }, // Bottom-left
-          { x: endX, y: endY },     // Top-right
+          { x: startX, y: startY, state: 'vertex1' }, // Bottom-left
+          { x: endX, y: endY, state: 'vertex2' },     // Top-right
         ]
         
         handles.forEach((handle, index) => {
+          // Add hover effect
+          if (hoverState === handle.state && !isDragging && !isResizing) {
+            // Draw highlight circle first
+            ctx.fillStyle = isDarkMode ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.2)'
+            ctx.beginPath()
+            ctx.arc(handle.x, handle.y, handleRadius + 4, 0, Math.PI * 2)
+            ctx.fill()
+          }
+          
+          // Draw handle
           ctx.fillStyle = isDarkMode ? 'white' : 'black'
           ctx.beginPath()
           ctx.arc(handle.x, handle.y, handleRadius, 0, Math.PI * 2)
@@ -249,8 +267,75 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
         })
       }
     }
-  }, [glyph, isPlaying, disabled, isDarkMode])
+  }, [glyph, isPlaying, disabled, isDarkMode, hoverState, isDragging, isResizing])
   
+  // Function to check what's under the cursor
+  const checkHoverTarget = (mouseX: number, mouseY: number) => {
+    const canvas = canvasRef.current
+    if (!canvas) return 'none'
+    
+    const rect = canvas.getBoundingClientRect()
+    
+    // Calculate glyph corners in normalized space
+    const startX_norm = glyph.position.x - glyph.size.width / 2
+    const startY_norm = glyph.position.y - glyph.size.height / 2
+    const endX_norm = glyph.position.x + glyph.size.width / 2
+    const endY_norm = glyph.position.y + glyph.size.height / 2
+    
+    // Convert to canvas coordinates
+    const startX = (startX_norm + 1) / 2 * rect.width
+    const startY = (1 - startY_norm) / 2 * rect.height
+    const endX = (endX_norm + 1) / 2 * rect.width
+    const endY = (1 - endY_norm) / 2 * rect.height
+    
+    // Check vertices first (they have priority)
+    const handleRadius = 12 // Slightly larger than visual radius for better UX
+    
+    // Check first vertex (bottom-left)
+    const distToVertex1 = Math.sqrt(
+      Math.pow(mouseX - startX, 2) + Math.pow(mouseY - startY, 2)
+    )
+    if (distToVertex1 <= handleRadius) {
+      return 'vertex1'
+    }
+    
+    // Check second vertex (top-right)
+    const distToVertex2 = Math.sqrt(
+      Math.pow(mouseX - endX, 2) + Math.pow(mouseY - endY, 2)
+    )
+    if (distToVertex2 <= handleRadius) {
+      return 'vertex2'
+    }
+    
+    // Check if near the line
+    // Calculate distance from point to line segment
+    const lineDistThreshold = 10 // px
+    
+    // Calculate line segment length squared
+    const lineLengthSq = Math.pow(endX - startX, 2) + Math.pow(endY - startY, 2)
+    
+    if (lineLengthSq === 0) return 'none' // Line has no length
+    
+    // Calculate projection of point onto line
+    const t = ((mouseX - startX) * (endX - startX) + (mouseY - startY) * (endY - startY)) / lineLengthSq
+    
+    // If projection is outside line segment, use distance to nearest endpoint
+    if (t < 0 || t > 1) return 'none'
+    
+    // Calculate projected point on line
+    const projX = startX + t * (endX - startX)
+    const projY = startY + t * (endY - startY)
+    
+    // Calculate distance to projected point
+    const distToLine = Math.sqrt(Math.pow(mouseX - projX, 2) + Math.pow(mouseY - projY, 2))
+    
+    if (distToLine <= lineDistThreshold) {
+      return 'line'
+    }
+    
+    return 'none'
+  }
+
   // Handle mouse interactions (drag, resize)
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (disabled) return
@@ -297,17 +382,29 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
         return
       }
     }
+    
+    // If we're not resizing a vertex, check if we're over the line
+    const hoverTarget = checkHoverTarget(mouseX, mouseY)
+    if (hoverTarget === 'line') {
+      setIsDragging(true)
+    }
   }
   
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    
+    const rect = canvas.getBoundingClientRect()
+    const mouseX = e.clientX - rect.left
+    const mouseY = e.clientY - rect.top
+    
+    // Update hover state
+    if (!isDragging && !isResizing) {
+      const target = checkHoverTarget(mouseX, mouseY)
+      setHoverState(target)
+    }
+    
     if ((isDragging || isResizing) && lastMousePos) {
-      const canvas = canvasRef.current
-      if (!canvas) return
-      
-      const rect = canvas.getBoundingClientRect()
-      const mouseX = e.clientX - rect.left
-      const mouseY = e.clientY - rect.top
-      
       // Calculate delta from last position in canvas pixels
       const deltaX = mouseX - lastMousePos.x
       const deltaY = mouseY - lastMousePos.y
@@ -369,6 +466,7 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
           const new_endY_norm = 1 - (endY / rect.height) * 2 // Y is inverted
           
           // Calculate dimensions without enforcing that end > start
+          // This allows vertices to cross each other and change line direction
           const newWidth = new_endX_norm - new_startX_norm
           const newHeight = new_endY_norm - new_startY_norm
           
@@ -427,23 +525,31 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
   const handleTimelineMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (disabled) return
     
-    const timeline = timelineRef.current
+    const timeline = subsectionTimelineRef.current
     if (!timeline) return
     
-    isDraggingTimelineRef.current = true
-    setIsScrubbing(true)
-    
-    // Calculate position based on click position
+    // Get current position
     const rect = timeline.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const position = Math.max(0, Math.min(1, x / rect.width))
-    setManualPosition(position)
+    const mouseX = e.clientX - rect.left
+    const posX = glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition() * rect.width
+    
+    // If we're within 10px of the position marker, start scrubbing
+    if (Math.abs(mouseX - posX) <= 10) {
+      isDraggingTimelineRef.current = true
+      setIsScrubbing(true)
+    } else {
+      // If not near the handle, set the position directly
+      const position = Math.max(0, Math.min(1, mouseX / rect.width))
+      setManualPosition(position)
+      isDraggingTimelineRef.current = true
+      setIsScrubbing(true)
+    }
   }
 
   const handleTimelineMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!isDraggingTimelineRef.current) return
     
-    const timeline = timelineRef.current
+    const timeline = subsectionTimelineRef.current
     if (!timeline) return
     
     // Calculate position based on mouse position
@@ -473,63 +579,6 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
       // Switch to manual control
       setIsScrubbing(true)
     }
-  }
-
-  // Add this useEffect to update the audio player when subsection changes
-  useEffect(() => {
-    const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
-    audioPlayer.setSubsection(subsectionStart, subsectionEnd, true)
-  }, [subsectionStart, subsectionEnd])
-
-  // Add these handlers for direct manipulation of subsection start/end
-  const handleSubsectionMouseDown = (e: React.MouseEvent<HTMLDivElement>, isStartHandle: boolean) => {
-    if (disabled) return
-    
-    const timeline = subsectionTimelineRef.current
-    if (!timeline) return
-    
-    if (isStartHandle) {
-      setIsDraggingSubsectionStart(true)
-    } else {
-      setIsDraggingSubsectionEnd(true)
-    }
-    
-    // Calculate position based on click position
-    updateSubsectionHandlePosition(e, isStartHandle)
-  }
-
-  const updateSubsectionHandlePosition = (e: React.MouseEvent<HTMLDivElement>, isStartHandle: boolean) => {
-    const timeline = subsectionTimelineRef.current
-    if (!timeline) return
-    
-    const rect = timeline.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const position = Math.max(0, Math.min(1, x / rect.width))
-    
-    // Allow handles to cross, just constrain to canvas bounds (0-1)
-    if (isStartHandle) {
-      setSubsectionStart(position)
-    } else {
-      setSubsectionEnd(position)
-    }
-  }
-
-  const handleSubsectionMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (isDraggingSubsectionStart) {
-      updateSubsectionHandlePosition(e, true)
-    } else if (isDraggingSubsectionEnd) {
-      updateSubsectionHandlePosition(e, false)
-    }
-  }
-
-  const handleSubsectionMouseUp = () => {
-    setIsDraggingSubsectionStart(false)
-    setIsDraggingSubsectionEnd(false)
-  }
-
-  const handleSubsectionMouseLeave = () => {
-    setIsDraggingSubsectionStart(false)
-    setIsDraggingSubsectionEnd(false)
   }
 
   // Add a useEffect to update the audio player when speed changes
@@ -567,13 +616,30 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     audioPlayer.setDiscreteFrequency(discreteFrequency)
   }, [discreteFrequency])
 
+  // Update cursor style based on hover state
+  const getCursorStyle = () => {
+    if (disabled) return "not-allowed"
+    if (isResizing || isDragging) return "grabbing"
+    
+    switch (hoverState) {
+      case 'vertex1':
+      case 'vertex2':
+        return "grab"
+      case 'line':
+        return "move"
+      default:
+        return "default"
+    }
+  }
+
   return (
-    <div className="space-y-4">
-      {/* Canvas Area */}
-      <div className="relative bg-background/50 rounded-lg p-3">
+    <div className="space-y-3">
+      {/* Canvas Area - Make it smaller by reducing aspect ratio */}
+      <div className="relative bg-background/50 rounded-lg p-2">
         <canvas
           ref={canvasRef}
-          className={`w-full aspect-square ${disabled ? "opacity-70 cursor-not-allowed" : ""}`}
+          className={`w-full aspect-[4/3] ${disabled ? "opacity-70" : ""}`}
+          style={{ cursor: getCursorStyle() }}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
@@ -581,113 +647,58 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
         />
       </div>
       
-      {/* Basic glyph information */}
+      {/* Basic glyph information - make more compact */}
       <div className="text-xs text-center text-muted-foreground">
-        X: {glyph.position.x.toFixed(2)}, Y: {glyph.position.y.toFixed(2)} • 
-        W: {glyph.size.width.toFixed(2)}, H: {glyph.size.height.toFixed(2)}
+        X: {glyph.position.x.toFixed(2)} Y: {glyph.position.y.toFixed(2)} • 
+        W: {glyph.size.width.toFixed(2)} H: {glyph.size.height.toFixed(2)}
       </div>
       
-      {/* Controls */}
-      <div className="space-y-4">
-        {/* Timeline visualization */}
-        <div className="space-y-2">
+      {/* Controls - make more compact */}
+      <div className="space-y-3">
+        {/* Simplified playback control - scrubbing only */}
+        <div className="space-y-1">
           <div className="flex items-center justify-between">
-            <h4 className="text-sm font-medium">Playback Position</h4>
+            <h4 className="text-xs font-medium">Playback Position</h4>
             <div className="text-xs text-muted-foreground">
-              Position: {glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition().toFixed(2)}
+              {isScrubbing ? manualPosition.toFixed(2) : glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition().toFixed(2)}
             </div>
-          </div>
-          
-          <div className="h-6 bg-muted rounded-md relative">
-            {/* Timeline background with position markers */}
-            <div className="absolute inset-0 flex justify-between px-2">
-              {[0, 0.25, 0.5, 0.75, 1].map((pos) => (
-                <div key={pos} className="h-full flex flex-col justify-center">
-                  <div className="w-0.5 h-2 bg-muted-foreground/30"></div>
-                </div>
-              ))}
-            </div>
-            
-            {/* Current position marker */}
-            <div 
-              className="absolute top-0 bottom-0 w-1 bg-primary rounded-full transform -translate-x-1/2"
-              style={{ 
-                left: `${glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition() * 100}%`,
-                transition: 'left 0.1s linear'
-              }}
-            ></div>
-          </div>
-        </div>
-        
-        {/* Loop subsection control */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h4 className="text-sm font-medium">Loop Subsection</h4>
-            <span className="text-xs text-muted-foreground">
-              {Math.min(subsectionStart, subsectionEnd).toFixed(2)} to {Math.max(subsectionStart, subsectionEnd).toFixed(2)}
-            </span>
           </div>
           
           <div 
             ref={subsectionTimelineRef}
             className="h-6 bg-muted rounded-md relative cursor-pointer"
-            onMouseMove={handleSubsectionMouseMove}
-            onMouseUp={handleSubsectionMouseUp}
-            onMouseLeave={handleSubsectionMouseLeave}
+            onMouseDown={handleTimelineMouseDown}
+            onMouseMove={handleTimelineMouseMove}
+            onMouseUp={handleTimelineMouseUp}
+            onMouseLeave={handleTimelineMouseLeave}
           >
             {/* Timeline background with position markers */}
-            <div className="absolute inset-0 flex justify-between px-2">
+            <div className="absolute inset-0 flex justify-between px-1">
               {[0, 0.25, 0.5, 0.75, 1].map((pos) => (
                 <div key={pos} className="h-full flex flex-col justify-center">
-                  <div className="w-0.5 h-2 bg-muted-foreground/30"></div>
+                  <div className="w-0.5 h-1.5 bg-muted-foreground/30"></div>
                 </div>
               ))}
             </div>
             
-            {/* Subsection range indicator */}
+            {/* Current position marker (scrub handle) */}
             <div 
-              className="absolute top-0 bottom-0 bg-primary/20"
+              className="absolute top-0 bottom-0 w-1 bg-emerald-500 rounded-full transform -translate-x-1/2 z-20 cursor-col-resize"
               style={{ 
-                left: `${Math.min(subsectionStart, subsectionEnd) * 100}%`,
-                width: `${Math.abs(subsectionEnd - subsectionStart) * 100}%`
+                left: `${isScrubbing ? manualPosition * 100 : glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition() * 100}%`,
+                transition: isScrubbing ? 'none' : 'left 0.1s linear'
               }}
-            ></div>
-            
-            {/* Current position marker (also shown in subsection timeline) */}
-            <div 
-              className="absolute top-0 bottom-0 w-1 bg-primary/40 rounded-full transform -translate-x-1/2"
-              style={{ 
-                left: `${glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition() * 100}%`,
-                transition: 'left 0.1s linear'
-              }}
-            ></div>
-            
-            {/* Subsection start handle */}
-            <div 
-              className="absolute top-0 bottom-0 w-3 cursor-col-resize flex items-center justify-center group z-10"
-              style={{ left: `${subsectionStart * 100}%`, transform: 'translateX(-50%)' }}
-              onMouseDown={(e) => handleSubsectionMouseDown(e, true)}
             >
-              <div className="w-1 h-full bg-primary/70 rounded-full group-hover:bg-primary group-active:bg-primary"></div>
-              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-primary/20 opacity-0 group-hover:opacity-100 group-active:opacity-100"></div>
-            </div>
-            
-            {/* Subsection end handle */}
-            <div 
-              className="absolute top-0 bottom-0 w-3 cursor-col-resize flex items-center justify-center group z-10"
-              style={{ left: `${subsectionEnd * 100}%`, transform: 'translateX(-50%)' }}
-              onMouseDown={(e) => handleSubsectionMouseDown(e, false)}
-            >
-              <div className="w-1 h-full bg-primary/70 rounded-full group-hover:bg-primary group-active:bg-primary"></div>
-              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-primary/20 opacity-0 group-hover:opacity-100 group-active:opacity-100"></div>
+              {/* Add a handle knob at the top for better visibility */}
+              <div className="absolute -top-1 left-1/2 w-3 h-3 bg-emerald-500 rounded-full transform -translate-x-1/2"></div>
             </div>
           </div>
         </div>
         
         {/* Playback Speed control */}
-        <div className="space-y-2">
+        <div className="space-y-1">
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium">Playback Speed</span>
+            <span className="text-xs font-medium">Playback Speed</span>
             <span className="text-xs text-muted-foreground">
               {formatSpeed(speed)}
             </span>
@@ -700,6 +711,7 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
             step={0.05}
             onValueChange={handleSpeedChange}
             disabled={disabled}
+            className="py-0"
           />
           
           <div className="flex text-xs text-muted-foreground justify-between">

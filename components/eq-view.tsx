@@ -80,7 +80,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const [currentPanning, setCurrentPanning] = useState<number>(0);
 
   // Add state for toggling between Glyph Grid and Dot Grid
-  const [activeGrid, setActiveGrid] = useState<"glyph" | "dot">("glyph");
+  const [activeGrid, setActiveGrid] = useState<"line" | "dot">("dot");
 
   // Measure the EQ component's width when it changes
   useEffect(() => {
@@ -269,8 +269,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
       <div className="space-y-6">
         {/* Combined EQ and Grid Layout */}
         <div className="flex flex-row gap-6">
-          {/* EQ Section - Now takes only part of the width */}
-          <div className="w-2/3 relative" ref={eqContainerRef}>
+          {/* EQ Section - Now takes more of the width */}
+          <div className="w-3/4 relative" ref={eqContainerRef}>
             {/* FFT Visualizer should always be visible during audio playback */}
             {(calibrationPlaying || glyphGridPlaying) && preEQAnalyser && (
               <div className="absolute inset-0 z-0 w-full aspect-[2/1]">
@@ -326,39 +326,39 @@ export function EQView({ setEqEnabled }: EQViewProps) {
             )}
           </div>
 
-          {/* Grid Visualizer - Now side by side with EQ */}
-          <div className="w-1/3 bg-card rounded-lg p-4">
+          {/* Grid Visualizer - Now takes less width */}
+          <div className="w-1/4 bg-card rounded-lg p-4">
             <div className="flex flex-col space-y-4">
               <h3 className="text-lg font-medium">Calibration</h3>
               
-              {/* Add segmented control for switching between grid types */}
+              {/* Updated segmented control with dot grid as default/left option */}
               <div className="flex border rounded-md overflow-hidden w-fit">
                 <button
                   className={`px-4 py-2 text-sm font-medium ${
-                    activeGrid === "glyph" 
-                      ? "bg-electric-blue text-white" 
-                      : "bg-background hover:bg-muted"
-                  }`}
-                  onClick={() => setActiveGrid("glyph")}
-                >
-                  Glyph Grid
-                </button>
-                <button
-                  className={`px-4 py-2 text-sm font-medium ${
                     activeGrid === "dot" 
-                      ? "bg-electric-blue text-white" 
+                      ? "bg-teal-500 text-white" 
                       : "bg-background hover:bg-muted"
                   }`}
                   onClick={() => setActiveGrid("dot")}
                 >
                   Dot Grid
                 </button>
+                <button
+                  className={`px-4 py-2 text-sm font-medium ${
+                    activeGrid === "line" 
+                      ? "bg-teal-500 text-white" 
+                      : "bg-background hover:bg-muted"
+                  }`}
+                  onClick={() => setActiveGrid("line")}
+                >
+                  Line Tool
+                </button>
               </div>
             </div>
             
             {/* Grid content area */}
             <div className="mt-4">
-              {activeGrid === "glyph" ? (
+              {activeGrid === "line" ? (
                 <GlyphGrid
                   isPlaying={glyphGridPlaying}
                   disabled={false}
@@ -375,10 +375,10 @@ export function EQView({ setEqEnabled }: EQViewProps) {
             <div className="flex justify-center mt-6">
               <Button
                 size="lg"
-                variant={activeGrid === "glyph" ? (glyphGridPlaying ? "default" : "outline") : (dotGridPlaying ? "default" : "outline")}
-                className={activeGrid === "glyph" ? (glyphGridPlaying ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : "") : (dotGridPlaying ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : "")}
+                variant={activeGrid === "line" ? (glyphGridPlaying ? "default" : "outline") : (dotGridPlaying ? "default" : "outline")}
+                className={activeGrid === "line" ? (glyphGridPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "") : (dotGridPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")}
                 onClick={() => {
-                  if (activeGrid === "glyph") {
+                  if (activeGrid === "line") {
                     setGlyphGridPlaying(!glyphGridPlaying);
                     if (dotGridPlaying) setDotGridPlaying(false);
                   } else {
@@ -388,7 +388,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 }}
               >
                 <Play className="mr-2 h-5 w-5" />
-                {activeGrid === "glyph" 
+                {activeGrid === "line" 
                   ? (glyphGridPlaying ? "Stop" : "Play") 
                   : (dotGridPlaying ? "Stop" : "Play")}
               </Button>
