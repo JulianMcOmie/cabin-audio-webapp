@@ -59,8 +59,8 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
   // Add playback mode state
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>(PlaybackMode.SWEEP)
 
-  // Add state for discrete frequency mode
-  const [discreteFrequency, setDiscreteFrequency] = useState(true)
+  // Set discrete frequency to always false (continuous mode)
+  const [discreteFrequency, setDiscreteFrequency] = useState(false)
 
   // Set up observer to detect theme changes
   useEffect(() => {
@@ -569,55 +569,67 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     audioPlayer.setDiscreteFrequency(discreteFrequency)
   }, [discreteFrequency])
 
-  // Add toggle handler for discrete frequency mode
-  const toggleDiscreteFrequency = () => {
-    setDiscreteFrequency(prev => !prev)
-  }
-
   return (
-    <div className="space-y-4">
-      <div className="relative bg-background/50 rounded-lg p-3">
-        <canvas
-          ref={canvasRef}
-          className={`w-full aspect-square cursor-move ${disabled ? "opacity-70 cursor-not-allowed" : ""}`}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-        />
-      </div>
-      
-      {/* Timeline scrubber */}
-      <div className="space-y-2">
-        <div 
-          ref={timelineRef}
-          className="h-6 bg-muted rounded-md relative cursor-pointer"
-          onMouseDown={handleTimelineMouseDown}
-          onMouseMove={handleTimelineMouseMove}
-          onMouseUp={handleTimelineMouseUp}
-          onMouseLeave={handleTimelineMouseLeave}
-        >
-          {/* Timeline background with position markers */}
-          <div className="absolute inset-0 flex justify-between px-2">
-            {[0, 0.25, 0.5, 0.75, 1].map((pos) => (
-              <div key={pos} className="h-full flex flex-col justify-center">
-                <div className="w-0.5 h-2 bg-muted-foreground/30"></div>
-              </div>
-            ))}
-          </div>
-          
-          {/* Current position marker */}
-          <div 
-            className="absolute top-0 bottom-0 w-1 bg-primary rounded-full transform -translate-x-1/2"
-            style={{ 
-              left: `${(isScrubbing ? manualPosition : glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition()) * 100}%`,
-              transition: isScrubbing ? 'none' : 'left 0.1s linear'
-            }}
-          ></div>
+    <div className="flex flex-col md:flex-row gap-4">
+      {/* Left side: Canvas */}
+      <div className="md:w-1/2">
+        <div className="relative bg-background/50 rounded-lg p-3">
+          <canvas
+            ref={canvasRef}
+            className={`w-full aspect-square cursor-move ${disabled ? "opacity-70 cursor-not-allowed" : ""}`}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+          />
         </div>
         
-        {/* Playback controls */}
-        <div className="flex justify-between items-center">
+        {/* Basic glyph information */}
+        <div className="text-xs text-center text-muted-foreground mt-2">
+          X: {glyph.position.x.toFixed(2)}, Y: {glyph.position.y.toFixed(2)} • 
+          W: {glyph.size.width.toFixed(2)}, H: {glyph.size.height.toFixed(2)}
+        </div>
+      </div>
+      
+      {/* Right side: Controls */}
+      <div className="md:w-1/2 space-y-4">
+        {/* Timeline scrubber */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-medium">Playback Position</h4>
+            <div className="text-xs text-muted-foreground">
+              Position: {(isScrubbing ? manualPosition : glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition()).toFixed(2)}
+            </div>
+          </div>
+          
+          <div 
+            ref={timelineRef}
+            className="h-6 bg-muted rounded-md relative cursor-pointer"
+            onMouseDown={handleTimelineMouseDown}
+            onMouseMove={handleTimelineMouseMove}
+            onMouseUp={handleTimelineMouseUp}
+            onMouseLeave={handleTimelineMouseLeave}
+          >
+            {/* Timeline background with position markers */}
+            <div className="absolute inset-0 flex justify-between px-2">
+              {[0, 0.25, 0.5, 0.75, 1].map((pos) => (
+                <div key={pos} className="h-full flex flex-col justify-center">
+                  <div className="w-0.5 h-2 bg-muted-foreground/30"></div>
+                </div>
+              ))}
+            </div>
+            
+            {/* Current position marker */}
+            <div 
+              className="absolute top-0 bottom-0 w-1 bg-primary rounded-full transform -translate-x-1/2"
+              style={{ 
+                left: `${(isScrubbing ? manualPosition : glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition()) * 100}%`,
+                transition: isScrubbing ? 'none' : 'left 0.1s linear'
+              }}
+            ></div>
+          </div>
+          
+          {/* Scrub button */}
           <Button 
             variant="outline" 
             size="sm"
@@ -626,84 +638,75 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
           >
             {isScrubbing ? "Resume Auto" : "Scrub"}
           </Button>
-          
-          <div className="text-xs text-muted-foreground">
-            Position: {(isScrubbing ? manualPosition : glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition()).toFixed(2)}
-          </div>
-        </div>
-      </div>
-      
-      {/* New separate subsection loop control */}
-      <div className="pt-3 border-t border-muted space-y-2">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-medium">Loop Subsection</span>
-          <span className="text-xs text-muted-foreground">
-            {subsectionStart.toFixed(2)} to {subsectionEnd.toFixed(2)}
-          </span>
         </div>
         
-        <div 
-          ref={subsectionTimelineRef}
-          className="h-6 bg-muted rounded-md relative cursor-pointer"
-          onMouseMove={handleSubsectionMouseMove}
-          onMouseUp={handleSubsectionMouseUp}
-          onMouseLeave={handleSubsectionMouseLeave}
-        >
-          {/* Timeline background with position markers */}
-          <div className="absolute inset-0 flex justify-between px-2">
-            {[0, 0.25, 0.5, 0.75, 1].map((pos) => (
-              <div key={pos} className="h-full flex flex-col justify-center">
-                <div className="w-0.5 h-2 bg-muted-foreground/30"></div>
-              </div>
-            ))}
+        {/* Loop subsection control */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-medium">Loop Subsection</h4>
+            <span className="text-xs text-muted-foreground">
+              {Math.min(subsectionStart, subsectionEnd).toFixed(2)} to {Math.max(subsectionStart, subsectionEnd).toFixed(2)}
+            </span>
           </div>
           
-          {/* Subsection range indicator */}
           <div 
-            className="absolute top-0 bottom-0 bg-primary/20"
-            style={{ 
-              left: `${Math.min(subsectionStart, subsectionEnd) * 100}%`,
-              width: `${Math.abs(subsectionEnd - subsectionStart) * 100}%`
-            }}
-          ></div>
-          
-          {/* Current position marker (also shown in subsection timeline) */}
-          <div 
-            className="absolute top-0 bottom-0 w-1 bg-primary/40 rounded-full transform -translate-x-1/2"
-            style={{ 
-              left: `${(isScrubbing ? manualPosition : glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition()) * 100}%`,
-              transition: isScrubbing ? 'none' : 'left 0.1s linear'
-            }}
-          ></div>
-          
-          {/* Subsection start handle */}
-          <div 
-            className="absolute top-0 bottom-0 w-3 cursor-col-resize flex items-center justify-center group z-10"
-            style={{ left: `${subsectionStart * 100}%`, transform: 'translateX(-50%)' }}
-            onMouseDown={(e) => handleSubsectionMouseDown(e, true)}
+            ref={subsectionTimelineRef}
+            className="h-6 bg-muted rounded-md relative cursor-pointer"
+            onMouseMove={handleSubsectionMouseMove}
+            onMouseUp={handleSubsectionMouseUp}
+            onMouseLeave={handleSubsectionMouseLeave}
           >
-            <div className="w-1 h-full bg-primary/70 rounded-full group-hover:bg-primary group-active:bg-primary"></div>
-            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-primary/20 opacity-0 group-hover:opacity-100 group-active:opacity-100"></div>
-          </div>
-          
-          {/* Subsection end handle */}
-          <div 
-            className="absolute top-0 bottom-0 w-3 cursor-col-resize flex items-center justify-center group z-10"
-            style={{ left: `${subsectionEnd * 100}%`, transform: 'translateX(-50%)' }}
-            onMouseDown={(e) => handleSubsectionMouseDown(e, false)}
-          >
-            <div className="w-1 h-full bg-primary/70 rounded-full group-hover:bg-primary group-active:bg-primary"></div>
-            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-primary/20 opacity-0 group-hover:opacity-100 group-active:opacity-100"></div>
+            {/* Timeline background with position markers */}
+            <div className="absolute inset-0 flex justify-between px-2">
+              {[0, 0.25, 0.5, 0.75, 1].map((pos) => (
+                <div key={pos} className="h-full flex flex-col justify-center">
+                  <div className="w-0.5 h-2 bg-muted-foreground/30"></div>
+                </div>
+              ))}
+            </div>
+            
+            {/* Subsection range indicator */}
+            <div 
+              className="absolute top-0 bottom-0 bg-primary/20"
+              style={{ 
+                left: `${Math.min(subsectionStart, subsectionEnd) * 100}%`,
+                width: `${Math.abs(subsectionEnd - subsectionStart) * 100}%`
+              }}
+            ></div>
+            
+            {/* Current position marker (also shown in subsection timeline) */}
+            <div 
+              className="absolute top-0 bottom-0 w-1 bg-primary/40 rounded-full transform -translate-x-1/2"
+              style={{ 
+                left: `${(isScrubbing ? manualPosition : glyphGridAudio.getGlyphGridAudioPlayer().getPathPosition()) * 100}%`,
+                transition: isScrubbing ? 'none' : 'left 0.1s linear'
+              }}
+            ></div>
+            
+            {/* Subsection start handle */}
+            <div 
+              className="absolute top-0 bottom-0 w-3 cursor-col-resize flex items-center justify-center group z-10"
+              style={{ left: `${subsectionStart * 100}%`, transform: 'translateX(-50%)' }}
+              onMouseDown={(e) => handleSubsectionMouseDown(e, true)}
+            >
+              <div className="w-1 h-full bg-primary/70 rounded-full group-hover:bg-primary group-active:bg-primary"></div>
+              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-primary/20 opacity-0 group-hover:opacity-100 group-active:opacity-100"></div>
+            </div>
+            
+            {/* Subsection end handle */}
+            <div 
+              className="absolute top-0 bottom-0 w-3 cursor-col-resize flex items-center justify-center group z-10"
+              style={{ left: `${subsectionEnd * 100}%`, transform: 'translateX(-50%)' }}
+              onMouseDown={(e) => handleSubsectionMouseDown(e, false)}
+            >
+              <div className="w-1 h-full bg-primary/70 rounded-full group-hover:bg-primary group-active:bg-primary"></div>
+              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-primary/20 opacity-0 group-hover:opacity-100 group-active:opacity-100"></div>
+            </div>
           </div>
         </div>
         
-        <div className="flex text-xs text-muted-foreground justify-between">
-          <span>Start</span>
-          <span>End</span>
-        </div>
-        
-        {/* Add playback mode toggle */}
-        <div className="flex justify-between items-center mt-2">
+        {/* Playback mode toggle */}
+        <div className="flex justify-between items-center">
           <div className="flex items-center space-x-2">
             <Switch 
               id="playback-mode-toggle"
@@ -717,55 +720,29 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
             {playbackMode === PlaybackMode.SWEEP ? "Sweep through path" : "Jump between start/end"}
           </div>
         </div>
-      </div>
-      
-      {/* Speed control */}
-      <div className="pt-3 border-t border-muted space-y-2">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-medium">Playback Speed</span>
-          <span className="text-xs text-muted-foreground">
-            {formatSpeed(speed)}
-          </span>
-        </div>
         
-        <Slider
-          value={[speed]}
-          min={0.25}
-          max={4.0}
-          step={0.05}
-          onValueChange={handleSpeedChange}
-          disabled={disabled}
-        />
-        
-        <div className="flex text-xs text-muted-foreground justify-between">
-          <span>Slow</span>
-          <span>Fast</span>
-        </div>
-      </div>
-      
-      {/* Discrete Frequency Toggle */}
-      <div className="pt-3 border-t border-muted space-y-2">
-        <div className="flex justify-between items-center">
-          <div className="flex items-center space-x-2">
-            <Switch 
-              id="discrete-frequency-toggle"
-              checked={discreteFrequency}
-              onCheckedChange={toggleDiscreteFrequency}
-              disabled={disabled || !isPlaying}
-            />
-            <Label htmlFor="discrete-frequency-toggle">Discrete Frequency</Label>
+        {/* Playback Speed control */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium">Playback Speed</span>
+            <span className="text-xs text-muted-foreground">
+              {formatSpeed(speed)}
+            </span>
           </div>
-          <div className="text-xs text-muted-foreground">
-            {discreteFrequency ? "Change frequency at hit points" : "Continuously change frequency"}
+          
+          <Slider
+            value={[speed]}
+            min={0.25}
+            max={4.0}
+            step={0.05}
+            onValueChange={handleSpeedChange}
+            disabled={disabled}
+          />
+          
+          <div className="flex text-xs text-muted-foreground justify-between">
+            <span>Slow</span>
+            <span>Fast</span>
           </div>
-        </div>
-      </div>
-      
-      <div className="flex flex-col space-y-2">
-        {/* Basic glyph information */}
-        <div className="text-xs text-center text-muted-foreground mt-2">
-          X: {glyph.position.x.toFixed(2)}, Y: {glyph.position.y.toFixed(2)} • 
-          W: {glyph.size.width.toFixed(2)}, H: {glyph.size.height.toFixed(2)}
         </div>
       </div>
     </div>

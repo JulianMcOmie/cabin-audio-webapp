@@ -79,6 +79,9 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const [currentFrequency, setCurrentFrequency] = useState<number>(0);
   const [currentPanning, setCurrentPanning] = useState<number>(0);
 
+  // Add state for toggling between Glyph Grid and Dot Grid
+  const [activeGrid, setActiveGrid] = useState<"glyph" | "dot">("glyph");
+
   // Measure the EQ component's width when it changes
   useEffect(() => {
     if (!eqContainerRef.current) return
@@ -264,109 +267,135 @@ export function EQView({ setEqEnabled }: EQViewProps) {
 
       {/* Main EQ View */}
       <div className="space-y-6">
-        {/* EQ and Dot Grid in a side-by-side layout that stacks on small screens */}
-        <div className="flex flex-col md:flex-row gap-4">
-          {/* Frequency Graph (taking 2/3 of the width) */}
-          <div className="flex-1 relative" ref={eqContainerRef}>
-            {/* FFT Visualizer should always be visible during audio playback */}
-            {(calibrationPlaying || glyphGridPlaying) && preEQAnalyser && (
-              <div className="absolute inset-0 z-0 w-full aspect-[2/1]">
-                <FFTVisualizer 
-                  analyser={preEQAnalyser} 
-                  width={eqWidth} 
-                  height={eqWidth / 2} 
-                  className="w-full h-full"
-                />
-              </div>
-            )}
-            
-            {/* FrequencyEQ component overlaid on top */}
-            <div className="relative z-10">
-              <FrequencyGraph 
-                selectedDot={selectedDot} 
-                disabled={!isEQEnabled} 
-                className="w-full" 
-                onInstructionChange={setInstruction}
-                onRequestEnable={() => setEQEnabled(true)}
+        {/* EQ Section - Now takes full width */}
+        <div className="w-full relative" ref={eqContainerRef}>
+          {/* FFT Visualizer should always be visible during audio playback */}
+          {(calibrationPlaying || glyphGridPlaying) && preEQAnalyser && (
+            <div className="absolute inset-0 z-0 w-full aspect-[2/1]">
+              <FFTVisualizer 
+                analyser={preEQAnalyser} 
+                width={eqWidth} 
+                height={eqWidth / 2} 
+                className="w-full h-full"
               />
             </div>
-
-            {/* Contextual Instructions */}
-            <div className="mt-1 mb-3 px-2 py-1.5 bg-muted/40 rounded text-sm text-muted-foreground border-l-2 border-electric-blue">
-              {instruction}
-            </div>
-
-            {/* EQ Toggle Button - Updated for consistency */}
-            <div className="eq-toggle-container">
-              <Button
-                variant={isEQEnabled ? "default" : "outline"}
-                size="sm"
-                className={isEQEnabled ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : ""}
-                onClick={toggleEQ}
-                title={isEQEnabled ? "Turn EQ Off" : "Turn EQ On"}
-              >
-                <Power className="h-4 w-4 mr-2" />
-                {isEQEnabled ? "EQ On" : "EQ Off"}
-              </Button>
-            </div>
-            
-            {/* Audio Parameters Display for Glyph Grid */}
-            {glyphGridPlaying && (
-              <div className="mt-4 flex justify-between text-sm">
-                <div className="px-3 py-1.5 bg-muted/40 rounded-md">
-                  <span className="font-medium">Frequency:</span> {formatFrequency(currentFrequency)}
-                </div>
-                <div className="px-3 py-1.5 bg-muted/40 rounded-md">
-                  <span className="font-medium">Pan Position:</span> {currentPanning.toFixed(2)}
-                </div>
-              </div>
-            )}
+          )}
+          
+          {/* FrequencyEQ component overlaid on top */}
+          <div className="relative z-10">
+            <FrequencyGraph 
+              selectedDot={selectedDot} 
+              disabled={!isEQEnabled} 
+              className="w-full" 
+              onInstructionChange={setInstruction}
+              onRequestEnable={() => setEQEnabled(true)}
+            />
           </div>
 
-          {/* Calibration Panel (1/3 width on desktop, full width on mobile) */}
-          <div className="w-full md:w-80 space-y-4">
-            {/* Dot Grid */}
-            {/* Commented out Dot Grid
-            <div className="bg-muted/30 p-4 rounded-lg">
-              <div className="flex justify-between items-center mb-3">
-                <h4 className="font-medium">Dot Grid</h4>
-                <Button
-                  size="sm"
-                  variant={dotGridPlaying ? "default" : "outline"}
-                  className={dotGridPlaying ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : ""}
-                  onClick={() => setDotGridPlaying(!dotGridPlaying)}
-                >
-                  <Play className="mr-2 h-4 w-4" />
-                  {dotGridPlaying ? "Stop" : "Play"}
-                </Button>
+          {/* Contextual Instructions */}
+          <div className="mt-1 mb-3 px-2 py-1.5 bg-muted/40 rounded text-sm text-muted-foreground border-l-2 border-electric-blue">
+            {instruction}
+          </div>
+
+          {/* EQ Toggle Button - Updated for consistency */}
+          <div className="eq-toggle-container">
+            <Button
+              variant={isEQEnabled ? "default" : "outline"}
+              size="sm"
+              className={isEQEnabled ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : ""}
+              onClick={toggleEQ}
+              title={isEQEnabled ? "Turn EQ Off" : "Turn EQ On"}
+            >
+              <Power className="h-4 w-4 mr-2" />
+              {isEQEnabled ? "EQ On" : "EQ Off"}
+            </Button>
+          </div>
+          
+          {/* Audio Parameters Display for Glyph Grid */}
+          {glyphGridPlaying && (
+            <div className="mt-4 flex justify-between text-sm">
+              <div className="px-3 py-1.5 bg-muted/40 rounded-md">
+                <span className="font-medium">Frequency:</span> {formatFrequency(currentFrequency)}
               </div>
-              
-              <DotCalibration
-                isPlaying={dotGridPlaying}
-                disabled={false}
-              />
+              <div className="px-3 py-1.5 bg-muted/40 rounded-md">
+                <span className="font-medium">Pan Position:</span> {currentPanning.toFixed(2)}
+              </div>
             </div>
-            */}
+          )}
+        </div>
+
+        {/* Glyph Grid - Now below the EQ section with new layout */}
+        <div className="mt-8 border rounded-lg p-6 bg-card">
+          <div className="flex flex-col space-y-4">
+            <h3 className="text-lg font-medium">Grid Visualizer</h3>
             
-            {/* Glyph Grid */}
-            <div className="bg-muted/30 p-4 rounded-lg">
-              <div className="flex justify-between items-center mb-3">
-                <h4 className="font-medium">Glyph Grid</h4>
+            {/* Add segmented control for switching between grid types */}
+            <div className="flex border rounded-md overflow-hidden w-fit">
+              <button
+                className={`px-4 py-2 text-sm font-medium ${
+                  activeGrid === "glyph" 
+                    ? "bg-electric-blue text-white" 
+                    : "bg-background hover:bg-muted"
+                }`}
+                onClick={() => setActiveGrid("glyph")}
+              >
+                Glyph Grid
+              </button>
+              <button
+                className={`px-4 py-2 text-sm font-medium ${
+                  activeGrid === "dot" 
+                    ? "bg-electric-blue text-white" 
+                    : "bg-background hover:bg-muted"
+                }`}
+                onClick={() => setActiveGrid("dot")}
+              >
+                Dot Grid
+              </button>
+            </div>
+          </div>
+          
+          <div className="flex flex-col md:flex-row gap-6 mt-4">
+            {/* Left side: Grid Canvas */}
+            <div className="md:w-1/2">
+              <div className="bg-muted/30 p-4 rounded-lg">
+                {activeGrid === "glyph" ? (
+                  <GlyphGrid
+                    isPlaying={glyphGridPlaying}
+                    disabled={false}
+                  />
+                ) : (
+                  <DotCalibration
+                    isPlaying={dotGridPlaying}
+                    disabled={false}
+                  />
+                )}
+              </div>
+            </div>
+            
+            {/* Right side: Controls */}
+            <div className="md:w-1/2 flex flex-col justify-between">
+              {/* Play button is now in the right column but at the bottom */}
+              <div className="flex justify-center mt-4">
                 <Button
-                  size="sm"
-                  variant={glyphGridPlaying ? "default" : "outline"}
-                  className={glyphGridPlaying ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : ""}
-                  onClick={() => setGlyphGridPlaying(!glyphGridPlaying)}
+                  size="lg"
+                  variant={activeGrid === "glyph" ? (glyphGridPlaying ? "default" : "outline") : (dotGridPlaying ? "default" : "outline")}
+                  className={activeGrid === "glyph" ? (glyphGridPlaying ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : "") : (dotGridPlaying ? "bg-electric-blue hover:bg-electric-blue/90 text-white" : "")}
+                  onClick={() => {
+                    if (activeGrid === "glyph") {
+                      setGlyphGridPlaying(!glyphGridPlaying);
+                      if (dotGridPlaying) setDotGridPlaying(false);
+                    } else {
+                      setDotGridPlaying(!dotGridPlaying);
+                      if (glyphGridPlaying) setGlyphGridPlaying(false);
+                    }
+                  }}
                 >
-                  <Play className="mr-2 h-4 w-4" />
-                  {glyphGridPlaying ? "Stop" : "Play"}
+                  <Play className="mr-2 h-5 w-5" />
+                  {activeGrid === "glyph" 
+                    ? (glyphGridPlaying ? "Stop" : "Play") 
+                    : (dotGridPlaying ? "Stop" : "Play")}
                 </Button>
               </div>
-              
-              <GlyphGrid
-                isPlaying={glyphGridPlaying}
-                disabled={false}
-              />
             </div>
           </div>
         </div>
@@ -404,121 +433,6 @@ export function EQView({ setEqEnabled }: EQViewProps) {
             </div>
           </div>
         </div>
-
-        {/* Calibration Section - Commented out as requested */}
-        {/*
-        <div className="mt-8 border rounded-lg p-6 bg-card">
-          <h3 className="text-lg font-medium mb-4">Reference Frequency Calibration</h3>
-          <div className="flex flex-col md:flex-row gap-6">
-            <div className="md:w-3/5 space-y-5">
-              <div>
-                <h4 className="font-medium mb-2">Understanding the Reference Calibration</h4>
-                <p className="text-muted-foreground">
-                  The reference calibration tool helps you compare how your EQ affects different frequencies:
-                </p>
-                <ul className="list-disc pl-5 space-y-1 mt-2 text-sm text-muted-foreground">
-                  <li>
-                    <strong>Reference row (dashed line)</strong> plays fixed 800Hz sounds at different pan positions - NOT affected by EQ
-                  </li>
-                  <li>
-                    <strong>Calibration row (solid line)</strong> plays at your chosen frequency - IS affected by your EQ settings
-                  </li>
-                  <li>
-                    <strong>Compare the two</strong> to hear how your EQ enhances or reduces specific frequencies
-                  </li>
-                </ul>
-              </div>
-
-              <div>
-                <h4 className="font-medium mb-2">Calibration Steps</h4>
-                <ol className="list-decimal pl-5 space-y-2 text-sm text-muted-foreground">
-                  <li>Press Play to start the calibration pattern</li>
-                  <li>Listen to how the reference (800Hz) row sounds across the stereo field</li>
-                  <li>
-                    Compare with the calibration row at your chosen frequency
-                  </li>
-                  <li>
-                    Drag the handle up/down to change the calibration frequency
-                  </li>
-                  <li>
-                    Adjust your EQ until different frequencies are properly balanced against the reference
-                  </li>
-                </ol>
-              </div>
-
-              <div>
-                <details className="group">
-                  <summary className="font-medium mb-2 cursor-pointer flex items-center">
-                    <h4>Tips</h4>
-                    <svg
-                      className="ml-2 h-4 w-4 transition-transform group-open:rotate-180"
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <polyline points="6 9 12 15 18 9"></polyline>
-                    </svg>
-                  </summary>
-                  <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground mt-2">
-                    <li>
-                      <strong>Check low frequencies</strong> - Often these need boosting (move the line to bottom area)
-                    </li>
-                    <li>
-                      <strong>Check high frequencies</strong> - These may need reduction (move the line to top area)
-                    </li>
-                    <li>
-                      <strong>Listen for panning differences</strong> - Both rows should have similar stereo imaging
-                    </li>
-                    <li>
-                      <strong>Toggle EQ on/off</strong> - Compare with and without EQ to verify improvements
-                    </li>
-                    <li>
-                      <strong>Test speech frequencies</strong> - Around 1kHz-4kHz for clarity
-                    </li>
-                  </ul>
-                </details>
-              </div>
-
-              <InfoCircle>
-                This calibration creates a personalized EQ tailored to your unique hearing and audio equipment,
-                ensuring balanced frequency response across your entire audio spectrum.
-              </InfoCircle>
-            </div>
-
-            <div className="md:w-2/5 flex flex-col justify-start">
-              <div className="bg-muted/50 p-4 rounded-lg">
-                <div className="flex justify-between items-center mb-3">
-                  <h4 className="font-medium">Calibration Controls</h4>
-                </div>
-
-                <div className="mb-3">
-                  <ReferenceCalibration 
-                    isPlaying={calibrationPlaying}
-                    disabled={false}
-                  />
-                </div>
-
-                <Button
-                  size="sm"
-                  className="w-full bg-electric-blue hover:bg-electric-blue/90 text-white mb-2"
-                  onClick={() => setCalibrationPlaying(!calibrationPlaying)}
-                >
-                  <Play className="mr-2 h-4 w-4" />
-                  {calibrationPlaying ? "Stop Calibration" : "Start Calibration"}
-                </Button>
-
-                <p className="text-xs text-center text-muted-foreground">
-                  Drag the handle up/down to change the calibration frequency
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-        */}
       </div>
 
       {/* EQ Profiles Section */}
@@ -531,19 +445,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
         />
       </div>
 
-      {/* Comment out the EQ Automatic Calibration Process Dialog */}
-      {/* {showCalibrationProcess && (
-        <Dialog open={showCalibrationProcess} onOpenChange={setShowCalibrationProcess}>
-          <DialogContent className="sm:max-w-[850px] p-0">
-            <EQCalibrationProcess 
-              onComplete={handleCalibrationComplete} 
-              onCancel={handleCalibrationCancel} 
-            />
-          </DialogContent>
-        </Dialog>
-      )} */}
-
-      {/* Create New Profile Dialog */}
+      {/* Dialogs remain the same */}
       <Dialog open={showCreateNewDialog} onOpenChange={setShowCreateNewDialog}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
