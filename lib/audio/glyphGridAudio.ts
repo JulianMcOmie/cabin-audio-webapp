@@ -1,4 +1,5 @@
 import { getAudioContext } from '@/lib/audio/audioContext'
+import * as eqProcessor from '@/lib/audio/eqProcessor'
 
 // Default values
 const DEFAULT_FREQ_MULTIPLIER = 1.0
@@ -367,8 +368,9 @@ class GlyphGridAudioPlayer {
       panner.connect(this.preEQGain)
       // preEQGain is already connected to destination and analyzer
     } else {
-      // Direct connection to output
-      panner.connect(ctx.destination)
+      // Connect to EQ processor instead of directly to destination
+      const eq = eqProcessor.getEQProcessor()
+      panner.connect(eq.getInputNode())
     }
     
     // Store the nodes
@@ -647,13 +649,16 @@ class GlyphGridAudioPlayer {
     
     // Connect if we're playing and have a source
     if (this.isPlaying && this.audioNodes.filter && this.audioNodes.panner) {
-      // Disconnect the panner from the destination
+      // Disconnect the panner from its current destination
       this.audioNodes.panner.disconnect()
       
-      // Connect panner -> preEQGain -> analyser and preEQGain -> destination
+      // Connect panner -> preEQGain -> analyser and preEQGain -> EQ input
       this.audioNodes.panner.connect(preEQGain)
       preEQGain.connect(analyser)
-      preEQGain.connect(ctx.destination)
+      
+      // Connect to EQ processor
+      const eq = eqProcessor.getEQProcessor()
+      preEQGain.connect(eq.getInputNode())
     }
     
     // Store for later access
