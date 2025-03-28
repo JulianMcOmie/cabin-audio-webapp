@@ -13,7 +13,7 @@ const ENVELOPE_ATTACK = 0.002; // Faster attack time in seconds - for very punch
 // const ENVELOPE_RELEASE_DEFAULT = 0.2; // Default release time (for reference only)
 const ENVELOPE_RELEASE_LOW_FREQ = 0.2; // Release time for lowest frequencies (seconds)
 const ENVELOPE_RELEASE_HIGH_FREQ = 0.02; // Release time for highest frequencies (seconds)
-const MASTER_GAIN = 1.0; // Much louder master gain for calibration
+const MASTER_GAIN = 1.5; // Much louder master gain for calibration
 
 // Polyrhythm settings
 const BASE_CYCLE_TIME = 1.0; // Base cycle time in seconds
