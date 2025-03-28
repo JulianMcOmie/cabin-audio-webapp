@@ -746,8 +746,8 @@ class DotGridAudioPlayer {
     const normalizedY = 1 - (y / (this.gridSize - 1)); // Flip so higher y = higher position
     
     // Calculate the frequency for this position
-    const minFreq = 60;  // Lower minimum for better low-end
-    const maxFreq = 10000; // Lower maximum to avoid harsh high-end
+    const minFreq = 40;  // Lower minimum for better low-end
+    const maxFreq = 15000; // Lower maximum to avoid harsh high-end
     const logMinFreq = Math.log2(minFreq);
     const logMaxFreq = Math.log2(maxFreq);
     const logFreqRange = logMaxFreq - logMinFreq;
