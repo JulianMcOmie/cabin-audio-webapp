@@ -5,7 +5,7 @@ import { useEQProfileStore } from '@/lib/stores'
 // Default values
 const DEFAULT_FREQ_MULTIPLIER = 1.0
 const DEFAULT_SWEEP_DURATION = 8.0 // 8 seconds per cycle
-const MASTER_GAIN = 0.5
+const MASTER_GAIN = 1.5
 // const ENVELOPE_ATTACK = 0.01 // 10ms
 // const ENVELOPE_RELEASE_LOW_FREQ = 0.8 // 800ms for low frequencies
 // const ENVELOPE_RELEASE_HIGH_FREQ = 0.2 // 200ms for high frequencies
