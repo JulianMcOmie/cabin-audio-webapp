@@ -377,24 +377,18 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
           const newPosX = (new_startX_norm + new_endX_norm) / 2
           const newPosY = (new_startY_norm + new_endY_norm) / 2
           
-          // Constrain position to keep the line within the canvas bounds
-          let finalPosX = Math.max(-1, Math.min(1, newPosX))
-          let finalPosY = Math.max(-1, Math.min(1, newPosY))
-          
-          // Constrain width and height to ensure line remains within canvas
-          // but still allowing for negative values
+          // Calculate absolute dimensions for minimum size constraints
           const absWidth = Math.abs(newWidth)
           const absHeight = Math.abs(newHeight)
           
-          // Ensure minimum size
+          // Ensure minimum size while preserving the sign
           const minSize = 0.1
-          const finalWidth = newWidth === 0 ? 
-            (newWidth >= 0 ? minSize : -minSize) : 
-            (absWidth < minSize ? (newWidth >= 0 ? minSize : -minSize) : newWidth)
+          const finalWidth = absWidth < minSize ? (newWidth >= 0 ? minSize : -minSize) : newWidth
+          const finalHeight = absHeight < minSize ? (newHeight >= 0 ? minSize : -minSize) : newHeight
           
-          const finalHeight = newHeight === 0 ? 
-            (newHeight >= 0 ? minSize : -minSize) : 
-            (absHeight < minSize ? (newHeight >= 0 ? minSize : -minSize) : newHeight)
+          // Constrain only the position to keep within bounds, not the corners relative to each other
+          let finalPosX = Math.max(-1, Math.min(1, newPosX))
+          let finalPosY = Math.max(-1, Math.min(1, newPosY))
           
           return {
             ...prev,
