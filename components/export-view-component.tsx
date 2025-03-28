@@ -13,8 +13,7 @@ import { EQProfile } from "@/lib/models/EQProfile"
 
 // EQ formats interface to type-check the export data
 interface EQFormats {
-  "15-band": Record<string, string>;
-  "10-band": Record<string, string>;
+  "All-bands": Record<string, string>;
   "Wavelet": Record<string, string>;
   "PowerAmp": Record<string, string>;
 }
@@ -29,14 +28,9 @@ export default function ExportView() {
   
   // Export format state
   const [exportFormats, setExportFormats] = useState<EQFormats>({
-    "15-band": {},
-    "10-band": {},
+    "All-bands": {},
     "Wavelet": {},
     "PowerAmp": {}
-  })
-  const [hasTooManyBands, setHasTooManyBands] = useState({
-    "10-band": false,
-    "15-band": false
   })
   
   // Load profiles once on component mount
@@ -58,66 +52,32 @@ export default function ExportView() {
     const profile = profiles.find(p => p.id === selectedProfileId)
     if (!profile) return
     
-    // Create simple 10-band and 15-band exports by taking the first N bands
+    // Create export format
     const formats: EQFormats = {
-      "15-band": {},
-      "10-band": {},
+      "All-bands": {},
       "Wavelet": {},
       "PowerAmp": {}
     }
     
     const bands = profile.bands || []
-    const bandCount = bands.length
     
     // Sort bands by frequency for consistent export
     const sortedBands = [...bands].sort((a, b) => a.frequency - b.frequency)
     
-    // Check if we have more bands than can be exported in each format
-    setHasTooManyBands({
-      "10-band": bandCount > 10,
-      "15-band": bandCount > 15
-    })
+    // Generate APO-compatible format for all bands
+    const formatAll = [`Preamp: ${profile.volume || 0} dB`]
     
-    // Generate APO-compatible format for 10-band EQ
-    const format10 = [`Preamp: ${profile.volume || 0} dB`]
-    
-    // Add bands in standard APO format
-    const bandsFor10 = sortedBands.slice(0, 10)
-    bandsFor10.forEach((band, index) => {
+    // Add all bands in standard APO format
+    sortedBands.forEach((band, index) => {
       // Determine filter type based on band type or reasonable default
       let filterType = "PK" // Default to peaking
       if (band.type === "lowshelf") filterType = "LSC"
       if (band.type === "highshelf") filterType = "HSC"
       
-      format10.push(`Filter ${index + 1}: ON ${filterType} Fc ${Math.round(band.frequency)} Hz Gain ${band.gain.toFixed(1)} dB Q ${band.q ? band.q.toFixed(2) : "1.00"}`)
+      formatAll.push(`Filter ${index + 1}: ON ${filterType} Fc ${Math.round(band.frequency)} Hz Gain ${band.gain.toFixed(1)} dB Q ${band.q ? band.q.toFixed(2) : "1.00"}`)
     })
     
-    // Add placeholder bands for missing bands
-    for (let i = bandsFor10.length; i < 10; i++) {
-      format10.push(`Filter ${i + 1}: ON PK Fc ${500 * (i + 1)} Hz Gain 0.0 dB Q 1.00`)
-    }
-    
-    // Generate APO-compatible format for 15-band EQ
-    const format15 = [`Preamp: ${profile.volume || 0} dB`]
-    
-    // Add bands in standard APO format
-    const bandsFor15 = sortedBands.slice(0, 15)
-    bandsFor15.forEach((band, index) => {
-      // Determine filter type based on band type or reasonable default
-      let filterType = "PK" // Default to peaking
-      if (band.type === "lowshelf") filterType = "LSC"
-      if (band.type === "highshelf") filterType = "HSC"
-      
-      format15.push(`Filter ${index + 1}: ON ${filterType} Fc ${Math.round(band.frequency)} Hz Gain ${band.gain.toFixed(1)} dB Q ${band.q ? band.q.toFixed(2) : "1.00"}`)
-    })
-    
-    // Add placeholder bands for missing bands
-    for (let i = bandsFor15.length; i < 15; i++) {
-      format15.push(`Filter ${i + 1}: ON PK Fc ${300 * (i + 1)} Hz Gain 0.0 dB Q 1.00`)
-    }
-    
-    formats["10-band"][profile.name] = format10.join('\n')
-    formats["15-band"][profile.name] = format15.join('\n')
+    formats["All-bands"][profile.name] = formatAll.join('\n')
     
     setExportFormats(formats)
   }, [selectedProfileId, profiles])
@@ -148,7 +108,7 @@ export default function ExportView() {
     const content = exportFormats[format][profile.name]
     
     if (content) {
-      const fileName = `${profile.name.replace(/\s+/g, "-").toLowerCase()}_${format}.txt`
+      const fileName = `${profile.name.replace(/\s+/g, "-").toLowerCase()}_eq.txt`
       
     const blob = new Blob([content], { type: "text/plain" })
     const url = URL.createObjectURL(blob)
@@ -202,76 +162,29 @@ export default function ExportView() {
       
       {selectedProfileId && (
         <>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+      <div className="grid grid-cols-1 gap-6 mb-8">
         <Card>
           <CardContent className="p-6">
             <div className="mb-4">
-              <h2 className="text-lg font-medium">15-Band EQ Settings</h2>
+              <h2 className="text-lg font-medium">EQ Settings</h2>
             </div>
-
-                {hasTooManyBands["15-band"] && selectedProfileId && profiles.find(p => p.id === selectedProfileId) && (
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3 mb-4 flex items-center text-sm text-yellow-800 dark:bg-yellow-900/20 dark:border-yellow-800 dark:text-yellow-300">
-                    <AlertCircle className="h-4 w-4 mr-2 flex-shrink-0" />
-                    <div>
-                      This profile has {profiles.find(p => p.id === selectedProfileId)?.bands?.length || 0} bands. Only the first 15 bands are included.
-                    </div>
-                  </div>
-                )}
 
             <div className="bg-muted p-4 rounded-md font-mono text-sm whitespace-pre-wrap overflow-auto h-40 relative group">
               <Button
                 variant="ghost"
                 size="icon"
                 className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 bg-background/80"
-                onClick={() => handleCopyToClipboard("15-band")}
+                onClick={() => handleCopyToClipboard("All-bands")}
               >
                 <Copy className="h-4 w-4" />
                 <span className="sr-only">Copy to clipboard</span>
               </Button>
                   {selectedProfileId && profiles.find(p => p.id === selectedProfileId)?.name && 
-                    exportFormats["15-band"][profiles.find(p => p.id === selectedProfileId)!.name]}
+                    exportFormats["All-bands"][profiles.find(p => p.id === selectedProfileId)!.name]}
             </div>
 
             <div className="mt-4 text-right">
-              <Button variant="outline" size="sm" onClick={() => handleDownload("15-band")}>
-                <Download className="h-4 w-4 mr-2" />
-                Download
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6">
-            <div className="mb-4">
-              <h2 className="text-lg font-medium">10-Band EQ Settings</h2>
-            </div>
-
-                {hasTooManyBands["10-band"] && selectedProfileId && profiles.find(p => p.id === selectedProfileId) && (
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3 mb-4 flex items-center text-sm text-yellow-800 dark:bg-yellow-900/20 dark:border-yellow-800 dark:text-yellow-300">
-                    <AlertCircle className="h-4 w-4 mr-2 flex-shrink-0" />
-                    <div>
-                      This profile has {profiles.find(p => p.id === selectedProfileId)?.bands?.length || 0} bands. Only the first 10 bands are included.
-                    </div>
-                  </div>
-                )}
-
-            <div className="bg-muted p-4 rounded-md font-mono text-sm whitespace-pre-wrap overflow-auto h-40 relative group">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 bg-background/80"
-                onClick={() => handleCopyToClipboard("10-band")}
-              >
-                <Copy className="h-4 w-4" />
-                <span className="sr-only">Copy to clipboard</span>
-              </Button>
-                  {selectedProfileId && profiles.find(p => p.id === selectedProfileId)?.name && 
-                    exportFormats["10-band"][profiles.find(p => p.id === selectedProfileId)!.name]}
-            </div>
-
-            <div className="mt-4 text-right">
-              <Button variant="outline" size="sm" onClick={() => handleDownload("10-band")}>
+              <Button variant="outline" size="sm" onClick={() => handleDownload("All-bands")}>
                 <Download className="h-4 w-4 mr-2" />
                 Download
               </Button>
@@ -316,7 +229,7 @@ export default function ExportView() {
                   <ol className="list-decimal pl-5 space-y-1">
                     <li>Install Equalizer APO from the official website</li>
                     <li>Open the configuration file in C:\Program Files\EqualizerAPO\config</li>
-                    <li>Copy and paste the 15-band EQ settings</li>
+                    <li>Copy and paste the EQ settings</li>
                     <li>Save the file and restart any audio applications</li>
                   </ol>
                 </div>
@@ -325,7 +238,7 @@ export default function ExportView() {
                   <h3 className="font-medium mb-2">Peace Equalizer (GUI for Equalizer APO)</h3>
                   <ol className="list-decimal pl-5 space-y-1">
                     <li>Install Peace Equalizer after installing Equalizer APO</li>
-                    <li>Open Peace and go to the 15-band or 10-band view</li>
+                    <li>Open Peace and go to the EQ view</li>
                     <li>Manually adjust the sliders to match the values</li>
                     <li>Save as a new preset</li>
                   </ol>
@@ -353,7 +266,7 @@ export default function ExportView() {
                   <ol className="list-decimal pl-5 space-y-1">
                     <li>Install eqMac from the official website</li>
                     <li>Open the app and go to the Advanced EQ section</li>
-                    <li>Click on &quot;Import&quot; and paste the 15-band EQ settings</li>
+                    <li>Click on &quot;Import&quot; and paste the EQ settings</li>
                     <li>Click &quot;Apply&quot; to save your changes</li>
                   </ol>
                 </div>
@@ -362,7 +275,7 @@ export default function ExportView() {
                   <h3 className="font-medium mb-2">Audio Hijack</h3>
                   <ol className="list-decimal pl-5 space-y-1">
                     <li>Install Audio Hijack from Rogue Amoeba</li>
-                    <li>Create a new session and add the 10-band EQ effect</li>
+                    <li>Create a new session and add the EQ effect</li>
                     <li>Manually adjust the sliders to match the values</li>
                     <li>Save the session</li>
                   </ol>
@@ -452,7 +365,7 @@ export default function ExportView() {
                   <h3 className="font-medium mb-2">Professional Audio Software</h3>
                   <ol className="list-decimal pl-5 space-y-1">
                     <li>Use a parametric EQ plugin in your DAW</li>
-                    <li>Create bands at each frequency point from the 15-band settings</li>
+                    <li>Create bands at each frequency point from the EQ settings</li>
                     <li>Set the gain values according to the dB values</li>
                     <li>Use medium Q values (around 1.0) for each band</li>
                   </ol>

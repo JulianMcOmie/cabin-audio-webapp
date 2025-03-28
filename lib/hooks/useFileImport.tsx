@@ -45,18 +45,18 @@ export function useFileImport({ onComplete, onError }: UseFileImportOptions = {}
     setDragActive(true)
   }, [])
 
-  const handleDragLeave = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault()
-      e.stopPropagation()
-      setDragCounter((prev) => prev - 1)
-      if (dragCounter <= 1) {
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragCounter((prev) => {
+      // Only deactivate drag state when counter reaches 0
+      if (prev <= 1) {
         setDragActive(false)
-        setDragCounter(0)
+        return 0
       }
-    },
-    [dragCounter],
-  )
+      return prev - 1
+    })
+  }, [])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
