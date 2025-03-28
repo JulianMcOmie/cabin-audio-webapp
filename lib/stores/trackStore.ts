@@ -59,6 +59,7 @@ const createDefaultContent = async (): Promise<{track: Track, artistId: string, 
     storageKey: "default-xenogenesis",
     coverStorageKey: "default-xenogenesis-cover",
     lastModified: Date.now(),
+    dateCreated: Date.now(),
     syncStatus: "synced"
   };
   
@@ -169,16 +170,22 @@ export const useTrackStore = create<TrackState>((set, get) => {
     isLoading: true, // Initially loading
     
     addTrack: (track: Track) => {
+      // Ensure dateCreated is set if not provided
+      const trackWithDate = {
+        ...track,
+        dateCreated: track.dateCreated || Date.now()
+      };
+      
       // Update local state first for immediate UI feedback
       set((state) => ({
         tracks: {
           ...state.tracks,
-          [track.id]: track
+          [trackWithDate.id]: trackWithDate
         }
       }));
       
       // Then persist to IndexedDB (fire and forget)
-      indexedDBManager.addItem(indexedDBManager.STORES.TRACKS, track)
+      indexedDBManager.addItem(indexedDBManager.STORES.TRACKS, trackWithDate)
         .catch(error => console.error('Failed to save track:', error));
     },
     
@@ -190,6 +197,7 @@ export const useTrackStore = create<TrackState>((set, get) => {
         const updatedTrack = {
           ...track,
           ...updates,
+          dateCreated: track.dateCreated || track.lastModified, // Preserve dateCreated or set it if missing
           lastModified: Date.now(),
           syncStatus: 'modified' as const
         };
@@ -243,7 +251,15 @@ export const useTrackStore = create<TrackState>((set, get) => {
       if (!initialized && !initialLoadPromise) {
         initialize();
       }
-      return Object.values(get().tracks);
+      
+      // Get tracks and sort by dateCreated (ascending - oldest first)
+      const tracksArray = Object.values(get().tracks);
+      return tracksArray.sort((a, b) => {
+        // If dateCreated doesn't exist, use lastModified as fallback
+        const aDate = a.dateCreated || a.lastModified;
+        const bDate = b.dateCreated || b.lastModified;
+        return aDate - bDate;
+      });
     },
     
     getTrackById: (trackId: string) => {

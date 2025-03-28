@@ -194,6 +194,7 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
                 duration: 240,
                 storageKey: "ambient-forest.mp3",
                 lastModified: Date.now(),
+                dateCreated: Date.now(), // First track
                 syncStatus: 'pending'
               },
               {
@@ -204,6 +205,7 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
                 duration: 320,
                 storageKey: "ocean-waves.mp3",
                 lastModified: Date.now(),
+                dateCreated: Date.now() + 1000, // 1 second later
                 syncStatus: 'pending'
               },
               {
@@ -214,6 +216,7 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
                 duration: 180,
                 storageKey: "rainy-day.mp3",
                 lastModified: Date.now(),
+                dateCreated: Date.now() + 2000, // 2 seconds later
                 syncStatus: 'pending'
               },
               {
@@ -224,6 +227,7 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
                 duration: 290,
                 storageKey: "mountain-stream.mp3",
                 lastModified: Date.now(),
+                dateCreated: Date.now() + 3000, // 3 seconds later
                 syncStatus: 'pending'
               },
               {
@@ -234,6 +238,7 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
                 duration: 350,
                 storageKey: "thunderstorm.mp3",
                 lastModified: Date.now(),
+                dateCreated: Date.now() + 4000, // 4 seconds later
                 syncStatus: 'pending'
               },
             ];

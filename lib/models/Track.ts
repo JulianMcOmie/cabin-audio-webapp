@@ -12,5 +12,6 @@ export interface Track {
   storageKey: string;  // IndexedDB key
   coverStorageKey?: string;
   lastModified: number;
+  dateCreated?: number; // When the track was first added
   syncStatus: SyncStatus;
 } 
