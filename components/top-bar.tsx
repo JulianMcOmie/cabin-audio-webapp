@@ -20,9 +20,14 @@ import { useTheme } from "@/components/theme-provider"
 
 interface TopBarProps {
   setActiveTab?: (tab: "eq" | "library" | "export" | "desktop" | "mobile" | "profile") => void
+  history?: Array<"eq" | "library" | "export" | "desktop" | "mobile" | "profile">
+  currentIndex?: number
+  setCurrentIndex?: (index: number) => void
 }
 
-export function TopBar({ setActiveTab }: TopBarProps) {
+type TabHistory = Array<"eq" | "library" | "export" | "desktop" | "mobile" | "profile">
+
+export function TopBar({ setActiveTab, history, currentIndex, setCurrentIndex }: TopBarProps) {
   const { user, signOut } = useAuth()
   const [showLoginModal, setShowLoginModal] = useState(false)
   const [showSignupModal, setShowSignupModal] = useState(false)
@@ -30,6 +35,33 @@ export function TopBar({ setActiveTab }: TopBarProps) {
   const [searchQuery, setSearchQuery] = useState("")
   const searchRef = useRef<HTMLDivElement>(null)
   const { theme, setTheme } = useTheme()
+  
+  // Use local state if props aren't provided
+  const [localHistory, setLocalHistory] = useState<TabHistory>(['library'])
+  const [localCurrentIndex, setLocalCurrentIndex] = useState(0)
+  
+  // Use provided history and index if available, otherwise use local state
+  const activeHistory = history || localHistory
+  const activeCurrentIndex = currentIndex !== undefined ? currentIndex : localCurrentIndex
+  const setActiveCurrentIndex = setCurrentIndex || setLocalCurrentIndex
+  
+  // Handle back button click
+  const handleBack = () => {
+    if (activeCurrentIndex > 0 && setActiveTab) {
+      const newIndex = activeCurrentIndex - 1
+      setActiveCurrentIndex(newIndex)
+      setActiveTab(activeHistory[newIndex])
+    }
+  }
+  
+  // Handle forward button click
+  const handleForward = () => {
+    if (activeCurrentIndex < activeHistory.length - 1 && setActiveTab) {
+      const newIndex = activeCurrentIndex + 1
+      setActiveCurrentIndex(newIndex)
+      setActiveTab(activeHistory[newIndex])
+    }
+  }
 
   // Close search results when clicking outside
   useEffect(() => {
@@ -54,10 +86,22 @@ export function TopBar({ setActiveTab }: TopBarProps) {
     <>
       <div className="h-16 flex items-center px-6 bg-background">
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="icon" className="h-8 w-8">
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            className="h-8 w-8" 
+            onClick={handleBack}
+            disabled={activeCurrentIndex <= 0}
+          >
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-8 w-8">
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            className="h-8 w-8"
+            onClick={handleForward}
+            disabled={activeCurrentIndex >= activeHistory.length - 1}
+          >
             <ArrowRight className="h-4 w-4" />
           </Button>
         </div>

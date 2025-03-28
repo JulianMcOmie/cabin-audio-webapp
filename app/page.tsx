@@ -1,7 +1,7 @@
 "use client"
 
-import { useState } from "react"
-// import { TopBar } from "@/components/top-bar"
+import { useState, useRef } from "react"
+import { TopBar } from "@/components/top-bar"
 import { EQView } from "@/components/eq-view"
 import { MusicLibrary } from "@/components/music-library/MusicLibrary"
 import { PlayerBar } from "@/components/player-bar"
@@ -14,11 +14,41 @@ import { ProfilePage } from "@/components/profile-page"
 import { SignupModal } from "@/components/signup-modal"
 // import { usePlayerStore } from "@/lib/stores"
 
+type TabType = "eq" | "library" | "export" | "desktop" | "mobile" | "profile";
+type TabHistory = Array<TabType>;
+
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<"eq" | "library" | "export" | "desktop" | "mobile" | "profile">("library")
+  const [activeTab, setActiveTab] = useState<TabType>("library")
   const [showPricingModal, setShowPricingModal] = useState(false)
   const [showSignupModal, setShowSignupModal] = useState(false)
   const [eqEnabled, setEqEnabled] = useState(false)
+  
+  // Navigation history tracking
+  const [history, setHistory] = useState<TabHistory>(['library'])
+  const [currentIndex, setCurrentIndex] = useState(0)
+  
+  // Function to push to history and update active tab
+  const pushToHistory = (tab: TabType) => {
+    // If we're not at the end of history, truncate history
+    if (currentIndex < history.length - 1) {
+      setHistory(prev => prev.slice(0, currentIndex + 1))
+    }
+    
+    // Don't add duplicate consecutive entries
+    if (history[currentIndex] !== tab) {
+      setHistory(prev => [...prev, tab])
+      setCurrentIndex(prev => prev + 1)
+    }
+    
+    // Set the active tab
+    setActiveTab(tab)
+  }
+  
+  // Standalone function to set active tab without pushing to history
+  // This is used by the back/forward buttons
+  const updateActiveTab = (tab: TabType) => {
+    setActiveTab(tab)
+  }
 
   // Function to show the upgrade/pricing modal
   const handleShowUpgrade = () => {
@@ -38,13 +68,19 @@ export default function Home() {
     <div className="flex flex-col h-screen bg-background">
       <div className="flex flex-1 overflow-hidden">
         <Sidebar 
-          activeTab={activeTab} // Use type assertion to fix the type issue
-          setActiveTab={setActiveTab}
-          onUpgradeClick={handleShowUpgrade} 
+          activeTab={activeTab}
+          setActiveTab={updateActiveTab}
+          onUpgradeClick={handleShowUpgrade}
+          pushToHistory={pushToHistory}
         />
 
         <div className="flex flex-col flex-1 overflow-hidden">
-          {/* <TopBar setActiveTab={setActiveTab} /> */}
+          <TopBar 
+            setActiveTab={updateActiveTab}
+            history={history}
+            currentIndex={currentIndex}
+            setCurrentIndex={setCurrentIndex}
+          />
 
           <div className="flex-1 pr-4 bg-main-section rounded-lg overflow-auto mb-2">
             <main className="h-full p-6 pb-0">
@@ -59,7 +95,7 @@ export default function Home() {
               ) : activeTab === "library" ? (
                 <MusicLibrary 
                   eqEnabled={eqEnabled}
-                  setActiveTab={setActiveTab}
+                  setActiveTab={pushToHistory}
                   onSignupClick={handleShowSignup}
                 />
               ) : activeTab === "export" ? (
