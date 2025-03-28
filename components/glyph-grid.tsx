@@ -65,6 +65,11 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
   // Add a reference to store the animation frame ID
   const animationFrameRef = useRef<number | null>(null);
 
+  // Keep modulation state but remove from UI
+  const [isModulating] = useState(true)
+  const [modulationRate] = useState(8.0) // 8 modulations per second
+  const [modulationDepth] = useState(0.8) // 80% depth
+
   // Set up observer to detect theme changes
   useEffect(() => {
     // Initial check
@@ -100,8 +105,8 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
       angle: glyph.angle
     })
     
-    // Disable envelope modulation (no gain envelope)
-    audioPlayer.setModulating(false)
+    // Enable envelope modulation by default
+    audioPlayer.setModulating(true)
     
     return () => {
       // Clean up audio on unmount

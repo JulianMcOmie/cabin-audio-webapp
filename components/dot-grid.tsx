@@ -446,8 +446,8 @@ export function DotCalibration({
   const selectedDots = externalSelectedDots !== undefined ? externalSelectedDots : internalSelectedDots;
   const setSelectedDots = externalSetSelectedDots !== undefined ? externalSetSelectedDots : setInternalSelectedDots;
   
-  // New selection mode - single vs multiple
-  const [selectionMode, setSelectionMode] = useState<'single' | 'multiple'>('single');
+  // Always use multiple selection mode
+  const selectionMode = 'multiple';
   
   // Track if playback was manually stopped
   const manuallyStopped = useRef(false);
@@ -476,9 +476,9 @@ export function DotCalibration({
   // Update audio player when selected dots change
   useEffect(() => {
     const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
-    // Pass the current selection mode to use fixed rhythm for single selection
-    audioPlayer.updateDots(selectedDots, gridSize, columnCount, selectionMode === 'single');
-  }, [selectedDots, gridSize, columnCount, selectionMode]);
+    // Always use multiple selection (false for fixed rhythm parameter)
+    audioPlayer.updateDots(selectedDots, gridSize, columnCount, false);
+  }, [selectedDots, gridSize, columnCount]);
   
   // Update audio player when playing state changes
   useEffect(() => {
@@ -504,42 +504,23 @@ export function DotCalibration({
   }, [preEQAnalyser, isPlaying]);
   
   const handleDotToggle = (x: number, y: number) => {
-    if (selectionMode === 'single') {
-      // In single selection mode, only allow one dot at a time
-      const dotKey = `${x},${y}`;
-      if (selectedDots.has(dotKey)) {
-        // If clicking on the already selected dot, deselect it and stop playback
-        const newSelectedDots = new Set<string>();
-        setSelectedDots(newSelectedDots);
-        if (isPlaying) {
-          setIsPlaying(false);
-        }
-      } else {
-        // Otherwise, select only this dot
-        const newSelectedDots = new Set<string>([dotKey]);
-        setSelectedDots(newSelectedDots);
-        manuallyStopped.current = false; // Reset the manual stop flag when selecting a new dot
-      }
+    // Always use multiple selection mode
+    const newSelectedDots = new Set(selectedDots);
+    const dotKey = `${x},${y}`;
+    
+    if (newSelectedDots.has(dotKey)) {
+      newSelectedDots.delete(dotKey);
     } else {
-      // In multiple selection mode, toggle individual dots
-      const newSelectedDots = new Set(selectedDots);
-      const dotKey = `${x},${y}`;
-      
-      if (newSelectedDots.has(dotKey)) {
-        newSelectedDots.delete(dotKey);
-      } else {
-        newSelectedDots.add(dotKey);
-      }
-      
-      setSelectedDots(newSelectedDots);
+      newSelectedDots.add(dotKey);
     }
-  };
-  
-  const toggleSelectionMode = () => {
-    setSelectionMode(prev => prev === 'single' ? 'multiple' : 'single');
-    // Clear selection when switching modes
-    setSelectedDots(new Set());
-    setIsPlaying(false);
+    
+    setSelectedDots(newSelectedDots);
+    
+    // Start playing if adding the first dot and currently not playing
+    if (newSelectedDots.size === 1 && selectedDots.size === 0 && !isPlaying) {
+      setIsPlaying(true);
+      manuallyStopped.current = false;
+    }
   };
   
   // Modify row adjustment to preserve relative dot positions
@@ -658,28 +639,8 @@ export function DotCalibration({
         />
       </div>
       
-      {/* Grid info */}
-      <div className="text-xs text-center text-muted-foreground">
-        Grid: {gridSize}×{columnCount} • Selected: {selectedDots.size} dot{selectedDots.size !== 1 ? 's' : ''}
-      </div>
-      
       {/* Controls */}
       <div className="space-y-3">
-        {/* Selection mode toggle */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <Switch
-              checked={selectionMode === 'multiple'}
-              onCheckedChange={toggleSelectionMode}
-              disabled={disabled}
-            />
-            <Label className="text-xs">Multiple Selection</Label>
-          </div>
-          <div className="text-xs text-muted-foreground">
-            {selectionMode === 'single' ? "Single" : "Multiple"}
-          </div>
-        </div>
-        
         {/* Row and Column Controls */}
         <div className="flex justify-between gap-3">
           {/* Row controls */}
