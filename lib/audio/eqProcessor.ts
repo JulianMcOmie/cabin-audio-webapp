@@ -73,7 +73,7 @@ class EQProcessor {
       this.filters = [];
       
       // Create new filters for each band
-      profile.bands.forEach((band, _) => {
+      profile.bands.forEach((band) => {
         const filter = audioCtx.createBiquadFilter();
         filter.type = 'peaking';
         filter.frequency.value = band.frequency;

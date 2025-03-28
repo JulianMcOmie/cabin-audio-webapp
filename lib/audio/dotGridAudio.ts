@@ -136,8 +136,6 @@ class DotGridAudioPlayer {
    * Set the current grid size
    */
   public setGridSize(rows: number, columns?: number): void {
-    const oldGridSize = this.gridSize;
-    const oldColumnCount = this.columnCount;
     
     this.gridSize = rows;
     
@@ -172,7 +170,7 @@ class DotGridAudioPlayer {
    */
   private updateAllDotPanning(): void {
     this.audioNodes.forEach((nodes, dotKey) => {
-      const [x, y] = dotKey.split(',').map(Number);
+      const x = dotKey.split(',').map(Number)[0];
       
       // Recalculate panning based on new column count
       // Simple panning calculation that evenly distributes columns from -1 to 1
@@ -333,7 +331,7 @@ class DotGridAudioPlayer {
     // Skip if no audio nodes
     if (this.audioNodes.size === 0) return;
     
-    const ctx = audioContext.getAudioContext();
+
     
     // Get the destination node (either preEQGain or directly to EQ processor)
     const destinationNode = this.preEQGain ? 
@@ -474,6 +472,11 @@ class DotGridAudioPlayer {
     // If in single selection mode, use a fixed moderate subdivision
     if (this.useSingleRhythm) {
       return 8; // Fixed value for single selection - moderate repeat rate
+    }
+
+    // If only one dot is selected, use a consistent moderate pace regardless of position
+    if (this.audioNodes.size === 1) {
+      return 8; // Fixed moderate pace for a single dot
     }
 
     // For multiple selection mode, use position-based subdivision

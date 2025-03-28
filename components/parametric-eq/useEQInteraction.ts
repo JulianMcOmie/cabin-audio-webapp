@@ -20,6 +20,11 @@ interface ShiftOffset {
   y: number;
 }
 
+// Interface for canvas with margin property
+interface CanvasWithMargin extends HTMLCanvasElement {
+  margin?: number;
+}
+
 export function useEQInteraction({
   canvasRef,
   bands,
@@ -96,17 +101,26 @@ export function useEQInteraction({
       // Stop playing when released
       audioPlayer.setPlaying(false);
     }
-  }, [bands]);
+  }, [bands, SHOULD_UPDATE_CALIBRATION]);
 
   // Modify the throttledBandUpdate function to capture Q changes
   const throttledBandUpdate = useCallback(
-    throttle((id: string, updates: Partial<EQBandWithUI>) => {
-      // If this update includes a Q value, store it for future bands
-      if (updates.q !== undefined) {
-        setLastUsedQ(updates.q);
-      }
-      onBandUpdate(id, updates);
-    }, 16),
+    (id: string, updates: Partial<EQBandWithUI>) => {
+      // Create a throttled function inside the callback
+      const throttledUpdate = throttle((updateId: string, updateData: Partial<EQBandWithUI>) => {
+        // If this update includes a Q value, store it for future bands
+        if (updateData.q !== undefined) {
+          setLastUsedQ(updateData.q);
+        }
+        onBandUpdate(updateId, updateData);
+      }, 16);
+      
+      // Call the throttled function
+      throttledUpdate(id, updates);
+      
+      // Return the throttled function for cancellation
+      return throttledUpdate;
+    },
     [onBandUpdate]
   );
 
@@ -143,7 +157,7 @@ export function useEQInteraction({
       const rect = canvas.getBoundingClientRect();
       
       // Get the margin from the canvas if available
-      const margin = (canvas as any).margin || 0;
+      const margin = (canvas as CanvasWithMargin).margin || 0;
       
       // Get current mouse position
       const currentMousePosition = {
@@ -261,7 +275,7 @@ export function useEQInteraction({
         });
       }
     }, 16), // Throttle to roughly 60fps (16ms)
-    [canvasRef, draggingBand, isDragging, bands, isShiftPressed, shiftOffset, freqRange, throttledBandUpdate]
+    [canvasRef, draggingBand, isDragging, bands, isShiftPressed, shiftOffset, freqRange, throttledBandUpdate, SHOULD_UPDATE_CALIBRATION]
   );
 
   // Handle global mouse events for dragging outside the canvas
@@ -286,7 +300,12 @@ export function useEQInteraction({
       
       // Cancel any pending throttled updates
       handleGlobalMouseMoveThrottled.cancel();
-      throttledBandUpdate.cancel();
+      
+      // Cancel throttled band updates
+      const update = throttledBandUpdate('', {});
+      if (update && update.cancel) {
+        update.cancel();
+      }
     };
     
     // Add global event listeners
@@ -301,7 +320,12 @@ export function useEQInteraction({
       
       // Cancel any pending throttled updates
       handleGlobalMouseMoveThrottled.cancel();
-      throttledBandUpdate.cancel();
+      
+      // Cancel throttled band updates
+      const update = throttledBandUpdate('', {});
+      if (update && update.cancel) {
+        update.cancel();
+      }
     };
   }, [isDragging, draggingBand, handleGlobalMouseMoveThrottled, throttledBandUpdate, playCalibrationAudio]);
 
@@ -318,7 +342,7 @@ export function useEQInteraction({
       const rect = canvas.getBoundingClientRect();
       
       // Get the margin from the canvas if available
-      const margin = (canvas as any).margin || 0;
+      const margin = (canvas as CanvasWithMargin).margin || 0;
       
       // Calculate mouse position relative to canvas
       const x = e.clientX - rect.left;
@@ -409,7 +433,7 @@ export function useEQInteraction({
     const rect = canvas.getBoundingClientRect();
     
     // Get the margin from the canvas if available
-    const margin = (canvas as any).margin || 0;
+    const margin = (canvas as CanvasWithMargin).margin || 0;
     
     // Calculate mouse position relative to canvas
     const x = e.clientX - rect.left;
@@ -530,16 +554,22 @@ export function useEQInteraction({
       
       // Cancel any pending throttled updates
       handleMouseMoveThrottled.cancel();
-      throttledBandUpdate.cancel();
+      const update = throttledBandUpdate('', {});
+      if (update && update.cancel) {
+        update.cancel();
+      }
     }
-  }, [bands, freqRange, hoveredBandId, draggingBand, onBandAdd, onBandRemove, onBandSelect, canvasRef, handleMouseMoveThrottled, throttledBandUpdate, playCalibrationAudio, lastUsedQ]);
+  }, [bands, freqRange, hoveredBandId, draggingBand, onBandAdd, onBandRemove, onBandSelect, canvasRef, handleMouseMoveThrottled, throttledBandUpdate, playCalibrationAudio, lastUsedQ, SHOULD_UPDATE_CALIBRATION]);
 
   // Cancel throttled functions on unmount
   useEffect(() => {
     return () => {
       handleGlobalMouseMoveThrottled.cancel();
       handleMouseMoveThrottled.cancel();
-      throttledBandUpdate.cancel();
+      const update = throttledBandUpdate('', {});
+      if (update && update.cancel) {
+        update.cancel();
+      }
     };
   }, [handleGlobalMouseMoveThrottled, handleMouseMoveThrottled, throttledBandUpdate]);
 
