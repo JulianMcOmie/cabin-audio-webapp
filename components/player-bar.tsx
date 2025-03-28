@@ -5,11 +5,10 @@ import { Pause, Play, SkipBack, SkipForward, Volume2, VolumeX, Loader2 } from "l
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import { useToast } from "@/components/common/ToastManager"
-import { usePlayerStore, useTrackStore } from "@/lib/stores"
+import { usePlayerStore, useTrackStore, useArtistStore, useAlbumStore } from "@/lib/stores"
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
-import { useArtistStore } from "@/lib/stores/artistStore"
-import { useAlbumStore } from "@/lib/stores/albumStore"
 import { cn } from "@/lib/utils"
+import * as fileStorage from "@/lib/storage/fileStorage"
 
 // // Dummy track interface
 // interface Track {
@@ -72,6 +71,10 @@ export function PlayerBar() {
   const getTrackById = useTrackStore(state => state.getTrackById)
   const currentTrack = currentTrackId ? getTrackById(currentTrackId) : null
   
+  // Get artist and album info
+  const getArtistById = useArtistStore(state => state.getArtistById)
+  const getAlbumById = useAlbumStore(state => state.getAlbumById)
+  
   // Get EQ state from the EQ profile store
   const { isEQEnabled, setEQEnabled } = useEQProfileStore()
   
@@ -80,6 +83,9 @@ export function PlayerBar() {
   const [isSeeking, setIsSeeking] = useState(false)
   const [seekPosition, setSeekPosition] = useState(0)
   const wasPlayingRef = useRef(false)
+  const [coverImageUrl, setCoverImageUrl] = useState<string>("/placeholder.svg?height=48&width=48")
+  const [artistNameText, setArtistNameText] = useState<string>("Unknown Artist")
+  const [albumNameText, setAlbumNameText] = useState<string>("Unknown Album")
 
   // Update loading state when loadingState changes
   useEffect(() => {
@@ -103,6 +109,49 @@ export function PlayerBar() {
       })
     }
   }, [error, showToast])
+
+  // Update artist and album info when track changes
+  useEffect(() => {
+    if (currentTrack) {
+      // Get artist name
+      if (currentTrack.artistId) {
+        const artist = getArtistById(currentTrack.artistId)
+        if (artist) {
+          setArtistNameText(artist.name)
+        } else {
+          setArtistNameText("Unknown Artist")
+        }
+      } else {
+        setArtistNameText("Unknown Artist")
+      }
+      
+      // Get album name
+      if (currentTrack.albumId) {
+        const album = getAlbumById(currentTrack.albumId)
+        if (album) {
+          setAlbumNameText(album.title)
+        } else {
+          setAlbumNameText("Unknown Album")
+        }
+      } else {
+        setAlbumNameText("Unknown Album")
+      }
+      
+      // Get cover art URL
+      if (currentTrack.coverStorageKey) {
+        fileStorage.getImageFileUrl(currentTrack.coverStorageKey)
+          .then(url => {
+            setCoverImageUrl(url)
+          })
+          .catch(error => {
+            console.error("Error loading cover art:", error)
+            setCoverImageUrl("/placeholder.svg?height=48&width=48")
+          })
+      } else {
+        setCoverImageUrl("/placeholder.svg?height=48&width=48")
+      }
+    }
+  }, [currentTrack, getArtistById, getAlbumById])
 
   const handlePlay = () => {
     console.log(`[PlayerBar] playingState: ${isPlaying}`)
@@ -257,32 +306,19 @@ export function PlayerBar() {
     )
   }
 
-  // Get display values for the track
-  const artistName = currentTrack?.artistId ? 
-    useArtistStore.getState().getArtistById(currentTrack.artistId)?.name || "Unknown Artist"
-    : "Unknown Artist";
-  
-  const albumName = currentTrack?.albumId ? 
-    useAlbumStore.getState().getAlbumById(currentTrack.albumId)?.title || "Unknown Album"
-    : "Unknown Album";
-  
-  const coverUrl = currentTrack?.coverStorageKey ? 
-    `/Xenogenesis.jpg` 
-    : "/placeholder.svg?height=48&width=48";
-
   // Render normal state with track
   return (
     <div className="player-bar p-2 w-full border-t bg-background">
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-3 w-[30%] min-w-[180px]">
           <img
-            src={coverUrl}
-            alt={`${albumName} cover`}
+            src={coverImageUrl}
+            alt={`${albumNameText} cover`}
             className="h-12 w-12 rounded-md object-cover"
           />
           <div className="flex flex-col min-w-0">
             <div className="text-sm font-medium truncate">{currentTrack.title}</div>
-            <div className="text-xs text-muted-foreground truncate">{artistName}</div>
+            <div className="text-xs text-muted-foreground truncate">{artistNameText}</div>
           </div>
         </div>
 

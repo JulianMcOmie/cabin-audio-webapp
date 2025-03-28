@@ -6,10 +6,9 @@ import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/common/ToastManager"
 import { useFileImport } from "@/lib/hooks/useFileImport"
 import { FileImportOverlay } from "@/components/import/FileImportOverlay"
-import { useTrackStore, usePlayerStore, useEQProfileStore } from "@/lib/stores"
+import { useTrackStore, usePlayerStore, useEQProfileStore, useArtistStore, useAlbumStore } from "@/lib/stores"
 import { Track as TrackModel } from "@/lib/models/Track"
-import { useArtistStore } from "@/lib/stores/artistStore"
-import { useAlbumStore } from "@/lib/stores/albumStore"
+import * as fileStorage from "@/lib/storage/fileStorage"
 
 // Import the extracted components
 import { EQStatusAlert } from "./EQStatusAlert"
@@ -46,44 +45,82 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
   const { currentTrackId, isPlaying, setCurrentTrack, setIsPlaying } = usePlayerStore()
   // Connect to eqProfileStore for the actual EQ enabled state
   const { isEQEnabled } = useEQProfileStore()
+  // Connect to artistStore
+  const getArtistById = useArtistStore(state => state.getArtistById)
+  // Connect to albumStore
+  const getAlbumById = useAlbumStore(state => state.getAlbumById)
   
   // Use the state from the store, falling back to the prop for backward compatibility
   const eqEnabled = isEQEnabled !== undefined ? isEQEnabled : eqEnabledProp
   
   const [tracks, setTracks] = useState<Track[]>([])
+  // Store cover image URLs to avoid recreating them on every render
+  const [coverImageUrls, setCoverImageUrls] = useState<Record<string, string>>({})
 
   // Convert store tracks to UI tracks
   const convertStoreTracksToUI = () => {
     console.log(`[convertStoreTracksToUI] Getting tracks from store`);
     const storeTracks = getTracks();
-    const artists = useArtistStore.getState().getArtists();
-    const albums = useAlbumStore.getState().getAlbums();
     console.log(`[convertStoreTracksToUI] Retrieved ${storeTracks.length} tracks from store`);
     
+    // First collect all needed cover art keys
+    const coverKeys = storeTracks
+      .filter(track => track.coverStorageKey)
+      .map(track => track.coverStorageKey!)
+      .filter(key => !coverImageUrls[key]);
+    
+    // Load cover URLs if not already loaded
+    if (coverKeys.length > 0) {
+      Promise.all(
+        coverKeys.map(async (key) => {
+          try {
+            const url = await fileStorage.getImageFileUrl(key);
+            return { key, url };
+          } catch (error) {
+            console.error(`Error loading cover art for key ${key}:`, error);
+            return { key, url: "/placeholder.svg?height=48&width=48" };
+          }
+        })
+      ).then(results => {
+        const newUrls: Record<string, string> = { ...coverImageUrls };
+        results.forEach(({ key, url }) => {
+          newUrls[key] = url;
+        });
+        setCoverImageUrls(newUrls);
+      });
+    }
+    
     const uiTracks = storeTracks.map((storeTrack): Track => {
-      // Resolve artist name from ID
-      const artist = storeTrack.artistId ? 
-        artists.find(a => a.id === storeTrack.artistId)?.name || "Unknown Artist" 
-        : "Unknown Artist";
-      
-      // Resolve album name from ID
-      const album = storeTrack.albumId ? 
-        albums.find(a => a.id === storeTrack.albumId)?.title || "Unknown Album" 
-        : "Unknown Album";
-      
-      // For cover URLs, use the actual file URL
-      let coverUrl = "/placeholder.svg?height=48&width=48";
-      if (storeTrack.coverStorageKey) {
-        coverUrl = `/Xenogenesis.jpg`; // For now, hardcode to the actual file
+      // Get artist name
+      let artistName = "Unknown Artist";
+      if (storeTrack.artistId) {
+        const artist = getArtistById(storeTrack.artistId);
+        if (artist) {
+          artistName = artist.name;
+        }
       }
+      
+      // Get album name
+      let albumName = "Unknown Album";
+      if (storeTrack.albumId) {
+        const album = getAlbumById(storeTrack.albumId);
+        if (album) {
+          albumName = album.title;
+        }
+      }
+      
+      // Get cover URL from cache or use placeholder
+      const coverUrl = storeTrack.coverStorageKey && coverImageUrls[storeTrack.coverStorageKey]
+        ? coverImageUrls[storeTrack.coverStorageKey]
+        : "/placeholder.svg?height=48&width=48";
       
       return {
         id: storeTrack.id,
         title: storeTrack.title,
-        artist: artist,
-        album: album,
+        artist: artistName,
+        album: albumName,
         duration: storeTrack.duration,
-        coverUrl: coverUrl,
+        coverUrl
       };
     });
     
@@ -247,7 +284,7 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
         unsubscribe();
       }
     };
-  }, [showToast, addTrack, getTracks, isTrackStoreLoading])
+  }, [showToast, addTrack, getTracks, isTrackStoreLoading, getArtistById, getAlbumById, coverImageUrls])
 
   // Add a new effect to listen for EQ status changes
   useEffect(() => {
