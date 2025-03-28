@@ -100,7 +100,7 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
         if (Object.keys(loadedProfiles).length === 0) {
           const defaultProfile: EQProfileWithDefault = {
             id: 'default-flat',
-            name: 'Flat',
+            name: 'Profile 1',
             bands: [],
             volume: 0,
             isDefault: true,

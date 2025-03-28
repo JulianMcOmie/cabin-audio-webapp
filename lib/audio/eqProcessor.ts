@@ -359,7 +359,7 @@ class EQProcessor {
   public createDefaultProfile(): EQProfile {
     return {
       id: 'default',
-      name: 'Flat',
+      name: 'Profile 1',
       bands: [],
       volume: 0,
       lastModified: Date.now(),
