@@ -1,7 +1,8 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { ArrowLeft, ArrowRight, LogIn, Search, Settings, User, UserPlus, X, Moon, Sun } from "lucide-react"
+import { ArrowLeft, ArrowRight, LogIn, Search, Settings, User, X, Moon, Sun } from "lucide-react"
+// import { UserPlus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useAuth } from "@/lib/auth-context"
@@ -37,7 +38,7 @@ export function TopBar({ setActiveTab, history, currentIndex, setCurrentIndex }:
   const { theme, setTheme } = useTheme()
   
   // Use local state if props aren't provided
-  const [localHistory, setLocalHistory] = useState<TabHistory>(['library'])
+  const [localHistory] = useState<TabHistory>(['library'])
   const [localCurrentIndex, setLocalCurrentIndex] = useState(0)
   
   // Use provided history and index if available, otherwise use local state
@@ -139,7 +140,16 @@ export function TopBar({ setActiveTab, history, currentIndex, setCurrentIndex }:
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
-            {searchFocused && <SearchResults query={searchQuery} />}
+            {searchFocused && (
+              <SearchResults 
+                query={searchQuery} 
+                setActiveTab={setActiveTab}
+                onClose={() => {
+                  setSearchFocused(false);
+                  setSearchQuery("");
+                }}
+              />
+            )}
           </div>
 
           {user ? (
@@ -188,6 +198,7 @@ export function TopBar({ setActiveTab, history, currentIndex, setCurrentIndex }:
             </DropdownMenu>
           ) : (
             <>
+              {/* Sign up/login buttons commented out
               <Button
                 variant="ghost"
                 size="sm"
@@ -202,6 +213,7 @@ export function TopBar({ setActiveTab, history, currentIndex, setCurrentIndex }:
                 <LogIn className="h-4 w-4" />
                 <span>Log in</span>
               </Button>
+              */}
             </>
           )}
         </div>

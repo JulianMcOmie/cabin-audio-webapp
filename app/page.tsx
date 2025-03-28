@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef } from "react"
+import { useState } from "react"
 import { TopBar } from "@/components/top-bar"
 import { EQView } from "@/components/eq-view"
 import { MusicLibrary } from "@/components/music-library/MusicLibrary"
