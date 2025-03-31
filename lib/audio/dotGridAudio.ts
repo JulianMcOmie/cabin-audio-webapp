@@ -12,7 +12,7 @@ const ENVELOPE_MAX_GAIN = 1.0; // Maximum gain during envelope cycle
 const ENVELOPE_ATTACK = 0.002; // Faster attack time in seconds - for very punchy transients
 const ENVELOPE_RELEASE_LOW_FREQ = 0.2; // Release time for lowest frequencies (seconds)
 const ENVELOPE_RELEASE_HIGH_FREQ = 0.02; // Release time for highest frequencies (seconds)
-const MASTER_GAIN = 1.5; // Much louder master gain for calibration
+const MASTER_GAIN = 2.5; // Much louder master gain for calibration
 
 // Polyrhythm settings
 const BASE_CYCLE_TIME = 1.0; // Base cycle time in seconds
@@ -36,7 +36,6 @@ class DotGridAudioPlayer {
     subdivision: number; // Rhythm subdivision
     nextTriggerTime: number; // Next time to trigger this dot
     offset: number; // Offset within the row's rhythm (0-1)
-    originalFrequency: number; // This NEVER changes
   }> = new Map();
   private gridSize: number = 3; // Default row count
   private columnCount: number = COLUMNS; // Default column count
@@ -759,9 +758,6 @@ class DotGridAudioPlayer {
     const logFreqRange = logMaxFreq - logMinFreq;
     const centerFreq = Math.pow(2, logMinFreq + normalizedY * logFreqRange);
     
-    // Calculate the original frequency once
-    const originalFrequency = Math.pow(2, logMinFreq + normalizedY * logFreqRange);
-    
     // Create a gain node for volume
     const gain = ctx.createGain();
     gain.gain.value = MASTER_GAIN;
@@ -800,8 +796,7 @@ class DotGridAudioPlayer {
       rhythmInterval: null, // Rhythm interval ID
       subdivision, // Subdivision for this dot
       nextTriggerTime: 0, // Will be set when playback starts
-      offset: 0, // Default offset, will be updated by calculateRowOffsets
-      originalFrequency, // This NEVER changes
+      offset: 0 // Default offset, will be updated by calculateRowOffsets
     });
     
     // Log filter information
@@ -928,31 +923,6 @@ class DotGridAudioPlayer {
   public setVolumeDb(dbLevel: number): void {
     this.baseDbLevel = dbLevel;
     this.applyVolumeInDb(dbLevel);
-  }
-
-  /**
-   * Set the master volume (legacy method, kept for compatibility)
-   * @param volume Volume level between 0 and 1
-   */
-  public setVolume(volume: number): void {
-    // Convert from linear to dB
-    // 0 -> -Infinity dB, but we'll use -60dB as practical minimum
-    // 1 -> 0dB (reference level)
-    const minDb = -60;
-    let dbLevel = minDb;
-    
-    if (volume > 0) {
-      // Convert from linear scale to logarithmic (dB)
-      dbLevel = 20 * Math.log10(volume);
-      // Clamp to reasonable minimum
-      dbLevel = Math.max(minDb, dbLevel);
-    }
-    
-    // Set as base level and apply
-    this.baseDbLevel = dbLevel;
-    this.applyVolumeInDb(dbLevel);
-    
-    console.log(`🔊 Legacy setVolume(${volume.toFixed(2)}) converted to ${dbLevel.toFixed(1)}dB`);
   }
 
   /**
