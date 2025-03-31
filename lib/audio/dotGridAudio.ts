@@ -423,8 +423,12 @@ class DotGridAudioPlayer {
       
       const now = timestamp / 1000;
       
-      // Check if it's time to trigger all dots
-      if (now - this.lastTriggerTime >= BASE_CYCLE_TIME) {
+      // Calculate cycle time dynamically based on number of nodes
+      const numNodes = orderedDots.length;
+      const cycleDuration = numNodes * STAGGER_DELAY;
+      
+      // Check if it's time to trigger all dots (use dynamic cycle time)
+      if (now - this.lastTriggerTime >= cycleDuration) {
         // Advance to the next pattern index
         this.volumePatternIndex = (this.volumePatternIndex + 1) % VOLUME_PATTERN.length;
         
