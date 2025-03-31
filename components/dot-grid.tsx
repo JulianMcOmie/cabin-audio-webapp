@@ -441,13 +441,13 @@ export function DotCalibration({
   const selectedDots = externalSelectedDots !== undefined ? externalSelectedDots : internalSelectedDots;
   const setSelectedDots = externalSetSelectedDots !== undefined ? externalSetSelectedDots : setInternalSelectedDots;
   
-  // Always use single selection mode
-  const selectionMode = 'single';
+  // Always use multiple selection mode
+  const selectionMode = 'multiple';
   
   // Update audio player when selected dots change
   useEffect(() => {
     const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
-    audioPlayer.updateDots(selectedDots, gridSize, columnCount, false);
+    audioPlayer.updateDots(selectedDots, gridSize, columnCount);
   }, [selectedDots, gridSize, columnCount]);
   
   // Direct control of audio player playback state - no fancy logic
@@ -468,28 +468,27 @@ export function DotCalibration({
     }
   }, [preEQAnalyser, isPlaying]);
   
-  // Modified dot toggle handler for single selection behavior
+  // Modified dot toggle handler to support multiple selections
   const handleDotToggle = (x: number, y: number) => {
     const dotKey = `${x},${y}`;
-    const newSelectedDots = new Set<string>();
+    const newSelectedDots = new Set<string>(selectedDots);
     
-    // If the clicked dot is already selected, deselect it (toggle off)
+    // Toggle this dot: if selected, deselect it; if not selected, select it
     if (selectedDots.has(dotKey)) {
-      // Leave newSelectedDots empty to clear the selection
+      newSelectedDots.delete(dotKey);
     } else {
-      // Otherwise, select only this dot (replacing any previously selected dot)
       newSelectedDots.add(dotKey);
     }
     
     setSelectedDots(newSelectedDots);
     
-    // Auto-start when selecting a dot
-    if (newSelectedDots.size === 1) {
+    // Auto-start when selecting dots
+    if (newSelectedDots.size > 0 && !isPlaying) {
       setIsPlaying(true);
     }
     
-    // Auto-stop when deselecting the dot
-    if (newSelectedDots.size === 0) {
+    // Auto-stop when deselecting all dots
+    if (newSelectedDots.size === 0 && isPlaying) {
       setIsPlaying(false);
     }
   };
