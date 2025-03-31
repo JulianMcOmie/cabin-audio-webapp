@@ -32,8 +32,6 @@ class DotGridAudioPlayer {
     panner: StereoPannerNode;
     filter: BiquadFilterNode;
     position: number; // Position for sorting
-    rhythmInterval: number | null; // Rhythm interval ID
-    nextTriggerTime: number; // Next time to trigger this dot
   }> = new Map();
   private gridSize: number = 3; // Default row count
   private columnCount: number = COLUMNS; // Default column count
@@ -42,12 +40,13 @@ class DotGridAudioPlayer {
   
   // Animation frame properties
   private animationFrameId: number | null = null;
+  private lastTriggerTime: number = 0; // Track the last time all dots were triggered
   
   // Volume oscillation properties
   private volumeOscillationPhase: number = 0;
   private volumeOscillationTimer: number | null = null;
   private baseDbLevel: number = 0; // 0dB is reference level
-  private dbOscillationRange: number = 6; // ±12dB oscillation range by default
+  private dbOscillationRange: number = 6; // ±6dB oscillation range by default
   
   // Add distortion gain property
   private distortionGain: number = 1.0;
@@ -79,35 +78,20 @@ class DotGridAudioPlayer {
    * Set the current grid size
    */
   public setGridSize(rows: number, columns?: number): void {
-    
     this.gridSize = rows;
-    
-    // let columnsChanged = false;
-    // if (columns !== undefined && columns !== this.columnCount) {
-    //   this.columnCount = columns;
-    //   columnsChanged = true;
-    // }
 
     if (columns !== undefined) {
       this.columnCount = columns;
       this.updateAllDotPanning();
     }
     
-    
-    console.log(`🔊 Grid size set to ${this.gridSize} rows × ${this.columnCount} columns`);
-    
-    // // Update panning for all dots if column count changed
-    // if (columnsChanged) {
-    //   this.updateAllDotPanning();
-    // }
-    
-    // Update playback based on current mode
+    // Update playback if playing
     if (this.isPlaying) {
       this.stopAllRhythms();
       this.startAllRhythms();
     }
   }
-  
+
   /**
    * Update panning for all dots based on current column count
    */
@@ -122,8 +106,6 @@ class DotGridAudioPlayer {
       
       // Update panner value
       nodes.panner.pan.value = panPosition;
-      
-      console.log(`🔊 Updated panning for dot ${dotKey}: ${panPosition.toFixed(2)} (column ${x+1} of ${this.columnCount})`);
     });
   }
 
@@ -172,7 +154,6 @@ class DotGridAudioPlayer {
       data[i] *= normalizationFactor;
     }
 
-    console.log(`🔊 Generated pink noise buffer: ${bufferSize} samples, normalized by ${normalizationFactor.toFixed(4)}`);
     this.pinkNoiseBuffer = buffer;
   }
 
@@ -196,10 +177,9 @@ class DotGridAudioPlayer {
       // Connect the gain to the analyzer - analyzer is just for visualization
       this.preEQGain.connect(this.preEQAnalyser);
       
-      // Simply connect to EQ processor directly (no need to route through distortionGainNode)
+      // Simply connect to EQ processor directly
       const eq = eqProcessor.getEQProcessor();
       this.preEQGain.connect(eq.getInputNode());
-      console.log('🔊 Connected preEQGain to EQ input');
       
       // If already playing, reconnect all sources
       if (this.isPlaying) {
@@ -245,8 +225,6 @@ class DotGridAudioPlayer {
     
     // Reconnect all sources to include analyzer in the signal chain
     this.reconnectAllSources();
-    
-    console.log('🔊 Connected to external analyzer');
   }
   
   /**
@@ -264,8 +242,6 @@ class DotGridAudioPlayer {
       // Reconnect without the analyzer
       this.reconnectAllSources();
     }
-    
-    console.log('🔊 Disconnected from external analyzer');
   }
   
   /**
@@ -290,8 +266,6 @@ class DotGridAudioPlayer {
         console.error(`Error reconnecting source for dot ${dotKey}:`, e);
       }
     });
-    
-    console.log(`🔊 Reconnected all sources (${this.audioNodes.size} dots) to audio path`);
   }
 
   /**
@@ -301,8 +275,6 @@ class DotGridAudioPlayer {
    * @param currentColumns Optional column count update
    */
   public updateDots(dots: Set<string>, currentGridSize?: number, currentColumns?: number): void {
-    console.log(`🔊 Updating dots: ${dots.size} selected`);
-    
     // Check if we're adding the first dot
     const isAddingFirstDot = this.audioNodes.size === 0 && dots.size === 1;
     
@@ -344,7 +316,6 @@ class DotGridAudioPlayer {
         const firstDotKey = Array.from(dots)[0];
         setTimeout(() => {
           if (this.isPlaying && this.audioNodes.has(firstDotKey)) {
-            console.log('🔊 Triggering immediate sound for newly added first dot');
             this.triggerDotEnvelope(firstDotKey);
           }
         }, 10);
@@ -356,8 +327,6 @@ class DotGridAudioPlayer {
    * Set the playing state
    */
   public setPlaying(playing: boolean): void {
-    console.log(`🔊 Setting playing state: ${playing}`);
-    
     if (playing === this.isPlaying) return;
     
     this.isPlaying = playing;
@@ -374,8 +343,6 @@ class DotGridAudioPlayer {
         // Small delay to ensure everything is set up first
         setTimeout(() => {
           if (this.isPlaying) {
-            console.log('🔊 Triggering immediate initial sound for all dots');
-            
             // Get all dot keys
             const dotKeys = Array.from(this.audioNodes.keys());
             
@@ -404,76 +371,47 @@ class DotGridAudioPlayer {
   }
 
   /**
-   * Start all rhythm timers - using requestAnimationFrame instead of setInterval
+   * Start all rhythm timers - using requestAnimationFrame
    */
   private startAllRhythms(): void {
     // Initialize animation frame properties
     this.animationFrameId = null;
     
-    // Initialize next trigger times with proper offsets
-    const now = performance.now() / 1000; // Current time in seconds (more precise than Date.now)
+    // Initialize timing system
+    this.lastTriggerTime = performance.now() / 1000;
     
-    // Always trigger all dots immediately for instant feedback
+    // Immediately trigger all dots for instant feedback
     const dotKeys = Array.from(this.audioNodes.keys());
-    console.log(`🔊 Will immediately trigger all ${dotKeys.length} dots for instant feedback`);
-    
-    // Set up next trigger times for all dots
-    this.audioNodes.forEach((nodes) => {
-      const baseInterval = BASE_CYCLE_TIME;
-      nodes.nextTriggerTime = now + baseInterval;
-    });
-    
-    // Start the animation frame loop
-    this.animationFrameId = requestAnimationFrame(this.animationFrameLoop.bind(this));
-    
-    // Immediately trigger all dots with a slight stagger
     dotKeys.forEach((dotKey, index) => {
       setTimeout(() => {
         if (this.isPlaying) {
-          console.log(`🔊 Immediate trigger for dot ${dotKey}`);
           this.triggerDotEnvelope(dotKey);
         }
-      }, index * 20); // 20ms stagger between each dot for a nice "roll" effect
+      }, index * 20); // 20ms stagger for a nice roll effect
     });
     
-    console.log(`🔊 Started rhythm system with CONSISTENT TIMING for all dots - cycle time: ${BASE_CYCLE_TIME}s`);
-  }
-  
-  /**
-   * Animation frame loop for rhythm timing
-   */
-  private animationFrameLoop(timestamp: number): void {
-    if (!this.isPlaying) return;
-    
-    // Convert to seconds for consistency with our timing system
-    const now = timestamp / 1000;
-    
-    // Check and trigger dots
-    this.checkAndTriggerDots(now);
-    
-    // Schedule next frame
-    this.animationFrameId = requestAnimationFrame(this.animationFrameLoop.bind(this));
-  }
-  
-  /**
-   * Check all dots and trigger them if it's their time
-   */
-  private checkAndTriggerDots(now: number): void {
-    this.audioNodes.forEach((nodes, dotKey) => {
-      if (now >= nodes.nextTriggerTime) {
-        // Trigger the dot
-        this.triggerDotEnvelope(dotKey);
+    // Start the animation frame loop with simplified timing
+    const frameLoop = (timestamp: number) => {
+      if (!this.isPlaying) return;
+      
+      const now = timestamp / 1000;
+      
+      // Check if it's time to trigger all dots
+      if (now - this.lastTriggerTime >= BASE_CYCLE_TIME) {
+        // Trigger all dots
+        this.audioNodes.forEach((_, dotKey) => {
+          this.triggerDotEnvelope(dotKey);
+        });
         
-        // Calculate time for next trigger
-        const interval = BASE_CYCLE_TIME;
-        nodes.nextTriggerTime = nodes.nextTriggerTime + interval;
-        
-        // If we've fallen behind significantly, reset to now plus interval
-        if (nodes.nextTriggerTime < now) {
-          nodes.nextTriggerTime = now + interval;
-        }
+        // Update last trigger time
+        this.lastTriggerTime = now;
       }
-    });
+      
+      // Schedule next frame
+      this.animationFrameId = requestAnimationFrame(frameLoop);
+    };
+    
+    this.animationFrameId = requestAnimationFrame(frameLoop);
   }
   
   /**
@@ -490,13 +428,10 @@ class DotGridAudioPlayer {
    * Start all audio sources
    */
   private startAllSources(): void {
-    console.log(`🔊 Starting all sources`);
-    
     const ctx = audioContext.getAudioContext();
     
     // Make sure we have pink noise buffer
     if (!this.pinkNoiseBuffer) {
-      console.warn('Pink noise buffer not ready');
       this.generatePinkNoiseBuffer();
       return;
     }
@@ -513,7 +448,6 @@ class DotGridAudioPlayer {
       // Connect directly to EQ input
       const eq = eqProcessor.getEQProcessor();
       this.preEQGain.connect(eq.getInputNode());
-      console.log('🔊 NEW preEQGain connected to EQ input');
     }
     
     // Start each source with the determined destination
@@ -556,8 +490,6 @@ class DotGridAudioPlayer {
    * Stop all audio sources
    */
   private stopAllSources(): void {
-    console.log(`🔊 Stopping all sources`);
-    
     this.audioNodes.forEach((nodes, dotKey) => {
       try {
         if (nodes.source) {
@@ -620,17 +552,12 @@ class DotGridAudioPlayer {
     
     // Finally set to zero after the exponential ramp
     nodes.envelopeGain.gain.setValueAtTime(0, now + ENVELOPE_ATTACK + releaseTime + 0.001);
-    
-    // Visual feedback via console
-    console.log(`🔊 Triggered dot ${dotKey} with release time ${releaseTime.toFixed(3)}s (freq: ${centerFreq.toFixed(0)}Hz)`);
   }
 
   /**
    * Add a new dot to the audio system
    */
   private addDot(dotKey: string): void {
-    console.log(`🔊 Adding dot: ${dotKey}`);
-    
     const [x, y] = dotKey.split(',').map(Number);
     
     // Create audio nodes for this dot
@@ -660,8 +587,6 @@ class DotGridAudioPlayer {
     
     panner.pan.value = panPosition;
     
-    console.log(`   Pan: ${panner.pan.value.toFixed(2)} (column ${x+1} of ${this.columnCount})`);
-    
     // Set Q value
     const qValue = 3.0;
     
@@ -671,7 +596,7 @@ class DotGridAudioPlayer {
     filter.frequency.value = centerFreq;
     filter.Q.value = qValue;
     
-    // Store the nodes with addition order
+    // Store the nodes with simplified structure
     this.audioNodes.set(dotKey, {
       source: ctx.createBufferSource(), // Dummy source (will be replaced when playing)
       gain,
@@ -679,22 +604,13 @@ class DotGridAudioPlayer {
       panner,
       filter,
       position: y * this.columnCount + x, // Store position for sorting
-      rhythmInterval: null, // Rhythm interval ID
-      nextTriggerTime: 0 // Will be set when playback starts
     });
-    
-    // Log filter information
-    console.log(`🔊 Added dot ${dotKey} at position (${x},${y})`);
-    console.log(`   Position: ${normalizedY.toFixed(2)}`);
-    console.log(`   Filter: ${centerFreq.toFixed(0)}Hz (Q=${qValue.toFixed(2)})`);
   }
   
   /**
    * Remove a dot from the audio system
    */
   private removeDot(dotKey: string): void {
-    console.log(`🔊 Removing dot: ${dotKey}`);
-    
     const nodes = this.audioNodes.get(dotKey);
     if (!nodes) return;
     
@@ -711,8 +627,6 @@ class DotGridAudioPlayer {
     
     // Remove from the map
     this.audioNodes.delete(dotKey);
-    
-    console.log(`🔊 Removed dot ${dotKey}`);
   }
 
   /**
@@ -735,14 +649,7 @@ class DotGridAudioPlayer {
       
       // Apply dB-based volume with baseline
       this.applyVolumeInDb(this.baseDbLevel + dbOffset);
-      
-      // Log volume at extremes of the cycle
-      if (Math.abs(Math.sin(this.volumeOscillationPhase)) > 0.99) {
-        console.log(`🔊 Volume cycle: ${(this.baseDbLevel + dbOffset).toFixed(1)}dB`);
-      }
     }, 50);
-    
-    console.log(`🔊 Started volume oscillation (±${this.dbOscillationRange}dB range)`);
   }
   
   /**
@@ -755,7 +662,6 @@ class DotGridAudioPlayer {
       
       // Reset to baseline volume
       this.applyVolumeInDb(this.baseDbLevel);
-      console.log('🔊 Stopped volume oscillation');
     }
   }
   
@@ -766,13 +672,6 @@ class DotGridAudioPlayer {
   private applyVolumeInDb(dbLevel: number): void {
     // Convert dB to gain ratio
     const gainRatio = Math.pow(10, dbLevel / 20);
-    
-    // Apply to all gain nodes with minimal logging (to avoid console spam)
-    const shouldLog = Math.random() < 0.05; // Only log ~5% of changes
-    
-    if (shouldLog) {
-      console.log(`🔊 Setting volume: ${dbLevel.toFixed(1)}dB (gain: ${gainRatio.toFixed(2)})`);
-    }
     
     // Apply gain to all audio nodes, including distortion gain factor
     this.audioNodes.forEach((nodes) => {
@@ -795,7 +694,6 @@ class DotGridAudioPlayer {
    */
   public setOscillationRange(dbRange: number): void {
     this.dbOscillationRange = Math.max(1, Math.min(24, dbRange));
-    console.log(`🔊 Set oscillation range to ±${this.dbOscillationRange}dB`);
   }
 
   /**
@@ -811,8 +709,6 @@ class DotGridAudioPlayer {
    * Clean up resources
    */
   public dispose(): void {
-    console.log('🔊 Disposing DotGridAudioPlayer');
-    
     this.setPlaying(false);
     this.stopAllRhythms();
     this.stopAllSources();
@@ -848,7 +744,6 @@ class DotGridAudioPlayer {
     if (this.isPlaying) {
       // Apply current volume again to incorporate new distortion gain
       this.applyVolumeInDb(this.baseDbLevel);
-      console.log(`🔊 Dot Grid distortion gain set to ${this.distortionGain.toFixed(2)}`);
     }
   }
 }
