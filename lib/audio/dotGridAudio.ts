@@ -10,30 +10,19 @@ const COLUMNS = 5; // Always 5 panning positions - match the value in dot-grid.t
 const ENVELOPE_MIN_GAIN = 0.0; // Minimum gain during envelope cycle
 const ENVELOPE_MAX_GAIN = 1.0; // Maximum gain during envelope cycle
 const ENVELOPE_ATTACK = 0.002; // Faster attack time in seconds - for very punchy transients
-// const ENVELOPE_RELEASE_DEFAULT = 0.2; // Default release time (for reference only)
 const ENVELOPE_RELEASE_LOW_FREQ = 0.2; // Release time for lowest frequencies (seconds)
 const ENVELOPE_RELEASE_HIGH_FREQ = 0.02; // Release time for highest frequencies (seconds)
 const MASTER_GAIN = 1.5; // Much louder master gain for calibration
 
 // Polyrhythm settings
 const BASE_CYCLE_TIME = 1.0; // Base cycle time in seconds
-// const MIN_SUBDIVISION = 2; // Minimum subdivision (lower dots)
-// const MAX_SUBDIVISION = 16; // Maximum subdivision (higher dots)
-
-// Sequential playback settings
-// const DOT_TIMING = 0.2; // Time between dots in sequential mode (seconds)
 
 // Analyzer settings
 const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
 const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
 
 // Updated constants for frequency multiplier
-// const DEFAULT_FREQ_MULTIPLIER = 1.0; // Default is no change (1.0)
-// const MIN_FREQ_MULTIPLIER = 0.5; // Half the frequency (lower pitch)
-// const MAX_FREQ_MULTIPLIER = 2.0; // Double the frequency (higher pitch)
 const DEFAULT_SWEEP_DURATION = 8.0; // Default sweep cycle duration in seconds
-// const MIN_SWEEP_DURATION = 2.0; // Minimum sweep cycle duration
-// const MAX_SWEEP_DURATION = 30.0; // Maximum sweep cycle duration
 
 // Playback mode enum
 export enum PlaybackMode {
@@ -56,36 +45,17 @@ class DotGridAudioPlayer {
     nextTriggerTime: number; // Next time to trigger this dot
     offset: number; // Offset within the row's rhythm (0-1)
     originalFrequency: number; // This NEVER changes
-    additionOrder: number; // Track the order in which dots are added
   }> = new Map();
   private gridSize: number = 3; // Default row count
   private columnCount: number = COLUMNS; // Default column count
-//   private masterTimerId: number | null = null;
-//   private startTime: number = 0; // When playback started
   private preEQAnalyser: AnalyserNode | null = null; // Pre-EQ analyzer node
   private preEQGain: GainNode | null = null; // Gain node for connecting all sources to analyzer
   
   // Sequential playback properties
   private playbackMode: PlaybackMode = PlaybackMode.POLYRHYTHM; // Default to polyrhythm mode
-  private sequenceTimer: number | null = null; // Timer for sequential playback
-  private sequenceIndex: number = 0; // Current index in the sequence
-  private orderedDots: string[] = []; // Dots ordered for sequential playback
-  
-  // Replace freqOffset with freqMultiplier
-  private freqMultiplier: number = 1.0; // Use fixed value
-  private isSweeping: boolean = false;
-  private sweepDuration: number = DEFAULT_SWEEP_DURATION;
-  private sweepTimeoutId: number | null = null;
   
   // Animation frame properties
   private animationFrameId: number | null = null;
-  
-  // Add a counter to track dot addition order
-  private dotAdditionCounter: number = 0;
-  
-  // Sequence repetition tracking
-  private sequenceRepeatCount: number = 0;
-  private sequenceGroupStart: number = 0;
   
   // Add property to track single selection mode
   private useSingleRhythm: boolean = false;
@@ -882,7 +852,6 @@ class DotGridAudioPlayer {
       nextTriggerTime: 0, // Will be set when playback starts
       offset: 0, // Default offset, will be updated by calculateRowOffsets
       originalFrequency, // This NEVER changes
-      additionOrder: this.dotAdditionCounter++ // Assign and increment counter
     });
     
     // Log filter information
