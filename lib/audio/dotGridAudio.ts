@@ -12,7 +12,7 @@ const ENVELOPE_MAX_GAIN = 1.0; // Maximum gain during envelope cycle
 const ENVELOPE_ATTACK = 0.002; // Faster attack time in seconds - for very punchy transients
 const ENVELOPE_RELEASE_LOW_FREQ = 0.2; // Release time for lowest frequencies (seconds)
 const ENVELOPE_RELEASE_HIGH_FREQ = 0.02; // Release time for highest frequencies (seconds)
-const MASTER_GAIN = 2.5; // Much louder master gain for calibration
+const MASTER_GAIN = 3.5; // Much louder master gain for calibration
 
 // Polyrhythm settings
 const BASE_CYCLE_TIME = 0.1; // Base cycle time in seconds
@@ -20,6 +20,9 @@ const BASE_CYCLE_TIME = 0.1; // Base cycle time in seconds
 // Analyzer settings
 const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
 const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
+
+// Volume pattern settings
+const VOLUME_PATTERN = [0, -12, -6, -12]; // The fixed pattern in dB: 0dB, -12dB, -6dB, -12dB
 
 class DotGridAudioPlayer {
   private static instance: DotGridAudioPlayer;
@@ -42,11 +45,9 @@ class DotGridAudioPlayer {
   private animationFrameId: number | null = null;
   private lastTriggerTime: number = 0; // Track the last time all dots were triggered
   
-  // Volume oscillation properties
-  private volumeOscillationPhase: number = 0;
-  private volumeOscillationTimer: number | null = null;
-  private baseDbLevel: number = 0; // 0dB is reference level
-  private dbOscillationRange: number = 6; // ±6dB oscillation range by default
+  // Volume pattern properties
+  private volumePatternIndex: number = 0; // Current position in volume pattern
+  private baseDbLevel: number = 0; // Base volume level in dB (0dB = reference level)
   
   // Add distortion gain property
   private distortionGain: number = 1.0;
@@ -316,7 +317,9 @@ class DotGridAudioPlayer {
         const firstDotKey = Array.from(dots)[0];
         setTimeout(() => {
           if (this.isPlaying && this.audioNodes.has(firstDotKey)) {
-            this.triggerDotEnvelope(firstDotKey);
+            // Use the current pattern volume
+            const volumeDb = this.baseDbLevel + VOLUME_PATTERN[this.volumePatternIndex];
+            this.triggerDotEnvelope(firstDotKey, volumeDb);
           }
         }, 10);
       }
@@ -330,13 +333,15 @@ class DotGridAudioPlayer {
     if (playing === this.isPlaying) return;
     
     this.isPlaying = playing;
+
+    console.log('🔊 Set playing state:', playing);
     
     if (playing) {
       this.startAllSources();
       this.startAllRhythms();
       
-      // Start volume oscillation
-      this.startVolumeOscillation();
+      // Reset volume pattern index
+      this.volumePatternIndex = 0;
       
       // Immediately trigger all dots once for instant feedback
       if (this.audioNodes.size > 0) {
@@ -346,16 +351,19 @@ class DotGridAudioPlayer {
             // Get all dot keys
             const dotKeys = Array.from(this.audioNodes.keys());
             
+            // Get the current volume from the pattern
+            const volumeDb = this.baseDbLevel + VOLUME_PATTERN[this.volumePatternIndex];
+            
             // If we only have one dot, trigger it directly
             if (dotKeys.length === 1) {
-              this.triggerDotEnvelope(dotKeys[0]);
+              this.triggerDotEnvelope(dotKeys[0], volumeDb);
             } 
             // Otherwise stagger slightly for a pleasing "roll" effect
             else {
               dotKeys.forEach((dotKey, index) => {
                 setTimeout(() => {
                   if (this.isPlaying) {
-                    this.triggerDotEnvelope(dotKey);
+                    this.triggerDotEnvelope(dotKey, volumeDb);
                   }
                 }, index * 30); // 30ms stagger between each dot
               });
@@ -366,7 +374,6 @@ class DotGridAudioPlayer {
     } else {
       this.stopAllRhythms();
       this.stopAllSources();
-      this.stopVolumeOscillation();
     }
   }
 
@@ -380,17 +387,23 @@ class DotGridAudioPlayer {
     // Initialize timing system
     this.lastTriggerTime = performance.now() / 1000;
     
+    // Reset volume pattern index
+    this.volumePatternIndex = 0;
+    
+    // Get initial volume from pattern
+    const initialVolumeDb = this.baseDbLevel + VOLUME_PATTERN[this.volumePatternIndex];
+    
     // Immediately trigger all dots for instant feedback
     const dotKeys = Array.from(this.audioNodes.keys());
     dotKeys.forEach((dotKey, index) => {
       setTimeout(() => {
         if (this.isPlaying) {
-          this.triggerDotEnvelope(dotKey);
+          this.triggerDotEnvelope(dotKey, initialVolumeDb);
         }
       }, index * 20); // 20ms stagger for a nice roll effect
     });
     
-    // Start the animation frame loop with simplified timing
+    // Start the animation frame loop with pattern-based volume
     const frameLoop = (timestamp: number) => {
       if (!this.isPlaying) return;
       
@@ -398,9 +411,15 @@ class DotGridAudioPlayer {
       
       // Check if it's time to trigger all dots
       if (now - this.lastTriggerTime >= BASE_CYCLE_TIME) {
-        // Trigger all dots
+        // Advance to the next pattern index
+        this.volumePatternIndex = (this.volumePatternIndex + 1) % VOLUME_PATTERN.length;
+        
+        // Get volume from pattern
+        const volumeDb = this.baseDbLevel + VOLUME_PATTERN[this.volumePatternIndex];
+        
+        // Trigger all dots with the current pattern volume
         this.audioNodes.forEach((_, dotKey) => {
-          this.triggerDotEnvelope(dotKey);
+          this.triggerDotEnvelope(dotKey, volumeDb);
         });
         
         // Update last trigger time
@@ -466,7 +485,7 @@ class DotGridAudioPlayer {
         nodes.envelopeGain.connect(nodes.gain);
         
         // Apply the distortion gain to each individual node's gain
-        // This directly applies the gain without routing concerns
+        // Initial gain value - will be modified by volumeDb in triggerDotEnvelope
         nodes.gain.gain.value = MASTER_GAIN * this.distortionGain;
         
         // Connect to the single determined destination point
@@ -504,9 +523,11 @@ class DotGridAudioPlayer {
   }
 
   /**
-   * Trigger the envelope for a specific dot
+   * Trigger the envelope for a specific dot with volume parameter
+   * @param dotKey The dot to trigger
+   * @param volumeDb Volume in dB to apply
    */
-  private triggerDotEnvelope(dotKey: string): void {
+  private triggerDotEnvelope(dotKey: string, volumeDb: number = 0): void {
     const nodes = this.audioNodes.get(dotKey);
     if (!nodes) return;
     
@@ -534,7 +555,15 @@ class DotGridAudioPlayer {
     const releaseTime = ENVELOPE_RELEASE_LOW_FREQ + 
       normalizedFreq * (ENVELOPE_RELEASE_HIGH_FREQ - ENVELOPE_RELEASE_LOW_FREQ);
     
-    // Reset to minimum gain
+    // Apply volume in dB to gain
+    // Convert dB to gain ratio (0dB = 1.0)
+    const gainRatio = Math.pow(10, volumeDb / 20);
+    
+    // Apply to this node's gain
+    nodes.gain.gain.cancelScheduledValues(now);
+    nodes.gain.gain.setValueAtTime(MASTER_GAIN * this.distortionGain * gainRatio, now);
+    
+    // Reset envelope to minimum gain
     nodes.envelopeGain.gain.cancelScheduledValues(now);
     nodes.envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, now);
     
@@ -630,79 +659,11 @@ class DotGridAudioPlayer {
   }
 
   /**
-   * Start volume oscillation
-   */
-  private startVolumeOscillation(): void {
-    // Stop any existing oscillation
-    this.stopVolumeOscillation();
-    
-    // Reset phase
-    this.volumeOscillationPhase = 0;
-    
-    // Start oscillation timer - 50ms updates for smooth changes
-    this.volumeOscillationTimer = window.setInterval(() => {
-      // Increment phase (2π rad/sec = 1Hz for 20 updates/sec)
-      this.volumeOscillationPhase += Math.PI / 10;
-      
-      // Calculate dB offset using sine wave (-range to +range)
-      const dbOffset = Math.sin(this.volumeOscillationPhase) * this.dbOscillationRange;
-      
-      // Apply dB-based volume with baseline
-      this.applyVolumeInDb(this.baseDbLevel + dbOffset);
-    }, 50);
-  }
-  
-  /**
-   * Stop volume oscillation
-   */
-  private stopVolumeOscillation(): void {
-    if (this.volumeOscillationTimer !== null) {
-      clearInterval(this.volumeOscillationTimer);
-      this.volumeOscillationTimer = null;
-      
-      // Reset to baseline volume
-      this.applyVolumeInDb(this.baseDbLevel);
-    }
-  }
-  
-  /**
-   * Apply volume in decibels
-   * @param dbLevel Volume level in dB (0dB = reference level)
-   */
-  private applyVolumeInDb(dbLevel: number): void {
-    // Convert dB to gain ratio
-    const gainRatio = Math.pow(10, dbLevel / 20);
-    
-    // Apply gain to all audio nodes, including distortion gain factor
-    this.audioNodes.forEach((nodes) => {
-      const ctx = audioContext.getAudioContext();
-      const currentTime = ctx.currentTime;
-      const TRANSITION_TIME = 0.01; // 10ms for smooth but fast transition
-      
-      // Apply with smooth transition, including distortion gain factor
-      nodes.gain.gain.cancelScheduledValues(currentTime);
-      nodes.gain.gain.linearRampToValueAtTime(
-        gainRatio * MASTER_GAIN * this.distortionGain, 
-        currentTime + TRANSITION_TIME
-      );
-    });
-  }
-
-  /**
-   * Set the dB oscillation range
-   * @param dbRange Range in dB to oscillate (±dbRange)
-   */
-  public setOscillationRange(dbRange: number): void {
-    this.dbOscillationRange = Math.max(1, Math.min(24, dbRange));
-  }
-
-  /**
    * Set the master volume in dB
    * @param dbLevel Volume level in dB (0dB = reference level)
    */
   public setVolumeDb(dbLevel: number): void {
     this.baseDbLevel = dbLevel;
-    this.applyVolumeInDb(dbLevel);
   }
 
   /**
@@ -712,7 +673,6 @@ class DotGridAudioPlayer {
     this.setPlaying(false);
     this.stopAllRhythms();
     this.stopAllSources();
-    this.stopVolumeOscillation();
     
     // Ensure animation frames are cancelled
     if (this.animationFrameId !== null) {
@@ -739,12 +699,6 @@ class DotGridAudioPlayer {
   private setDistortionGain(gain: number): void {
     // Clamp gain between 0 and 1
     this.distortionGain = Math.max(0, Math.min(1, gain));
-    
-    // If playing, apply to all active gain nodes
-    if (this.isPlaying) {
-      // Apply current volume again to incorporate new distortion gain
-      this.applyVolumeInDb(this.baseDbLevel);
-    }
   }
 }
 
