@@ -21,14 +21,6 @@ const BASE_CYCLE_TIME = 1.0; // Base cycle time in seconds
 const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
 const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
 
-// Updated constants for frequency multiplier
-const DEFAULT_SWEEP_DURATION = 8.0; // Default sweep cycle duration in seconds
-
-// Playback mode enum
-export enum PlaybackMode {
-  POLYRHYTHM = 'polyrhythm' // Only keeping polyrhythm mode
-}
-
 class DotGridAudioPlayer {
   private static instance: DotGridAudioPlayer;
   private pinkNoiseBuffer: AudioBuffer | null = null;
@@ -51,14 +43,8 @@ class DotGridAudioPlayer {
   private preEQAnalyser: AnalyserNode | null = null; // Pre-EQ analyzer node
   private preEQGain: GainNode | null = null; // Gain node for connecting all sources to analyzer
   
-  // Sequential playback properties
-  private playbackMode: PlaybackMode = PlaybackMode.POLYRHYTHM; // Default to polyrhythm mode
-  
   // Animation frame properties
   private animationFrameId: number | null = null;
-  
-  // Add property to track single selection mode
-  private useSingleRhythm: boolean = false;
   
   // Volume oscillation properties
   private volumeOscillationPhase: number = 0;
@@ -90,38 +76,6 @@ class DotGridAudioPlayer {
       DotGridAudioPlayer.instance = new DotGridAudioPlayer();
     }
     return DotGridAudioPlayer.instance;
-  }
-
-  /**
-   * Set the playback mode
-   */
-  public setPlaybackMode(mode: PlaybackMode): void {
-    if (this.playbackMode === mode) return;
-    
-    console.log(`🔊 Switching playback mode to: ${mode}`);
-    
-    // Store the previous playing state
-    const wasPlaying = this.isPlaying;
-    
-    // Stop current playback
-    if (wasPlaying) {
-      this.setPlaying(false);
-    }
-    
-    // Update mode
-    this.playbackMode = mode;
-    
-    // Resume playback if it was playing
-    if (wasPlaying) {
-      this.setPlaying(true);
-    }
-  }
-  
-  /**
-   * Get the current playback mode
-   */
-  public getPlaybackMode(): PlaybackMode {
-    return this.playbackMode;
   }
 
   /**
@@ -348,10 +302,9 @@ class DotGridAudioPlayer {
    * @param dots Set of dot coordinates
    * @param currentGridSize Optional grid size update
    * @param currentColumns Optional column count update
-   * @param useSingleRhythm Whether to use a fixed rhythm for all dots (single selection mode)
    */
-  public updateDots(dots: Set<string>, currentGridSize?: number, currentColumns?: number, useSingleRhythm: boolean = false): void {
-    console.log(`🔊 Updating dots: ${dots.size} selected, singleRhythm: ${useSingleRhythm}`);
+  public updateDots(dots: Set<string>, currentGridSize?: number, currentColumns?: number): void {
+    console.log(`🔊 Updating dots: ${dots.size} selected`);
     
     // Check if we're adding the first dot
     const isAddingFirstDot = this.audioNodes.size === 0 && dots.size === 1;
@@ -364,9 +317,6 @@ class DotGridAudioPlayer {
     else if (currentColumns && currentColumns !== this.columnCount) {
       this.setGridSize(this.gridSize, currentColumns);
     }
-    
-    // Update single rhythm flag
-    this.useSingleRhythm = useSingleRhythm;
     
     // Get current dots
     const currentDots = new Set(this.audioNodes.keys());
