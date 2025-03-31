@@ -15,7 +15,7 @@ const ENVELOPE_RELEASE_HIGH_FREQ = 0.02; // Release time for highest frequencies
 const MASTER_GAIN = 2.5; // Much louder master gain for calibration
 
 // Polyrhythm settings
-const BASE_CYCLE_TIME = 1.0; // Base cycle time in seconds
+const BASE_CYCLE_TIME = 0.1; // Base cycle time in seconds
 
 // Analyzer settings
 const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
@@ -33,9 +33,7 @@ class DotGridAudioPlayer {
     filter: BiquadFilterNode;
     position: number; // Position for sorting
     rhythmInterval: number | null; // Rhythm interval ID
-    subdivision: number; // Rhythm subdivision
     nextTriggerTime: number; // Next time to trigger this dot
-    offset: number; // Offset within the row's rhythm (0-1)
   }> = new Map();
   private gridSize: number = 3; // Default row count
   private columnCount: number = COLUMNS; // Default column count
@@ -334,9 +332,6 @@ class DotGridAudioPlayer {
       }
     });
     
-    // Calculate offsets for dots in the same row
-    this.calculateRowOffsets();
-    
     // If playing, restart rhythm
     if (this.isPlaying) {
       this.stopAllRhythms();
@@ -355,110 +350,6 @@ class DotGridAudioPlayer {
         }, 10);
       }
     }
-  }
-  
-  /**
-   * Calculate timing offsets for dots in the same row
-   */
-  private calculateRowOffsets(): void {
-    // Group dots by row
-    const dotsByRow = new Map<number, string[]>();
-    
-    // Collect all dots by row
-    this.audioNodes.forEach((_, dotKey) => {
-      const y = dotKey.split(',').map(Number)[1];
-      if (!dotsByRow.has(y)) {
-        dotsByRow.set(y, []);
-      }
-      dotsByRow.get(y)?.push(dotKey);
-    });
-    
-    // For each row, assign evenly distributed offsets
-    dotsByRow.forEach((dotsInRow, rowIndex) => {
-      // Sort dots by x-coordinate for consistent assignment
-      dotsInRow.sort((a, b) => {
-        const xA = parseInt(a.split(',')[0]);
-        const xB = parseInt(b.split(',')[0]);
-        return xA - xB;
-      });
-      
-      // Assign more pronounced staggered offsets
-      dotsInRow.forEach((dotKey, index) => {
-        const nodes = this.audioNodes.get(dotKey);
-        if (nodes) {
-          // If only one dot, no offset needed
-          if (dotsInRow.length === 1) {
-            nodes.offset = 0;
-          } else {
-            // Create more pronounced staggering with multiple approaches:
-            
-            // 1. Basic approach - distribute evenly but with full range (0 to 0.95)
-            const linearOffset = index / dotsInRow.length;
-            
-            // 2. Apply a pattern based on column position for more musical feel
-            // This creates a less predictable pattern across rows
-            const patternFactor = (index % 3 === 0) ? 1.1 : 0.9; // Every third dot gets slightly different offset
-            
-            // 3. Add slight randomization to prevent mechanical feel
-            // Use a predictable "random" based on position to keep it consistent
-            const pseudoRandom = Math.sin(index * 7919) * 0.05; // Using prime number for better distribution
-            
-            // Combine these factors and ensure we stay in the 0-0.99 range
-            const finalOffset = (linearOffset * 0.95 * patternFactor + pseudoRandom + 1) % 1.0;
-            
-            nodes.offset = finalOffset;
-          }
-        }
-      });
-      
-      console.log(`🔊 Row ${rowIndex}: assigned staggered offsets to ${dotsInRow.length} dots`);
-    });
-  }
-
-  /**
-   * Calculate subdivision based on vertical position or use fixed value for single selection
-   */
-  private calculateSubdivision(): number {
-    // Use fixed subdivision for ALL dots regardless of position
-    // This completely decouples timing from frequency
-    return 8; // Use a consistent moderate pace
-
-    // Old frequency-dependent code below is no longer used
-    /*
-    // If in single selection mode, use a fixed moderate subdivision
-    if (this.useSingleRhythm) {
-      return 8; // Fixed value for single selection - moderate repeat rate
-    }
-
-    // If only one dot is selected, use a consistent moderate pace regardless of position
-    if (this.audioNodes.size === 1) {
-      return 8; // Fixed moderate pace for a single dot
-    }
-
-    // For multiple selection mode, use position-based subdivision
-    // Invert y to make higher dots have more subdivisions
-    // Normalize to 0-1 range
-    const normalizedY = 1 - (y / (this.gridSize - 1));
-    
-    // Calculate subdivision - higher dots get more subdivisions
-    const subdivision = Math.floor(MIN_SUBDIVISION + normalizedY * (MAX_SUBDIVISION - MIN_SUBDIVISION));
-    
-    // Use musically useful subdivisions: 2, 3, 4, 5, 6, 8, 12, 16
-    // Find the closest musically useful subdivision
-    const musicalSubdivisions = [2, 3, 4, 5, 6, 8, 12, 16];
-    let closestSubdivision = musicalSubdivisions[0];
-    let closestDistance = Math.abs(subdivision - closestSubdivision);
-    
-    for (let i = 1; i < musicalSubdivisions.length; i++) {
-      const distance = Math.abs(subdivision - musicalSubdivisions[i]);
-      if (distance < closestDistance) {
-        closestDistance = distance;
-        closestSubdivision = musicalSubdivisions[i];
-      }
-    }
-    
-    return closestSubdivision;
-    */
   }
 
   /**
@@ -528,10 +419,8 @@ class DotGridAudioPlayer {
     
     // Set up next trigger times for all dots
     this.audioNodes.forEach((nodes) => {
-      const baseInterval = BASE_CYCLE_TIME / nodes.subdivision;
-      // Apply the offset to stagger dots in the same row
-      const offsetTime = baseInterval * nodes.offset;
-      nodes.nextTriggerTime = now + offsetTime;
+      const baseInterval = BASE_CYCLE_TIME;
+      nodes.nextTriggerTime = now + baseInterval;
     });
     
     // Start the animation frame loop
@@ -576,7 +465,7 @@ class DotGridAudioPlayer {
         this.triggerDotEnvelope(dotKey);
         
         // Calculate time for next trigger
-        const interval = BASE_CYCLE_TIME / nodes.subdivision;
+        const interval = BASE_CYCLE_TIME;
         nodes.nextTriggerTime = nodes.nextTriggerTime + interval;
         
         // If we've fallen behind significantly, reset to now plus interval
@@ -733,7 +622,7 @@ class DotGridAudioPlayer {
     nodes.envelopeGain.gain.setValueAtTime(0, now + ENVELOPE_ATTACK + releaseTime + 0.001);
     
     // Visual feedback via console
-    console.log(`🔊 Triggered dot ${dotKey} with subdivision ${nodes.subdivision} and release time ${releaseTime.toFixed(3)}s (freq: ${centerFreq.toFixed(0)}Hz)`);
+    console.log(`🔊 Triggered dot ${dotKey} with release time ${releaseTime.toFixed(3)}s (freq: ${centerFreq.toFixed(0)}Hz)`);
   }
 
   /**
@@ -782,9 +671,6 @@ class DotGridAudioPlayer {
     filter.frequency.value = centerFreq;
     filter.Q.value = qValue;
     
-    // Calculate subdivision based on vertical position or fixed value for single selection
-    const subdivision = this.calculateSubdivision();
-    
     // Store the nodes with addition order
     this.audioNodes.set(dotKey, {
       source: ctx.createBufferSource(), // Dummy source (will be replaced when playing)
@@ -794,17 +680,13 @@ class DotGridAudioPlayer {
       filter,
       position: y * this.columnCount + x, // Store position for sorting
       rhythmInterval: null, // Rhythm interval ID
-      subdivision, // Subdivision for this dot
-      nextTriggerTime: 0, // Will be set when playback starts
-      offset: 0 // Default offset, will be updated by calculateRowOffsets
+      nextTriggerTime: 0 // Will be set when playback starts
     });
     
     // Log filter information
     console.log(`🔊 Added dot ${dotKey} at position (${x},${y})`);
     console.log(`   Position: ${normalizedY.toFixed(2)}`);
     console.log(`   Filter: ${centerFreq.toFixed(0)}Hz (Q=${qValue.toFixed(2)})`);
-    console.log(`   Subdivision: ${subdivision}`);
-    console.log(`   Rhythm: ${(BASE_CYCLE_TIME / subdivision).toFixed(3)}s intervals`);
   }
   
   /**
