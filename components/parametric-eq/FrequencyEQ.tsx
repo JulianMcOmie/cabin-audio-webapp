@@ -274,12 +274,16 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       const newBands = [...prev]
       const index = newBands.findIndex(b => b.id === id)
       if (index !== -1) {
-        newBands[index] = { ...newBands[index], ...updates }
+        // Create updated band with new properties, maintaining other properties
+        const updatedBand = { ...newBands[index], ...updates }
         
-        // Recalculate frequency response if needed
+        // Recalculate frequency response ONLY if parameters affecting response were changed
         if (updates.frequency !== undefined || updates.gain !== undefined || updates.q !== undefined || updates.type !== undefined) {
-          newBands[index].frequencyResponse = calculateBandResponse(newBands[index])
+          updatedBand.frequencyResponse = calculateBandResponse(updatedBand)
         }
+        
+        // Update just this band in the array
+        newBands[index] = updatedBand
       }
       return newBands
     })
@@ -754,7 +758,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     ghostNode, 
     draggingBandId, 
     hoveredBandId, 
-    profile, 
+    profile,
     isDraggingVolume,
     isHoveringVolume,
     freqRange,

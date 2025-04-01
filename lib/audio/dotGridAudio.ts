@@ -406,7 +406,7 @@ class DotGridAudioPlayer {
       .map(([key]) => key);
     
     // Stagger timing constant - delay between each dot in seconds
-    const STAGGER_DELAY = 0.01;
+    const STAGGER_DELAY = 0.05;
     
     // Immediately trigger all dots with staggered timing for instant feedback
     orderedDots.forEach((dotKey, index) => {
