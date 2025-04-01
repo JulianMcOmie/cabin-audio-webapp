@@ -466,14 +466,17 @@ export function EQView({ setEqEnabled }: EQViewProps) {
               </Button>
             </div>
             
-            {/* Help text link */}
-            <div className="mt-2 text-center">
-              <button 
-                className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+            {/* Tutorial button replacing help text link */}
+            <div className="flex justify-center mt-3">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-xs text-muted-foreground hover:text-foreground"
                 onClick={() => setShowCalibrationModal(true)}
               >
-                How do I use this?
-              </button>
+                <HelpCircle className="mr-1 h-3 w-3" />
+                Tutorial
+              </Button>
             </div>
           </div>
         </div>
