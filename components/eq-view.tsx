@@ -9,6 +9,7 @@ import { EQCalibrationModal } from "@/components/eq-calibration-modal"
 import { LoginModal } from "@/components/login-modal"
 import { SignupModal } from "@/components/signup-modal"
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
+import { usePlayerStore } from "@/lib/stores"
 import { Slider } from "@/components/ui/slider"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -42,6 +43,9 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     setActiveProfile,
     addProfile 
   } = useEQProfileStore()
+  
+  // Get the player state to control music playback
+  const { isPlaying: isMusicPlaying, setIsPlaying: setMusicPlaying } = usePlayerStore()
   
   const [showCalibrationModal, setShowCalibrationModal] = useState(false)
   const [showCreateNewDialog, setShowCreateNewDialog] = useState(false)
@@ -262,6 +266,11 @@ export function EQView({ setEqEnabled }: EQViewProps) {
       // Just stop playing without clearing dot selection
       setDotGridPlaying(false);
     } else {
+      // If music is playing, pause it
+      if (isMusicPlaying) {
+        setMusicPlaying(false);
+      }
+      
       // If starting and there are no dots selected, don't start
       // (this is handled by the DotCalibration component internally)
       setDotGridPlaying(true);
@@ -427,6 +436,11 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   if (activeGrid === "line") {
                     setGlyphGridPlaying(!glyphGridPlaying);
                     if (dotGridPlaying) setDotGridPlaying(false);
+                    
+                    // If enabling glyph grid playback and music is playing, pause the music
+                    if (!glyphGridPlaying && isMusicPlaying) {
+                      setMusicPlaying(false);
+                    }
                   } else {
                     handleDotGridPlayToggle();
                   }
@@ -434,8 +448,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
               >
                 <Play className="mr-2 h-5 w-5" />
                 {activeGrid === "line" 
-                  ? (glyphGridPlaying ? "Stop" : "Play") 
-                  : (dotGridPlaying ? "Stop" : "Play")}
+                  ? (glyphGridPlaying ? "Stop" : "Play Calibration") 
+                  : (dotGridPlaying ? "Stop" : "Play Calibration")}
               </Button>
             </div>
             

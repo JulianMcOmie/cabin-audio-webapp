@@ -3,6 +3,7 @@
 import type React from "react"
 import { useRef, useEffect, useState, useMemo } from "react"
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
+import { usePlayerStore } from "@/lib/stores"
 
 interface DotGridProps {
   selectedDot: [number, number] | null
@@ -531,6 +532,9 @@ export function DotCalibration({
     const dotKey = `${x},${y}`;
     const newSelectedDots = new Set<string>(selectedDots);
     
+    // Get music player state
+    const { isPlaying: isMusicPlaying, setIsPlaying: setMusicPlaying } = usePlayerStore.getState();
+    
     // Toggle this dot: if selected, deselect it; if not selected, select it
     if (selectedDots.has(dotKey)) {
       newSelectedDots.delete(dotKey);
@@ -542,6 +546,10 @@ export function DotCalibration({
     
     // Auto-start when selecting dots
     if (newSelectedDots.size > 0 && !isPlaying) {
+      // If music is playing, pause it first
+      if (isMusicPlaying) {
+        setMusicPlaying(false);
+      }
       setIsPlaying(true);
     }
     
