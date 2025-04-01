@@ -19,7 +19,7 @@ export function EQCalibrationModal({ open, onClose }: EQCalibrationModalProps) {
         <div className="h-[calc(80vh-210px)] mt-4 overflow-auto">
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              This is a unique calibration approach unlike anything you&apos;ve likely seen before. It helps you adjust your EQ to create a wider and taller soundstage in your headphone (yes, we&apos;re adding the dimension of height to the soundstage).
+              We offer EQ calibration tools unlike anything you&apos;ve likely seen before. They help you adjust your EQ to create a wider and taller soundstage in your headphone (yes, we&apos;re adding the dimension of height to the soundstage).
               Most people never think about sound having height - that&apos;s what makes this special.
             </p>
 

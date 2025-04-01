@@ -334,7 +334,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
           </div>
 
           {/* Grid Visualizer - Now takes less width */}
-          <div className="w-1/4 bg-card rounded-lg p-4">
+          <div className="w-1/4 bg-gray-100 dark:bg-card rounded-lg p-4">
             <div className="flex flex-col space-y-4">
               {/* Updated segmented control with dot grid as default/left option */}
               <div className="flex border rounded-md overflow-hidden w-fit">
@@ -400,6 +400,16 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   ? (glyphGridPlaying ? "Stop" : "Play") 
                   : (dotGridPlaying ? "Stop" : "Play")}
               </Button>
+            </div>
+            
+            {/* Help text link */}
+            <div className="mt-2 text-center">
+              <button 
+                className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+                onClick={() => setShowCalibrationModal(true)}
+              >
+                How do I use this?
+              </button>
             </div>
           </div>
         </div>

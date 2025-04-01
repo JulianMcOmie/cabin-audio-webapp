@@ -666,6 +666,13 @@ export function DotCalibration({
           isPlaying={isPlaying}
           selectionMode={selectionMode}
         />
+        
+        {/* Instruction text */}
+        <div className="mt-2 text-xs text-center text-muted-foreground">
+          {selectedDots.size === 0 
+            ? "Click dots to play them"
+            : "Use arrow keys to move dots"}
+        </div>
       </div>
       
       {/* Controls */}

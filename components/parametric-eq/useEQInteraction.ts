@@ -58,51 +58,6 @@ export function useEQInteraction({
   // Add this state to track the last used bandwidth/Q value
   const [lastUsedQ, setLastUsedQ] = useState(1.0); // Default Q value
 
-  // Function to play calibration audio based on current band
-  const playCalibrationAudio = useCallback((bandId: string | null, play: boolean) => {
-    const audioPlayer = getReferenceCalibrationAudio();
-
-    // console.log(`🔊 playCalibrationAudio: bandId=${bandId}, play=${play}`);
-    
-    if (play && bandId) {
-      // Find the band being dragged
-      const band = bands.find(b => b.id === bandId);
-      
-      if (band) {
-        // Calculate bandwidth from Q
-        const bandwidth = band.q ? 1.0 / band.q : 1.0;
-        
-        // Only update if the flag is true
-        if (SHOULD_UPDATE_CALIBRATION) {
-          // Adjust calibration frequency to focus on the edge of the noise burst
-          // Using logarithmic scaling to make the adjustment more natural for audio
-          let calibrationFreq = band.frequency;
-          const centerFreq = 1000; // Reference center point where no adjustment occurs
-          
-          if (band.frequency !== centerFreq) {
-            // Calculate logarithmic compression factor
-            // This compresses the range logarithmically toward the center (1000Hz)
-            const logRatio = Math.log10(band.frequency / centerFreq);
-            const compressionFactor = 1.0; // Controls how much compression to apply
-            
-            // Apply logarithmic compression
-            calibrationFreq = centerFreq * Math.pow(10, logRatio * compressionFactor);
-          }
-          
-          audioPlayer.updateCalibrationParameters(calibrationFreq, bandwidth);
-        }
-        
-        // Only start playing if not already playing
-        if (!audioPlayer.isActive()) {
-        //   audioPlayer.setPlaying(true);
-        }
-      }
-    } else {
-      // Stop playing when released
-      audioPlayer.setPlaying(false);
-    }
-  }, [bands, SHOULD_UPDATE_CALIBRATION]);
-
   // Modify the throttledBandUpdate function to capture Q changes
   const throttledBandUpdate = useCallback(
     (id: string, updates: Partial<EQBandWithUI>) => {
@@ -282,8 +237,6 @@ export function useEQInteraction({
   useEffect(() => {
     if (!isDragging || !draggingBand) return;
     
-    // Start playing calibration audio when dragging begins
-    playCalibrationAudio(draggingBand, true);
     
     const handleGlobalMouseMove = (e: MouseEvent) => {
       // Use the throttled handler
@@ -291,9 +244,6 @@ export function useEQInteraction({
     };
     
     const handleGlobalMouseUp = () => {
-      // Stop playing calibration audio when dragging ends
-      playCalibrationAudio(null, false);
-      
       setDraggingBand(null);
       setIsDragging(false);
       prevMousePositionRef.current = null; // Reset position tracking
@@ -327,7 +277,7 @@ export function useEQInteraction({
         update.cancel();
       }
     };
-  }, [isDragging, draggingBand, handleGlobalMouseMoveThrottled, throttledBandUpdate, playCalibrationAudio]);
+  }, [isDragging, draggingBand, handleGlobalMouseMoveThrottled, throttledBandUpdate]);
 
   // Throttled mouse move handler for hover effects
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -546,9 +496,6 @@ export function useEQInteraction({
       if (draggingBand === clickedBandId) {
         setDraggingBand(null);
         setIsDragging(false);
-        
-        // Stop any playing audio
-        playCalibrationAudio(null, false);
       }
       onBandSelect(null);
       
@@ -559,7 +506,7 @@ export function useEQInteraction({
         update.cancel();
       }
     }
-  }, [bands, freqRange, hoveredBandId, draggingBand, onBandAdd, onBandRemove, onBandSelect, canvasRef, handleMouseMoveThrottled, throttledBandUpdate, playCalibrationAudio, lastUsedQ, SHOULD_UPDATE_CALIBRATION]);
+  }, [bands, freqRange, hoveredBandId, draggingBand, onBandAdd, onBandRemove, onBandSelect, canvasRef, handleMouseMoveThrottled, throttledBandUpdate, lastUsedQ, SHOULD_UPDATE_CALIBRATION]);
 
   // Cancel throttled functions on unmount
   useEffect(() => {

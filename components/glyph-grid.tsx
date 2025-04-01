@@ -622,9 +622,9 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
   }
 
   return (
-    <div className="space-y-3">
-      {/* Canvas Area - Make it smaller by reducing aspect ratio */}
-      <div className="relative bg-background/50 rounded-lg p-2">
+    <div className="space-y-4">
+      {/* Canvas container */}
+      <div className="relative bg-gray-100 dark:bg-background/50 rounded-lg p-2">
         <canvas
           ref={canvasRef}
           className={`w-full aspect-[4/3] ${disabled ? "opacity-70" : ""}`}
