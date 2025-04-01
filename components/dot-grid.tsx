@@ -468,6 +468,64 @@ export function DotCalibration({
     }
   }, [preEQAnalyser, isPlaying]);
   
+  // Handle arrow key navigation
+  useEffect(() => {
+    if (disabled || selectedDots.size === 0) return;
+    
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Skip if disabled or no dots selected
+      if (disabled || selectedDots.size === 0) return;
+      
+      // Only handle arrow keys
+      if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+      
+      // Parse all selected dots
+      const parsedDots = Array.from(selectedDots).map(dot => {
+        const [x, y] = dot.split(',').map(Number);
+        return { x, y };
+      });
+      
+      // Calculate new positions based on arrow key
+      let dx = 0, dy = 0;
+      switch (e.key) {
+        case 'ArrowUp': dy = -1; break;
+        case 'ArrowDown': dy = 1; break;
+        case 'ArrowLeft': dx = -1; break;
+        case 'ArrowRight': dx = 1; break;
+      }
+      
+      // Check if all dots can move in the desired direction
+      const canAllMove = parsedDots.every(dot => {
+        const newX = dot.x + dx;
+        const newY = dot.y + dy;
+        return newX >= 0 && newX < columnCount && newY >= 0 && newY < gridSize;
+      });
+      
+      // If all dots can move, update the selection
+      if (canAllMove) {
+        const newSelectedDots = new Set<string>();
+        parsedDots.forEach(dot => {
+          const newX = dot.x + dx;
+          const newY = dot.y + dy;
+          newSelectedDots.add(`${newX},${newY}`);
+        });
+        
+        setSelectedDots(newSelectedDots);
+        
+        // Prevent default behavior (scrolling)
+        e.preventDefault();
+      }
+    };
+    
+    // Add event listener
+    window.addEventListener('keydown', handleKeyDown);
+    
+    // Clean up
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [disabled, selectedDots, setSelectedDots, columnCount, gridSize]);
+  
   // Modified dot toggle handler to support multiple selections
   const handleDotToggle = (x: number, y: number) => {
     const dotKey = `${x},${y}`;
