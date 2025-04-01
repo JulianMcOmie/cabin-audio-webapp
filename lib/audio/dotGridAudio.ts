@@ -273,9 +273,6 @@ class DotGridAudioPlayer {
    * @param currentColumns Optional column count update
    */
   public updateDots(dots: Set<string>, currentGridSize?: number, currentColumns?: number): void {
-    // Check if we're adding the first dot
-    const isAddingFirstDot = this.audioNodes.size === 0 && dots.size === 1;
-    
     // Update grid size if provided and changed
     if (currentGridSize && currentGridSize !== this.gridSize) {
       this.setGridSize(currentGridSize, currentColumns);
@@ -375,7 +372,7 @@ class DotGridAudioPlayer {
     
     // Get dots ordered left-to-right, top-to-bottom (like reading English text)
     const orderedDots = Array.from(this.audioNodes.entries())
-      .sort(([keyA, nodesA], [keyB, nodesB]) => {
+      .sort(([keyA], [keyB]) => {
         const [xA, yA] = keyA.split(',').map(Number);
         const [xB, yB] = keyB.split(',').map(Number);
         
@@ -404,7 +401,7 @@ class DotGridAudioPlayer {
       const now = timestamp / 1000;
       
       // Base delay between triggers - much faster now
-      const triggerDelay = 0.1; // 100ms between each trigger (was 250ms)
+      const triggerDelay = 0.05;
       
       // Check if it's time to trigger the next dot
       if (now - this.lastTriggerTime >= triggerDelay) {
