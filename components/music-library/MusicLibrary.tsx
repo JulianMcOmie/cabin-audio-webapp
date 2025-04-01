@@ -374,7 +374,48 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
   // Show loading skeleton only when IndexedDB is loading track data
   if (isTrackStoreLoading) {
     console.log(`[MusicLibrary] Rendering loading skeleton because isTrackStoreLoading: ${isTrackStoreLoading}`);
-    return <LoadingSkeleton itemCount={5} className="pb-24" />
+    return (
+      <DragDropArea
+        dragActive={dragActive}
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+        className="mx-auto space-y-8 relative pb-24"
+      >
+        <EQStatusAlert isEnabled={eqEnabled} onSettingsClick={handleEQSettingsClick} />
+        
+        <div className="flex justify-between items-center mb-2">
+          <div>
+            <h2 className="text-2xl font-semibold">Music Library</h2>
+            <p className="text-sm text-muted-foreground">Your local files & royalty-free music.</p>
+          </div>
+          <Button 
+            variant="outline"
+            onClick={handleImportButtonClick}
+          >
+            <Upload className="mr-2 h-4 w-4" />
+            Import Music
+          </Button>
+          <input
+            type="file"
+            id="file-upload"
+            className="hidden"
+            accept="audio/*,.mp3,.wav,.flac"
+            onChange={(e) => e.target.files && handleFileSelect(e.target.files)}
+            multiple
+          />
+        </div>
+
+        <div className="rounded-md border p-4">
+          <LoadingSkeleton itemCount={5} />
+        </div>
+
+        <ImportArea onImportClick={handleImportButtonClick} />
+        
+        <DragOverlay isVisible={dragActive} />
+      </DragDropArea>
+    )
   }
 
   // Show empty state if no tracks (only after loading completes)
