@@ -211,6 +211,19 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     return () => cancelAnimationFrame(frameId);
   }, [glyphGridPlaying]);
 
+  // Add effect to stop calibration when music starts playing
+  useEffect(() => {
+    // If music starts playing, stop any active calibration
+    if (isMusicPlaying) {
+      if (dotGridPlaying) {
+        setDotGridPlaying(false);
+      }
+      if (glyphGridPlaying) {
+        setGlyphGridPlaying(false);
+      }
+    }
+  }, [isMusicPlaying, dotGridPlaying, glyphGridPlaying]);
+
   const handleProfileClick = () => {
     setNewProfileName("");
     setShowCreateNewDialog(true);
@@ -448,8 +461,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
               >
                 <Play className="mr-2 h-5 w-5" />
                 {activeGrid === "line" 
-                  ? (glyphGridPlaying ? "Stop" : "Play Calibration") 
-                  : (dotGridPlaying ? "Stop" : "Play Calibration")}
+                  ? (glyphGridPlaying ? "Stop Calibration" : "Play Calibration") 
+                  : (dotGridPlaying ? "Stop Calibration" : "Play Calibration")}
               </Button>
             </div>
             
