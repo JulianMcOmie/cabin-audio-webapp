@@ -36,6 +36,7 @@ export function TopBar({ setActiveTab, history, currentIndex, setCurrentIndex }:
   const [searchQuery, setSearchQuery] = useState("")
   const searchRef = useRef<HTMLDivElement>(null)
   const { theme, setTheme } = useTheme()
+  const [isMobile, setIsMobile] = useState(false)
   
   // Use local state if props aren't provided
   const [localHistory] = useState<TabHistory>(['library'])
@@ -45,6 +46,22 @@ export function TopBar({ setActiveTab, history, currentIndex, setCurrentIndex }:
   const activeHistory = history || localHistory
   const activeCurrentIndex = currentIndex !== undefined ? currentIndex : localCurrentIndex
   const setActiveCurrentIndex = setCurrentIndex || setLocalCurrentIndex
+  
+  // Detect mobile devices
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768)
+    }
+    
+    // Check initially
+    checkMobile()
+    
+    // Set up listener for resize
+    window.addEventListener('resize', checkMobile)
+    
+    // Cleanup
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
   
   // Handle back button click
   const handleBack = () => {
@@ -86,7 +103,8 @@ export function TopBar({ setActiveTab, history, currentIndex, setCurrentIndex }:
   return (
     <>
       <div className="h-16 flex items-center px-6 bg-background">
-        <div className="flex items-center gap-2">
+        {/* Navigation buttons - hidden on mobile */}
+        <div className="hidden md:flex items-center gap-2">
           <Button 
             variant="ghost" 
             size="icon" 
@@ -107,17 +125,9 @@ export function TopBar({ setActiveTab, history, currentIndex, setCurrentIndex }:
           </Button>
         </div>
 
-        <div className="ml-auto flex items-center gap-3">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-          >
-            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            <span className="sr-only">Toggle theme</span>
-          </Button>
-          <div className="relative w-64" ref={searchRef}>
+        <div className={`flex items-center gap-3 ${isMobile ? 'ml-auto' : 'ml-auto'}`}>
+          {/* Search - hidden on mobile */}
+          <div className="hidden md:block relative w-64" ref={searchRef}>
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             {searchQuery && (
               <Button
@@ -151,6 +161,17 @@ export function TopBar({ setActiveTab, history, currentIndex, setCurrentIndex }:
               />
             )}
           </div>
+
+          {/* Theme toggle - moved to the far right on mobile */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          >
+            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            <span className="sr-only">Toggle theme</span>
+          </Button>
 
           {user ? (
             <DropdownMenu>

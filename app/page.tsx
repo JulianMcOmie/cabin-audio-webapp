@@ -83,7 +83,7 @@ export default function Home() {
           />
 
           <div className="flex-1 pr-4 bg-main-section rounded-lg overflow-auto mb-2">
-            <main className="h-full p-6 pb-0">
+            <main className="h-full p-6 pb-0 md:pt-6 pt-12">
               {activeTab === "eq" ? (
                 <EQView
                 //   isPlaying={isPlaying}

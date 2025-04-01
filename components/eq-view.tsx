@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { HelpCircle, Play, Power, Volume2 } from "lucide-react"
+import { HelpCircle, Play, Power, Volume2, Sliders } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { FrequencyGraph } from "@/components/frequency-graph"
 import { EQProfiles } from "@/components/eq-profiles"
@@ -77,6 +77,25 @@ export function EQView({ setEqEnabled }: EQViewProps) {
 
   // New state to track selected dots for dot grid
   const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set());
+  
+  // Add state to track if the device is mobile
+  const [isMobile, setIsMobile] = useState(false)
+
+  // Detect mobile devices
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768)
+    }
+    
+    // Check initially
+    checkMobile()
+    
+    // Set up listener for resize
+    window.addEventListener('resize', checkMobile)
+    
+    // Cleanup
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
 
   // Measure the EQ component's width when it changes
   useEffect(() => {
@@ -251,6 +270,24 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     // Stop the glyph grid if it's playing
     if (glyphGridPlaying) setGlyphGridPlaying(false);
   };
+
+  // If on mobile, show a message instead of the EQ interface
+  if (isMobile) {
+    return (
+      <div className="flex flex-col items-center justify-center h-96 text-center p-6">
+        <div className="w-24 h-24 mb-6 text-gray-400">
+          <Sliders className="w-full h-full" />
+        </div>
+        <h2 className="text-2xl font-semibold mb-3">EQ Functionality</h2>
+        <p className="text-muted-foreground mb-6 max-w-md">
+          For the best experience with our advanced EQ functionality, please use Cabin Audio on a desktop computer.
+        </p>
+        <p className="text-sm text-muted-foreground">
+          The detailed frequency controls and visualization require a larger screen for precise adjustments.
+        </p>
+      </div>
+    )
+  }
 
   return (
     <div className="mx-auto space-y-8 pb-24">

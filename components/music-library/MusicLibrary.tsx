@@ -56,6 +56,24 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
   const [tracks, setTracks] = useState<Track[]>([])
   // Store cover image URLs to avoid recreating them on every render
   const [coverImageUrls, setCoverImageUrls] = useState<Record<string, string>>({})
+  // Add state to track if device is mobile
+  const [isMobile, setIsMobile] = useState(false)
+
+  // Detect mobile devices on mount
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768)
+    }
+    
+    // Check initially
+    checkMobile()
+    
+    // Set up listener for resize
+    window.addEventListener('resize', checkMobile)
+    
+    // Cleanup
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
 
   // Convert store tracks to UI tracks
   const convertStoreTracksToUI = () => {
@@ -475,6 +493,14 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
           multiple
         />
       </div>
+
+      {isMobile && (
+        <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md">
+          <p className="text-sm text-amber-800 dark:text-amber-300">
+            <strong>💻 Pro tip:</strong> For the best experience with our music library and EQ features, we recommend using Cabin Audio on a desktop computer.
+          </p>
+        </div>
+      )}
 
       <div>
         <div className="rounded-md border p-4">
