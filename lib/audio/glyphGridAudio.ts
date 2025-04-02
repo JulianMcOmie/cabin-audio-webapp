@@ -16,6 +16,7 @@ const DEFAULT_MODULATION_DEPTH = 0.8 // how much to modulate (0-1)
 const ENVELOPE_ATTACK_TIME = 0.005 // 5ms attack
 const ENVELOPE_RELEASE_TIME = 0.05 // 100ms release
 const DEFAULT_SPEED = 1.0 // Default movement speed
+const DEFAULT_BACKGROUND_NOISE_VOLUME = 0.1 // Default background noise volume
 
 // Add constants for hit detection
 const DEFAULT_HIT_INTERVAL = 0.2 // Default interval between hits (20% of path)
@@ -53,6 +54,20 @@ class GlyphGridAudioPlayer {
     panner: null,
     filter: null
   }
+  
+  // New: Background noise nodes
+  private backgroundNoiseNodes: {
+    source: AudioBufferSourceNode | null;
+    gain: GainNode | null;
+    panner: StereoPannerNode | null;
+  } = {
+    source: null,
+    gain: null,
+    panner: null
+  }
+  
+  // New: Background noise volume
+  private backgroundNoiseVolume: number = DEFAULT_BACKGROUND_NOISE_VOLUME
   
   // Path related properties
   private pathPosition: number = 0 // Position along the path (0 to 1)
@@ -326,6 +341,11 @@ class GlyphGridAudioPlayer {
     
     if (this.audioNodes.panner) {
       this.audioNodes.panner.pan.value = panPosition
+      
+      // Update background noise panner to match main panner
+      if (this.backgroundNoiseNodes.panner) {
+        this.backgroundNoiseNodes.panner.pan.value = panPosition;
+      }
     }
   }
   
@@ -400,6 +420,9 @@ class GlyphGridAudioPlayer {
     // Start the source
     source.start()
     
+    // Start background noise
+    this.startBackgroundNoise()
+    
     // Start the animation loop to update path position
     this.startAnimationLoop()
     
@@ -457,6 +480,9 @@ class GlyphGridAudioPlayer {
       this.audioNodes.panner.disconnect()
     }
     
+    // Stop and clean up background noise
+    this.stopBackgroundNoise();
+    
     // Reset audio nodes
     this.audioNodes = {
       source: null,
@@ -465,6 +491,65 @@ class GlyphGridAudioPlayer {
       panner: null,
       filter: null
     }
+  }
+  
+  private startBackgroundNoise(): void {
+    if (!this.pinkNoiseBuffer) return;
+    
+    const ctx = getAudioContext();
+    
+    // Create new audio nodes for background noise
+    const source = ctx.createBufferSource();
+    source.buffer = this.pinkNoiseBuffer;
+    source.loop = true;
+    
+    // Create gain node for volume control
+    const gain = ctx.createGain();
+    gain.gain.value = this.backgroundNoiseVolume;
+    
+    // Create panner node that will follow main panner
+    const panner = ctx.createStereoPanner();
+    panner.pan.value = this.audioNodes.panner?.pan.value || 0;
+    
+    // Connect background noise chain
+    source.connect(gain);
+    gain.connect(panner);
+    
+    // Connect to EQ processor
+    const eq = eqProcessor.getEQProcessor();
+    panner.connect(eq.getInputNode());
+    
+    // Store nodes
+    this.backgroundNoiseNodes = {
+      source,
+      gain,
+      panner
+    };
+    
+    // Start the source
+    source.start();
+  }
+  
+  private stopBackgroundNoise(): void {
+    if (this.backgroundNoiseNodes.source) {
+      this.backgroundNoiseNodes.source.stop();
+      this.backgroundNoiseNodes.source.disconnect();
+    }
+    
+    if (this.backgroundNoiseNodes.gain) {
+      this.backgroundNoiseNodes.gain.disconnect();
+    }
+    
+    if (this.backgroundNoiseNodes.panner) {
+      this.backgroundNoiseNodes.panner.disconnect();
+    }
+    
+    // Reset background noise nodes
+    this.backgroundNoiseNodes = {
+      source: null,
+      gain: null,
+      panner: null
+    };
   }
   
   public setFrequencyMultiplier(multiplier: number): void {
@@ -789,6 +874,34 @@ class GlyphGridAudioPlayer {
       this.audioNodes.gain.gain.value = MASTER_GAIN * this.distortionGain;
       console.log(`🔊 Glyph Grid distortion gain set to ${this.distortionGain.toFixed(2)}`);
     }
+  }
+  
+  // Add method to set filter Q value (bandwidth)
+  public setFilterQ(q: number): void {
+    // Clamp Q to reasonable values
+    const clampedQ = Math.max(0.1, Math.min(20, q));
+    
+    // If playing, update the filter's Q value
+    if (this.isPlaying && this.audioNodes.filter) {
+      this.audioNodes.filter.Q.value = clampedQ;
+      console.log(`🔊 Filter Q set to ${clampedQ.toFixed(2)}`);
+    }
+  }
+  
+  // New method to set background noise volume
+  public setBackgroundNoiseVolume(volume: number): void {
+    // Clamp volume between 0 and 1
+    this.backgroundNoiseVolume = Math.max(0, Math.min(1, volume));
+    
+    // Update gain node if playing
+    if (this.isPlaying && this.backgroundNoiseNodes.gain) {
+      this.backgroundNoiseNodes.gain.gain.value = this.backgroundNoiseVolume;
+    }
+  }
+  
+  // New method to get background noise volume
+  public getBackgroundNoiseVolume(): number {
+    return this.backgroundNoiseVolume;
   }
 }
 

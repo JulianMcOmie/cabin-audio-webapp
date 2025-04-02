@@ -52,6 +52,10 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
   // Add a reference to store the animation frame ID
   const animationFrameRef = useRef<number | null>(null);
 
+  // Add state for background noise volume and filter bandwidth (Q factor)
+  const [backgroundNoiseVolume, setBackgroundNoiseVolume] = useState(0.1) // Default 0.1 (10%)
+  const [filterQ, setFilterQ] = useState(5.0) // Default Q factor is 5.0
+
   // Set up observer to detect theme changes
   useEffect(() => {
     // Initial check
@@ -621,6 +625,26 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     }
   }
 
+  // Add handlers for the new sliders
+  const handleBackgroundNoiseVolumeChange = (values: number[]) => {
+    setBackgroundNoiseVolume(values[0])
+  }
+
+  const handleFilterQChange = (values: number[]) => {
+    setFilterQ(values[0])
+  }
+
+  // Add effects to update audio player with new slider values
+  useEffect(() => {
+    const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
+    audioPlayer.setBackgroundNoiseVolume(backgroundNoiseVolume)
+  }, [backgroundNoiseVolume])
+
+  useEffect(() => {
+    const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
+    audioPlayer.setFilterQ(filterQ)
+  }, [filterQ])
+
   return (
     <div className="space-y-4">
       {/* Canvas container */}
@@ -700,6 +724,56 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
           <div className="flex text-xs text-muted-foreground justify-between">
             <span>Slow</span>
             <span>Fast</span>
+          </div>
+        </div>
+        
+        {/* Background Noise Volume control */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">Background Noise Volume</span>
+            <span className="text-xs text-muted-foreground">
+              {(backgroundNoiseVolume * 100).toFixed(0)}%
+            </span>
+          </div>
+          
+          <Slider
+            value={[backgroundNoiseVolume]}
+            min={0}
+            max={1}
+            step={0.01}
+            onValueChange={handleBackgroundNoiseVolumeChange}
+            disabled={disabled}
+            className="py-0"
+          />
+          
+          <div className="flex text-xs text-muted-foreground justify-between">
+            <span>Silent</span>
+            <span>Loud</span>
+          </div>
+        </div>
+        
+        {/* Filter Bandwidth (Q) control */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">Noise Bandwidth</span>
+            <span className="text-xs text-muted-foreground">
+              {filterQ.toFixed(1)}
+            </span>
+          </div>
+          
+          <Slider
+            value={[filterQ]}
+            min={0.1}
+            max={20}
+            step={0.1}
+            onValueChange={handleFilterQChange}
+            disabled={disabled}
+            className="py-0"
+          />
+          
+          <div className="flex text-xs text-muted-foreground justify-between">
+            <span>Wide</span>
+            <span>Narrow</span>
           </div>
         </div>
       </div>
