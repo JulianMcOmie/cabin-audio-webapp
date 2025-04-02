@@ -623,7 +623,7 @@ class DotGridAudioPlayer {
     panner.pan.value = panPosition;
     
     // Set Q value
-    const qValue = 6.0;
+    const qValue = 0.5;
     
     // Create filter
     const filter = ctx.createBiquadFilter();

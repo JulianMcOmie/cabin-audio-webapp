@@ -1,7 +1,7 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
-import { HelpCircle, Play, Power, Volume2, Sliders } from "lucide-react"
+import { useState, useEffect, useRef, useCallback } from "react"
+import { HelpCircle, Play, Power, Volume2, Sliders, ChevronLeft, ChevronRight, Check, Move, Shuffle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { FrequencyGraph } from "@/components/frequency-graph"
 import { EQProfiles } from "@/components/eq-profiles"
@@ -21,6 +21,7 @@ import { DotCalibration } from "@/components/dot-grid"
 import { GlyphGrid } from "@/components/glyph-grid"
 import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
+import { FrequencyEQ } from "@/components/parametric-eq/FrequencyEQ"
 
 interface EQViewProps {
 //   isPlaying: boolean
@@ -41,7 +42,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     getProfiles,
     getActiveProfile,
     setActiveProfile,
-    addProfile 
+    addProfile,
+    updateProfile
   } = useEQProfileStore()
   
   // Get the player state to control music playback
@@ -50,6 +52,34 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const [showCalibrationModal, setShowCalibrationModal] = useState(false)
   const [showCreateNewDialog, setShowCreateNewDialog] = useState(false)
   const [newProfileName, setNewProfileName] = useState("")
+  
+  // Auto-calibration state
+  const [showAutoCalibration, setShowAutoCalibration] = useState(false)
+  const [calibrationStep, setCalibrationStep] = useState(0)
+  const [calibrationConfig, setCalibrationConfig] = useState({
+    bassBoost: 0,  // -12 to 12 dB
+    trebleBoost: 0,  // -12 to 12 dB
+    midBoost: 0,  // -12 to 12 dB
+    lowMidBoost: 0,  // -12 to 12 dB
+    highMidBoost: 0,  // -12 to 12 dB
+  })
+  const calibrationDotsRef = useRef<{
+    highLeft: string,
+    highRight: string,
+    lowLeft: string,
+    lowRight: string,
+    mid: string,
+    lowMid: string,
+    highMid: string
+  }>({
+    highLeft: "0,0",
+    highRight: "4,0",
+    lowLeft: "0,4",
+    lowRight: "4,4",
+    mid: "2,2",
+    lowMid: "2,3",
+    highMid: "2,1"
+  })
   
   // Track the selected profile ID
   const [selectedProfileId, setSelectedProfileId] = useState<string>("")
@@ -270,9 +300,6 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     setEQEnabled(!isEQEnabled);
   };
 
-  // Comment out auto-calibration related state
-  // const [showCalibrationProcess, setShowCalibrationProcess] = useState(false)
-
   // Add a function to handle dot grid play/stop
   const handleDotGridPlayToggle = () => {
     if (dotGridPlaying) {
@@ -292,6 +319,235 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     // Stop the glyph grid if it's playing
     if (glyphGridPlaying) setGlyphGridPlaying(false);
   };
+
+  // Function to apply calibration to EQ
+  const applyCalibrationToEQ = () => {
+    // Get the active profile
+    const activeProfile = getActiveProfile();
+    if (!activeProfile) return;
+    
+    // Create a new profile with the calibration settings
+    const newBands = [
+      // Bass band (around 60Hz)
+      {
+        id: uuidv4(),
+        frequency: 60,
+        gain: calibrationConfig.bassBoost,
+        q: 1.2, // Wide band
+        type: "peaking" as const
+      },
+      // Low-mid band (around 250Hz)
+      {
+        id: uuidv4(),
+        frequency: 250,
+        gain: calibrationConfig.lowMidBoost,
+        q: 1.0, // Medium width
+        type: "peaking" as const
+      },
+      // Mid band (around 1000Hz)
+      {
+        id: uuidv4(),
+        frequency: 1000,
+        gain: calibrationConfig.midBoost,
+        q: 1.0, // Medium width
+        type: "peaking" as const
+      },
+      // High-mid band (around 3500Hz)
+      {
+        id: uuidv4(),
+        frequency: 3500,
+        gain: calibrationConfig.highMidBoost,
+        q: 1.0, // Medium width
+        type: "peaking" as const
+      },
+      // Treble band (around 10000Hz)
+      {
+        id: uuidv4(),
+        frequency: 10000,
+        gain: calibrationConfig.trebleBoost,
+        q: 1.2, // Wide band
+        type: "peaking" as const
+      }
+    ];
+    
+    // Create a new calibrated profile
+    const calibratedProfile = {
+      ...activeProfile,
+      bands: newBands,
+      name: activeProfile.name + " (Calibrated)",
+      id: uuidv4(),
+      lastModified: Date.now(),
+      syncStatus: 'modified' as SyncStatus
+    };
+    
+    // Add the new profile and select it
+    addProfile(calibratedProfile);
+    setActiveProfile(calibratedProfile.id);
+    setSelectedProfileId(calibratedProfile.id);
+    
+    // Enable EQ if not already enabled
+    if (!isEQEnabled) {
+      setEQEnabled(true);
+    }
+    
+    // Close auto-calibration modal
+    setShowAutoCalibration(false);
+  };
+  
+  // Helper function to get dots for current calibration step
+  const getCurrentCalibrationDots = () => {
+    const dots = new Set<string>();
+    const { highLeft, highRight, lowLeft, lowRight, mid, lowMid, highMid } = calibrationDotsRef.current;
+    
+    // Determine which dots to show based on current step
+    switch (calibrationStep) {
+      case 0: // Bass step - show low dots
+        dots.add(lowLeft);
+        dots.add(lowRight);
+        break;
+      case 1: // Treble step - show high dots
+        dots.add(highLeft);
+        dots.add(highRight);
+        break;
+      case 2: // Mid calibration
+        dots.add(mid);
+        break;
+      case 3: // Low-mid calibration
+        dots.add(lowMid);
+        break;
+      case 4: // High-mid calibration
+        dots.add(highMid);
+        break;
+      default:
+        break;
+    }
+    
+    return dots;
+  };
+
+  // Add a random movement effect for EQ bands
+  const [randomModeActive, setRandomModeActive] = useState(false)
+  const randomModeIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const targetFrequenciesRef = useRef<Map<string, number>>(new Map())
+  // Add a ref for the timer that generates new positions
+  const newPositionsTimerRef = useRef<NodeJS.Timeout | null>(null)
+  // Add state for random mode speed
+  const [randomModeSpeed, setRandomModeSpeed] = useState(0.5) // 0.0 to 1.0
+  
+  useEffect(() => {
+    if (!randomModeActive || !isEQEnabled) {
+      // Clear intervals if random mode is off or EQ is disabled
+      if (randomModeIntervalRef.current) {
+        clearInterval(randomModeIntervalRef.current)
+        randomModeIntervalRef.current = null
+      }
+      if (newPositionsTimerRef.current) {
+        clearTimeout(newPositionsTimerRef.current)
+        newPositionsTimerRef.current = null
+      }
+      // Clear target frequencies
+      targetFrequenciesRef.current.clear()
+      return
+    }
+    
+    const activeProfile = getActiveProfile()
+    if (!activeProfile || activeProfile.bands.length === 0) return
+    
+    // Function to generate a random frequency across the audio spectrum
+    function getRandomFrequency() {
+      // Use logarithmic distribution for frequencies to sound more natural
+      // 20Hz to 20kHz (covers the full audible range)
+      const minLog = Math.log(20)
+      const maxLog = Math.log(20000)
+      const randomLog = minLog + Math.random() * (maxLog - minLog)
+      return Math.exp(randomLog)
+    }
+    
+    // Function to assign new random targets to all bands
+    function assignNewTargets() {
+      const currentProfile = getActiveProfile();
+      if (!currentProfile || currentProfile.bands.length === 0) return;
+      
+      currentProfile.bands.forEach(band => {
+        const randomFreq = getRandomFrequency()
+        targetFrequenciesRef.current.set(band.id, randomFreq)
+      })
+      
+      // Schedule the next target assignment
+      // Use speed to determine interval - faster speed = shorter interval
+      const interval = Math.max(1000, 5000 * (1 - randomModeSpeed));
+      newPositionsTimerRef.current = setTimeout(assignNewTargets, interval)
+    }
+    
+    // Initialize targets for any bands that don't have them yet
+    activeProfile.bands.forEach(band => {
+      if (!targetFrequenciesRef.current.has(band.id)) {
+        targetFrequenciesRef.current.set(band.id, band.frequency)
+      }
+    })
+    
+    // Initial assignment of random targets
+    assignNewTargets()
+    
+    // Set up interval for smooth movements toward target frequencies
+    randomModeIntervalRef.current = setInterval(() => {
+      // Get the latest profile to ensure we're working with current data
+      const currentProfile = getActiveProfile();
+      if (!currentProfile || currentProfile.bands.length === 0) return;
+      
+      const updatedBands = currentProfile.bands.map(band => {
+        // Get current target frequency for this band
+        const targetFreq = targetFrequenciesRef.current.get(band.id) || band.frequency
+        
+        // Calculate step size - adjusted by speed setting
+        const distance = targetFreq - band.frequency
+        // Faster movement with higher speed (up to 25% of distance per step at max speed)
+        const speedFactor = 0.05 + (randomModeSpeed * 0.20)
+        const step = distance * speedFactor
+        
+        // Apply the step
+        let newFrequency = band.frequency + step
+        
+        // Ensure we stay within audible range
+        newFrequency = Math.max(20, Math.min(20000, newFrequency))
+        
+        // Keep the same band configuration, just update frequency
+        return {
+          ...band,
+          frequency: newFrequency
+        }
+      })
+      
+      // Only update if there are changes
+      if (updatedBands.some((band, i) => Math.abs(band.frequency - currentProfile.bands[i].frequency) > 0.1)) {
+        // Update the profile with the new bands
+        updateProfile(currentProfile.id, { bands: updatedBands })
+      }
+    }, 16) // Update at 60fps (approximately) for very smooth animation
+    
+    // Clean up intervals and targets on unmount or when disabled
+    return () => {
+      if (randomModeIntervalRef.current) {
+        clearInterval(randomModeIntervalRef.current)
+        randomModeIntervalRef.current = null
+      }
+      if (newPositionsTimerRef.current) {
+        clearTimeout(newPositionsTimerRef.current)
+        newPositionsTimerRef.current = null
+      }
+      targetFrequenciesRef.current.clear()
+    }
+  }, [randomModeActive, isEQEnabled, getActiveProfile, updateProfile, randomModeSpeed])
+  
+  // Handler for toggling random mode
+  const toggleRandomMode = useCallback(() => {
+    setRandomModeActive(prev => !prev)
+  }, [])
+
+  // Handler for random mode speed slider
+  const handleRandomSpeedChange = useCallback((values: number[]) => {
+    setRandomModeSpeed(values[0])
+  }, [])
 
   // If on mobile, show a message instead of the EQ interface
   if (isMobile) {
@@ -363,12 +619,12 @@ export function EQView({ setEqEnabled }: EQViewProps) {
             
             {/* FrequencyEQ component overlaid on top */}
             <div className="relative z-10">
-              <FrequencyGraph 
-                selectedDot={selectedDot} 
-                disabled={!isEQEnabled} 
-                className="w-full" 
+              <FrequencyEQ 
+                disabled={!isEQEnabled}
                 onInstructionChange={setInstruction}
                 onRequestEnable={() => setEQEnabled(true)}
+                randomModeActive={randomModeActive}
+                className="w-full"
               />
             </div>
 
@@ -389,6 +645,34 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 <Power className="h-4 w-4 mr-2" />
                 {isEQEnabled ? "EQ On" : "EQ Off"}
               </Button>
+              
+              {/* Random Mode Toggle Button */}
+              <Button
+                variant={randomModeActive ? "default" : "outline"}
+                size="sm"
+                className={`ml-2 ${randomModeActive ? "bg-teal-500 hover:bg-teal-600 text-white" : ""}`}
+                onClick={toggleRandomMode}
+                title={randomModeActive ? "Stop Random Frequency Mode" : "Start Random Frequency Mode"}
+                disabled={!isEQEnabled}
+              >
+                <Shuffle className="h-4 w-4 mr-2" />
+                {randomModeActive ? "Random On" : "Random Mode"}
+              </Button>
+              
+              {/* Random Mode Speed Slider - Only show when random mode is active */}
+              {randomModeActive && (
+                <div className="ml-4 pl-4 border-l flex items-center gap-2" style={{ width: '200px' }}>
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">Speed:</span>
+                  <Slider
+                    value={[randomModeSpeed]}
+                    min={0.1}
+                    max={1.0}
+                    step={0.1}
+                    onValueChange={handleRandomSpeedChange}
+                    className="flex-1"
+                  />
+                </div>
+              )}
             </div>
           </div>
 
@@ -467,7 +751,42 @@ export function EQView({ setEqEnabled }: EQViewProps) {
             </div>
             
             {/* Tutorial button replacing help text link */}
-            <div className="flex justify-center mt-3">
+            <div className="flex justify-center mt-3 gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-xs bg-teal-500 hover:bg-teal-600 text-white"
+                onClick={() => {
+                  // Stop music if playing
+                  if (isMusicPlaying) {
+                    setMusicPlaying(false);
+                  }
+                  
+                  // Stop any active calibration
+                  if (dotGridPlaying) {
+                    setDotGridPlaying(false);
+                  }
+                  if (glyphGridPlaying) {
+                    setGlyphGridPlaying(false);
+                  }
+                  
+                  // Reset calibration state
+                  setCalibrationStep(0);
+                  setCalibrationConfig({
+                    bassBoost: 0,
+                    trebleBoost: 0,
+                    midBoost: 0,
+                    lowMidBoost: 0,
+                    highMidBoost: 0,
+                  });
+                  
+                  // Show auto-calibration modal
+                  setShowAutoCalibration(true);
+                }}
+              >
+                <Sliders className="mr-1 h-3 w-3" />
+                Auto-Calibrate
+              </Button>
               <Button
                 size="sm"
                 variant="ghost"
@@ -563,6 +882,208 @@ export function EQView({ setEqEnabled }: EQViewProps) {
       <EQCalibrationModal open={showCalibrationModal} onClose={() => setShowCalibrationModal(false)} />
       <LoginModal open={showLoginModal} onClose={() => setShowLoginModal(false)} />
       <SignupModal open={showSignupModal} onClose={() => setShowSignupModal(false)} />
+      
+      {/* Auto-Calibration Modal */}
+      <Dialog open={showAutoCalibration} onOpenChange={(open) => !open && setShowAutoCalibration(false)}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>Auto-Calibration {calibrationStep + 1}/5</DialogTitle>
+          </DialogHeader>
+          
+          <div className="py-4 space-y-6">
+            {/* Instructions based on current step */}
+            <div className="text-sm p-4 bg-muted/20 rounded-lg border">
+              {calibrationStep === 0 && (
+                <p>Step 1: Adjust the bass boost slider until the low notes sound balanced between left and right. You should hear low bass tones alternating between left and right speakers.</p>
+              )}
+              {calibrationStep === 1 && (
+                <p>Step 2: Adjust the treble boost slider until the high notes sound balanced between left and right. You should hear high treble tones alternating between left and right speakers.</p>
+              )}
+              {calibrationStep === 2 && (
+                <p>Step 3: Adjust the mid control until it sounds centered and natural. You will hear a mid-range tone in the center.</p>
+              )}
+              {calibrationStep === 3 && (
+                <p>Step 4: Fine-tune the low-mid frequencies to balance with the bass. This helps smooth the transition between bass and mid-range.</p>
+              )}
+              {calibrationStep === 4 && (
+                <p>Step 5: Fine-tune the high-mid frequencies to balance with the treble. This helps smooth the transition between mid-range and treble.</p>
+              )}
+            </div>
+            
+            {/* Sliders */}
+            <div className="space-y-6 p-4 border rounded-lg">
+              {/* Bass Boost Slider - Show only in step 0 */}
+              {calibrationStep === 0 && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Bass Boost</label>
+                  <div className="flex items-center gap-4">
+                    <span className="text-xs w-10 text-right">-12dB</span>
+                    <Slider
+                      value={[calibrationConfig.bassBoost]}
+                      min={-12}
+                      max={12}
+                      step={0.5}
+                      onValueChange={(value) => {
+                        // Just update the state - we'll apply all changes at the end
+                        const newConfig = {...calibrationConfig, bassBoost: value[0]};
+                        setCalibrationConfig(newConfig);
+                      }}
+                      className="flex-1"
+                    />
+                    <span className="text-xs w-10">+12dB</span>
+                    <span className="text-xs w-14 text-right">{calibrationConfig.bassBoost.toFixed(1)}dB</span>
+                  </div>
+                </div>
+              )}
+              
+              {/* Treble Boost Slider - Show only in step 1 */}
+              {calibrationStep === 1 && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Treble Boost</label>
+                  <div className="flex items-center gap-4">
+                    <span className="text-xs w-10 text-right">-12dB</span>
+                    <Slider
+                      value={[calibrationConfig.trebleBoost]}
+                      min={-12}
+                      max={12}
+                      step={0.5}
+                      onValueChange={(value) => {
+                        // Just update the state - we'll apply all changes at the end
+                        const newConfig = {...calibrationConfig, trebleBoost: value[0]};
+                        setCalibrationConfig(newConfig);
+                      }}
+                      className="flex-1"
+                    />
+                    <span className="text-xs w-10">+12dB</span>
+                    <span className="text-xs w-14 text-right">{calibrationConfig.trebleBoost.toFixed(1)}dB</span>
+                  </div>
+                </div>
+              )}
+              
+              {/* Mid Boost Slider - Show only in step 2 */}
+              {calibrationStep === 2 && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Mid-range Boost</label>
+                  <div className="flex items-center gap-4">
+                    <span className="text-xs w-10 text-right">-12dB</span>
+                    <Slider
+                      value={[calibrationConfig.midBoost]}
+                      min={-12}
+                      max={12}
+                      step={0.5}
+                      onValueChange={(value) => {
+                        // Just update the state - we'll apply all changes at the end
+                        const newConfig = {...calibrationConfig, midBoost: value[0]};
+                        setCalibrationConfig(newConfig);
+                      }}
+                      className="flex-1"
+                    />
+                    <span className="text-xs w-10">+12dB</span>
+                    <span className="text-xs w-14 text-right">{calibrationConfig.midBoost.toFixed(1)}dB</span>
+                  </div>
+                </div>
+              )}
+              
+              {/* Low-Mid Boost Slider - Show only in step 3 */}
+              {calibrationStep === 3 && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Low-Mid Boost</label>
+                  <div className="flex items-center gap-4">
+                    <span className="text-xs w-10 text-right">-12dB</span>
+                    <Slider
+                      value={[calibrationConfig.lowMidBoost]}
+                      min={-12}
+                      max={12}
+                      step={0.5}
+                      onValueChange={(value) => {
+                        // Just update the state - we'll apply all changes at the end
+                        const newConfig = {...calibrationConfig, lowMidBoost: value[0]};
+                        setCalibrationConfig(newConfig);
+                      }}
+                      className="flex-1"
+                    />
+                    <span className="text-xs w-10">+12dB</span>
+                    <span className="text-xs w-14 text-right">{calibrationConfig.lowMidBoost.toFixed(1)}dB</span>
+                  </div>
+                </div>
+              )}
+              
+              {/* High-Mid Boost Slider - Show only in step 4 */}
+              {calibrationStep === 4 && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">High-Mid Boost</label>
+                  <div className="flex items-center gap-4">
+                    <span className="text-xs w-10 text-right">-12dB</span>
+                    <Slider
+                      value={[calibrationConfig.highMidBoost]}
+                      min={-12}
+                      max={12}
+                      step={0.5}
+                      onValueChange={(value) => {
+                        // Just update the state - we'll apply all changes at the end
+                        const newConfig = {...calibrationConfig, highMidBoost: value[0]};
+                        setCalibrationConfig(newConfig);
+                      }}
+                      className="flex-1"
+                    />
+                    <span className="text-xs w-10">+12dB</span>
+                    <span className="text-xs w-14 text-right">{calibrationConfig.highMidBoost.toFixed(1)}dB</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Hidden Dot Calibration - We still need this for audio generation but don't display it */}
+              <div className="hidden">
+                <DotCalibration
+                  isPlaying={true}
+                  setIsPlaying={() => {}}
+                  disabled={false}
+                  selectedDots={getCurrentCalibrationDots()}
+                  setSelectedDots={() => {}}
+                />
+              </div>
+            </div>
+          </div>
+          
+          {/* Navigation Buttons with improved visibility */}
+          <DialogFooter className="flex justify-between pt-4 border-t">
+            <div>
+              {calibrationStep > 0 && (
+                <Button 
+                  variant="outline" 
+                  onClick={() => setCalibrationStep(prev => prev - 1)}
+                  className="mr-2"
+                >
+                  <ChevronLeft className="mr-1 h-4 w-4" />
+                  Previous
+                </Button>
+              )}
+            </div>
+            
+            <div>
+              {calibrationStep < 4 ? (
+                <Button 
+                  size="lg"
+                  className="bg-teal-500 hover:bg-teal-600 text-white font-medium"
+                  onClick={() => setCalibrationStep(prev => prev + 1)}
+                >
+                  Next Step
+                  <ChevronRight className="ml-1 h-4 w-4" />
+                </Button>
+              ) : (
+                <Button 
+                  size="lg"
+                  className="bg-teal-500 hover:bg-teal-600 text-white font-medium"
+                  onClick={applyCalibrationToEQ}
+                >
+                  Apply Calibration
+                  <Check className="ml-1 h-4 w-4" />
+                </Button>
+              )}
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

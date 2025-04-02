@@ -18,6 +18,7 @@ interface FrequencyEQProps {
   className?: string
   onInstructionChange?: (instruction: string) => void
   onRequestEnable?: () => void
+  randomModeActive?: boolean
 }
 
 // Define a type for the audio processor
@@ -57,7 +58,14 @@ export function updateAudio(
   }
 }
 
-export function FrequencyEQ({ profileId, disabled = false, className, onInstructionChange, onRequestEnable }: FrequencyEQProps) {
+export function FrequencyEQ({ 
+  profileId, 
+  disabled = false, 
+  className, 
+  onInstructionChange, 
+  onRequestEnable,
+  randomModeActive = false
+}: FrequencyEQProps) {
   const canvasRef = useRef<CanvasWithMargin>(null)
   const backgroundCanvasRef = useRef<CanvasWithMargin>(null)
   // Add refs for animation frame and canvas context
@@ -426,7 +434,9 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
   useEffect(() => {
     if (!onInstructionChange) return;
     
-    if (isDraggingVolume) {
+    if (randomModeActive) {
+      onInstructionChange("Random mode active: EQ bands are automatically moving");
+    } else if (isDraggingVolume) {
       onInstructionChange("Drag up/down to adjust volume");
     } else if (isHoveringVolume) {
       onInstructionChange("Click and drag to adjust volume");
@@ -439,7 +449,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     } else {
       onInstructionChange("Click + drag on the center line to add a band");
     }
-  }, [draggingBandId, hoveredBandId, isDraggingVolume, isHoveringVolume, isShiftPressed, onInstructionChange]);
+  }, [draggingBandId, hoveredBandId, isDraggingVolume, isHoveringVolume, isShiftPressed, onInstructionChange, randomModeActive]);
 
   // Set up observer to detect theme changes
   useEffect(() => {
