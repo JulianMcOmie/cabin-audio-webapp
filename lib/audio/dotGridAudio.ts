@@ -73,41 +73,6 @@ class DotGridAudioPlayer {
   }
 
   /**
-   * Set the current grid size
-   */
-  public setGridSize(rows: number, columns?: number): void {
-    this.gridSize = rows;
-
-    if (columns !== undefined) {
-      this.columnCount = columns;
-      this.updateAllDotPanning();
-    }
-    
-    // Update playback if playing
-    if (this.isPlaying) {
-      this.stopAllRhythms();
-      this.startAllRhythms();
-    }
-  }
-
-  /**
-   * Update panning for all dots based on current column count
-   */
-  private updateAllDotPanning(): void {
-    this.audioNodes.forEach((nodes, dotKey) => {
-      const x = dotKey.split(',').map(Number)[0];
-      
-      // Recalculate panning based on new column count
-      // Simple panning calculation that evenly distributes columns from -1 to 1
-      // First column (x=0) will be -1 (full left), last column will be 1 (full right)
-      const panPosition = this.columnCount <= 1 ? 0 : (2 * (x / (this.columnCount - 1)) - 1);
-      
-      // Update panner value
-      nodes.panner.pan.value = panPosition;
-    });
-  }
-
-  /**
    * Generate pink noise buffer
    */
   private async generatePinkNoiseBuffer(): Promise<void> {
@@ -267,6 +232,41 @@ class DotGridAudioPlayer {
   }
 
   /**
+   * Set the current grid size
+   */
+  public setGridSize(rows: number, columns?: number): void {
+    this.gridSize = rows;
+
+    if (columns !== undefined) {
+      this.columnCount = columns;
+      this.updateAllDotPanning();
+    }
+    
+    // Update playback if playing
+    if (this.isPlaying) {
+      this.stopAllRhythms();
+      this.startAllRhythms();
+    }
+  }
+
+  /**
+   * Update panning for all dots based on current column count
+   */
+  private updateAllDotPanning(): void {
+    this.audioNodes.forEach((nodes, dotKey) => {
+      const x = dotKey.split(',').map(Number)[0];
+      
+      // Recalculate panning based on new column count
+      // Simple panning calculation that evenly distributes columns from -1 to 1
+      // First column (x=0) will be -1 (full left), last column will be 1 (full right)
+      const panPosition = this.columnCount <= 1 ? 0 : (2 * (x / (this.columnCount - 1)) - 1);
+      
+      // Update panner value
+      nodes.panner.pan.value = panPosition;
+    });
+  }
+
+  /**
    * Update the set of active dots
    * @param dots Set of dot coordinates
    * @param currentGridSize Optional grid size update
@@ -305,16 +305,6 @@ class DotGridAudioPlayer {
       this.stopAllSources();
       this.startAllSources();
       this.startAllRhythms();
-      
-    //   // If we just added the first dot, trigger it immediately without delay
-    //   if (isAddingFirstDot) {
-    //     const firstDotKey = Array.from(dots)[0];
-    //     if (this.audioNodes.has(firstDotKey)) {
-    //       // Use the current pattern volume
-    //       const volumeDb = this.baseDbLevel + VOLUME_PATTERN[this.volumePatternIndex];
-    //       this.triggerDotEnvelope(firstDotKey, volumeDb);
-    //     }
-    //   }
     }
   }
 
@@ -455,9 +445,9 @@ class DotGridAudioPlayer {
   private startAllSources(): void {
     const ctx = audioContext.getAudioContext();
     
-    // Make sure we have pink noise buffer
+    // Make sure we have a buffer
     if (!this.pinkNoiseBuffer) {
-      this.generatePinkNoiseBuffer();
+      console.warn('🔊 No pink noise buffer available');
       return;
     }
     
@@ -483,10 +473,17 @@ class DotGridAudioPlayer {
         source.buffer = this.pinkNoiseBuffer;
         source.loop = true;
         
-        // Connect the audio chain - simple bandpass approach
-        // source -> filter -> panner -> envelopeGain -> gain -> destinationNode
+        // Connect the audio chain
         source.connect(nodes.filter);
         nodes.filter.connect(nodes.panner);
+        
+        // Start playback
+        source.start();
+        
+        // Store the new source
+        nodes.source = source;
+        
+        // Remaining connections
         nodes.panner.connect(nodes.envelopeGain);
         nodes.envelopeGain.connect(nodes.gain);
         
@@ -500,11 +497,6 @@ class DotGridAudioPlayer {
         // Start with gain at minimum (silent)
         nodes.envelopeGain.gain.value = ENVELOPE_MIN_GAIN;
         
-        // Start playback
-        source.start();
-        
-        // Store the new source
-        nodes.source = source;
       } catch (e) {
         console.error(`Error starting source for dot ${dotKey}:`, e);
       }
@@ -518,7 +510,6 @@ class DotGridAudioPlayer {
     this.audioNodes.forEach((nodes, dotKey) => {
       try {
         if (nodes.source) {
-          // Add a property to track if the source has been started
           nodes.source.stop();
           nodes.source.disconnect();
         }
@@ -602,8 +593,8 @@ class DotGridAudioPlayer {
     const normalizedY = 1 - (y / (this.gridSize - 1)); // Flip so higher y = higher position
     
     // Calculate the frequency for this position
-    const minFreq = 40;  // Lower minimum for better low-end
-    const maxFreq = 15000; // Lower maximum to avoid harsh high-end
+    const minFreq = 60;  // Lower minimum for better low-end
+    const maxFreq = 10000; // Lower maximum to avoid harsh high-end
     const logMinFreq = Math.log2(minFreq);
     const logMaxFreq = Math.log2(maxFreq);
     const logFreqRange = logMaxFreq - logMinFreq;
@@ -623,7 +614,7 @@ class DotGridAudioPlayer {
     panner.pan.value = panPosition;
     
     // Set Q value
-    const qValue = 6.0;
+    const qValue = 20.0;
     
     // Create filter
     const filter = ctx.createBiquadFilter();
@@ -631,9 +622,12 @@ class DotGridAudioPlayer {
     filter.frequency.value = centerFreq;
     filter.Q.value = qValue;
     
+    // Create a dummy source - will be replaced when playing
+    const dummySource = ctx.createBufferSource();
+    
     // Store the nodes with simplified structure
     this.audioNodes.set(dotKey, {
-      source: ctx.createBufferSource(), // Dummy source (will be replaced when playing)
+      source: dummySource, // Dummy source (will be replaced when playing)
       gain,
       envelopeGain: ctx.createGain(),
       panner,

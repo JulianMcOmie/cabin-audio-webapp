@@ -4,6 +4,8 @@ import type React from "react"
 import { useRef, useEffect, useState, useMemo } from "react"
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
 import { usePlayerStore } from "@/lib/stores"
+import { Switch } from "@/components/ui/switch"
+import { Label } from "@/components/ui/label"
 
 interface DotGridProps {
   selectedDot: [number, number] | null
@@ -431,25 +433,22 @@ export function DotCalibration({
   selectedDots: externalSelectedDots,
   setSelectedDots: externalSetSelectedDots 
 }: DotCalibrationProps) {
-  // Always use odd numbers for grid dimensions
-  const [gridSize, setGridSize] = useState(5); // Start with 5 rows (odd number)
-  const [columnCount, setColumnCount] = useState(5); // Start with 5 columns (odd number)
+  // Local state when not provided externally
+  const [localSelectedDots, localSetSelectedDots] = useState<Set<string>>(new Set());
   
-  // Use either external or internal state for selected dots
-  const [internalSelectedDots, setInternalSelectedDots] = useState<Set<string>>(new Set()); // Start with no dots selected
+  // Use provided state if available, otherwise use local state
+  const selectedDots = externalSelectedDots || localSelectedDots;
+  const setSelectedDots = externalSetSelectedDots || localSetSelectedDots;
   
-  // Use either external or internal state
-  const selectedDots = externalSelectedDots !== undefined ? externalSelectedDots : internalSelectedDots;
-  const setSelectedDots = externalSetSelectedDots !== undefined ? externalSetSelectedDots : setInternalSelectedDots;
-  
-  // Always use multiple selection mode
-  const selectionMode = 'multiple';
+  const [gridRows, setGridRows] = useState(5);
+  const [columnCount, setColumnCount] = useState(DEFAULT_COLUMNS);
+  const [selectionMode, setSelectionMode] = useState<'single' | 'multiple'>('multiple');
   
   // Update audio player when selected dots change
   useEffect(() => {
     const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
-    audioPlayer.updateDots(selectedDots, gridSize, columnCount);
-  }, [selectedDots, gridSize, columnCount]);
+    audioPlayer.updateDots(selectedDots, gridRows, columnCount);
+  }, [selectedDots, gridRows, columnCount]);
   
   // Direct control of audio player playback state - no fancy logic
   useEffect(() => {
@@ -499,7 +498,7 @@ export function DotCalibration({
       const canAllMove = parsedDots.every(dot => {
         const newX = dot.x + dx;
         const newY = dot.y + dy;
-        return newX >= 0 && newX < columnCount && newY >= 0 && newY < gridSize;
+        return newX >= 0 && newX < columnCount && newY >= 0 && newY < gridRows;
       });
       
       // If all dots can move, update the selection
@@ -525,7 +524,7 @@ export function DotCalibration({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [disabled, selectedDots, setSelectedDots, columnCount, gridSize]);
+  }, [disabled, selectedDots, setSelectedDots, columnCount, gridRows]);
   
   // Modified dot toggle handler to support multiple selections
   const handleDotToggle = (x: number, y: number) => {
@@ -561,9 +560,9 @@ export function DotCalibration({
   
   // Modify row adjustment to preserve relative dot positions
   const increaseRows = () => {
-    if (gridSize < MAX_ROWS) {
-      const oldGridSize = gridSize;
-      const newGridSize = gridSize + 2; // Add 2 to maintain odd number
+    if (gridRows < MAX_ROWS) {
+      const oldGridRows = gridRows;
+      const newGridRows = gridRows + 2; // Add 2 to maintain odd number
       
       // Remap dots to preserve relative positions
       const newSelectedDots = new Set<string>();
@@ -571,22 +570,22 @@ export function DotCalibration({
         const [x, y] = dot.split(',').map(Number);
         if (x < columnCount) {
           // Calculate the relative position in the old grid (0-1)
-          const relativePos = y / (oldGridSize - 1);
+          const relativePos = y / (oldGridRows - 1);
           // Map to the same relative position in the new grid
-          const newY = Math.round(relativePos * (newGridSize - 1));
+          const newY = Math.round(relativePos * (newGridRows - 1));
           newSelectedDots.add(`${x},${newY}`);
         }
       });
       
-      setGridSize(newGridSize);
+      setGridRows(newGridRows);
       setSelectedDots(newSelectedDots);
     }
   };
   
   const decreaseRows = () => {
-    if (gridSize > MIN_ROWS) {
-      const oldGridSize = gridSize;
-      const newGridSize = gridSize - 2; // Subtract 2 to maintain odd number
+    if (gridRows > MIN_ROWS) {
+      const oldGridRows = gridRows;
+      const newGridRows = gridRows - 2; // Subtract 2 to maintain odd number
       
       // Remap dots to preserve relative positions
       const newSelectedDots = new Set<string>();
@@ -594,14 +593,14 @@ export function DotCalibration({
         const [x, y] = dot.split(',').map(Number);
         if (x < columnCount) {
           // Calculate the relative position in the old grid (0-1)
-          const relativePos = y / (oldGridSize - 1);
+          const relativePos = y / (oldGridRows - 1);
           // Map to the same relative position in the new grid
-          const newY = Math.round(relativePos * (newGridSize - 1));
+          const newY = Math.round(relativePos * (newGridRows - 1));
           newSelectedDots.add(`${x},${newY}`);
         }
       });
       
-      setGridSize(newGridSize);
+      setGridRows(newGridRows);
       setSelectedDots(newSelectedDots);
     }
   };
@@ -616,7 +615,7 @@ export function DotCalibration({
       const newSelectedDots = new Set<string>();
       selectedDots.forEach(dot => {
         const [x, y] = dot.split(',').map(Number);
-        if (y < gridSize) {
+        if (y < gridRows) {
           // Calculate the relative position in the old grid (0-1)
           const relativePos = x / (oldColumnCount - 1);
           // Map to the same relative position in the new grid
@@ -639,7 +638,7 @@ export function DotCalibration({
       const newSelectedDots = new Set<string>();
       selectedDots.forEach(dot => {
         const [x, y] = dot.split(',').map(Number);
-        if (y < gridSize) {
+        if (y < gridRows) {
           // Calculate the relative position in the old grid (0-1)
           const relativePos = x / (oldColumnCount - 1);
           // Map to the same relative position in the new grid
@@ -662,11 +661,10 @@ export function DotCalibration({
   };
   
   return (
-    <div className="space-y-3">
-      {/* Canvas */}
-      <div className="relative bg-background/50 rounded-lg p-2">
-        <DotGrid
-          gridSize={gridSize}
+    <div className="space-y-4">
+      <div className="rounded-lg overflow-hidden border border-border">
+        <DotGrid 
+          gridSize={gridRows}
           columnCount={columnCount}
           selectedDots={selectedDots}
           onDotToggle={handleDotToggle}
@@ -674,94 +672,95 @@ export function DotCalibration({
           isPlaying={isPlaying}
           selectionMode={selectionMode}
         />
-        
-        {/* Instruction text */}
-        <div className="mt-2 text-xs text-center text-muted-foreground">
-          {selectedDots.size === 0 
-            ? "Click dots to play them"
-            : "Use arrow keys to move dots"}
-        </div>
       </div>
       
-      {/* Controls */}
-      <div className="space-y-3">
-        {/* Row and Column Controls */}
-        <div className="flex justify-between gap-3">
-          {/* Row controls */}
-          <div className="flex-1 space-y-1">
-            <span className="text-xs font-medium">Rows</span>
-            <div className="flex items-center space-x-1">
-              <button
-                className={`h-6 w-6 rounded flex items-center justify-center border ${
-                  gridSize <= MIN_ROWS || disabled
-                    ? 'opacity-50 cursor-not-allowed'
-                    : 'hover:bg-muted'
-                }`}
-                onClick={decreaseRows}
-                disabled={gridSize <= MIN_ROWS || disabled}
-              >
-                <span className="text-xs">-</span>
-              </button>
-              <span className="w-4 text-center text-xs">{gridSize}</span>
-              <button
-                className={`h-6 w-6 rounded flex items-center justify-center border ${
-                  gridSize >= MAX_ROWS || disabled
-                    ? 'opacity-50 cursor-not-allowed'
-                    : 'hover:bg-muted'
-                }`}
-                onClick={increaseRows}
-                disabled={gridSize >= MAX_ROWS || disabled}
-              >
-                <span className="text-xs">+</span>
-              </button>
+      <div className="bg-muted/40 rounded-lg p-3 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex flex-1 items-center space-x-4">
+            <button
+              onClick={decreaseRows}
+              disabled={gridRows <= MIN_ROWS || disabled}
+              className="p-1 rounded bg-background hover:bg-muted disabled:opacity-50"
+            >
+              <MinusIcon className="h-4 w-4" />
+            </button>
+            
+            <div className="text-sm font-medium">
+              {gridRows} × {columnCount} Grid
             </div>
+            
+            <button
+              onClick={increaseRows}
+              disabled={gridRows >= MAX_ROWS || disabled}
+              className="p-1 rounded bg-background hover:bg-muted disabled:opacity-50"
+            >
+              <PlusIcon className="h-4 w-4" />
+            </button>
           </div>
           
-          {/* Column controls */}
-          <div className="flex-1 space-y-1">
-            <span className="text-xs font-medium">Columns</span>
-            <div className="flex items-center space-x-1">
-              <button
-                className={`h-6 w-6 rounded flex items-center justify-center border ${
-                  columnCount <= MIN_COLUMNS || disabled
-                    ? 'opacity-50 cursor-not-allowed'
-                    : 'hover:bg-muted'
-                }`}
-                onClick={decreaseColumns}
-                disabled={columnCount <= MIN_COLUMNS || disabled}
-              >
-                <span className="text-xs">-</span>
-              </button>
-              <span className="w-4 text-center text-xs">{columnCount}</span>
-              <button
-                className={`h-6 w-6 rounded flex items-center justify-center border ${
-                  columnCount >= MAX_COLUMNS || disabled
-                    ? 'opacity-50 cursor-not-allowed'
-                    : 'hover:bg-muted'
-                }`}
-                onClick={increaseColumns}
-                disabled={columnCount >= MAX_COLUMNS || disabled}
-              >
-                <span className="text-xs">+</span>
-              </button>
-            </div>
+          <div className="flex items-center space-x-4">
+            <button
+              onClick={decreaseColumns}
+              disabled={columnCount <= MIN_COLUMNS || disabled}
+              className="p-1 rounded bg-background hover:bg-muted disabled:opacity-50"
+            >
+              <MinusIcon className="h-4 w-4" />
+            </button>
+            
+            <button
+              onClick={increaseColumns}
+              disabled={columnCount >= MAX_COLUMNS || disabled}
+              className="p-1 rounded bg-background hover:bg-muted disabled:opacity-50"
+            >
+              <PlusIcon className="h-4 w-4" />
+            </button>
+          </div>
+          
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={clearSelection}
+              disabled={selectedDots.size === 0 || disabled}
+              className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+            >
+              Clear
+            </button>
+            
+            <button
+              onClick={() => setIsPlaying(!isPlaying)}
+              disabled={selectedDots.size === 0 || disabled}
+              className={`px-3 py-1 rounded text-xs font-medium ${
+                isPlaying
+                  ? "bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/40"
+                  : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:hover:bg-emerald-900/40"
+              } disabled:opacity-50`}
+            >
+              {isPlaying ? "Stop" : "Play"}
+            </button>
           </div>
         </div>
-        
-        {/* Clear button */}
-        <button
-          className={`px-2 py-1 rounded flex items-center justify-center text-xs border ${
-            selectedDots.size === 0 || disabled
-              ? 'opacity-50 cursor-not-allowed'
-              : 'hover:bg-muted'
-          }`}
-          onClick={clearSelection}
-          disabled={selectedDots.size === 0 || disabled}
-        >
-          Clear
-        </button>
       </div>
     </div>
+  )
+}
+
+// These aren't defined in the file, so add them
+interface IconProps {
+  className?: string;
+}
+
+function MinusIcon({ className }: IconProps) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M5 12h14" />
+    </svg>
+  );
+}
+
+function PlusIcon({ className }: IconProps) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M12 5v14M5 12h14" />
+    </svg>
   );
 }
 

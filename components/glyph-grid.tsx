@@ -690,8 +690,8 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
           <Slider
             value={[speed]}
             min={0.25}
-            max={4.0}
-            step={0.05}
+            max={20.0}
+            step={0.25}
             onValueChange={handleSpeedChange}
             disabled={disabled}
             className="py-0"
@@ -699,7 +699,7 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
           
           <div className="flex text-xs text-muted-foreground justify-between">
             <span>Slow</span>
-            <span>Fast</span>
+            <span>Very Fast</span>
           </div>
         </div>
       </div>
