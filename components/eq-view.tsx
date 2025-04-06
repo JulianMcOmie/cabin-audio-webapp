@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { HelpCircle, Play, Power, Volume2, Sliders } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { FrequencyGraph } from "@/components/frequency-graph"
@@ -33,6 +33,12 @@ interface EQViewProps {
 export function EQView({ setEqEnabled }: EQViewProps) {
   const [selectedDot] = useState<[number, number] | null>(null)
   const [instruction, setInstruction] = useState("Click + drag on the center line to add a band")
+  
+  // Add state for multi-band control
+  const [selectedBands, setSelectedBands] = useState<string[]>([])
+  const [amplitudeMultiplier, setAmplitudeMultiplier] = useState(1.0) // Default to 1.0 (no change)
+  const [amplitudeDifference, setAmplitudeDifference] = useState(0.0) // Default to 0.0 (no difference)
+  
   const { 
     isEQEnabled, 
     setEQEnabled, 
@@ -41,7 +47,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     getProfiles,
     getActiveProfile,
     setActiveProfile,
-    addProfile 
+    addProfile,
+    updateProfile
   } = useEQProfileStore()
   
   // Get the player state to control music playback
@@ -84,6 +91,9 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   
   // Add state to track if the device is mobile
   const [isMobile, setIsMobile] = useState(false)
+
+  // Add state for showing error messages
+  const [importError, setImportError] = useState<string | null>(null);
 
   // Detect mobile devices
   useEffect(() => {
@@ -224,6 +234,90 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     }
   }, [isMusicPlaying, dotGridPlaying, glyphGridPlaying]);
 
+  // Handle selected bands change from FrequencyEQ
+  const handleSelectedBandsChange = useCallback((bandIds: string[]) => {
+    setSelectedBands(bandIds);
+    
+    // Reset sliders when selection changes
+    if (bandIds.length !== 2) {
+      setAmplitudeMultiplier(1.0);
+      setAmplitudeDifference(0.0);
+    }
+  }, []);
+  
+  // Apply amplitude adjustments to the selected bands
+  const applyAmplitudeAdjustments = useCallback(() => {
+    // Only proceed if exactly 2 bands are selected
+    if (selectedBands.length !== 2) return;
+    
+    const profile = getActiveProfile();
+    if (!profile) return;
+    
+    // Find the two selected bands
+    const band1 = profile.bands.find(band => band.id === selectedBands[0]);
+    const band2 = profile.bands.find(band => band.id === selectedBands[1]);
+    
+    if (!band1 || !band2) return;
+    
+    // Calculate the average gain of both bands
+    const avgGain = (band1.gain + band2.gain) / 2;
+    
+    // Apply amplitude multiplier to the average gain
+    const multipliedAvgGain = avgGain * amplitudeMultiplier;
+    
+    // Calculate new gains with the difference applied
+    // The amplitude difference is split between the two bands
+    const halfDifference = amplitudeDifference / 2;
+    const newGain1 = multipliedAvgGain - halfDifference;
+    const newGain2 = multipliedAvgGain + halfDifference;
+    
+    // Clamp gains to valid range (-24 to 24 dB)
+    const clampedGain1 = Math.max(-24, Math.min(24, newGain1));
+    const clampedGain2 = Math.max(-24, Math.min(24, newGain2));
+    
+    // Update the profile with new gains
+    const updatedBands = [...profile.bands];
+    
+    // Find and update the bands
+    const index1 = updatedBands.findIndex(b => b.id === selectedBands[0]);
+    const index2 = updatedBands.findIndex(b => b.id === selectedBands[1]);
+    
+    if (index1 !== -1 && index2 !== -1) {
+      updatedBands[index1] = { ...updatedBands[index1], gain: clampedGain1 };
+      updatedBands[index2] = { ...updatedBands[index2], gain: clampedGain2 };
+      
+      // Update the profile
+      updateProfile(profile.id, { bands: updatedBands });
+    }
+  }, [selectedBands, amplitudeMultiplier, amplitudeDifference, getActiveProfile, updateProfile]);
+  
+  // Apply adjustments when slider values change
+  useEffect(() => {
+    if (selectedBands.length === 2) {
+      applyAmplitudeAdjustments();
+    }
+  }, [selectedBands, amplitudeMultiplier, amplitudeDifference, applyAmplitudeAdjustments]);
+
+  // Handle amplitude multiplier change
+  const handleAmplitudeMultiplierChange = (value: number[]) => {
+    setAmplitudeMultiplier(value[0]);
+  };
+  
+  // Handle amplitude difference change
+  const handleAmplitudeDifferenceChange = (value: number[]) => {
+    setAmplitudeDifference(value[0]);
+  };
+  
+  // Format the multiplier value
+  const formatMultiplier = (value: number): string => {
+    return `${value.toFixed(1)}x`;
+  };
+  
+  // Format the difference value
+  const formatDifference = (value: number): string => {
+    return `${value > 0 ? '+' : ''}${value.toFixed(1)} dB`;
+  };
+
   const handleProfileClick = () => {
     setNewProfileName("");
     setShowCreateNewDialog(true);
@@ -270,9 +364,6 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     setEQEnabled(!isEQEnabled);
   };
 
-  // Comment out auto-calibration related state
-  // const [showCalibrationProcess, setShowCalibrationProcess] = useState(false)
-
   // Add a function to handle dot grid play/stop
   const handleDotGridPlayToggle = () => {
     if (dotGridPlaying) {
@@ -291,6 +382,121 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     
     // Stop the glyph grid if it's playing
     if (glyphGridPlaying) setGlyphGridPlaying(false);
+  };
+
+  const handleProfileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setImportError(null);
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const content = e.target?.result as string;
+        let profileData;
+
+        // Try to parse as JSON
+        try {
+          profileData = JSON.parse(content);
+        } catch (jsonError) {
+          // If JSON parsing fails, try to parse as plain text
+          try {
+            // Check if this is the Filter format (Filter 1: ON PK Fc...)
+            const lines = content.split('\n').filter(line => line.trim().length > 0);
+            const isFilterFormat = lines[0]?.match(/^Filter \d+: /);
+            
+            if (isFilterFormat) {
+              // Parse the filter format
+              const bands = lines.map(line => {
+                // Parse each filter line with a regex
+                const match = line.match(/^Filter \d+: (ON|OFF) ([A-Z]+) Fc ([0-9.]+) Hz Gain ([0-9.-]+) dB Q ([0-9.]+)$/);
+                if (!match) return null;
+                
+                const [_, state, type, frequency, gain, q] = match;
+                
+                // Only include filters that are ON
+                if (state !== 'ON') return null;
+                
+                // Map filter types to band types
+                let filterType = 'peaking'; // Default for PK
+                if (type === 'HSC') filterType = 'highshelf';
+                else if (type === 'LSC') filterType = 'lowshelf';
+                
+                return {
+                  type: filterType,
+                  frequency: parseFloat(frequency),
+                  gain: parseFloat(gain),
+                  q: parseFloat(q)
+                };
+              }).filter(Boolean);
+              
+              const profileName = file.name.replace(/\.[^.]+$/, '') || 'Imported Profile';
+              
+              profileData = {
+                name: profileName,
+                bands: bands,
+                volume: 0 // Default volume
+              };
+            } else {
+              // Attempt to extract profile data from plain text format
+              const lines = content.split('\n');
+              const name = lines.find(line => line.startsWith('Name:'))?.substring(5).trim();
+              if (!name) throw new Error('Profile name not found');
+
+              // Extract bands if they exist
+              const bandsStr = content.match(/Bands:([\s\S]*?)(?=Volume:|$)/)?.[1].trim();
+              const bands = bandsStr ? JSON.parse(bandsStr) : [];
+
+              // Extract volume
+              const volumeStr = content.match(/Volume:\s*([\-\d\.]+)/)?.[1];
+              const volume = volumeStr ? parseFloat(volumeStr) : 0;
+
+              profileData = {
+                name,
+                bands,
+                volume
+              };
+            }
+          } catch (textError) {
+            console.error('Text parsing error:', textError);
+            throw new Error('Invalid file format. Please upload a valid EQ profile.');
+          }
+        }
+
+        // Validate the profile data
+        if (!profileData.name) {
+          throw new Error('Profile name is required');
+        }
+
+        // Create a new profile with the imported data and generated fields
+        const newProfile = {
+          id: uuidv4(),
+          name: profileData.name,
+          bands: Array.isArray(profileData.bands) ? profileData.bands : [],
+          volume: typeof profileData.volume === 'number' ? profileData.volume : 0,
+          lastModified: Date.now(),
+          syncStatus: 'modified' as SyncStatus
+        };
+
+        // Add the profile and select it
+        addProfile(newProfile);
+        setSelectedProfileId(newProfile.id);
+        setActiveProfile(newProfile.id);
+
+        // Reset the file input
+        event.target.value = '';
+        
+        console.log(`Imported profile: ${newProfile.name} with ${newProfile.bands.length} bands`);
+      } catch (error) {
+        console.error('Error importing profile:', error);
+        setImportError(error instanceof Error ? error.message : 'Failed to import profile');
+        
+        // Reset the file input
+        event.target.value = '';
+      }
+    };
+
+    reader.readAsText(file);
   };
 
   // If on mobile, show a message instead of the EQ interface
@@ -369,6 +575,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 className="w-full" 
                 onInstructionChange={setInstruction}
                 onRequestEnable={() => setEQEnabled(true)}
+                onSelectedBandsChange={handleSelectedBandsChange}
               />
             </div>
 
@@ -376,6 +583,55 @@ export function EQView({ setEqEnabled }: EQViewProps) {
             <div className="mt-1 mb-3 px-2 py-1.5 bg-muted/40 rounded text-sm text-muted-foreground border-l-2 border-electric-blue">
               {instruction}
             </div>
+
+            {/* Multi-band controls - only show when exactly 2 bands are selected */}
+            {selectedBands.length === 2 && (
+              <div className="mt-4 p-4 border rounded-lg bg-card">
+                <h4 className="font-medium mb-3">Multi-Band Adjustment</h4>
+                
+                {/* Amplitude Multiplier Slider */}
+                <div className="mb-4">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="text-sm">Overall Amplitude</span>
+                    <span className="text-sm font-medium">{formatMultiplier(amplitudeMultiplier)}</span>
+                  </div>
+                  <Slider
+                    value={[amplitudeMultiplier]}
+                    min={-2.0}
+                    max={2.0}
+                    step={0.1}
+                    onValueChange={handleAmplitudeMultiplierChange}
+                    className="w-full"
+                  />
+                  <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                    <span>-2x</span>
+                    <span>0x</span>
+                    <span>2x</span>
+                  </div>
+                </div>
+                
+                {/* Amplitude Difference Slider */}
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="text-sm">Amplitude Difference</span>
+                    <span className="text-sm font-medium">{formatDifference(amplitudeDifference)}</span>
+                  </div>
+                  <Slider
+                    value={[amplitudeDifference]}
+                    min={-24}
+                    max={24}
+                    step={0.5}
+                    onValueChange={handleAmplitudeDifferenceChange}
+                    className="w-full"
+                  />
+                  <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                    <span>-24 dB</span>
+                    <span>0 dB</span>
+                    <span>+24 dB</span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* EQ Toggle Button */}
             <div className="eq-toggle-container">
@@ -519,6 +775,32 @@ export function EQView({ setEqEnabled }: EQViewProps) {
       {/* EQ Profiles Section */}
       <div className="mt-8">
         <h3 className="text-lg font-medium mb-4">EQ Profiles</h3>
+        <div className="flex justify-between items-center mb-3">
+          <div>
+            {importError && (
+              <p className="text-sm text-red-500">
+                {importError}
+              </p>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => document.getElementById('profile-upload')?.click()}
+              title="Import profile from file"
+            >
+              Import Profile
+            </Button>
+            <input
+              type="file"
+              id="profile-upload"
+              className="hidden"
+              accept=".txt,.json"
+              onChange={handleProfileImport}
+            />
+          </div>
+        </div>
         <EQProfiles
           onProfileClick={handleProfileClick}
           selectedProfile={selectedProfileId}

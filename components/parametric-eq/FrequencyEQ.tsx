@@ -18,6 +18,7 @@ interface FrequencyEQProps {
   className?: string
   onInstructionChange?: (instruction: string) => void
   onRequestEnable?: () => void
+  onSelectedBandsChange?: (selectedBandIds: string[]) => void
 }
 
 // Define a type for the audio processor
@@ -57,7 +58,7 @@ export function updateAudio(
   }
 }
 
-export function FrequencyEQ({ profileId, disabled = false, className, onInstructionChange, onRequestEnable }: FrequencyEQProps) {
+export function FrequencyEQ({ profileId, disabled = false, className, onInstructionChange, onRequestEnable, onSelectedBandsChange }: FrequencyEQProps) {
   const canvasRef = useRef<CanvasWithMargin>(null)
   const backgroundCanvasRef = useRef<CanvasWithMargin>(null)
   // Add refs for animation frame and canvas context
@@ -69,12 +70,16 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [selectedBandId, setSelectedBandId] = useState<string | null>(null)
   
+  // New state for multi-selection
+  const [selectedBands, setSelectedBands] = useState<string[]>([])
+  
   // Volume control state
   const [isDraggingVolume, setIsDraggingVolume] = useState(false)
   const [isHoveringVolume, setIsHoveringVolume] = useState(false)
   
   // State to track if Control or Option key is pressed
   const [isModifierKeyPressed, setIsModifierKeyPressed] = useState(false)
+  const [isCtrlKeyPressed, setIsCtrlKeyPressed] = useState(false)
   
   // Connect to EQ profile store
   const { 
@@ -150,12 +155,17 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     return newProfileBand.id
   }, [profile, updateProfile, onRequestEnable, disabled])
   
-  // Add keyboard event listeners for Control and Option keys
+  // Extend keyboard event listeners to detect Ctrl key for multi-selection
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Check if Control (ctrlKey) or Option/Alt (altKey) is pressed
       if (e.ctrlKey || e.altKey) {
         setIsModifierKeyPressed(true);
+      }
+      
+      // Track Ctrl key separately for multi-selection
+      if (e.ctrlKey) {
+        setIsCtrlKeyPressed(true);
       }
     };
     
@@ -163,11 +173,16 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       // When no modifier keys are pressed anymore
       if (!e.ctrlKey && !e.altKey) {
         setIsModifierKeyPressed(false);
-        
-        // Stop the calibration sound when keys are released
-        const audioPlayer = getReferenceCalibrationAudio();
-        audioPlayer.setPlaying(false);
       }
+      
+      // Update Ctrl key state
+      if (!e.ctrlKey) {
+        setIsCtrlKeyPressed(false);
+      }
+      
+      // Stop the calibration sound when keys are released
+      const audioPlayer = getReferenceCalibrationAudio();
+      audioPlayer.setPlaying(false);
     };
     
     // Add global event listeners
@@ -177,6 +192,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     const handleBlur = () => {
       // Stop the calibration sound when window loses focus
       setIsModifierKeyPressed(false);
+      setIsCtrlKeyPressed(false);
       const audioPlayer = getReferenceCalibrationAudio();
       audioPlayer.setPlaying(false);
     };
@@ -297,6 +313,50 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     updateProfile(profile.id, { bands: updatedBands })
   }, [profile, updateProfile])
   
+  // Update the band selection handler to support multi-selection
+  const handleBandSelect = useCallback((id: string | null) => {
+    setSelectedBandId(id);
+    
+    // Handle multi-selection with Ctrl key
+    if (id !== null) {
+      if (isCtrlKeyPressed) {
+        // Toggle selection: add if not already selected, remove if already selected
+        setSelectedBands(prev => {
+          if (prev.includes(id)) {
+            const newSelection = prev.filter(bandId => bandId !== id);
+            // Notify parent component of selection change
+            if (onSelectedBandsChange) {
+              onSelectedBandsChange(newSelection);
+            }
+            return newSelection;
+          } else {
+            const newSelection = [...prev, id];
+            // Notify parent component of selection change
+            if (onSelectedBandsChange) {
+              onSelectedBandsChange(newSelection);
+            }
+            return newSelection;
+          }
+        });
+      } else {
+        // Without Ctrl, select just this band
+        const newSelection = [id];
+        setSelectedBands(newSelection);
+        // Notify parent component of selection change
+        if (onSelectedBandsChange) {
+          onSelectedBandsChange(newSelection);
+        }
+      }
+    } else if (!isCtrlKeyPressed) {
+      // Clear selection if null id and not holding Ctrl
+      setSelectedBands([]);
+      // Notify parent component of selection change
+      if (onSelectedBandsChange) {
+        onSelectedBandsChange([]);
+      }
+    }
+  }, [isCtrlKeyPressed, onSelectedBandsChange]);
+  
   // Use EQ interaction
   const { 
     handleMouseMove: handleBandMouseMove, 
@@ -312,7 +372,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     onBandAdd: handleBandAdd,
     onBandUpdate: handleBandUpdate,
     onBandRemove: handleBandRemove,
-    onBandSelect: setSelectedBandId,
+    onBandSelect: handleBandSelect,
   })
   
   // Custom mouse handlers to support volume control
@@ -422,7 +482,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     }
   }, [handleBandMouseDown, profile, updateProfile, isModifierKeyPressed, updateCalibrationFromMousePosition]);
   
-  // Update instruction text based on interaction state
+  // Update instruction text to include multi-selection hint
   useEffect(() => {
     if (!onInstructionChange) return;
     
@@ -435,11 +495,13 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       // even when not currently pressing shift
       onInstructionChange("Shift + drag to change bandwidth (Q)");
     } else if (hoveredBandId) {
-      onInstructionChange("Right click to delete band");
+      onInstructionChange("Right click to delete band, Ctrl + click to select multiple bands");
+    } else if (selectedBands.length >= 2) {
+      onInstructionChange("Adjust selected bands using sliders below");
     } else {
-      onInstructionChange("Click + drag on the center line to add a band");
+      onInstructionChange("Click + drag on the center line to add a band, Ctrl + click to select multiple bands");
     }
-  }, [draggingBandId, hoveredBandId, isDraggingVolume, isHoveringVolume, isShiftPressed, onInstructionChange]);
+  }, [draggingBandId, hoveredBandId, isDraggingVolume, isHoveringVolume, isShiftPressed, onInstructionChange, selectedBands.length]);
 
   // Set up observer to detect theme changes
   useEffect(() => {
@@ -617,7 +679,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     backgroundDrawnRef.current = true;
   }, [isDarkMode, freqRange]);
 
-  // Main canvas rendering function to be called by requestAnimationFrame
+  // Main canvas rendering function, modified to show multi-selection state
   const renderCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -651,6 +713,8 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       // or if it's already marked as hovered
       const isHovered = band.id === hoveredBandId || band.id === draggingBandId;
       const isDragging = band.id === draggingBandId;
+      // Add isSelected state for rendering
+      const isSelected = selectedBands.includes(band.id);
       
       // Add margin to rendering
       EQBandRenderer.drawBand(
@@ -666,6 +730,22 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
         margin, // Pass margin for coordinate adjustments
         margin  // Pass margin for coordinate adjustments
       );
+      
+      // Instead, draw a selection indicator if the band is selected
+      if (isSelected) {
+        // Draw a selection ring around the band handle
+        const bandX = margin + EQCoordinateUtils.freqToX(band.frequency, rect.width - margin * 2, freqRange);
+        const bandY = margin + EQCoordinateUtils.gainToY(band.gain, rect.height - margin * 2);
+        
+        // Draw selection indicator (circle with dashed stroke)
+        ctx.beginPath();
+        ctx.arc(bandX, bandY, 14, 0, Math.PI * 2);
+        ctx.strokeStyle = isDarkMode ? "rgba(59, 130, 246, 0.8)" : "rgba(37, 99, 235, 0.8)";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([3, 3]); // Create dashed line
+        ctx.stroke();
+        ctx.setLineDash([]); // Reset line dash
+      }
       
       // Draw Q indicator if shift is pressed and band is selected, hovered, or being dragged
       if (isShiftPressed && (band.id === selectedBandId || band.isHovered || band.id === draggingBandId)) {
@@ -762,7 +842,8 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     isDraggingVolume,
     isHoveringVolume,
     freqRange,
-    renderBackgroundCanvas
+    renderBackgroundCanvas,
+    selectedBands // Add selectedBands as dependency
   ]);
 
   // Initialize canvases and start animation loop

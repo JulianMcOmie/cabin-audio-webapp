@@ -18,6 +18,11 @@ const ENVELOPE_RELEASE_TIME = 0.05 // 100ms release
 const DEFAULT_SPEED = 1.0 // Default movement speed
 const DEFAULT_BACKGROUND_NOISE_VOLUME = 0.1 // Default background noise volume
 
+// Volume oscillation settings
+const VOLUME_OSCILLATION_RATE = 1.0 // 1Hz - oscillate once per second
+const VOLUME_OSCILLATION_MIN = 0.0 // Silent
+const VOLUME_OSCILLATION_MAX = 1.0 // Full volume
+
 // Number of simultaneous nodes to distribute along the line
 const NUM_NODES = 20
 
@@ -118,6 +123,10 @@ class GlyphGridAudioPlayer {
   
   // Add distortion gain property
   private distortionGain: number = 1.0;
+  
+  // Add volume oscillation properties
+  private volumeOscillationEnabled: boolean = true; // Start with oscillation enabled
+  private volumeOscillationAnimationId: number | null = null;
   
   private constructor() {
     // Generate pink noise buffer
@@ -445,6 +454,9 @@ class GlyphGridAudioPlayer {
     if (this.isSweeping) {
       this.startSweep();
     }
+    
+    // Start volume oscillation
+    this.startVolumeOscillation();
   }
   
   private startAnimationLoop(): void {
@@ -462,6 +474,9 @@ class GlyphGridAudioPlayer {
     
     // Stop frequency sweep
     this.stopSweep();
+    
+    // Stop volume oscillation
+    this.stopVolumeOscillation();
     
     // Stop animation loop
     if (this.animationFrameId) {
@@ -647,10 +662,88 @@ class GlyphGridAudioPlayer {
     });
   }
   
+  // Add method to start volume oscillation
+  private startVolumeOscillation(): void {
+    // Stop any existing oscillation
+    this.stopVolumeOscillation();
+    
+    const startTime = performance.now();
+    
+    const updateVolume = () => {
+      if (!this.isPlaying) return;
+      
+      // Calculate current time in seconds
+      const now = performance.now();
+      const elapsed = (now - startTime) / 1000;
+      
+      // Calculate oscillation value (0 to 1) using sine wave
+      // sin varies from -1 to 1, so we normalize to 0 to 1
+      const oscillationValue = (Math.sin(elapsed * Math.PI * 2 * VOLUME_OSCILLATION_RATE) + 1) / 2;
+      
+      // Scale to desired range (min to max)
+      const volumeScale = VOLUME_OSCILLATION_MIN + oscillationValue * (VOLUME_OSCILLATION_MAX - VOLUME_OSCILLATION_MIN);
+      
+      // Apply to all nodes
+      this.audioNodes.forEach(node => {
+        if (node.gain) {
+          // Base gain with distortion applied
+          const baseGain = (MASTER_GAIN * this.distortionGain) / NUM_NODES;
+          
+          // Apply oscillation factor
+          node.gain.gain.value = baseGain * volumeScale;
+        }
+      });
+      
+      // Schedule next update
+      this.volumeOscillationAnimationId = requestAnimationFrame(updateVolume);
+    };
+    
+    // Start the oscillation loop
+    this.volumeOscillationAnimationId = requestAnimationFrame(updateVolume);
+    console.log('🔊 Started volume oscillation at 1Hz');
+  }
+  
+  // Add method to stop volume oscillation
+  private stopVolumeOscillation(): void {
+    if (this.volumeOscillationAnimationId !== null) {
+      cancelAnimationFrame(this.volumeOscillationAnimationId);
+      this.volumeOscillationAnimationId = null;
+      
+      // Reset gains to normal
+      this.audioNodes.forEach(node => {
+        if (node.gain) {
+          const baseGain = (MASTER_GAIN * this.distortionGain) / NUM_NODES;
+          node.gain.gain.value = baseGain;
+        }
+      });
+    }
+  }
+  
+  // Add public method to enable/disable volume oscillation
+  public setVolumeOscillation(enabled: boolean): void {
+    if (enabled === this.volumeOscillationEnabled) return;
+    
+    this.volumeOscillationEnabled = enabled;
+    
+    if (this.isPlaying) {
+      if (enabled) {
+        this.startVolumeOscillation();
+      } else {
+        this.stopVolumeOscillation();
+      }
+    }
+  }
+  
+  // Add getter for volume oscillation state
+  public isVolumeOscillationEnabled(): boolean {
+    return this.volumeOscillationEnabled;
+  }
+  
   public dispose(): void {
     this.setPlaying(false);
     this.stopSweep();
     this.stopEnvelopeModulation();
+    this.stopVolumeOscillation();
     this.stopBackgroundNoise();
   }
   

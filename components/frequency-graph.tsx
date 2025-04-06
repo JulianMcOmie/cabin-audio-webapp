@@ -9,6 +9,7 @@ interface FrequencyGraphProps {
   className?: string
   onInstructionChange?: (instruction: string) => void
   onRequestEnable?: () => void
+  onSelectedBandsChange?: (selectedBandIds: string[]) => void
 }
 
 export function FrequencyGraph({ 
@@ -16,7 +17,8 @@ export function FrequencyGraph({
   disabled = false, 
   className, 
   onInstructionChange,
-  onRequestEnable
+  onRequestEnable,
+  onSelectedBandsChange
 }: FrequencyGraphProps) {
   // Get the active profile ID from the store
   const { getActiveProfile } = useEQProfileStore();
@@ -29,6 +31,7 @@ export function FrequencyGraph({
         disabled={disabled}
         onInstructionChange={onInstructionChange}
         onRequestEnable={onRequestEnable}
+        onSelectedBandsChange={onSelectedBandsChange}
       />
     </div>
   )
