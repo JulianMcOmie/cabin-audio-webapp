@@ -52,6 +52,9 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
   // Add a reference to store the animation frame ID
   const animationFrameRef = useRef<number | null>(null);
 
+  // Add source count state
+  const [sourceCount, setSourceCount] = useState(5)
+
   // Set up observer to detect theme changes
   useEffect(() => {
     // Initial check
@@ -214,21 +217,36 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
       ctx.lineTo(endX, endY)
       ctx.stroke()
       
-      // If playing, draw a moving dot along the path
+      // If playing, draw multiple dots along the path at fixed positions
       if (isPlaying && !disabled) {
         const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
-        const pathPosition = audioPlayer.getPathPosition()
         
-        const dotX = startX + (endX - startX) * pathPosition
-        const dotY = startY + (endY - startY) * pathPosition
+        // Get source positions from audio player or use default positions
+        let sourcePositions: number[] = []
+        if (typeof audioPlayer.getSourcePositions === 'function') {
+          sourcePositions = audioPlayer.getSourcePositions()
+        } else {
+          // Fallback for compatibility - evenly space points
+          const numSources = 5
+          for (let i = 0; i < numSources; i++) {
+            sourcePositions.push(i / (numSources - 1))
+          }
+        }
         
-        // Draw the dot
-        ctx.fillStyle = isDarkMode ? 'rgb(56, 189, 248)' : 'rgb(2, 132, 199)'
-        ctx.beginPath()
-        ctx.arc(dotX, dotY, 8, 0, Math.PI * 2)
-        ctx.fill()
+        // Draw each dot at its fixed position along the line
+        sourcePositions.forEach((position) => {
+          const dotX = startX + (endX - startX) * position
+          const dotY = startY + (endY - startY) * position
+          
+          // Draw the dot with pulsing effect
+          const pulseSize = 6 + Math.sin(Date.now() / 200) * 2
+          ctx.fillStyle = isDarkMode ? 'rgb(56, 189, 248)' : 'rgb(2, 132, 199)'
+          ctx.beginPath()
+          ctx.arc(dotX, dotY, pulseSize, 0, Math.PI * 2)
+          ctx.fill()
+        })
         
-        // Request animation frame to continue the animation
+        // Request animation frame to continue the animation for the pulsing effect
         requestAnimationFrame(() => {
           setGlyph(prev => ({ ...prev }))
         })
@@ -497,14 +515,15 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
     
     if (isScrubbing) {
-      // Set to manual position and ensure audio is playing while scrubbing
+      // Only set manual position for UI visualization
       audioPlayer.setManualPosition(manualPosition)
-      audioPlayer.setPlaying(true)
     } else {
-      // When not scrubbing, return to automatic control based on isPlaying state
+      // When not scrubbing, return to automatic UI control
       audioPlayer.setManualControl(false)
-      audioPlayer.setPlaying(isPlaying && !disabled)
     }
+    
+    // Always ensure audio is playing based on isPlaying state, not scrubbing state
+    audioPlayer.setPlaying(isPlaying && !disabled)
   }, [isScrubbing, manualPosition, isPlaying, disabled])
 
   // Replace the existing useEffect that forces UI updates with a more efficient animation frame approach
@@ -621,6 +640,24 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     }
   }
 
+  // Add useEffect to handle source count changes
+  useEffect(() => {
+    const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
+    if (typeof audioPlayer.setNumberOfSources === 'function') {
+      audioPlayer.setNumberOfSources(sourceCount)
+    }
+  }, [sourceCount])
+
+  // Handle source count slider change
+  const handleSourceCountChange = (values: number[]) => {
+    setSourceCount(Math.round(values[0]))
+  }
+
+  // Format source count for display
+  const formatSourceCount = (value: number): string => {
+    return `${value}`
+  }
+
   return (
     <div className="space-y-4">
       {/* Canvas container */}
@@ -700,6 +737,31 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
           <div className="flex text-xs text-muted-foreground justify-between">
             <span>Slow</span>
             <span>Fast</span>
+          </div>
+        </div>
+
+        {/* Source Count control */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">Number of Sources</span>
+            <span className="text-xs text-muted-foreground">
+              {sourceCount}
+            </span>
+          </div>
+          
+          <Slider
+            value={[sourceCount]}
+            min={1}
+            max={12}
+            step={1}
+            onValueChange={handleSourceCountChange}
+            disabled={disabled}
+            className="py-0"
+          />
+          
+          <div className="flex text-xs text-muted-foreground justify-between">
+            <span>Few</span>
+            <span>Many</span>
           </div>
         </div>
       </div>

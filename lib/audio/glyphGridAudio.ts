@@ -20,6 +20,11 @@ const DEFAULT_SPEED = 1.0 // Default movement speed
 // Add constants for hit detection
 const DEFAULT_HIT_INTERVAL = 0.2 // Default interval between hits (20% of path)
 
+// Number of noise sources along the line
+const DEFAULT_NUM_SOURCES = 5
+// Stagger offset between sources as percentage of total interval - INCREASED
+const DEFAULT_STAGGER_OFFSET = 0.8 // 80% of the modulation interval
+
 export enum PlaybackMode {
   PATH = 'path', // Follow the path continuously back and forth
   OSCILLATE = 'oscillate', // Oscillate through the path at varying speeds
@@ -40,19 +45,19 @@ class GlyphGridAudioPlayer {
   private static instance: GlyphGridAudioPlayer
   private pinkNoiseBuffer: AudioBuffer | null = null
   private isPlaying: boolean = false
-  private audioNodes: {
+  
+  // Replace single audioNodes with array of nodes
+  private audioNodeGroups: Array<{
     source: AudioBufferSourceNode | null;
     gain: GainNode | null;
     envelopeGain: GainNode | null;
     panner: StereoPannerNode | null;
     filter: BiquadFilterNode | null;
-  } = {
-    source: null,
-    gain: null,
-    envelopeGain: null,
-    panner: null,
-    filter: null
-  }
+    position: number; // Fixed position along the line (0-1)
+  }> = [];
+  
+  // Main output/analyzer chain
+  private mainOutputGain: GainNode | null = null;
   
   // Path related properties
   private pathPosition: number = 0 // Position along the path (0 to 1)
@@ -101,6 +106,9 @@ class GlyphGridAudioPlayer {
   
   // Add distortion gain property
   private distortionGain: number = 1.0;
+  
+  // Add number of sources property
+  private numberOfSources: number = DEFAULT_NUM_SOURCES;
   
   private constructor() {
     this.generatePinkNoiseBuffer()
@@ -165,18 +173,38 @@ class GlyphGridAudioPlayer {
   }
   
   public setGlyph(glyph: GlyphData): void {
-    this.currentGlyph = glyph
+    const previousGlyph = this.currentGlyph;
+    this.currentGlyph = glyph;
     
-    // if (this.isPlaying) {
-    //   this.stopSound()
-    //   this.startSound()
-    // }
+    // Check if we need to update the audio nodes due to a glyph change
+    if (this.isPlaying && previousGlyph !== null && 
+       (previousGlyph.position.x !== glyph.position.x || 
+        previousGlyph.position.y !== glyph.position.y ||
+        previousGlyph.size.width !== glyph.size.width ||
+        previousGlyph.size.height !== glyph.size.height)) {
+      
+      // Update all audio nodes to reflect the new glyph position
+      this.updateAllAudioNodes();
+    }
+  }
+  
+  // New method to update all audio nodes when the glyph changes
+  private updateAllAudioNodes(): void {
+    if (!this.currentGlyph || this.audioNodeGroups.length === 0) return;
+    
+    // Update each audio node group based on its fixed position along the line
+    this.audioNodeGroups.forEach(group => {
+      if (group.filter && group.panner) {
+        this.updateAudioParametersForSource(group.position, group.filter, group.panner);
+      }
+    });
   }
   
   private updateAudioNodesFromGlyph(): void {
     if (!this.currentGlyph) return
     
-    // Calculate the current path position based on the glyph
+    // Only update the path position for UI purposes,
+    // not source audio parameters
     this.updatePathPosition()
   }
   
@@ -186,8 +214,7 @@ class GlyphGridAudioPlayer {
     // If in manual control mode, use the manually set position
     if (this.isManualControl) {
       const position = this.manualPosition
-      // In manual mode, always update parameters (for responsive UI)
-      this.updateAudioParametersFromPosition(position)
+      this.pathPosition = position
       return
     }
     
@@ -208,52 +235,18 @@ class GlyphGridAudioPlayer {
         if (this.pathPosition >= max) {
           this.pathPosition = max
           this.pathDirection = -1
-          // This is a hit point (reached end)
-          this.updateAudioParametersFromPosition(this.pathPosition)
         } else if (this.pathPosition <= min) {
           this.pathPosition = min
           this.pathDirection = 1
-          // This is a hit point (reached start)
-          this.updateAudioParametersFromPosition(this.pathPosition)
-        } else if (this.discreteFrequency) {
-          // Check if we crossed a hit point
-          const hitInterval = DEFAULT_HIT_INTERVAL
-          const currentInterval = Math.floor(this.pathPosition / hitInterval)
-          const previousInterval = Math.floor(previousPosition / hitInterval)
-          
-          if (currentInterval !== previousInterval) {
-            // We crossed a hit point, update audio
-            this.updateAudioParametersFromPosition(this.pathPosition)
-          }
-        } else {
-          // Continuous mode - always update
-          this.updateAudioParametersFromPosition(this.pathPosition)
         }
       } else {
         // Regular full-range behavior
         if (this.pathPosition >= 1) {
           this.pathPosition = 1
           this.pathDirection = -1
-          // This is a hit point (reached end)
-          this.updateAudioParametersFromPosition(this.pathPosition)
         } else if (this.pathPosition <= 0) {
           this.pathPosition = 0
           this.pathDirection = 1
-          // This is a hit point (reached start)
-          this.updateAudioParametersFromPosition(this.pathPosition)
-        } else if (this.discreteFrequency) {
-          // Check if we crossed a hit point
-          const hitInterval = DEFAULT_HIT_INTERVAL
-          const currentInterval = Math.floor(this.pathPosition / hitInterval)
-          const previousInterval = Math.floor(previousPosition / hitInterval)
-          
-          if (currentInterval !== previousInterval) {
-            // We crossed a hit point, update audio
-            this.updateAudioParametersFromPosition(this.pathPosition)
-          }
-        } else {
-          // Continuous mode - always update
-          this.updateAudioParametersFromPosition(this.pathPosition)
         }
       }
     } else if (this.playbackMode === PlaybackMode.ALTERNATE) {
@@ -276,57 +269,13 @@ class GlyphGridAudioPlayer {
           this.pathPosition = this.useSubsection ? this.subsectionStart : 0
           this.pathDirection = 1
         }
-        
-        // Update audio parameters at each alternation point
-        this.updateAudioParametersFromPosition(this.pathPosition)
       }
     }
   }
   
-  // New method to update audio parameters from a position
+  // This method is modified to be a no-op as we don't want to update fixed source positions
   private updateAudioParametersFromPosition(position: number): void {
-    if (!this.currentGlyph) return
-    
-    // Get the glyph's position and size
-    const { position: glyphPos, size: glyphSize } = this.currentGlyph
-    
-    // Calculate the actual x and y in normalized space (-1 to 1)
-    const startX = glyphPos.x - glyphSize.width / 2
-    const startY = glyphPos.y - glyphSize.height / 2
-    const endX = glyphPos.x + glyphSize.width / 2
-    const endY = glyphPos.y + glyphSize.height / 2
-    
-    // Interpolate between start and end points
-    const x = startX + position * (endX - startX)
-    const y = startY + position * (endY - startY)
-    
-    // Map y to frequency (bottom = low, top = high)
-    const minFreq = 20
-    const maxFreq = 20000
-    
-    // Properly normalize y from glyph space to full 0-1 range
-    const normalizedY = Math.max(0, Math.min(1, (y + 1) / 2))
-    
-    // Map to logarithmic frequency scale
-    const logMinFreq = Math.log2(minFreq)
-    const logMaxFreq = Math.log2(maxFreq)
-    const logFreqRange = logMaxFreq - logMinFreq
-    const centerFreq = Math.pow(2, logMinFreq + normalizedY * logFreqRange)
-    
-    // Apply frequency multiplier
-    const adjustedFreq = centerFreq * this.freqMultiplier
-    
-    // Map x to pan position (-1 to 1)
-    const panPosition = x
-    
-    // Now update the audio nodes with these values
-    if (this.audioNodes.filter) {
-      this.audioNodes.filter.frequency.value = adjustedFreq
-    }
-    
-    if (this.audioNodes.panner) {
-      this.audioNodes.panner.pan.value = panPosition
-    }
+    // No-op - sources should stay at their fixed positions
   }
   
   public setPlaying(playing: boolean): void {
@@ -349,63 +298,80 @@ class GlyphGridAudioPlayer {
     
     const ctx = getAudioContext()
     
-    // Create new audio nodes
-    const source = ctx.createBufferSource()
-    source.buffer = this.pinkNoiseBuffer
-    source.loop = true
+    // Create a main output gain node
+    this.mainOutputGain = ctx.createGain();
+    this.mainOutputGain.gain.value = 1.0;
     
-    // Create gain node for volume - apply distortion gain
-    const gain = ctx.createGain()
-    gain.gain.value = MASTER_GAIN * this.distortionGain;
-    
-    // Create envelope gain node
-    const envelopeGain = ctx.createGain()
-    envelopeGain.gain.value = ENVELOPE_MAX_GAIN
-    
-    // Create panner node
-    const panner = ctx.createStereoPanner()
-    panner.pan.value = 0 // Start centered
-    
-    // Create filter node (bandpass filter)
-    const filter = ctx.createBiquadFilter()
-    filter.type = 'bandpass'
-    filter.frequency.value = 500 // Default frequency
-    filter.Q.value = 5.0 // Default Q
-    
-    // Connect the audio chain
-    source.connect(gain)
-    gain.connect(envelopeGain)
-    envelopeGain.connect(filter)
-    filter.connect(panner)
-    
-    // If we have an analyzer, connect through it
+    // Create analyzer if needed
+    let analyzerOutput = this.mainOutputGain;
     if (this.preEQAnalyser && this.preEQGain) {
-      panner.connect(this.preEQGain)
-      // preEQGain is already connected to destination and analyzer
+      this.mainOutputGain.connect(this.preEQGain);
+      // preEQGain is already connected to analyzer
     } else {
-      // Connect to EQ processor directly
-      const eq = eqProcessor.getEQProcessor()
-      panner.connect(eq.getInputNode())
+      // Connect main output to EQ processor
+      const eq = eqProcessor.getEQProcessor();
+      this.mainOutputGain.connect(eq.getInputNode());
     }
     
-    // Store the nodes
-    this.audioNodes = {
-      source,
-      gain,
-      envelopeGain,
-      panner,
-      filter
+    // Clear any existing audio nodes
+    this.audioNodeGroups = [];
+    
+    // Create the specified number of audio sources evenly spread along the line
+    for (let i = 0; i < this.numberOfSources; i++) {
+      // Calculate fixed position along the line (0 to 1)
+      const position = i / (this.numberOfSources - 1 || 1);
+      
+      // Create new audio nodes for this source
+      const source = ctx.createBufferSource();
+      source.buffer = this.pinkNoiseBuffer;
+      source.loop = true;
+      
+      // Create gain node for volume - apply distortion gain
+      const gain = ctx.createGain();
+      gain.gain.value = (MASTER_GAIN * this.distortionGain) / Math.sqrt(this.numberOfSources);
+      
+      // Create envelope gain node
+      const envelopeGain = ctx.createGain();
+      envelopeGain.gain.value = 0.0; // Start silent
+      
+      // Create filter node (bandpass filter)
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.Q.value = 5.0; // Default Q
+      
+      // Create panner node
+      const panner = ctx.createStereoPanner();
+      
+      // Connect the audio chain for this source
+      source.connect(gain);
+      gain.connect(envelopeGain);
+      envelopeGain.connect(filter);
+      filter.connect(panner);
+      panner.connect(this.mainOutputGain);
+      
+      // Set the audio parameters based on position
+      this.updateAudioParametersForSource(position, filter, panner);
+      
+      // Start the source
+      source.start();
+      
+      // Add to our array of audio node groups
+      this.audioNodeGroups.push({
+        source,
+        gain,
+        envelopeGain,
+        panner,
+        filter,
+        position
+      });
     }
     
-    // Start the source
-    source.start()
-    
-    // Start the animation loop to update path position
-    this.startAnimationLoop()
+    // Start the animation loop
+    this.startAnimationLoop();
     
     // Start envelope modulation if enabled
     if (this.isModulating) {
-      this.startEnvelopeModulation()
+      this.startEnvelopeModulation();
     }
   }
   
@@ -436,34 +402,26 @@ class GlyphGridAudioPlayer {
       this.preEQAnalyser = null
     }
     
-    if (this.audioNodes.source) {
-      this.audioNodes.source.stop()
-      this.audioNodes.source.disconnect()
-    }
+    // Clean up and disconnect all audio nodes
+    this.audioNodeGroups.forEach(group => {
+      if (group.source) {
+        group.source.stop()
+        group.source.disconnect()
+      }
+      
+      if (group.gain) group.gain.disconnect()
+      if (group.envelopeGain) group.envelopeGain.disconnect()
+      if (group.filter) group.filter.disconnect()
+      if (group.panner) group.panner.disconnect()
+    })
     
-    if (this.audioNodes.gain) {
-      this.audioNodes.gain.disconnect()
-    }
+    // Clear the audio nodes array
+    this.audioNodeGroups = []
     
-    if (this.audioNodes.envelopeGain) {
-      this.audioNodes.envelopeGain.disconnect()
-    }
-    
-    if (this.audioNodes.filter) {
-      this.audioNodes.filter.disconnect()
-    }
-    
-    if (this.audioNodes.panner) {
-      this.audioNodes.panner.disconnect()
-    }
-    
-    // Reset audio nodes
-    this.audioNodes = {
-      source: null,
-      gain: null,
-      envelopeGain: null,
-      panner: null,
-      filter: null
+    // Disconnect main output gain
+    if (this.mainOutputGain) {
+      this.mainOutputGain.disconnect()
+      this.mainOutputGain = null
     }
   }
   
@@ -565,32 +523,41 @@ class GlyphGridAudioPlayer {
     // Calculate interval in milliseconds based on rate
     const intervalMs = 1000 / this.modulationRate
     
+    // Calculate stagger time - spread sources evenly across the entire interval
     const triggerEnvelope = () => {
-      if (!this.audioNodes.envelopeGain) return
-      
       const ctx = getAudioContext()
       const now = ctx.currentTime
       
       // Calculate the minimum gain based on modulation depth
       const minGain = ENVELOPE_MAX_GAIN * (1 - this.modulationDepth)
       
-      // Reset to minimum gain
-      this.audioNodes.envelopeGain.gain.cancelScheduledValues(now)
-      this.audioNodes.envelopeGain.gain.setValueAtTime(minGain, now)
+      // Spread triggers evenly across the interval for maximum staggering
+      const staggerTime = intervalMs / this.numberOfSources
       
-      // Attack phase - quick ramp to max gain
-      this.audioNodes.envelopeGain.gain.linearRampToValueAtTime(
-        ENVELOPE_MAX_GAIN, 
-        now + ENVELOPE_ATTACK_TIME
-      )
-      
-      // Release phase - slower decay back to min gain
-      this.audioNodes.envelopeGain.gain.linearRampToValueAtTime(
-        minGain,
-        now + ENVELOPE_ATTACK_TIME + ENVELOPE_RELEASE_TIME
-      )
-
-      console.log('🔊 Envelope modulation triggered')
+      // Trigger envelope for each source with staggered timing
+      this.audioNodeGroups.forEach((group, index) => {
+        if (!group.envelopeGain) return
+        
+        // Calculate staggered time offset based on source index
+        // Spread triggers evenly across the interval
+        const offsetTime = (staggerTime * index) / 1000 // Convert to seconds
+        
+        // Reset to minimum gain
+        group.envelopeGain.gain.cancelScheduledValues(now + offsetTime)
+        group.envelopeGain.gain.setValueAtTime(minGain, now + offsetTime)
+        
+        // Attack phase - quick ramp to max gain
+        group.envelopeGain.gain.linearRampToValueAtTime(
+          ENVELOPE_MAX_GAIN,
+          now + offsetTime + ENVELOPE_ATTACK_TIME
+        )
+        
+        // Release phase - slower decay back to min gain
+        group.envelopeGain.gain.linearRampToValueAtTime(
+          minGain,
+          now + offsetTime + ENVELOPE_ATTACK_TIME + ENVELOPE_RELEASE_TIME
+        )
+      })
     }
     
     // Trigger immediately then start interval
@@ -604,12 +571,14 @@ class GlyphGridAudioPlayer {
       this.modulationTimerId = null
     }
     
-    // Reset envelope gain to max if available
-    if (this.audioNodes.envelopeGain) {
-      const ctx = getAudioContext()
-      this.audioNodes.envelopeGain.gain.cancelScheduledValues(ctx.currentTime)
-      this.audioNodes.envelopeGain.gain.setValueAtTime(ENVELOPE_MAX_GAIN, ctx.currentTime)
-    }
+    // Reset envelope gain to max if available for all sources
+    const ctx = getAudioContext()
+    this.audioNodeGroups.forEach(group => {
+      if (group.envelopeGain) {
+        group.envelopeGain.gain.cancelScheduledValues(ctx.currentTime)
+        group.envelopeGain.gain.setValueAtTime(ENVELOPE_MAX_GAIN, ctx.currentTime)
+      }
+    })
   }
   
   public dispose(): void {
@@ -662,13 +631,13 @@ class GlyphGridAudioPlayer {
     const preEQGain = ctx.createGain()
     preEQGain.gain.value = 1.0
     
-    // Connect if we're playing and have a source
-    if (this.isPlaying && this.audioNodes.filter && this.audioNodes.panner) {
-      // Disconnect the panner from its current destination
-      this.audioNodes.panner.disconnect()
+    // Connect if we're playing and have sources
+    if (this.isPlaying && this.mainOutputGain) {
+      // Disconnect the main output from its current destination
+      this.mainOutputGain.disconnect()
       
-      // Connect panner -> preEQGain -> analyser and preEQGain -> EQ input
-      this.audioNodes.panner.connect(preEQGain)
+      // Connect main output -> preEQGain -> analyser and preEQGain -> EQ input
+      this.mainOutputGain.connect(preEQGain)
       preEQGain.connect(analyser)
       
       // Connect directly to EQ processor
@@ -694,14 +663,28 @@ class GlyphGridAudioPlayer {
     let frequency = 0;
     let panning = 0;
     
-    // Get values from audio nodes if available
-    if (this.audioNodes.filter) {
-      frequency = this.audioNodes.filter.frequency.value;
+    // If no sources, return defaults
+    if (this.audioNodeGroups.length === 0) {
+      return { frequency, panning };
     }
     
-    if (this.audioNodes.panner) {
-      panning = this.audioNodes.panner.pan.value;
-    }
+    // Sum values from all sources
+    let freqSum = 0;
+    let panSum = 0;
+    
+    this.audioNodeGroups.forEach(group => {
+      if (group.filter) {
+        freqSum += group.filter.frequency.value;
+      }
+      
+      if (group.panner) {
+        panSum += group.panner.pan.value;
+      }
+    });
+    
+    // Calculate average
+    frequency = freqSum / this.audioNodeGroups.length;
+    panning = panSum / this.audioNodeGroups.length;
     
     return { frequency, panning };
   }
@@ -783,12 +766,77 @@ class GlyphGridAudioPlayer {
     // Clamp gain between 0 and 1
     this.distortionGain = Math.max(0, Math.min(1, gain));
     
-    // If playing, apply to active gain node
-    if (this.isPlaying && this.audioNodes.gain) {
-      // Apply directly to the gain node
-      this.audioNodes.gain.gain.value = MASTER_GAIN * this.distortionGain;
+    // If playing, apply to active gain nodes
+    if (this.isPlaying) {
+      this.audioNodeGroups.forEach(group => {
+        if (group.gain) {
+          // Apply distortion gain, divided by sqrt of number of sources to maintain overall volume
+          group.gain.gain.value = (MASTER_GAIN * this.distortionGain) / Math.sqrt(this.numberOfSources);
+        }
+      });
       console.log(`🔊 Glyph Grid distortion gain set to ${this.distortionGain.toFixed(2)}`);
     }
+  }
+  
+  // Add method to set number of sources
+  public setNumberOfSources(count: number): void {
+    this.numberOfSources = Math.max(1, Math.min(12, count));
+    
+    // If playing, restart the sound to apply the new setting
+    if (this.isPlaying) {
+      this.stopSound();
+      this.startSound();
+    }
+  }
+  
+  public getNumberOfSources(): number {
+    return this.numberOfSources;
+  }
+  
+  // New method to update parameters for a single source
+  private updateAudioParametersForSource(position: number, filter: BiquadFilterNode, panner: StereoPannerNode): void {
+    if (!this.currentGlyph) return;
+    
+    // Get the glyph's position and size
+    const { position: glyphPos, size: glyphSize } = this.currentGlyph;
+    
+    // Calculate the actual x and y in normalized space (-1 to 1)
+    const startX = glyphPos.x - glyphSize.width / 2;
+    const startY = glyphPos.y - glyphSize.height / 2;
+    const endX = glyphPos.x + glyphSize.width / 2;
+    const endY = glyphPos.y + glyphSize.height / 2;
+    
+    // Interpolate between start and end points
+    const x = startX + position * (endX - startX);
+    const y = startY + position * (endY - startY);
+    
+    // Map y to frequency (bottom = low, top = high)
+    const minFreq = 20;
+    const maxFreq = 20000;
+    
+    // Properly normalize y from glyph space to full 0-1 range
+    const normalizedY = Math.max(0, Math.min(1, (y + 1) / 2));
+    
+    // Map to logarithmic frequency scale
+    const logMinFreq = Math.log2(minFreq);
+    const logMaxFreq = Math.log2(maxFreq);
+    const logFreqRange = logMaxFreq - logMinFreq;
+    const centerFreq = Math.pow(2, logMinFreq + normalizedY * logFreqRange);
+    
+    // Apply frequency multiplier
+    const adjustedFreq = centerFreq * this.freqMultiplier;
+    
+    // Map x to pan position (-1 to 1)
+    const panPosition = x;
+    
+    // Update the audio nodes with these values
+    filter.frequency.value = adjustedFreq;
+    panner.pan.value = panPosition;
+  }
+  
+  // Add method to get the source positions for visualization
+  public getSourcePositions(): number[] {
+    return this.audioNodeGroups.map(group => group.position);
   }
 }
 
