@@ -110,6 +110,9 @@ class GlyphGridAudioPlayer {
   // Add number of sources property
   private numberOfSources: number = DEFAULT_NUM_SOURCES;
   
+  // Add a base position property that will be used for movement
+  private basePosition: number = 0;
+  
   private constructor() {
     this.generatePinkNoiseBuffer()
     
@@ -203,9 +206,38 @@ class GlyphGridAudioPlayer {
   private updateAudioNodesFromGlyph(): void {
     if (!this.currentGlyph) return
     
-    // Only update the path position for UI purposes,
-    // not source audio parameters
+    // Update the base position and path position
     this.updatePathPosition()
+    
+    // Update all audio node positions based on the new base position
+    if (this.isPlaying) {
+      this.updateMovingAudioNodes()
+    }
+  }
+  
+  // New method to update all audio nodes with moving positions
+  private updateMovingAudioNodes(): void {
+    if (!this.currentGlyph || this.audioNodeGroups.length === 0) return;
+    
+    // Update each audio node group with its new cycling position
+    this.audioNodeGroups.forEach((group, index) => {
+      if (group.filter && group.panner) {
+        // Calculate the offset position for this node
+        // Each node is evenly spaced along the line but cycles
+        const offsetPosition = (this.numberOfSources > 1) 
+          ? index / this.numberOfSources 
+          : 0;
+        
+        // Calculate the wrapped position (0-1) for this source
+        const cycledPosition = (this.basePosition + offsetPosition) % 1.0;
+        
+        // Store the new position
+        group.position = cycledPosition;
+        
+        // Update audio parameters for this source at its new position
+        this.updateAudioParametersForSource(cycledPosition, group.filter, group.panner);
+      }
+    });
   }
   
   private updatePathPosition(): void {
@@ -215,40 +247,18 @@ class GlyphGridAudioPlayer {
     if (this.isManualControl) {
       const position = this.manualPosition
       this.pathPosition = position
+      this.basePosition = position
       return
     }
-    
-    // Store previous position to detect hit crossing
-    const previousPosition = this.pathPosition
     
     // Calculate new position based on playback mode
     if (this.playbackMode === PlaybackMode.SWEEP) {
       // Apply speed factor to the position increment
-      this.pathPosition += 0.005 * this.pathDirection * this.speed
+      this.basePosition = (this.basePosition + 0.005 * this.speed) % 1.0;
+      this.pathPosition = this.basePosition;
       
-      // If using subsection, check subsection boundaries
-      if (this.useSubsection) {
-        // Handle both normal and reversed subsection ranges
-        const min = Math.min(this.subsectionStart, this.subsectionEnd)
-        const max = Math.max(this.subsectionStart, this.subsectionEnd)
-        
-        if (this.pathPosition >= max) {
-          this.pathPosition = max
-          this.pathDirection = -1
-        } else if (this.pathPosition <= min) {
-          this.pathPosition = min
-          this.pathDirection = 1
-        }
-      } else {
-        // Regular full-range behavior
-        if (this.pathPosition >= 1) {
-          this.pathPosition = 1
-          this.pathDirection = -1
-        } else if (this.pathPosition <= 0) {
-          this.pathPosition = 0
-          this.pathDirection = 1
-        }
-      }
+      // The path direction is always forward in cycling mode
+      this.pathDirection = 1;
     } else if (this.playbackMode === PlaybackMode.ALTERNATE) {
       // Alternate mode: jump between start and end points
       const stayDuration = 30 / this.speed // Number of frames to stay at each point
@@ -263,10 +273,12 @@ class GlyphGridAudioPlayer {
         if (this.pathDirection === 1) {
           // We're at start point, move to end
           this.pathPosition = this.useSubsection ? this.subsectionEnd : 1
+          this.basePosition = this.pathPosition;
           this.pathDirection = -1
         } else {
           // We're at end point, move to start
           this.pathPosition = this.useSubsection ? this.subsectionStart : 0
+          this.basePosition = this.pathPosition;
           this.pathDirection = 1
         }
       }
@@ -318,8 +330,11 @@ class GlyphGridAudioPlayer {
     
     // Create the specified number of audio sources evenly spread along the line
     for (let i = 0; i < this.numberOfSources; i++) {
-      // Calculate fixed position along the line (0 to 1)
-      const position = i / (this.numberOfSources - 1 || 1);
+      // Calculate initial position along the line (0 to 1) - evenly spaced
+      const offsetPosition = (this.numberOfSources > 1) ? i / this.numberOfSources : 0;
+      
+      // Calculate the wrapped position (0-1) for this source
+      const cycledPosition = (this.basePosition + offsetPosition) % 1.0;
       
       // Create new audio nodes for this source
       const source = ctx.createBufferSource();
@@ -332,7 +347,7 @@ class GlyphGridAudioPlayer {
       
       // Create envelope gain node
       const envelopeGain = ctx.createGain();
-      envelopeGain.gain.value = 0.0; // Start silent
+      envelopeGain.gain.value = ENVELOPE_MAX_GAIN; // Start at max gain
       
       // Create filter node (bandpass filter)
       const filter = ctx.createBiquadFilter();
@@ -349,8 +364,8 @@ class GlyphGridAudioPlayer {
       filter.connect(panner);
       panner.connect(this.mainOutputGain);
       
-      // Set the audio parameters based on position
-      this.updateAudioParametersForSource(position, filter, panner);
+      // Set the audio parameters based on initial position
+      this.updateAudioParametersForSource(cycledPosition, filter, panner);
       
       // Start the source
       source.start();
@@ -362,7 +377,7 @@ class GlyphGridAudioPlayer {
         envelopeGain,
         panner,
         filter,
-        position
+        position: cycledPosition
       });
     }
     
@@ -523,46 +538,39 @@ class GlyphGridAudioPlayer {
     // Calculate interval in milliseconds based on rate
     const intervalMs = 1000 / this.modulationRate
     
-    // Calculate stagger time - spread sources evenly across the entire interval
-    const triggerEnvelope = () => {
+    // For cycling dots, we want to trigger envelopes continuously
+    const triggerAllEnvelopes = () => {
       const ctx = getAudioContext()
       const now = ctx.currentTime
       
       // Calculate the minimum gain based on modulation depth
       const minGain = ENVELOPE_MAX_GAIN * (1 - this.modulationDepth)
       
-      // Spread triggers evenly across the interval for maximum staggering
-      const staggerTime = intervalMs / this.numberOfSources
-      
-      // Trigger envelope for each source with staggered timing
-      this.audioNodeGroups.forEach((group, index) => {
+      // Apply envelope to all sources
+      this.audioNodeGroups.forEach(group => {
         if (!group.envelopeGain) return
         
-        // Calculate staggered time offset based on source index
-        // Spread triggers evenly across the interval
-        const offsetTime = (staggerTime * index) / 1000 // Convert to seconds
-        
         // Reset to minimum gain
-        group.envelopeGain.gain.cancelScheduledValues(now + offsetTime)
-        group.envelopeGain.gain.setValueAtTime(minGain, now + offsetTime)
+        group.envelopeGain.gain.cancelScheduledValues(now)
+        group.envelopeGain.gain.setValueAtTime(minGain, now)
         
         // Attack phase - quick ramp to max gain
         group.envelopeGain.gain.linearRampToValueAtTime(
           ENVELOPE_MAX_GAIN,
-          now + offsetTime + ENVELOPE_ATTACK_TIME
+          now + ENVELOPE_ATTACK_TIME
         )
         
         // Release phase - slower decay back to min gain
         group.envelopeGain.gain.linearRampToValueAtTime(
           minGain,
-          now + offsetTime + ENVELOPE_ATTACK_TIME + ENVELOPE_RELEASE_TIME
+          now + ENVELOPE_ATTACK_TIME + ENVELOPE_RELEASE_TIME
         )
       })
     }
     
     // Trigger immediately then start interval
-    triggerEnvelope()
-    this.modulationTimerId = window.setInterval(triggerEnvelope, intervalMs)
+    triggerAllEnvelopes()
+    this.modulationTimerId = window.setInterval(triggerAllEnvelopes, intervalMs)
   }
   
   private stopEnvelopeModulation(): void {
