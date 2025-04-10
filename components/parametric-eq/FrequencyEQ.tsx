@@ -11,6 +11,9 @@ import { useEQProcessor, calculateBandResponse } from "./useEQProcessor"
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
 import { EQBand } from "@/lib/models/EQBand"
 import { getReferenceCalibrationAudio } from '@/lib/audio/referenceCalibrationAudio';
+// import { AmplitudeCurveControls } from './AmplitudeCurveControls';
+import { WaveletControlPanel } from '@/components/wavelet-control-panel';
+import { WaveletState } from '@/lib/audio/WaveletState';
 
 interface FrequencyEQProps {
   profileId?: string
@@ -298,7 +301,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
   }, [profile, updateProfile])
   
   // Use EQ interaction
-  const { 
+  const {
     handleMouseMove: handleBandMouseMove, 
     handleMouseDown: handleBandMouseDown, 
     isShiftPressed,
@@ -314,113 +317,6 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     onBandRemove: handleBandRemove,
     onBandSelect: setSelectedBandId,
   })
-  
-  // Custom mouse handlers to support volume control
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!profile || isDraggingVolume) return;
-    
-    // First check if we should update calibration based on modifier keys
-    if (isModifierKeyPressed) {
-      updateCalibrationFromMousePosition(e);
-      // Still allow regular hover behavior
-    }
-    
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    const rect = canvas.getBoundingClientRect();
-    const margin = canvas.margin || 40;
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    
-    // Calculate inner dimensions
-    const innerWidth = rect.width - margin * 2;
-    const innerHeight = rect.height - margin * 2;
-    
-    // Check if we're hovering over the volume control using raw coordinates
-    const isOverVolume = EQBandRenderer.isInVolumeControl(
-      x, y, innerWidth, innerHeight, profile.volume || 0, margin, margin
-    );
-    
-    setIsHoveringVolume(isOverVolume);
-    
-    // If we're not over the volume control, pass to band handler
-    if (!isOverVolume) {
-      handleBandMouseMove(e);
-    } else {
-      // Update cursor based on volume hover
-      document.body.style.cursor = 'pointer';
-    }
-  }, [profile, isDraggingVolume, handleBandMouseMove, isModifierKeyPressed, updateCalibrationFromMousePosition]);
-  
-  // Handle mouse down for volume control
-  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!profile) return;
-    
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    const rect = canvas.getBoundingClientRect();
-    const margin = canvas.margin || 40;
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    
-    // inner dimensions
-    const innerWidth = rect.width - margin * 2;
-    const innerHeight = rect.height - margin * 2;
-    
-    // volume control
-    const isOverVolume = EQBandRenderer.isInVolumeControl(
-      x, y, innerWidth, innerHeight, profile.volume || 0, margin, margin
-    );
-    
-    if (isOverVolume) {
-      setIsDraggingVolume(true);
-      document.body.style.cursor = 'grabbing';
-      
-      // Handle document mouse move to support dragging outside canvas bounds
-      const handleDocumentMouseMove = (e: MouseEvent) => {
-        // If modifier key is pressed during volume dragging, update calibration as well
-        if (isModifierKeyPressed) {
-          updateCalibrationFromMousePosition(e);
-        }
-        
-        const rect = canvas.getBoundingClientRect();
-        const y = e.clientY - rect.top;
-        
-        // Calculate position within the inner area
-        const innerY = Math.max(margin, Math.min(rect.height - margin, y)) - margin;
-        
-        // Calculate new volume using EQCoordinateUtils
-        const newVolume = EQCoordinateUtils.yToGain(innerY, innerHeight);
-        
-        // Update profile volume
-        updateProfile(profile.id, { volume: newVolume });
-      };
-      
-      const handleDocumentMouseUp = () => {
-        setIsDraggingVolume(false);
-        document.body.style.cursor = '';
-        
-        document.removeEventListener('mousemove', handleDocumentMouseMove);
-        document.removeEventListener('mouseup', handleDocumentMouseUp);
-      };
-      
-      document.addEventListener('mousemove', handleDocumentMouseMove);
-      document.addEventListener('mouseup', handleDocumentMouseUp);
-    } else {
-      // Only check if within inner area, but DON'T check disabled state here
-      // to allow band interaction even when EQ is disabled
-      const isWithinInnerArea = 
-        x >= margin && x <= rect.width - margin &&
-        y >= margin && y <= rect.height - margin;
-        
-      if (isWithinInnerArea) {
-        // Always pass to band handler, even when disabled
-        handleBandMouseDown(e);
-      }
-    }
-  }, [handleBandMouseDown, profile, updateProfile, isModifierKeyPressed, updateCalibrationFromMousePosition]);
   
   // Update instruction text based on interaction state
   useEffect(() => {
@@ -843,20 +739,200 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Add wavelet state
+  const [waveletState] = useState(() => new WaveletState());
+  
+  // Load wavelets from profile when it changes
+  useEffect(() => {
+    if (profile && profile.wavelets) {
+      waveletState.importWavelets(profile.wavelets);
+    }
+  }, [profile, waveletState]);
+  
+  // Function to update the EQ bands based on the wavelet curve
+  const applyWaveletToEQBands = useCallback(() => {
+    if (!profile) return;
+    
+    // Clone the current bands from the profile
+    const updatedBands = [...profile.bands];
+    
+    // Update the gain of each band based on the wavelet's value at the band's frequency
+    updatedBands.forEach(band => {
+      // Get the wavelet value at this band's frequency
+      const waveletValue = waveletState.getValueAtFrequency(band.frequency);
+      
+      // Convert the wavelet value (typically -1 to 1) to gain in dB (typically -24 to 24)
+      // The scaling factor of 24 means a wavelet value of 1 corresponds to +24dB
+      const newGain = waveletValue * 24;
+      
+      // Update this band's gain
+      band.gain = newGain;
+    });
+    
+    // Update the profile with the new bands and save the wavelets
+    updateProfile(profile.id, { 
+      bands: updatedBands,
+      wavelets: waveletState.exportWavelets(),
+      lastModified: Date.now()
+    });
+  }, [profile, updateProfile, waveletState]);
+  
+  // Handle wavelet parameter update
+  const handleWaveletUpdate = useCallback((index: number, param: string, value: number) => {
+    // Update the wavelet state
+    waveletState.updateWavelet(index, param as any, value);
+    
+    // Apply changes to EQ bands
+    applyWaveletToEQBands();
+  }, [waveletState, applyWaveletToEQBands]);
+  
+  // Handle adding a new wavelet
+  const handleAddWavelet = useCallback(() => {
+    waveletState.addWavelet();
+    
+    // Save to profile and update EQ
+    applyWaveletToEQBands();
+  }, [waveletState, applyWaveletToEQBands]);
+  
+  // Handle removing a wavelet
+  const handleRemoveWavelet = useCallback((index: number) => {
+    waveletState.removeWavelet(index);
+    
+    // Save to profile and update EQ
+    applyWaveletToEQBands();
+  }, [waveletState, applyWaveletToEQBands]);
+
+  // Custom mouse handlers to support volume control
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!profile || isDraggingVolume) return;
+    
+    // First check if we should update calibration based on modifier keys
+    if (isModifierKeyPressed) {
+      updateCalibrationFromMousePosition(e);
+      // Still allow regular hover behavior
+    }
+    
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    const margin = canvas.margin || 40;
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Calculate inner dimensions
+    const innerWidth = rect.width - margin * 2;
+    const innerHeight = rect.height - margin * 2;
+    
+    // Check if we're hovering over the volume control using raw coordinates
+    const isOverVolume = EQBandRenderer.isInVolumeControl(
+      x, y, innerWidth, innerHeight, profile.volume || 0, margin, margin
+    );
+    
+    setIsHoveringVolume(isOverVolume);
+    
+    // If we're not over the volume control, pass to band handler
+    if (!isOverVolume) {
+      handleBandMouseMove(e);
+    } else {
+      // Update cursor based on volume hover
+      document.body.style.cursor = 'pointer';
+    }
+  }, [profile, isDraggingVolume, handleBandMouseMove, isModifierKeyPressed, updateCalibrationFromMousePosition]);
+  
+  // Handle mouse down for volume control
+  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!profile) return;
+    
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    const margin = canvas.margin || 40;
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // inner dimensions
+    const innerWidth = rect.width - margin * 2;
+    const innerHeight = rect.height - margin * 2;
+    
+    // volume control
+    const isOverVolume = EQBandRenderer.isInVolumeControl(
+      x, y, innerWidth, innerHeight, profile.volume || 0, margin, margin
+    );
+    
+    if (isOverVolume) {
+      setIsDraggingVolume(true);
+      document.body.style.cursor = 'grabbing';
+      
+      // Handle document mouse move to support dragging outside canvas bounds
+      const handleDocumentMouseMove = (e: MouseEvent) => {
+        // If modifier key is pressed during volume dragging, update calibration as well
+        if (isModifierKeyPressed) {
+          updateCalibrationFromMousePosition(e);
+        }
+        
+        const rect = canvas.getBoundingClientRect();
+        const y = e.clientY - rect.top;
+        
+        // Calculate position within the inner area
+        const innerY = Math.max(margin, Math.min(rect.height - margin, y)) - margin;
+        
+        // Calculate new volume using EQCoordinateUtils
+        const newVolume = EQCoordinateUtils.yToGain(innerY, innerHeight);
+        
+        // Update profile volume
+        updateProfile(profile.id, { volume: newVolume });
+      };
+      
+      const handleDocumentMouseUp = () => {
+        setIsDraggingVolume(false);
+        document.body.style.cursor = '';
+        
+        document.removeEventListener('mousemove', handleDocumentMouseMove);
+        document.removeEventListener('mouseup', handleDocumentMouseUp);
+      };
+      
+      document.addEventListener('mousemove', handleDocumentMouseMove);
+      document.addEventListener('mouseup', handleDocumentMouseUp);
+    } else {
+      // Only check if within inner area, but DON'T check disabled state here
+      // to allow band interaction even when EQ is disabled
+      const isWithinInnerArea = 
+        x >= margin && x <= rect.width - margin &&
+        y >= margin && y <= rect.height - margin;
+        
+      if (isWithinInnerArea) {
+        // Always pass to band handler, even when disabled
+        handleBandMouseDown(e);
+      }
+    }
+  }, [handleBandMouseDown, profile, updateProfile, isModifierKeyPressed, updateCalibrationFromMousePosition]);
+
   return (
-    <div
-      className={`w-full aspect-[2/1] frequency-graph rounded-lg border dark:border-gray-700 overflow-hidden opacity-80 ${className || ""} relative`}
-    >
-      <canvas 
-        ref={backgroundCanvasRef}
-        className="w-full h-full absolute top-0 left-0 z-0"
-      />
-      <canvas 
-        ref={canvasRef} 
-        className="w-full h-full absolute top-0 left-0 z-10"
-        onMouseMove={handleMouseMove}
-        onMouseDown={handleMouseDown}
-        onContextMenu={(e) => e.preventDefault()}
+    <div className="space-y-4">
+      <div
+        className={`w-full aspect-[2/1] frequency-graph rounded-lg border dark:border-gray-700 overflow-hidden opacity-80 ${className || ""} relative`}
+      >
+        <canvas 
+          ref={backgroundCanvasRef}
+          className="w-full h-full absolute top-0 left-0 z-0"
+        />
+        <canvas 
+          ref={canvasRef} 
+          className="w-full h-full absolute top-0 left-0 z-10"
+          onMouseMove={handleMouseMove}
+          onMouseDown={handleMouseDown}
+          onContextMenu={(e) => e.preventDefault()}
+        />
+      </div>
+      
+      {/* Replace AmplitudeCurveControls with WaveletControlPanel */}
+      <WaveletControlPanel 
+        waveletState={waveletState}
+        onWaveletUpdate={handleWaveletUpdate}
+        onAddWavelet={handleAddWavelet}
+        onRemoveWavelet={handleRemoveWavelet}
       />
     </div>
   )

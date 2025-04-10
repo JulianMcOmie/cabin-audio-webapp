@@ -9,7 +9,7 @@ const COLUMNS = 5; // Always 5 panning positions - match the value in dot-grid.t
 // Envelope settings
 const ENVELOPE_MIN_GAIN = 0.0; // Minimum gain during envelope cycle
 const ENVELOPE_MAX_GAIN = 1.0; // Maximum gain during envelope cycle
-const ENVELOPE_ATTACK = 0.002; // Faster attack time in seconds - for very punchy transients
+const ENVELOPE_ATTACK = 0.00; // Faster attack time in seconds - for very punchy transients
 const ENVELOPE_RELEASE_LOW_FREQ = 0.2; // Release time for lowest frequencies (seconds)
 const ENVELOPE_RELEASE_HIGH_FREQ = 0.02; // Release time for highest frequencies (seconds)
 const MASTER_GAIN = 6.0; // Much louder master gain for calibration
@@ -19,24 +19,34 @@ const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
 const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
 
 // Volume pattern settings
-const VOLUME_PATTERN = [0, -12, -6, -12]; // The fixed pattern in dB: 0dB, -12dB, -6dB, -12dB
+const VOLUME_PATTERN = [0]; // The fixed pattern in dB: 0dB, -12dB, -6dB, -12dB
+
+// Sound source type enum
+export enum SoundSourceType {
+  NOISE = 'noise',
+  SINE = 'sine'
+}
 
 class DotGridAudioPlayer {
   private static instance: DotGridAudioPlayer;
   private pinkNoiseBuffer: AudioBuffer | null = null;
   private isPlaying: boolean = false;
   private audioNodes: Map<string, {
-    source: AudioBufferSourceNode;
+    source: AudioBufferSourceNode | OscillatorNode;
     gain: GainNode;
     envelopeGain: GainNode;
     panner: StereoPannerNode;
     filter: BiquadFilterNode;
     position: number; // Position for sorting
+    frequency: number; // Store frequency for each node
   }> = new Map();
   private gridSize: number = 3; // Default row count
   private columnCount: number = COLUMNS; // Default column count
   private preEQAnalyser: AnalyserNode | null = null; // Pre-EQ analyzer node
   private preEQGain: GainNode | null = null; // Gain node for connecting all sources to analyzer
+  
+  // Add sound source type variable
+  private soundSourceType: SoundSourceType = SoundSourceType.SINE;
   
   // Animation frame properties
   private animationFrameId: number | null = null;
@@ -70,6 +80,29 @@ class DotGridAudioPlayer {
       DotGridAudioPlayer.instance = new DotGridAudioPlayer();
     }
     return DotGridAudioPlayer.instance;
+  }
+
+  /**
+   * Set sound source type (sine or noise)
+   */
+  public setSoundSourceType(type: SoundSourceType): void {
+    if (this.soundSourceType === type) return;
+    
+    this.soundSourceType = type;
+    console.log(`🔊 Set sound source type to: ${type}`);
+    
+    // If playing, restart all sources with new type
+    if (this.isPlaying) {
+      this.stopAllSources();
+      this.startAllSources();
+    }
+  }
+  
+  /**
+   * Get current sound source type
+   */
+  public getSoundSourceType(): SoundSourceType {
+    return this.soundSourceType;
   }
 
   /**
@@ -305,16 +338,6 @@ class DotGridAudioPlayer {
       this.stopAllSources();
       this.startAllSources();
       this.startAllRhythms();
-      
-    //   // If we just added the first dot, trigger it immediately without delay
-    //   if (isAddingFirstDot) {
-    //     const firstDotKey = Array.from(dots)[0];
-    //     if (this.audioNodes.has(firstDotKey)) {
-    //       // Use the current pattern volume
-    //       const volumeDb = this.baseDbLevel + VOLUME_PATTERN[this.volumePatternIndex];
-    //       this.triggerDotEnvelope(firstDotKey, volumeDb);
-    //     }
-    //   }
     }
   }
 
@@ -455,8 +478,8 @@ class DotGridAudioPlayer {
   private startAllSources(): void {
     const ctx = audioContext.getAudioContext();
     
-    // Make sure we have pink noise buffer
-    if (!this.pinkNoiseBuffer) {
+    // Make sure we have pink noise buffer if using noise
+    if (this.soundSourceType === SoundSourceType.NOISE && !this.pinkNoiseBuffer) {
       this.generatePinkNoiseBuffer();
       return;
     }
@@ -478,33 +501,61 @@ class DotGridAudioPlayer {
     // Start each source with the determined destination
     this.audioNodes.forEach((nodes, dotKey) => {
       try {
-        // Create a new source
-        const source = ctx.createBufferSource();
-        source.buffer = this.pinkNoiseBuffer;
-        source.loop = true;
-        
-        // Connect the audio chain - simple bandpass approach
-        // source -> filter -> panner -> envelopeGain -> gain -> destinationNode
-        source.connect(nodes.filter);
-        nodes.filter.connect(nodes.panner);
-        nodes.panner.connect(nodes.envelopeGain);
-        nodes.envelopeGain.connect(nodes.gain);
-        
-        // Apply the distortion gain to each individual node's gain
-        // Initial gain value - will be modified by volumeDb in triggerDotEnvelope
-        nodes.gain.gain.value = MASTER_GAIN * this.distortionGain;
-        
-        // Connect to the single determined destination point
-        nodes.gain.connect(destinationNode);
-        
-        // Start with gain at minimum (silent)
-        nodes.envelopeGain.gain.value = ENVELOPE_MIN_GAIN;
-        
-        // Start playback
-        source.start();
-        
-        // Store the new source
-        nodes.source = source;
+        if (this.soundSourceType === SoundSourceType.NOISE) {
+          // Create a new noise source
+          const source = ctx.createBufferSource();
+          source.buffer = this.pinkNoiseBuffer;
+          source.loop = true;
+          
+          // Connect the audio chain - simple bandpass approach
+          // source -> filter -> panner -> envelopeGain -> gain -> destinationNode
+          source.connect(nodes.filter);
+          nodes.filter.connect(nodes.panner);
+          nodes.panner.connect(nodes.envelopeGain);
+          nodes.envelopeGain.connect(nodes.gain);
+          
+          // Apply the distortion gain to each individual node's gain
+          // Initial gain value - will be modified by volumeDb in triggerDotEnvelope
+          nodes.gain.gain.value = MASTER_GAIN * this.distortionGain;
+          
+          // Connect to the single determined destination point
+          nodes.gain.connect(destinationNode);
+          
+          // Start with gain at minimum (silent)
+          nodes.envelopeGain.gain.value = ENVELOPE_MIN_GAIN;
+          
+          // Start playback
+          source.start();
+          
+          // Store the new source
+          nodes.source = source;
+        } else {
+          // Create a sine oscillator
+          const oscillator = ctx.createOscillator();
+          oscillator.type = 'sine';
+          oscillator.frequency.value = nodes.frequency;
+          
+          // Connect directly without the filter since we control frequency directly
+          // oscillator -> panner -> envelopeGain -> gain -> destinationNode
+          oscillator.connect(nodes.panner);
+          nodes.panner.connect(nodes.envelopeGain);
+          nodes.envelopeGain.connect(nodes.gain);
+          
+          // Apply the distortion gain
+          nodes.gain.gain.value = MASTER_GAIN * this.distortionGain * 0.5; // Lower gain for sine to avoid clipping
+          
+          // Connect to destination
+          nodes.gain.connect(destinationNode);
+          
+          // Start with gain at minimum (silent)
+          nodes.envelopeGain.gain.value = ENVELOPE_MIN_GAIN;
+          
+          // Start the oscillator
+          oscillator.start();
+          
+          // Store the new source
+          nodes.source = oscillator;
+        }
       } catch (e) {
         console.error(`Error starting source for dot ${dotKey}:`, e);
       }
@@ -518,7 +569,7 @@ class DotGridAudioPlayer {
     this.audioNodes.forEach((nodes, dotKey) => {
       try {
         if (nodes.source) {
-          // Add a property to track if the source has been started
+          // Stop the source
           nodes.source.stop();
           nodes.source.disconnect();
         }
@@ -541,8 +592,10 @@ class DotGridAudioPlayer {
     const now = ctx.currentTime;
     
     // Calculate release time based on frequency
-    // Get the center frequency from the filter
-    const centerFreq = nodes.filter.frequency.value;
+    // Get the center frequency - either from filter or stored frequency
+    const centerFreq = this.soundSourceType === SoundSourceType.NOISE 
+      ? nodes.filter.frequency.value 
+      : nodes.frequency;
     
     // Calculate normalized frequency position (0 to 1) on logarithmic scale
     // Using 20Hz and 20kHz as reference points for human hearing range
@@ -565,9 +618,13 @@ class DotGridAudioPlayer {
     // Convert dB to gain ratio (0dB = 1.0)
     const gainRatio = Math.pow(10, volumeDb / 20);
     
-    // Apply to this node's gain
+    // Apply to this node's gain - use lower base gain for sine tones
+    const baseGain = this.soundSourceType === SoundSourceType.NOISE 
+      ? MASTER_GAIN 
+      : MASTER_GAIN * 0.5;
+    
     nodes.gain.gain.cancelScheduledValues(now);
-    nodes.gain.gain.setValueAtTime(MASTER_GAIN * this.distortionGain * gainRatio, now);
+    nodes.gain.gain.setValueAtTime(baseGain * this.distortionGain * gainRatio, now);
     
     // Reset envelope to minimum gain
     nodes.envelopeGain.gain.cancelScheduledValues(now);
@@ -639,6 +696,7 @@ class DotGridAudioPlayer {
       panner,
       filter,
       position: y * this.columnCount + x, // Store position for sorting
+      frequency: centerFreq, // Store frequency for sine oscillator usage
     });
   }
   

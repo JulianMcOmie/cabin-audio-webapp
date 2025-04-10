@@ -135,7 +135,7 @@ const DEFAULT_COLUMNS = 5; // Default number of columns (odd)
 const MIN_COLUMNS = 3; // Minimum columns (odd)
 const MAX_COLUMNS = 15; // Maximum columns (odd)
 const MIN_ROWS = 3; // Minimum rows (odd)
-const MAX_ROWS = 15; // Maximum rows (odd)
+const MAX_ROWS = 25; // Maximum rows (odd)
 const BASE_DOT_RADIUS = 6; // Base dot size, will be adjusted as needed
 
 // New DotGrid component with multiple selection support

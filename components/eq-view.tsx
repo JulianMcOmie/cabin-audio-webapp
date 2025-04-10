@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { HelpCircle, Play, Power, Volume2, Sliders } from "lucide-react"
+import { HelpCircle, Play, Power, Volume2, Sliders, Waves } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { FrequencyGraph } from "@/components/frequency-graph"
 import { EQProfiles } from "@/components/eq-profiles"
@@ -21,6 +21,7 @@ import { DotCalibration } from "@/components/dot-grid"
 import { GlyphGrid } from "@/components/glyph-grid"
 import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 interface EQViewProps {
 //   isPlaying: boolean
@@ -41,7 +42,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     getProfiles,
     getActiveProfile,
     setActiveProfile,
-    addProfile 
+    addProfile,
+    updateProfile
   } = useEQProfileStore()
   
   // Get the player state to control music playback
@@ -53,7 +55,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   
   // Track the selected profile ID
   const [selectedProfileId, setSelectedProfileId] = useState<string>("")
-  
+
 //   const [activeTab, setActiveTab] = useState("eq")
   const [showLoginModal, setShowLoginModal] = useState(false)
   const [showSignupModal, setShowSignupModal] = useState(false)
