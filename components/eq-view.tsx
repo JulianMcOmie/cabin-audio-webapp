@@ -8,6 +8,7 @@ import { EQProfiles } from "@/components/eq-profiles"
 import { EQCalibrationModal } from "@/components/eq-calibration-modal"
 import { LoginModal } from "@/components/login-modal"
 import { SignupModal } from "@/components/signup-modal"
+import { AutoCalibrationModal } from "@/components/auto-calibration-modal"
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
 import { usePlayerStore } from "@/lib/stores"
 import { Slider } from "@/components/ui/slider"
@@ -84,6 +85,9 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   
   // Add state to track if the device is mobile
   const [isMobile, setIsMobile] = useState(false)
+
+  // Add state for the auto-calibration modal
+  const [showAutoCalibrateModal, setShowAutoCalibrateModal] = useState(false);
 
   // Detect mobile devices
   useEffect(() => {
@@ -270,9 +274,6 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     setEQEnabled(!isEQEnabled);
   };
 
-  // Comment out auto-calibration related state
-  // const [showCalibrationProcess, setShowCalibrationProcess] = useState(false)
-
   // Add a function to handle dot grid play/stop
   const handleDotGridPlayToggle = () => {
     if (dotGridPlaying) {
@@ -323,14 +324,15 @@ export function EQView({ setEqEnabled }: EQViewProps) {
           </div>
         </div>
         <div className="flex gap-2">
-          {/* Comment out the Auto-Calibrate EQ button */}
-          {/* <Button 
-            className="bg-electric-blue hover:bg-electric-blue/90 text-white" 
-            onClick={startCalibration}
+          {/* Auto-Calibrate Button */}
+          <Button
+            className="bg-teal-500 hover:bg-teal-600 text-white"
+            onClick={() => setShowAutoCalibrateModal(true)}
           >
             <Sliders className="mr-2 h-5 w-5" />
             Auto-Calibrate EQ
-          </Button> */}
+          </Button>
+          {/* Tutorial Button */}
           <Button variant="outline" onClick={() => setShowCalibrationModal(true)}>
             <HelpCircle className="mr-2 h-5 w-5" />
             Tutorial
@@ -563,6 +565,12 @@ export function EQView({ setEqEnabled }: EQViewProps) {
       <EQCalibrationModal open={showCalibrationModal} onClose={() => setShowCalibrationModal(false)} />
       <LoginModal open={showLoginModal} onClose={() => setShowLoginModal(false)} />
       <SignupModal open={showSignupModal} onClose={() => setShowSignupModal(false)} />
+      {/* Render the AutoCalibrationModal */}
+      <AutoCalibrationModal
+        open={showAutoCalibrateModal}
+        onClose={() => setShowAutoCalibrateModal(false)}
+        // Pass necessary props later for EQ updates and audio control
+      />
     </div>
   )
 }
