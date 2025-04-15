@@ -24,24 +24,21 @@ export function AutoCalibrationModal({ open, onClose }: AutoCalibrationModalProp
   // Access the EQ profile store
   const { getActiveProfile, updateProfile } = useEQProfileStore(); // Removed addBand
 
+  // Effect for modal open/close and initial step setup
   useEffect(() => {
     if (open) {
       calibration.reset();
-      newBandIdRef.current = null; // Reset new band ID on open
+      newBandIdRef.current = null;
       const step = calibration.getCurrentStep();
+      // Set the first step - the effect below will handle initial band creation
       setCurrentStep(step);
       if (step) {
+        // Set initial slider value for the first step
         const initialVal = step.initialValue ?? (step.controlRange[0] + step.controlRange[1]) / 2;
         setCurrentValue(initialVal);
         audioPlayer.startNoiseSources(step.noiseSources);
         console.log("Starting step:", step);
-
-        // Pre-create band if step targets 'new'
-        if (step.targetBandIndex === 'new') {
-            handleValueChange([initialVal], true); // Trigger initial band creation
-        }
       } else {
-         // No steps defined
          console.warn("AutoCalibration: No calibration steps found.");
          audioPlayer.stopNoiseSources();
       }
@@ -50,40 +47,52 @@ export function AutoCalibrationModal({ open, onClose }: AutoCalibrationModalProp
       console.log("Closing calibration modal, stopping audio.");
     }
 
-    // Cleanup function
+    // Cleanup function for modal close
     return () => {
-      if (open) { // Ensure cleanup only happens when modal was open
+      if (!open) { // Only stop audio if modal is actually closing
          audioPlayer.stopNoiseSources();
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, calibration]); // Audio player instance is stable, addBand/updateProfile/getActiveProfile are stable
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, calibration]); // Only run when modal open state changes
+
+  // Effect for handling initial band creation when the step changes
+  useEffect(() => {
+    // Only run if the modal is open and we have a valid current step
+    if (open && currentStep) {
+      // Check if the *current* step requires creating a new band 
+      // and we haven't created one for this step instance yet (using newBandIdRef)
+      if (currentStep.targetBandIndex === 'new' && !newBandIdRef.current) {
+        // Use the current step's initial value for the slider
+        const initialVal = currentStep.initialValue ?? (currentStep.controlRange[0] + currentStep.controlRange[1]) / 2;
+        // Trigger band creation using the confirmed current step data
+        console.log(`useEffect[currentStep]: Triggering initial band creation for Step ID = ${currentStep.id}`);
+        handleValueChange([initialVal], true);
+      }
+    }
+  // Trigger this effect when the currentStep changes *after* the modal is open
+  }, [open, currentStep]); 
 
   const handleNextStep = () => {
-    // Value is already applied live by handleValueChange
-    // We just need to advance the step and manage audio
-    audioPlayer.stopNoiseSources(); // Stop audio for the completed step
-    newBandIdRef.current = null; // Reset new band ID for the next step
+    audioPlayer.stopNoiseSources();
+    newBandIdRef.current = null;
 
     const hasNext = calibration.nextStep();
     if (hasNext) {
       const nextStep = calibration.getCurrentStep();
+      // Set the state for the next step
       setCurrentStep(nextStep);
       if (nextStep) {
+        // Set the slider value for the next step
         const initialVal = nextStep.initialValue ?? (nextStep.controlRange[0] + nextStep.controlRange[1]) / 2;
         setCurrentValue(initialVal);
+        // Start audio for the next step
         audioPlayer.startNoiseSources(nextStep.noiseSources);
         console.log("Moving to next step:", nextStep);
-
-        // Pre-create band if next step targets 'new'
-        if (nextStep.targetBandIndex === 'new') {
-            handleValueChange([initialVal], true); // Trigger initial band creation for new step
-        }
       }
     } else {
-      // Calibration finished
       console.log("Auto-calibration finished.");
-      onClose(); // Close the modal
+      onClose();
     }
   };
 
@@ -92,6 +101,13 @@ export function AutoCalibrationModal({ open, onClose }: AutoCalibrationModalProp
     setCurrentValue(newValue);
 
     if (!currentStep) return;
+
+    // --- DEBUG LOGGING START ---
+    console.log(`handleValueChange: Step ID = ${currentStep.id}, isInitialSetup = ${isInitialSetup}`);
+    console.log(`  > ParameterToControl: ${currentStep.parameterToControl}`);
+    console.log(`  > NewValue (from slider/initial): ${newValue}`);
+    console.log(`  > TargetBandIndex: ${currentStep.targetBandIndex}`);
+    // --- DEBUG LOGGING END ---
 
     const activeProfile = getActiveProfile();
     if (!activeProfile) {
@@ -110,12 +126,22 @@ export function AutoCalibrationModal({ open, onClose }: AutoCalibrationModalProp
             targetBandId = newBandIdRef.current;
             bandIndex = updatedBands.findIndex(b => b.id === targetBandId);
         } else {
-            // Create a new band object
+            // Use initial values from the step definition, with defaults if not provided
+            const initialFrequency = currentStep.initialNewBandFrequency ?? 1000;
+            const initialGain = currentStep.initialNewBandGain ?? 0;
+            const initialQ = currentStep.initialNewBandQ ?? 1;
+            
+            // --- DEBUG LOGGING START (New Band Creation) ---
+            console.log(`  > Creating New Band: initialFreq=${initialFrequency}, initialGain=${initialGain}, initialQ=${initialQ}`);
+            console.log(`     >> Control Param: ${currentStep.parameterToControl}, NewValue: ${newValue}`);
+            // --- DEBUG LOGGING END ---
+
+            // Create a new band object using step definition initials, overriding with the controlled value
             const newBand: EQBand = {
                 id: uuidv4(),
-                frequency: currentStep.parameterToControl === 'frequency' ? newValue : 1000,
-                gain: currentStep.parameterToControl === 'gain' ? newValue : 0,
-                q: currentStep.parameterToControl === 'q' ? newValue : 1,
+                frequency: currentStep.parameterToControl === 'frequency' ? newValue : initialFrequency,
+                gain: currentStep.parameterToControl === 'gain' ? newValue : initialGain,
+                q: currentStep.parameterToControl === 'q' ? newValue : initialQ,
                 type: 'peaking'
             };
             // Add the new band to the array for update
@@ -124,7 +150,6 @@ export function AutoCalibrationModal({ open, onClose }: AutoCalibrationModalProp
             newBandIdRef.current = targetBandId; // Store the ID for this step
             bandIndex = updatedBands.length - 1; // New band is at the end
             profileNeedsUpdate = true; // Profile needs update because we added a band
-            console.log(`AutoCalibration: Prepared new band ${targetBandId} for step ${currentStep.id}`);
             // If initial setup, we only add the band, no parameter update needed yet
             if (isInitialSetup) {
                  updateProfile(activeProfile.id, { bands: updatedBands });
@@ -146,6 +171,11 @@ export function AutoCalibrationModal({ open, onClose }: AutoCalibrationModalProp
         // Get a mutable copy of the band to update
         const bandToUpdate = { ...updatedBands[bandIndex] };
         let parameterChanged = false;
+
+        // --- DEBUG LOGGING START (Existing Band Update) ---
+        console.log(`  > Updating Existing Band ${targetBandId} (Index ${bandIndex}):`);
+        console.log(`     >> Control Param: ${currentStep.parameterToControl}, NewValue: ${newValue}`);
+        // --- DEBUG LOGGING END ---
 
         // Update the specific parameter
         if (currentStep.parameterToControl === 'frequency' && bandToUpdate.frequency !== newValue) {
