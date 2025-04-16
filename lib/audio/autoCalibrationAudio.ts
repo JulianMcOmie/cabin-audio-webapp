@@ -6,23 +6,30 @@ import { NoiseSourceConfig } from '../calibration/AutoCalibration';
 // Master gain specifically for calibration noise
 const MASTER_GAIN = 0.5; // Relatively quiet constant noise
 
+// Pulsing parameters (adjust as needed)
+const PULSE_INTERVAL = 1.0; // seconds (total cycle time)
+const PULSE_ON_DURATION = 0.3; // seconds (how long the sound is at full volume)
+const PULSE_ATTACK_TIME = 0.05; // seconds
+const PULSE_RELEASE_TIME = 0.1; // seconds
+
 interface ActiveNoiseSource {
   source: AudioBufferSourceNode;
   filter: BiquadFilterNode;
   panner: StereoPannerNode;
-  gain: GainNode;
+  mainGain: GainNode; // Renamed from gain
+  pulseGain?: GainNode; // For the pulse envelope
+  lfo?: OscillatorNode; // LFO for pulsing
+  lfoShaper?: WaveShaperNode; // To shape LFO output into envelope
+  lfoOffset?: ConstantSourceNode; // To make envelope 0-1
 }
 
 class AutoCalibrationAudioPlayer {
   private static instance: AutoCalibrationAudioPlayer;
-  private pinkNoiseBuffer: AudioBuffer | null = null;
   private isPlaying: boolean = false;
   private activeNodes: ActiveNoiseSource[] = [];
   private distortionGain: number = 1.0;
 
   private constructor() {
-    this.generatePinkNoiseBuffer();
-
     // Apply initial distortion gain from store
     const initialDistortionGain = useEQProfileStore.getState().distortionGain;
     this.setDistortionGain(initialDistortionGain);
@@ -42,78 +49,131 @@ class AutoCalibrationAudioPlayer {
     return AutoCalibrationAudioPlayer.instance;
   }
 
-  private async generatePinkNoiseBuffer(): Promise<void> {
-    // Reusing the pink noise generation logic (consider extracting to a common utility)
-    const ctx = audioContext.getAudioContext();
-    const bufferSize = ctx.sampleRate * 2; // 2 seconds
-    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-
-    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
-    for (let i = 0; i < bufferSize; i++) {
-      const white = Math.random() * 2 - 1;
-      b0 = 0.99886 * b0 + white * 0.0555179;
-      b1 = 0.99332 * b1 + white * 0.0750759;
-      b2 = 0.96900 * b2 + white * 0.1538520;
-      b3 = 0.86650 * b3 + white * 0.3104856;
-      b4 = 0.55000 * b4 + white * 0.5329522;
-      b5 = -0.7616 * b5 - white * 0.0168980;
-      b6 = white * 0.5362;
-      data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6) * 0.11;
-    }
-
-    let peak = 0;
-    for (let i = 0; i < bufferSize; i++) {
-      const abs = Math.abs(data[i]);
-      if (abs > peak) peak = abs;
-    }
-    const normalizationFactor = peak > 0.8 ? 0.8 / peak : 1.0;
-    for (let i = 0; i < bufferSize; i++) {
-      data[i] *= normalizationFactor;
-    }
-
-    this.pinkNoiseBuffer = buffer;
-    console.log("Pink noise buffer generated for auto-calibration.");
-  }
-
   public startNoiseSources(sources: NoiseSourceConfig[]): void {
     if (this.isPlaying) {
-      this.stopNoiseSources(); // Stop existing sources before starting new ones
-    }
-    if (!this.pinkNoiseBuffer) {
-      console.error("Pink noise buffer not ready for calibration audio.");
-      return;
+      this.stopNoiseSources();
     }
 
     const ctx = audioContext.getAudioContext();
     const eqInput = eqProcessor.getEQProcessor().getInputNode();
+    const now = ctx.currentTime;
 
     this.activeNodes = sources.map(config => {
+      // Generate a unique buffer for each source
+      const bufferSize = ctx.sampleRate * 2; // 2 seconds (can adjust duration)
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+
+      // Pink noise generation logic (moved inside the loop)
+      let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+      for (let i = 0; i < bufferSize; i++) {
+        const white = Math.random() * 2 - 1;
+        b0 = 0.99886 * b0 + white * 0.0555179;
+        b1 = 0.99332 * b1 + white * 0.0750759;
+        b2 = 0.96900 * b2 + white * 0.1538520;
+        b3 = 0.86650 * b3 + white * 0.3104856;
+        b4 = 0.55000 * b4 + white * 0.5329522;
+        b5 = -0.7616 * b5 - white * 0.0168980;
+        b6 = white * 0.5362;
+        data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6) * 0.11;
+      }
+      // Normalize the buffer (optional but good practice)
+      let peak = 0;
+      for (let i = 0; i < bufferSize; i++) {
+          const abs = Math.abs(data[i]);
+          if (abs > peak) peak = abs;
+      }
+      const normalizationFactor = peak > 0.8 ? 0.8 / peak : 1.0; // Avoid clipping but don't boost too much
+      for (let i = 0; i < bufferSize; i++) {
+          data[i] *= normalizationFactor;
+      }
+
       const source = ctx.createBufferSource();
-      source.buffer = this.pinkNoiseBuffer;
-      source.loop = true;
+      // Assign the newly generated unique buffer
+      source.buffer = buffer;
+      source.loop = true; // Loop this unique buffer
 
       const filter = ctx.createBiquadFilter();
       filter.type = 'bandpass';
       filter.frequency.value = config.centerFrequency;
-      filter.Q.value = config.bandwidth; // Assuming bandwidth directly maps to Q
+      filter.Q.value = config.bandwidth;
 
       const panner = ctx.createStereoPanner();
       panner.pan.value = config.position;
 
-      const gain = ctx.createGain();
-      // Apply master gain and distortion gain
-      gain.gain.value = MASTER_GAIN * this.distortionGain;
+      // Main gain for overall level and distortion control
+      const mainGain = ctx.createGain();
+      mainGain.gain.value = MASTER_GAIN * this.distortionGain;
 
-      // Connect chain: Source -> Filter -> Panner -> Gain -> EQ Input
-      source.connect(filter);
-      filter.connect(panner);
-      panner.connect(gain);
-      gain.connect(eqInput);
+      const isPulsing = config.pulsing ?? false;
+      const pulseDelay = config.pulseDelay ?? 0;
+      const startTime = now + pulseDelay;
 
-      source.start();
+      let activeNode: ActiveNoiseSource = { source, filter, panner, mainGain };
 
-      return { source, filter, panner, gain };
+      if (isPulsing) {
+        // --- Pulsing Setup ---
+        const pulseGain = ctx.createGain();
+        pulseGain.gain.value = 0; // Start silent
+
+        // LFO generates a sawtooth wave (-1 to 1) to control the timing
+        const lfo = ctx.createOscillator();
+        lfo.type = 'sawtooth';
+        lfo.frequency.value = 1 / PULSE_INTERVAL;
+
+        // Use WaveShaper to create the envelope shape from the LFO
+        const pulseCurve = new Float32Array(256);
+        const attackSamples = Math.floor(pulseCurve.length * (PULSE_ATTACK_TIME / PULSE_INTERVAL));
+        const onSamples = Math.floor(pulseCurve.length * (PULSE_ON_DURATION / PULSE_INTERVAL));
+        const releaseSamples = Math.floor(pulseCurve.length * (PULSE_RELEASE_TIME / PULSE_INTERVAL));
+
+        for (let i = 0; i < pulseCurve.length; i++) {
+            if (i < attackSamples) {
+                // Attack ramp (linear)
+                pulseCurve[i] = i / attackSamples;
+            } else if (i < attackSamples + onSamples) {
+                // Hold phase
+                pulseCurve[i] = 1;
+            } else if (i < attackSamples + onSamples + releaseSamples) {
+                 // Release ramp (linear)
+                pulseCurve[i] = 1 - ( (i - (attackSamples + onSamples)) / releaseSamples );
+            } else {
+                // Off phase
+                pulseCurve[i] = 0;
+            }
+        }
+
+        const lfoShaper = ctx.createWaveShaper();
+        lfoShaper.curve = pulseCurve;
+        lfoShaper.oversample = 'none'; // Or '2x'/'4x' if needed
+
+        // Connect LFO -> Shaper -> pulseGain.gain Param
+        lfo.connect(lfoShaper);
+        lfoShaper.connect(pulseGain.gain);
+
+        // Connect audio path: Source -> Filter -> Panner -> pulseGain -> mainGain -> EQ
+        source.connect(filter);
+        filter.connect(panner);
+        panner.connect(pulseGain);
+        pulseGain.connect(mainGain);
+        mainGain.connect(eqInput);
+
+        lfo.start(startTime); // Start LFO with the specified delay
+        source.start(startTime); // Start audio source at the same time
+
+        activeNode = { ...activeNode, pulseGain, lfo, lfoShaper };
+        // --- End Pulsing Setup ---
+
+      } else {
+        // Non-pulsing: Connect directly to mainGain
+        source.connect(filter);
+        filter.connect(panner);
+        panner.connect(mainGain);
+        mainGain.connect(eqInput);
+        source.start(now); // Start immediately if not pulsing (no delay needed)
+      }
+
+      return activeNode;
     });
 
     this.isPlaying = true;
@@ -123,15 +183,30 @@ class AutoCalibrationAudioPlayer {
   public stopNoiseSources(): void {
     if (!this.isPlaying) return;
 
+    const now = audioContext.getAudioContext().currentTime;
     this.activeNodes.forEach(nodes => {
       try {
-        nodes.source.stop();
+        nodes.source.stop(now + 0.1); // Stop smoothly
         nodes.source.disconnect();
         nodes.filter.disconnect();
         nodes.panner.disconnect();
-        nodes.gain.disconnect();
+        nodes.mainGain.disconnect(); // Disconnect mainGain
+
+        // Stop and disconnect pulsing nodes if they exist
+        if (nodes.lfo) {
+          nodes.lfo.stop(now + 0.1);
+          nodes.lfo.disconnect();
+        }
+        if (nodes.lfoShaper) {
+            nodes.lfoShaper.disconnect();
+        }
+        if (nodes.pulseGain) {
+          nodes.pulseGain.disconnect();
+        }
+
       } catch (e) {
-        console.warn("Error stopping calibration noise source:", e);
+        // Ignore errors often caused by stopping already stopped nodes
+        // console.warn("Error stopping calibration noise source:", e);
       }
     });
 
@@ -142,18 +217,17 @@ class AutoCalibrationAudioPlayer {
 
   public setDistortionGain(gainValue: number): void {
     this.distortionGain = Math.max(0, Math.min(1, gainValue));
-    // Update gain of active nodes if playing
     if (this.isPlaying) {
       const now = audioContext.getAudioContext().currentTime;
       this.activeNodes.forEach(nodes => {
-        nodes.gain.gain.setValueAtTime(MASTER_GAIN * this.distortionGain, now);
+        // Only adjust the mainGain, not the pulseGain
+        nodes.mainGain.gain.setValueAtTime(MASTER_GAIN * this.distortionGain, now);
       });
     }
   }
 
   public dispose(): void {
     this.stopNoiseSources();
-    this.pinkNoiseBuffer = null;
     // Unsubscribe? Currently no mechanism in store for specific unsub
     console.log("AutoCalibrationAudioPlayer disposed.");
   }
