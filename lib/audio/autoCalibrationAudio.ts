@@ -7,10 +7,10 @@ import { NoiseSourceConfig } from '../calibration/AutoCalibration';
 const MASTER_GAIN = 0.5; // Relatively quiet constant noise
 
 // Pulsing parameters (adjust as needed)
-const PULSE_INTERVAL = 1.0; // seconds (total cycle time)
-const PULSE_ON_DURATION = 0.3; // seconds (how long the sound is at full volume)
-const PULSE_ATTACK_TIME = 0.05; // seconds
-const PULSE_RELEASE_TIME = 0.1; // seconds
+const PULSE_INTERVAL = 1.0; // seconds (total cycle time) - Default if not specified
+const PULSE_ON_DURATION = 0.3; // seconds (how long the sound is at full volume, relative to period)
+const PULSE_ATTACK_TIME = 0.05; // seconds (relative to period)
+const PULSE_RELEASE_TIME = 0.1; // seconds (relative to period)
 
 interface ActiveNoiseSource {
   source: AudioBufferSourceNode;
@@ -21,6 +21,7 @@ interface ActiveNoiseSource {
   lfo?: OscillatorNode; // LFO for pulsing
   lfoShaper?: WaveShaperNode; // To shape LFO output into envelope
   lfoOffset?: ConstantSourceNode; // To make envelope 0-1
+  group?: 'A' | 'B'; // Identifier for checkerboard group
 }
 
 class AutoCalibrationAudioPlayer {
@@ -28,6 +29,7 @@ class AutoCalibrationAudioPlayer {
   private isPlaying: boolean = false;
   private activeNodes: ActiveNoiseSource[] = [];
   private distortionGain: number = 1.0;
+  private groupFilter: 'A' | 'B' | 'All' = 'All'; // State for filtering
 
   private constructor() {
     // Apply initial distortion gain from store
@@ -111,21 +113,49 @@ class AutoCalibrationAudioPlayer {
 
       let activeNode: ActiveNoiseSource = { source, filter, panner, mainGain };
 
+      // --- Determine and store group based on pulse period --- 
+      // Infer group based on the periods defined in AutoCalibration.ts
+      // This assumes Group A = 1.0s, Group B = 0.5s
+      const periodForGroupCheck = config.pulsePeriod ?? PULSE_INTERVAL; // Use default if undefined
+      if (Math.abs(periodForGroupCheck - 1.0) < 0.01) { // Check for Group A period
+         activeNode.group = 'A';
+      } else if (Math.abs(periodForGroupCheck - 0.5) < 0.01) { // Check for Group B period
+        activeNode.group = 'B';
+      } else {
+        // Optional: handle unexpected periods if necessary
+        // console.warn(`Source with period ${periodForGroupCheck}s doesn't match standard group A/B periods.`);
+      }
+      // --- End Group Determination ---
+
       if (isPulsing) {
         // --- Pulsing Setup ---
         const pulseGain = ctx.createGain();
         pulseGain.gain.value = 0; // Start silent
 
+        // Determine the period for this specific source
+        const period = config.pulsePeriod ?? PULSE_INTERVAL;
+
         // LFO generates a sawtooth wave (-1 to 1) to control the timing
         const lfo = ctx.createOscillator();
         lfo.type = 'sawtooth';
-        lfo.frequency.value = 1 / PULSE_INTERVAL;
+        lfo.frequency.value = 1 / period; // Use the source-specific period
 
         // Use WaveShaper to create the envelope shape from the LFO
         const pulseCurve = new Float32Array(256);
-        const attackSamples = Math.floor(pulseCurve.length * (PULSE_ATTACK_TIME / PULSE_INTERVAL));
-        const onSamples = Math.floor(pulseCurve.length * (PULSE_ON_DURATION / PULSE_INTERVAL));
-        const releaseSamples = Math.floor(pulseCurve.length * (PULSE_RELEASE_TIME / PULSE_INTERVAL));
+        // Calculate durations relative to the source's specific period
+        let attackSamples = Math.floor(pulseCurve.length * (PULSE_ATTACK_TIME / period));
+        let onSamples = Math.floor(pulseCurve.length * (PULSE_ON_DURATION / period));
+        let releaseSamples = Math.floor(pulseCurve.length * (PULSE_RELEASE_TIME / period));
+
+        // Ensure total duration doesn't exceed the period length in samples
+        const totalDurationSamples = attackSamples + onSamples + releaseSamples;
+        if (totalDurationSamples > pulseCurve.length) {
+          console.warn(`Pulse duration (${PULSE_ATTACK_TIME + PULSE_ON_DURATION + PULSE_RELEASE_TIME}s) exceeds period (${period}s) for source ${config.centerFrequency}Hz@${config.position}. Clamping envelope.`);
+          // Simple clamping strategy: reduce 'on' time first
+          const excess = totalDurationSamples - pulseCurve.length;
+          onSamples = Math.max(0, onSamples - excess);
+          // If still too long, might need more sophisticated scaling
+        }
 
         for (let i = 0; i < pulseCurve.length; i++) {
             if (i < attackSamples) {
@@ -177,12 +207,14 @@ class AutoCalibrationAudioPlayer {
     });
 
     this.isPlaying = true;
+    this.applyGroupFilter(); // Apply filter immediately after creating nodes
     console.log(`Auto-calibration started ${this.activeNodes.length} noise sources.`);
   }
 
   public stopNoiseSources(): void {
     if (!this.isPlaying) return;
 
+    this.groupFilter = 'All'; // Reset filter on stop
     const now = audioContext.getAudioContext().currentTime;
     this.activeNodes.forEach(nodes => {
       try {
@@ -212,7 +244,7 @@ class AutoCalibrationAudioPlayer {
 
     this.activeNodes = [];
     this.isPlaying = false;
-    console.log("Auto-calibration stopped noise sources.");
+    console.log("Auto-calibration stopped noise sources.", "filter reset to 'All'.");
   }
 
   public setDistortionGain(gainValue: number): void {
@@ -222,8 +254,39 @@ class AutoCalibrationAudioPlayer {
       this.activeNodes.forEach(nodes => {
         // Only adjust the mainGain, not the pulseGain
         nodes.mainGain.gain.setValueAtTime(MASTER_GAIN * this.distortionGain, now);
+        // Re-apply filter immediately after distortion change
+        this.applyGroupFilter();
       });
     }
+  }
+
+  public setGroupFilter(filter: 'A' | 'B' | 'All'): void {
+    this.groupFilter = filter;
+    if (this.isPlaying) {
+      this.applyGroupFilter();
+    }
+    console.log(`Audio group filter set to: ${filter}`);
+  }
+
+  private applyGroupFilter(): void {
+    if (!this.isPlaying) return;
+
+    const now = audioContext.getAudioContext().currentTime;
+    const rampTime = 0.05; // Short ramp to avoid clicks
+
+    this.activeNodes.forEach(node => {
+      const targetGain = MASTER_GAIN * this.distortionGain;
+      let shouldBeAudible = true;
+
+      if (this.groupFilter !== 'All') {
+        if (node.group !== this.groupFilter) {
+          shouldBeAudible = false;
+        }
+      }
+
+      const finalGain = shouldBeAudible ? targetGain : 0.0001; // Use near-zero gain instead of 0
+      node.mainGain.gain.linearRampToValueAtTime(finalGain, now + rampTime);
+    });
   }
 
   public dispose(): void {

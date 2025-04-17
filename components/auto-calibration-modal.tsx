@@ -19,6 +19,7 @@ export function AutoCalibrationModal({ open, onClose }: AutoCalibrationModalProp
   const [currentStep, setCurrentStep] = useState<CalibrationStep | null>(null);
   const [currentValue, setCurrentValue] = useState<number>(0);
   const audioPlayer = getAutoCalibrationAudioPlayer(); // Get the audio player instance
+  const [groupFilter, setGroupFilter] = useState<'A' | 'B' | 'All'>('All');
   const newBandIdRef = useRef<string | null>(null); // Ref to store the ID of a newly created band for the current step
 
   // Access the EQ profile store
@@ -28,6 +29,8 @@ export function AutoCalibrationModal({ open, onClose }: AutoCalibrationModalProp
   useEffect(() => {
     if (open) {
       calibration.reset();
+      setGroupFilter('All'); // Reset filter on open
+      audioPlayer.setGroupFilter('All'); // Reset audio player filter
       newBandIdRef.current = null;
       const step = calibration.getCurrentStep();
       // Set the first step - the effect below will handle initial band creation
@@ -45,11 +48,13 @@ export function AutoCalibrationModal({ open, onClose }: AutoCalibrationModalProp
     } else {
       audioPlayer.stopNoiseSources();
       console.log("Closing calibration modal, stopping audio.");
+      audioPlayer.setGroupFilter('All'); // Ensure filter reset on close
     }
 
     // Cleanup function for modal close
     return () => {
       if (!open) { // Only stop audio if modal is actually closing
+         audioPlayer.setGroupFilter('All'); // Ensure filter reset on close
          audioPlayer.stopNoiseSources();
       }
     };
@@ -74,7 +79,8 @@ export function AutoCalibrationModal({ open, onClose }: AutoCalibrationModalProp
   }, [open, currentStep]); 
 
   const handleNextStep = () => {
-    audioPlayer.stopNoiseSources();
+    audioPlayer.stopNoiseSources(); // Stops audio, which also resets filter in player
+    setGroupFilter('All'); // Reset UI filter state for next step
     newBandIdRef.current = null;
 
     const hasNext = calibration.nextStep();
@@ -206,11 +212,15 @@ export function AutoCalibrationModal({ open, onClose }: AutoCalibrationModalProp
     }
 };
 
-
   const handleClose = () => {
     audioPlayer.stopNoiseSources();
     console.log("Closing calibration modal via button, stopping audio.");
     onClose();
+  }
+
+  const handleFilterChange = (filter: 'A' | 'B' | 'All') => {
+    setGroupFilter(filter);
+    audioPlayer.setGroupFilter(filter);
   }
 
   if (!open || !currentStep) return null;
@@ -260,6 +270,36 @@ export function AutoCalibrationModal({ open, onClose }: AutoCalibrationModalProp
                      `${currentValue.toFixed(0)} Hz`}
                 </span>
                 <span>{currentStep.controlRange[1]}</span>
+             </div>
+          </div>
+
+          {/* Group Isolation Controls */}
+          <div className="space-y-2 pt-2 border-t">
+             <label className="text-sm font-medium">Isolate Audio Group</label>
+             <div className="flex gap-2 justify-center">
+                <Button 
+                  variant={groupFilter === 'All' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => handleFilterChange('All')}
+                >
+                  All Sources
+                </Button>
+                <Button 
+                  variant={groupFilter === 'A' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => handleFilterChange('A')}
+                  className={groupFilter === 'A' ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}
+                >
+                  Group A Only
+                </Button>
+                <Button 
+                  variant={groupFilter === 'B' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => handleFilterChange('B')}
+                  className={groupFilter === 'B' ? "bg-red-600 hover:bg-red-700 text-white" : ""}
+                >
+                  Group B Only
+                </Button>
              </div>
           </div>
         </div>
