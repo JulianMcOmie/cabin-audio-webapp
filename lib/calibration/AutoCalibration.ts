@@ -30,11 +30,45 @@ export class AutoCalibration {
   // Helper method to generate the noise sources
   private _generateCheckerboardNoiseSources(): NoiseSourceConfig[] {
     const sources: NoiseSourceConfig[] = [];
-    const frequencies = [200, 700, 2400, 8500]; // ~Logarithmic centers 100Hz-16kHz
-    const positions = [-1, -0.33, 0.33, 1]; // 4 spatial positions
-    const bandwidthQ = 2;
-    const baseDelay = 0.1; // Base start delay
-    const staggerMax = 0.05; // Max random stagger offset
+    const GRID_DIMENSION = 5; // NxN grid
+    const MIN_FREQ = 20; // Hz
+    const MAX_FREQ = 20000; // Hz
+
+    // --- Calculate Logarithmic Frequencies --- 
+    const frequencies: number[] = [];
+    const bandEdges: number[] = [];
+    const logMin = Math.log10(MIN_FREQ);
+    const logMax = Math.log10(MAX_FREQ);
+    const logRange = logMax - logMin;
+    const logRatioPerBand = logRange / GRID_DIMENSION;
+
+    for (let i = 0; i <= GRID_DIMENSION; i++) {
+       bandEdges.push(10**(logMin + i * logRatioPerBand));
+    }
+    for (let i = 0; i < GRID_DIMENSION; i++) {
+        // Center frequency as geometric mean of edges
+        frequencies.push(Math.sqrt(bandEdges[i] * bandEdges[i+1]));
+    }
+
+    // --- Calculate Evenly Spaced Positions --- 
+    const positions: number[] = [];
+    const positionStep = 2 / GRID_DIMENSION;
+    for (let j = 0; j < GRID_DIMENSION; j++) {
+      // Center of each position segment
+      positions.push(-1 + positionStep * (j + 0.5));
+    }
+
+    // --- Calculate Bandwidth (Q) based on logarithmic division --- 
+    // Bandwidth in octaves is constant for log spacing
+    const freqRatio = bandEdges[1] / bandEdges[0]; // Same for all bands
+    const bandwidthOctaves = Math.log2(freqRatio);
+    // Formula relating Q to bandwidth in octaves: Q = sqrt(2^BW) / (2^BW - 1)
+    // Handle potential division by zero if BW is 0 (shouldn't happen here)
+    const twoPowBW = Math.pow(2, bandwidthOctaves);
+    const bandwidthQ = twoPowBW === 1 ? 100 : Math.sqrt(twoPowBW) / (twoPowBW - 1); // High Q if BW=0
+
+    const baseDelay = 0.01; // Base start delay
+    const STAGGER_PER_COLUMN = 0.015; // Fixed delay added per column index (seconds)
     const periodA = 1.0; // Pulse period for group A (slower)
     const periodB = 0.5; // Pulse period for group B (faster)
 
@@ -44,8 +78,10 @@ export class AutoCalibration {
         const pulsePeriod = isGroupA ? periodA : periodB;
         // Group B starts roughly half a cycle of Group A later
         const groupDelayOffset = isGroupA ? 0 : periodA / 2;
-        const stagger = Math.random() * staggerMax;
-        const pulseDelay = baseDelay + groupDelayOffset + stagger;
+
+        // Fixed stagger based on column index
+        const columnStagger = j * STAGGER_PER_COLUMN;
+        const pulseDelay = baseDelay + groupDelayOffset + columnStagger;
 
         sources.push({
           type: 'pink',
