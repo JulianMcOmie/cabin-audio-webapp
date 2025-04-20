@@ -21,7 +21,9 @@ interface ActiveNoiseSource {
   lfo?: OscillatorNode; // LFO for pulsing
   lfoShaper?: WaveShaperNode; // To shape LFO output into envelope
   lfoOffset?: ConstantSourceNode; // To make envelope 0-1
-  group?: 'A' | 'B'; // Identifier for checkerboard group
+  group?: 'A' | 'B'; // Identifier for checkerboard group (based on pulse period)
+  row?: number; // Row index of the source
+  rowGroup?: 'Even' | 'Odd'; // Identifier for row group
 }
 
 class AutoCalibrationAudioPlayer {
@@ -29,7 +31,7 @@ class AutoCalibrationAudioPlayer {
   private isPlaying: boolean = false;
   private activeNodes: ActiveNoiseSource[] = [];
   private distortionGain: number = 1.0;
-  private groupFilter: 'A' | 'B' | 'All' = 'All'; // State for filtering
+  private groupFilter: 'A' | 'B' | 'RowEven' | 'RowOdd' | 'All' = 'All';
 
   private constructor() {
     // Apply initial distortion gain from store
@@ -113,19 +115,24 @@ class AutoCalibrationAudioPlayer {
 
       let activeNode: ActiveNoiseSource = { source, filter, panner, mainGain };
 
-      // --- Determine and store group based on pulse period --- 
-      // Infer group based on the periods defined in AutoCalibration.ts
-      // This assumes Group A = 1.0s, Group B = 0.5s
-      const periodForGroupCheck = config.pulsePeriod ?? PULSE_INTERVAL; // Use default if undefined
-      if (Math.abs(periodForGroupCheck - 1.0) < 0.01) { // Check for Group A period
+      // --- Determine checkerboard group based on pulse period ---
+      const periodForGroupCheck = config.pulsePeriod ?? PULSE_INTERVAL;
+      if (Math.abs(periodForGroupCheck - 1.0) < 0.01) {
          activeNode.group = 'A';
-      } else if (Math.abs(periodForGroupCheck - 0.5) < 0.01) { // Check for Group B period
+      } else if (Math.abs(periodForGroupCheck - 0.5) < 0.01) {
         activeNode.group = 'B';
-      } else {
-        // Optional: handle unexpected periods if necessary
-        // console.warn(`Source with period ${periodForGroupCheck}s doesn't match standard group A/B periods.`);
       }
-      // --- End Group Determination ---
+      // --- End Checkerboard Group Determination ---
+
+      // --- Determine Row Group ---
+      // ** ASSUMPTION: config.row exists on NoiseSourceConfig **
+      if (typeof config.row === 'number') {
+        activeNode.row = config.row;
+        activeNode.rowGroup = config.row % 2 === 0 ? 'Even' : 'Odd';
+      } else {
+        // console.warn(`NoiseSourceConfig for ${config.centerFrequency}Hz@${config.position} is missing 'row' property. Row filtering will not work for this source.`);
+      }
+      // --- End Row Group Determination ---
 
       if (isPulsing) {
         // --- Pulsing Setup ---
@@ -260,7 +267,7 @@ class AutoCalibrationAudioPlayer {
     }
   }
 
-  public setGroupFilter(filter: 'A' | 'B' | 'All'): void {
+  public setGroupFilter(filter: 'A' | 'B' | 'RowEven' | 'RowOdd' | 'All'): void {
     this.groupFilter = filter;
     if (this.isPlaying) {
       this.applyGroupFilter();
@@ -276,16 +283,32 @@ class AutoCalibrationAudioPlayer {
 
     this.activeNodes.forEach(node => {
       const targetGain = MASTER_GAIN * this.distortionGain;
-      let shouldBeAudible = true;
+      let shouldBeAudible = true; // Assume audible by default
 
-      if (this.groupFilter !== 'All') {
+      // Apply filter logic based on the current groupFilter state
+      if (this.groupFilter === 'A' || this.groupFilter === 'B') {
+        // Checkerboard filtering
         if (node.group !== this.groupFilter) {
           shouldBeAudible = false;
         }
+      } else if (this.groupFilter === 'RowEven') {
+        // Even row filtering
+        if (node.rowGroup !== 'Even') {
+          shouldBeAudible = false;
+        }
+      } else if (this.groupFilter === 'RowOdd') {
+        // Odd row filtering
+        if (node.rowGroup !== 'Odd') {
+          shouldBeAudible = false;
+        }
       }
+      // If groupFilter is 'All', shouldBeAudible remains true
 
       const finalGain = shouldBeAudible ? targetGain : 0.0001; // Use near-zero gain instead of 0
-      node.mainGain.gain.linearRampToValueAtTime(finalGain, now + rampTime);
+      // Check if mainGain still exists (might have been disconnected during stop)
+      if (node.mainGain?.gain) {
+          node.mainGain.gain.linearRampToValueAtTime(finalGain, now + rampTime);
+      }
     });
   }
 

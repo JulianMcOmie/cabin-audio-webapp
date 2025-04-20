@@ -6,6 +6,7 @@ export interface NoiseSourceConfig {
   pulsing?: boolean; // Whether the source should pulse
   pulseDelay?: number; // Delay in seconds before the first pulse cycle starts
   pulsePeriod?: number; // Period in seconds for the pulse repetition
+  row: number; // Row index for row-based filtering
   // Volume/gain might also be needed
 }
 
@@ -65,21 +66,23 @@ export class AutoCalibration {
     // Formula relating Q to bandwidth in octaves: Q = sqrt(2^BW) / (2^BW - 1)
     // Handle potential division by zero if BW is 0 (shouldn't happen here)
     const twoPowBW = Math.pow(2, bandwidthOctaves);
-    const bandwidthQ = twoPowBW === 1 ? 100 : Math.sqrt(twoPowBW) / (twoPowBW - 1); // High Q if BW=0
-
+    // Higher Q values result in narrower bands and less overlap between adjacent frequency rows.
+    let bandwidthQ = twoPowBW === 1 ? 100 : Math.sqrt(twoPowBW) / (twoPowBW - 1); // High Q if BW=0
+    bandwidthQ *= 2.0;
     const baseDelay = 0.01; // Base start delay
     const STAGGER_PER_COLUMN = 0.015; // Fixed delay added per column index (seconds)
-    const periodA = 1.0; // Pulse period for group A (slower)
-    const periodB = 0.5; // Pulse period for group B (faster)
+    const periodA = 1.0; // Pulse period for group A (e.g., Even rows)
+    const periodB = 0.5; // Pulse period for group B (e.g., Odd rows)
 
-    for (let i = 0; i < frequencies.length; i++) {
-      for (let j = 0; j < positions.length; j++) {
-        const isGroupA = (i + j) % 2 === 0; // Checkerboard pattern
-        const pulsePeriod = isGroupA ? periodA : periodB;
-        // Group B starts roughly half a cycle of Group A later
-        const groupDelayOffset = isGroupA ? 0 : periodA / 2;
+    for (let i = 0; i < frequencies.length; i++) { // i represents the row index (frequency axis)
+      const isEvenRow = i % 2 === 0;
+      for (let j = 0; j < positions.length; j++) { // j represents the column index (position axis)
+        // Assign period and delay based on ROW index (i) instead of checkerboard
+        const pulsePeriod = isEvenRow ? periodA : periodB;
+        // Odd rows (using periodB) start roughly half a cycle of periodA later
+        const groupDelayOffset = isEvenRow ? 0 : periodA / 2;
 
-        // Fixed stagger based on column index
+        // Fixed stagger based on column index remains the same
         const columnStagger = j * STAGGER_PER_COLUMN;
         const pulseDelay = baseDelay + groupDelayOffset + columnStagger;
 
@@ -87,10 +90,11 @@ export class AutoCalibration {
           type: 'pink',
           centerFrequency: frequencies[i],
           position: positions[j],
-          bandwidth: bandwidthQ,
+          bandwidth: bandwidthQ, // Controls the overlap between frequency rows
           pulsing: true,
           pulsePeriod: pulsePeriod,
           pulseDelay: pulseDelay,
+          row: i, // Assign the row index (i)
         });
       }
     }
