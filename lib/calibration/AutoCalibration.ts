@@ -31,6 +31,7 @@ export class AutoCalibration {
   // Helper method to generate the noise sources
   private _generateCheckerboardNoiseSources(): NoiseSourceConfig[] {
     const sources: NoiseSourceConfig[] = [];
+<<<<<<< HEAD
     const GRID_DIMENSION = 5; // NxN grid
     const MIN_FREQ = 20; // Hz
     const MAX_FREQ = 20000; // Hz
@@ -85,6 +86,24 @@ export class AutoCalibration {
         // Fixed stagger based on column index remains the same
         const columnStagger = j * STAGGER_PER_COLUMN;
         const pulseDelay = baseDelay + groupDelayOffset + columnStagger;
+=======
+    const frequencies = [200, 700, 2400, 8500]; // ~Logarithmic centers 100Hz-16kHz
+    const positions = [-1, -0.33, 0.33, 1]; // 4 spatial positions
+    const bandwidthQ = 2;
+    const baseDelay = 0.1; // Base start delay
+    const staggerMax = 0.05; // Max random stagger offset
+    const periodA = 1.0; // Pulse period for group A (slower)
+    const periodB = 0.5; // Pulse period for group B (faster)
+
+    for (let i = 0; i < frequencies.length; i++) {
+      for (let j = 0; j < positions.length; j++) {
+        const isGroupA = (i + j) % 2 === 0; // Checkerboard pattern
+        const pulsePeriod = isGroupA ? periodA : periodB;
+        // Group B starts roughly half a cycle of Group A later
+        const groupDelayOffset = isGroupA ? 0 : periodA / 2;
+        const stagger = Math.random() * staggerMax;
+        const pulseDelay = baseDelay + groupDelayOffset + stagger;
+>>>>>>> parent of 1d654f0 (Interleaved calibration)
 
         sources.push({
           type: 'pink',
