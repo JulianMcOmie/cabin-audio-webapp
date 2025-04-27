@@ -21,6 +21,8 @@ import { DotCalibration } from "@/components/dot-grid"
 import { GlyphGrid } from "@/components/glyph-grid"
 import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
+import * as sineGridAudio from '@/lib/audio/sineGridAudio'
+import { SineGrid } from "@/components/sine-grid"
 
 interface EQViewProps {
 //   isPlaying: boolean
@@ -77,13 +79,16 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const [glyphGridPlaying, setGlyphGridPlaying] = useState(false)
   
   // Add state for toggling between Glyph Grid and Dot Grid
-  const [activeGrid, setActiveGrid] = useState<"line" | "dot">("dot");
+  const [activeGrid, setActiveGrid] = useState<"line" | "dot" | "sine">("dot")
 
   // New state to track selected dots for dot grid
-  const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set());
+  const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set())
   
   // Add state to track if the device is mobile
   const [isMobile, setIsMobile] = useState(false)
+
+  // Add state for sine grid
+  const [sineGridPlaying, setSineGridPlaying] = useState(false)
 
   // Detect mobile devices
   useEffect(() => {
@@ -181,6 +186,26 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     }
   }, [dotGridPlaying, calibrationPlaying, glyphGridPlaying]);
 
+  // Handle analyser for sine grid
+  useEffect(() => {
+    if (sineGridPlaying) {
+      const sineAudio = sineGridAudio.getSineGridAudioPlayer();
+      const analyser = sineAudio.createPreEQAnalyser();
+      setPreEQAnalyser(analyser);
+      console.log("〰️ Connected sine grid to FFT analyzer");
+
+      // Return cleanup function for sine grid
+      return () => {
+        sineGridAudio.getSineGridAudioPlayer().disconnectFromAnalyser(); 
+        setPreEQAnalyser(null);
+      }
+    } 
+    // Ensure analyser is cleared if no calibration tools are playing
+    else if (!calibrationPlaying && !glyphGridPlaying && !dotGridPlaying) { 
+      setPreEQAnalyser(null);
+    }
+  }, [sineGridPlaying, calibrationPlaying, glyphGridPlaying, dotGridPlaying]);
+
   // Initialize selected profile from the active profile and keep it synced
   useEffect(() => {
     const activeProfile = getActiveProfile();
@@ -213,16 +238,12 @@ export function EQView({ setEqEnabled }: EQViewProps) {
 
   // Add effect to stop calibration when music starts playing
   useEffect(() => {
-    // If music starts playing, stop any active calibration
     if (isMusicPlaying) {
-      if (dotGridPlaying) {
-        setDotGridPlaying(false);
-      }
-      if (glyphGridPlaying) {
-        setGlyphGridPlaying(false);
-      }
+      if (dotGridPlaying) setDotGridPlaying(false);
+      if (glyphGridPlaying) setGlyphGridPlaying(false);
+      if (sineGridPlaying) setSineGridPlaying(false);
     }
-  }, [isMusicPlaying, dotGridPlaying, glyphGridPlaying]);
+  }, [isMusicPlaying, dotGridPlaying, glyphGridPlaying, sineGridPlaying, setMusicPlaying]);
 
   const handleProfileClick = () => {
     setNewProfileName("");
@@ -270,27 +291,16 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     setEQEnabled(!isEQEnabled);
   };
 
-  // Comment out auto-calibration related state
-  // const [showCalibrationProcess, setShowCalibrationProcess] = useState(false)
-
   // Add a function to handle dot grid play/stop
   const handleDotGridPlayToggle = () => {
     if (dotGridPlaying) {
-      // Just stop playing without clearing dot selection
       setDotGridPlaying(false);
     } else {
-      // If music is playing, pause it
-      if (isMusicPlaying) {
-        setMusicPlaying(false);
-      }
-      
-      // If starting and there are no dots selected, don't start
-      // (this is handled by the DotCalibration component internally)
+      if (isMusicPlaying) setMusicPlaying(false);
       setDotGridPlaying(true);
     }
-    
-    // Stop the glyph grid if it's playing
     if (glyphGridPlaying) setGlyphGridPlaying(false);
+    if (sineGridPlaying) setSineGridPlaying(false);
   };
 
   // If on mobile, show a message instead of the EQ interface
@@ -345,7 +355,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
           {/* EQ Section - Now takes more of the width */}
           <div className="w-3/4 relative" ref={eqContainerRef}>
             {/* FFT Visualizer should always be visible during audio playback */}
-            {(calibrationPlaying || glyphGridPlaying || dotGridPlaying) && preEQAnalyser && (
+            {(calibrationPlaying || glyphGridPlaying || dotGridPlaying || sineGridPlaying) && preEQAnalyser && (
               <div className="absolute inset-0 z-0">
                 <div className="w-full aspect-[2/1] frequency-graph rounded-lg border dark:border-gray-700 overflow-hidden opacity-80 relative pointer-events-none">
                   {/* The actual EQ visualization area has 40px margins on all sides */}
@@ -398,7 +408,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
               {/* Updated segmented control with dot grid as default/left option */}
               <div className="flex border rounded-md overflow-hidden w-fit">
                 <button
-                  className={`px-4 py-2 text-sm font-medium ${
+                  className={`px-3 py-1.5 text-xs font-medium ${
                     activeGrid === "dot" 
                       ? "bg-teal-500 text-white" 
                       : "bg-background hover:bg-muted"
@@ -408,7 +418,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   Dot Grid
                 </button>
                 <button
-                  className={`px-4 py-2 text-sm font-medium ${
+                  className={`px-3 py-1.5 text-xs font-medium ${
                     activeGrid === "line" 
                       ? "bg-teal-500 text-white" 
                       : "bg-background hover:bg-muted"
@@ -416,6 +426,16 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   onClick={() => setActiveGrid("line")}
                 >
                   Line Tool
+                </button>
+                <button
+                  className={`px-3 py-1.5 text-xs font-medium ${
+                    activeGrid === "sine" 
+                      ? "bg-teal-500 text-white" 
+                      : "bg-background hover:bg-muted"
+                  }`}
+                  onClick={() => setActiveGrid("sine")}
+                >
+                  Sine Grid
                 </button>
               </div>
             </div>
@@ -427,7 +447,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   isPlaying={glyphGridPlaying}
                   disabled={false}
                 />
-              ) : (
+              ) : activeGrid === "dot" ? (
                 <DotCalibration
                   isPlaying={dotGridPlaying}
                   setIsPlaying={setDotGridPlaying}
@@ -436,6 +456,13 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   selectedDots={selectedDots}
                   setSelectedDots={setSelectedDots}
                 />
+              ) : (
+                <SineGrid
+                  isPlaying={sineGridPlaying}
+                  setIsPlaying={setSineGridPlaying}
+                  disabled={false}
+                  preEQAnalyser={preEQAnalyser}
+                />
               )}
             </div>
             
@@ -443,26 +470,41 @@ export function EQView({ setEqEnabled }: EQViewProps) {
             <div className="flex justify-center mt-6">
               <Button
                 size="lg"
-                variant={activeGrid === "line" ? (glyphGridPlaying ? "default" : "outline") : (dotGridPlaying ? "default" : "outline")}
-                className={activeGrid === "line" ? (glyphGridPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "") : (dotGridPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")}
+                variant={
+                  (activeGrid === "line" && glyphGridPlaying) ||
+                  (activeGrid === "dot" && dotGridPlaying) ||
+                  (activeGrid === "sine" && sineGridPlaying)
+                  ? "default" : "outline"
+                }
+                className={
+                  (activeGrid === "line" && glyphGridPlaying) ||
+                  (activeGrid === "dot" && dotGridPlaying) ||
+                  (activeGrid === "sine" && sineGridPlaying)
+                  ? "bg-teal-500 hover:bg-teal-600 text-white" : ""
+                }
                 onClick={() => {
                   if (activeGrid === "line") {
-                    setGlyphGridPlaying(!glyphGridPlaying);
+                    const willPlay = !glyphGridPlaying;
+                    setGlyphGridPlaying(willPlay);
                     if (dotGridPlaying) setDotGridPlaying(false);
-                    
-                    // If enabling glyph grid playback and music is playing, pause the music
-                    if (!glyphGridPlaying && isMusicPlaying) {
-                      setMusicPlaying(false);
-                    }
-                  } else {
+                    if (sineGridPlaying) setSineGridPlaying(false);
+                    if (willPlay && isMusicPlaying) setMusicPlaying(false);
+                  } else if (activeGrid === "dot") {
                     handleDotGridPlayToggle();
+                  } else if (activeGrid === "sine") {
+                    const willPlay = !sineGridPlaying;
+                    setSineGridPlaying(willPlay);
+                    if (dotGridPlaying) setDotGridPlaying(false);
+                    if (glyphGridPlaying) setGlyphGridPlaying(false);
+                    if (willPlay && isMusicPlaying) setMusicPlaying(false);
                   }
                 }}
               >
                 <Play className="mr-2 h-5 w-5" />
-                {activeGrid === "line" 
-                  ? (glyphGridPlaying ? "Stop Calibration" : "Play Calibration") 
-                  : (dotGridPlaying ? "Stop Calibration" : "Play Calibration")}
+                { (activeGrid === "line" && glyphGridPlaying) ||
+                  (activeGrid === "dot" && dotGridPlaying) ||
+                  (activeGrid === "sine" && sineGridPlaying)
+                  ? "Stop Calibration" : "Play Calibration" }
               </Button>
             </div>
             
