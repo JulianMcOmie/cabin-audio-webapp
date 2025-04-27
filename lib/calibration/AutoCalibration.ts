@@ -30,7 +30,9 @@ export class AutoCalibration {
   // Helper method to generate the noise sources
   private _generateCheckerboardNoiseSources(): NoiseSourceConfig[] {
     const sources: NoiseSourceConfig[] = [];
-    const GRID_DIMENSION = 5; // NxN grid
+    // const GRID_DIMENSION = 2; // NxN grid
+    const NUM_ROWS = 8;
+    const NUM_COLUMNS = 2;
     const MIN_FREQ = 20; // Hz
     const MAX_FREQ = 20000; // Hz
 
@@ -40,20 +42,20 @@ export class AutoCalibration {
     const logMin = Math.log10(MIN_FREQ);
     const logMax = Math.log10(MAX_FREQ);
     const logRange = logMax - logMin;
-    const logRatioPerBand = logRange / GRID_DIMENSION;
+    const logRatioPerBand = logRange / NUM_ROWS;
 
-    for (let i = 0; i <= GRID_DIMENSION; i++) {
+    for (let i = 0; i <= NUM_ROWS; i++) {
        bandEdges.push(10**(logMin + i * logRatioPerBand));
     }
-    for (let i = 0; i < GRID_DIMENSION; i++) {
+    for (let i = 0; i < NUM_ROWS; i++) {
         // Center frequency as geometric mean of edges
         frequencies.push(Math.sqrt(bandEdges[i] * bandEdges[i+1]));
     }
 
     // --- Calculate Evenly Spaced Positions --- 
     const positions: number[] = [];
-    const positionStep = 2 / GRID_DIMENSION;
-    for (let j = 0; j < GRID_DIMENSION; j++) {
+    const positionStep = 2 / NUM_COLUMNS;
+    for (let j = 0; j < NUM_COLUMNS; j++) {
       // Center of each position segment
       positions.push(-1 + positionStep * (j + 0.5));
     }
