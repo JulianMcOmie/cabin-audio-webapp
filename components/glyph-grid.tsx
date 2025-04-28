@@ -88,7 +88,7 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     })
     
     // Enable envelope modulation by default
-    audioPlayer.setModulating(true)
+    // audioPlayer.setModulating(true)
     
     // Ensure continuous frequencies (not discrete/quantized)
     audioPlayer.setDiscreteFrequency(false)
