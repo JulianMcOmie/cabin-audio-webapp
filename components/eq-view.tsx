@@ -19,10 +19,12 @@ import { FFTVisualizer } from "@/components/audio/FFTVisualizer"
 import { getReferenceCalibrationAudio } from "@/lib/audio/referenceCalibrationAudio"
 import { DotCalibration } from "@/components/dot-grid"
 import { GlyphGrid } from "@/components/glyph-grid"
+import { SineGrid } from "@/components/sine-grid";
+import { HorizontalLineTool } from "@/components/horizontal-line-tool";
 import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
-import * as sineGridAudio from '@/lib/audio/sineGridAudio'
-import { SineGrid } from "@/components/sine-grid"
+import * as sineGridAudio from '@/lib/audio/sineGridAudio';
+import * as horizontalLineAudio from '@/lib/audio/horizontalLineAudio';
 
 interface EQViewProps {
 //   isPlaying: boolean
@@ -79,7 +81,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const [glyphGridPlaying, setGlyphGridPlaying] = useState(false)
   
   // Add state for toggling between Glyph Grid and Dot Grid
-  const [activeGrid, setActiveGrid] = useState<"line" | "dot" | "sine">("dot")
+  const [activeGrid, setActiveGrid] = useState<"dot" | "line" | "sine" | "hz_line">("dot")
 
   // New state to track selected dots for dot grid
   const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set())
@@ -89,6 +91,9 @@ export function EQView({ setEqEnabled }: EQViewProps) {
 
   // Add state for sine grid
   const [sineGridPlaying, setSineGridPlaying] = useState(false)
+
+  // Add state for horizontal line tool
+  const [horizontalLinePlaying, setHorizontalLinePlaying] = useState(false)
 
   // Detect mobile devices
   useEffect(() => {
@@ -403,51 +408,50 @@ export function EQView({ setEqEnabled }: EQViewProps) {
           </div>
 
           {/* Grid Visualizer - Now takes less width */}
-          <div className="w-1/4 bg-gray-100 dark:bg-card rounded-lg p-4">
-            <div className="flex flex-col space-y-4">
-              {/* Updated segmented control with dot grid as default/left option */}
-              <div className="flex border rounded-md overflow-hidden w-fit">
+          <div className="w-1/4 bg-gray-100 dark:bg-card rounded-lg p-4 flex flex-col">
+            <div className="flex flex-col space-y-4 mb-4">
+              {/* Updated segmented control */}
+              <div className="flex border rounded-md overflow-hidden w-full">
                 <button
-                  className={`px-3 py-1.5 text-xs font-medium ${
-                    activeGrid === "dot" 
-                      ? "bg-teal-500 text-white" 
-                      : "bg-background hover:bg-muted"
-                  }`}
+                  className={`flex-1 px-2 py-1.5 text-xs font-medium text-center ${
+                    activeGrid === "dot" ? "bg-teal-500 text-white" : "bg-background hover:bg-muted"}`}
                   onClick={() => setActiveGrid("dot")}
                 >
-                  Dot Grid
+                  Dots
                 </button>
                 <button
-                  className={`px-3 py-1.5 text-xs font-medium ${
-                    activeGrid === "line" 
-                      ? "bg-teal-500 text-white" 
-                      : "bg-background hover:bg-muted"
-                  }`}
+                  className={`flex-1 px-2 py-1.5 text-xs font-medium text-center ${
+                    activeGrid === "line" ? "bg-teal-500 text-white" : "bg-background hover:bg-muted"}`}
                   onClick={() => setActiveGrid("line")}
                 >
-                  Line Tool
+                  Line
                 </button>
                 <button
-                  className={`px-3 py-1.5 text-xs font-medium ${
-                    activeGrid === "sine" 
-                      ? "bg-teal-500 text-white" 
-                      : "bg-background hover:bg-muted"
-                  }`}
+                  className={`flex-1 px-2 py-1.5 text-xs font-medium text-center ${
+                    activeGrid === "sine" ? "bg-teal-500 text-white" : "bg-background hover:bg-muted"}`}
                   onClick={() => setActiveGrid("sine")}
                 >
                   Sine Grid
                 </button>
+                <button
+                  className={`flex-1 px-2 py-1.5 text-xs font-medium text-center ${
+                    activeGrid === "hz_line" ? "bg-teal-500 text-white" : "bg-background hover:bg-muted"}`}
+                  onClick={() => setActiveGrid("hz_line")}
+                >
+                  Hz Line
+                </button>
               </div>
             </div>
             
-            {/* Grid content area */}
-            <div className="mt-4">
-              {activeGrid === "line" ? (
+            {/* Grid content area - update rendering logic */}
+            <div className="flex-grow">
+              {activeGrid === "line" && (
                 <GlyphGrid
                   isPlaying={glyphGridPlaying}
                   disabled={false}
                 />
-              ) : activeGrid === "dot" ? (
+              )}
+              {activeGrid === "dot" && (
                 <DotCalibration
                   isPlaying={dotGridPlaying}
                   setIsPlaying={setDotGridPlaying}
@@ -456,10 +460,19 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   selectedDots={selectedDots}
                   setSelectedDots={setSelectedDots}
                 />
-              ) : (
+              )}
+              {activeGrid === "sine" && (
                 <SineGrid
                   isPlaying={sineGridPlaying}
                   setIsPlaying={setSineGridPlaying}
+                  disabled={false}
+                  preEQAnalyser={preEQAnalyser}
+                />
+              )}
+              {activeGrid === "hz_line" && (
+                <HorizontalLineTool
+                  isPlaying={horizontalLinePlaying}
+                  setIsPlaying={setHorizontalLinePlaying}
                   disabled={false}
                   preEQAnalyser={preEQAnalyser}
                 />
@@ -473,13 +486,15 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 variant={
                   (activeGrid === "line" && glyphGridPlaying) ||
                   (activeGrid === "dot" && dotGridPlaying) ||
-                  (activeGrid === "sine" && sineGridPlaying)
+                  (activeGrid === "sine" && sineGridPlaying) ||
+                  (activeGrid === "hz_line" && horizontalLinePlaying)
                   ? "default" : "outline"
                 }
                 className={
                   (activeGrid === "line" && glyphGridPlaying) ||
                   (activeGrid === "dot" && dotGridPlaying) ||
-                  (activeGrid === "sine" && sineGridPlaying)
+                  (activeGrid === "sine" && sineGridPlaying) ||
+                  (activeGrid === "hz_line" && horizontalLinePlaying)
                   ? "bg-teal-500 hover:bg-teal-600 text-white" : ""
                 }
                 onClick={() => {
@@ -488,6 +503,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                     setGlyphGridPlaying(willPlay);
                     if (dotGridPlaying) setDotGridPlaying(false);
                     if (sineGridPlaying) setSineGridPlaying(false);
+                    if (horizontalLinePlaying) setHorizontalLinePlaying(false);
                     if (willPlay && isMusicPlaying) setMusicPlaying(false);
                   } else if (activeGrid === "dot") {
                     handleDotGridPlayToggle();
@@ -496,6 +512,14 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                     setSineGridPlaying(willPlay);
                     if (dotGridPlaying) setDotGridPlaying(false);
                     if (glyphGridPlaying) setGlyphGridPlaying(false);
+                    if (horizontalLinePlaying) setHorizontalLinePlaying(false);
+                    if (willPlay && isMusicPlaying) setMusicPlaying(false);
+                  } else if (activeGrid === "hz_line") {
+                    const willPlay = !horizontalLinePlaying;
+                    setHorizontalLinePlaying(willPlay);
+                    if (dotGridPlaying) setDotGridPlaying(false);
+                    if (glyphGridPlaying) setGlyphGridPlaying(false);
+                    if (sineGridPlaying) setSineGridPlaying(false);
                     if (willPlay && isMusicPlaying) setMusicPlaying(false);
                   }
                 }}
@@ -503,7 +527,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 <Play className="mr-2 h-5 w-5" />
                 { (activeGrid === "line" && glyphGridPlaying) ||
                   (activeGrid === "dot" && dotGridPlaying) ||
-                  (activeGrid === "sine" && sineGridPlaying)
+                  (activeGrid === "sine" && sineGridPlaying) ||
+                  (activeGrid === "hz_line" && horizontalLinePlaying)
                   ? "Stop Calibration" : "Play Calibration" }
               </Button>
             </div>
