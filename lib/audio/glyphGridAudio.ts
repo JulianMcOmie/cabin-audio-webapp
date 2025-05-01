@@ -5,17 +5,19 @@ import { useEQProfileStore } from '@/lib/stores'
 // Default values
 const DEFAULT_FREQ_MULTIPLIER = 1.0
 const DEFAULT_SWEEP_DURATION = 8.0 // 8 seconds per cycle
-const MASTER_GAIN = 1.5
+const SINE_GAIN = 0.3 // Quieter gain for sine tone
+const NOISE_GAIN = 1.0 // Louder gain for noise
 // const ENVELOPE_ATTACK = 0.01 // 10ms
 // const ENVELOPE_RELEASE_LOW_FREQ = 0.8 // 800ms for low frequencies
 // const ENVELOPE_RELEASE_HIGH_FREQ = 0.2 // 200ms for high frequencies
-const ENVELOPE_MAX_GAIN = 1.0
+// const ENVELOPE_MAX_GAIN = 1.0
 // const ENVELOPE_MIN_GAIN = 0.001
-const DEFAULT_MODULATION_RATE = 8.0 // modulations per second
-const DEFAULT_MODULATION_DEPTH = 0.8 // how much to modulate (0-1)
-const ENVELOPE_ATTACK_TIME = 0.005 // 5ms attack
-const ENVELOPE_RELEASE_TIME = 0.05 // 100ms release
+// const DEFAULT_MODULATION_RATE = 8.0 // modulations per second
+// const DEFAULT_MODULATION_DEPTH = 0.8 // how much to modulate (0-1)
+// const ENVELOPE_ATTACK_TIME = 0.005 // 5ms attack
+// const ENVELOPE_RELEASE_TIME = 0.05 // 100ms release
 const DEFAULT_SPEED = 1.0 // Default movement speed
+const NOISE_FILTER_Q = 10.0 // Q factor for the noise notch filter
 
 // Add constants for hit detection
 const DEFAULT_HIT_INTERVAL = 0.2 // Default interval between hits (20% of path)
@@ -41,17 +43,21 @@ class GlyphGridAudioPlayer {
   private pinkNoiseBuffer: AudioBuffer | null = null
   private isPlaying: boolean = false
   private audioNodes: {
-    source: AudioBufferSourceNode | null;
-    gain: GainNode | null;
-    envelopeGain: GainNode | null;
+    oscillatorSource: OscillatorNode | null;
+    sineGain: GainNode | null;
+    noiseSource: AudioBufferSourceNode | null;
+    noiseGain: GainNode | null;
+    noiseFilter: BiquadFilterNode | null;
+    mixerGain: GainNode | null;
     panner: StereoPannerNode | null;
-    filter: BiquadFilterNode | null;
   } = {
-    source: null,
-    gain: null,
-    envelopeGain: null,
-    panner: null,
-    filter: null
+    oscillatorSource: null,
+    sineGain: null,
+    noiseSource: null,
+    noiseGain: null,
+    noiseFilter: null,
+    mixerGain: null,
+    panner: null
   }
   
   // Path related properties
@@ -69,11 +75,6 @@ class GlyphGridAudioPlayer {
   private currentGlyph: GlyphData | null = null
   
   // Add these properties to the class
-  private isModulating: boolean = true
-  private modulationRate: number = DEFAULT_MODULATION_RATE
-  private modulationDepth: number = DEFAULT_MODULATION_DEPTH
-  private modulationTimerId: number | null = null
-  
   private isManualControl: boolean = false
   private manualPosition: number = 0
   
@@ -103,6 +104,7 @@ class GlyphGridAudioPlayer {
   private distortionGain: number = 1.0;
   
   private constructor() {
+    // Add back pink noise generation call
     this.generatePinkNoiseBuffer()
     
     // Apply initial distortion gain from store
@@ -156,7 +158,7 @@ class GlyphGridAudioPlayer {
       const pink = b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362
       
       // Scale to stay within -1.0 to 1.0
-      channelData[i] = pink * 0.11
+      channelData[i] = pink * 0.11 // Pink noise generally needs scaling down
     }
     
     this.pinkNoiseBuffer = noiseBuffer
@@ -320,8 +322,12 @@ class GlyphGridAudioPlayer {
     const panPosition = x
     
     // Now update the audio nodes with these values
-    if (this.audioNodes.filter) {
-      this.audioNodes.filter.frequency.value = adjustedFreq
+    if (this.audioNodes.oscillatorSource) {
+      this.audioNodes.oscillatorSource.frequency.value = adjustedFreq
+    }
+    
+    if (this.audioNodes.noiseFilter) {
+      this.audioNodes.noiseFilter.frequency.value = adjustedFreq
     }
     
     if (this.audioNodes.panner) {
@@ -342,6 +348,7 @@ class GlyphGridAudioPlayer {
   }
   
   private startSound(): void {
+    // Add check for pink noise buffer again
     if (!this.pinkNoiseBuffer) {
       console.warn('🔊 Tried to start sound but pink noise buffer is not ready')
       return
@@ -349,64 +356,69 @@ class GlyphGridAudioPlayer {
     
     const ctx = getAudioContext()
     
-    // Create new audio nodes
-    const source = ctx.createBufferSource()
-    source.buffer = this.pinkNoiseBuffer
-    source.loop = true
-    
-    // Create gain node for volume - apply distortion gain
-    const gain = ctx.createGain()
-    gain.gain.value = MASTER_GAIN * this.distortionGain;
-    
-    // Create envelope gain node
-    const envelopeGain = ctx.createGain()
-    envelopeGain.gain.value = ENVELOPE_MAX_GAIN
-    
-    // Create panner node
+    // --- Create Sine Path Nodes ---
+    const oscillatorSource = ctx.createOscillator()
+    oscillatorSource.type = 'sine' // Use sine wave
+    const sineGain = ctx.createGain()
+    sineGain.gain.value = SINE_GAIN
+
+    // --- Create Noise Path Nodes ---
+    const noiseSource = ctx.createBufferSource()
+    noiseSource.buffer = this.pinkNoiseBuffer 
+    noiseSource.loop = true 
+    const noiseGain = ctx.createGain()
+    noiseGain.gain.value = NOISE_GAIN
+    const noiseFilter = ctx.createBiquadFilter()
+    noiseFilter.type = 'notch'
+    noiseFilter.frequency.value = 500 // Default frequency, will be updated
+    noiseFilter.Q.value = NOISE_FILTER_Q 
+
+    // --- Create Mixer and Panner Nodes ---
+    const mixerGain = ctx.createGain()
+    mixerGain.gain.value = this.distortionGain // Apply current distortion gain
     const panner = ctx.createStereoPanner()
     panner.pan.value = 0 // Start centered
     
-    // Create filter node (bandpass filter)
-    const filter = ctx.createBiquadFilter()
-    filter.type = 'bandpass'
-    filter.frequency.value = 500 // Default frequency
-    filter.Q.value = 5.0 // Default Q
+    // --- Connect Audio Graph ---
+    // Sine Path: oscillatorSource -> sineGain -> mixerGain
+    oscillatorSource.connect(sineGain)
+    sineGain.connect(mixerGain)
     
-    // Connect the audio chain
-    source.connect(gain)
-    gain.connect(envelopeGain)
-    envelopeGain.connect(filter)
-    filter.connect(panner)
+    // Noise Path: noiseSource -> noiseGain -> noiseFilter -> mixerGain
+    noiseSource.connect(noiseGain)
+    noiseGain.connect(noiseFilter)
+    noiseFilter.connect(mixerGain)
     
-    // If we have an analyzer, connect through it
+    // Combined Path: mixerGain -> panner -> Output
+    mixerGain.connect(panner)
+    
+    // Connect panner to output (preEQ analyser or EQ input)
     if (this.preEQAnalyser && this.preEQGain) {
       panner.connect(this.preEQGain)
-      // preEQGain is already connected to destination and analyzer
+      // preEQGain is already connected to analyser and EQ input
     } else {
-      // Connect to EQ processor directly
+      // Connect directly to EQ processor input
       const eq = eqProcessor.getEQProcessor()
       panner.connect(eq.getInputNode())
     }
     
     // Store the nodes
     this.audioNodes = {
-      source,
-      gain,
-      envelopeGain,
+      oscillatorSource,
+      sineGain,
+      noiseSource,
+      noiseGain,
+      noiseFilter,
+      mixerGain,
       panner,
-      filter
     }
     
-    // Start the source
-    source.start()
+    // Start the sources
+    oscillatorSource.start()
+    noiseSource.start()
     
     // Start the animation loop to update path position
     this.startAnimationLoop()
-    
-    // Start envelope modulation if enabled
-    if (this.isModulating) {
-      this.startEnvelopeModulation()
-    }
   }
   
   private startAnimationLoop(): void {
@@ -419,51 +431,49 @@ class GlyphGridAudioPlayer {
   }
   
   private stopSound(): void {
-    // Stop envelope modulation
-    this.stopEnvelopeModulation()
-    
     if (this.animationFrameId) {
       cancelAnimationFrame(this.animationFrameId)
       this.animationFrameId = null
     }
     
-    // Clean up the analyzer nodes
-    if (this.preEQAnalyser) {
-      if (this.preEQGain) {
-        this.preEQGain.disconnect()
-        this.preEQGain = null
-      }
-      this.preEQAnalyser = null
+    // Stop sources
+    if (this.audioNodes.oscillatorSource) {
+      this.audioNodes.oscillatorSource.stop()
+      this.audioNodes.oscillatorSource.disconnect()
+    }
+    if (this.audioNodes.noiseSource) {
+      this.audioNodes.noiseSource.stop()
+      this.audioNodes.noiseSource.disconnect()
     }
     
-    if (this.audioNodes.source) {
-      this.audioNodes.source.stop()
-      this.audioNodes.source.disconnect()
+    // Disconnect gains and filters
+    if (this.audioNodes.sineGain) {
+      this.audioNodes.sineGain.disconnect()
+    }
+    if (this.audioNodes.noiseGain) {
+      this.audioNodes.noiseGain.disconnect()
+    }
+    if (this.audioNodes.noiseFilter) {
+      this.audioNodes.noiseFilter.disconnect()
     }
     
-    if (this.audioNodes.gain) {
-      this.audioNodes.gain.disconnect()
+    // Disconnect mixer and panner
+    if (this.audioNodes.mixerGain) {
+      this.audioNodes.mixerGain.disconnect()
     }
-    
-    if (this.audioNodes.envelopeGain) {
-      this.audioNodes.envelopeGain.disconnect()
-    }
-    
-    if (this.audioNodes.filter) {
-      this.audioNodes.filter.disconnect()
-    }
-    
     if (this.audioNodes.panner) {
       this.audioNodes.panner.disconnect()
     }
     
     // Reset audio nodes
     this.audioNodes = {
-      source: null,
-      gain: null,
-      envelopeGain: null,
+      oscillatorSource: null,
+      sineGain: null,
+      noiseSource: null,
+      noiseGain: null,
+      noiseFilter: null,
+      mixerGain: null,
       panner: null,
-      filter: null
     }
   }
   
@@ -527,95 +537,9 @@ class GlyphGridAudioPlayer {
     }
   }
   
-  public setModulating(enabled: boolean): void {
-    if (this.isModulating === enabled) return
-    
-    this.isModulating = enabled
-    
-    if (enabled && this.isPlaying) {
-      this.startEnvelopeModulation()
-    } else {
-      this.stopEnvelopeModulation()
-    }
-  }
-  
-  public isModulationEnabled(): boolean {
-    return this.isModulating
-  }
-  
-  public setModulationRate(rate: number): void {
-    this.modulationRate = rate
-    
-    // If we're already modulating, restart with new rate
-    if (this.isModulating && this.isPlaying) {
-      this.stopEnvelopeModulation()
-      this.startEnvelopeModulation()
-    }
-  }
-  
-  public setModulationDepth(depth: number): void {
-    this.modulationDepth = Math.max(0, Math.min(1, depth)) // Clamp between 0 and 1
-  }
-  
-  private startEnvelopeModulation(): void {
-    if (this.modulationTimerId !== null) {
-      clearInterval(this.modulationTimerId)
-    }
-    
-    // Calculate interval in milliseconds based on rate
-    const intervalMs = 1000 / this.modulationRate
-    
-    const triggerEnvelope = () => {
-      if (!this.audioNodes.envelopeGain) return
-      
-      const ctx = getAudioContext()
-      const now = ctx.currentTime
-      
-      // Calculate the minimum gain based on modulation depth
-      const minGain = ENVELOPE_MAX_GAIN * (1 - this.modulationDepth)
-      
-      // Reset to minimum gain
-      this.audioNodes.envelopeGain.gain.cancelScheduledValues(now)
-      this.audioNodes.envelopeGain.gain.setValueAtTime(minGain, now)
-      
-      // Attack phase - quick ramp to max gain
-      this.audioNodes.envelopeGain.gain.linearRampToValueAtTime(
-        ENVELOPE_MAX_GAIN, 
-        now + ENVELOPE_ATTACK_TIME
-      )
-      
-      // Release phase - slower decay back to min gain
-      this.audioNodes.envelopeGain.gain.linearRampToValueAtTime(
-        minGain,
-        now + ENVELOPE_ATTACK_TIME + ENVELOPE_RELEASE_TIME
-      )
-
-      console.log('🔊 Envelope modulation triggered')
-    }
-    
-    // Trigger immediately then start interval
-    triggerEnvelope()
-    this.modulationTimerId = window.setInterval(triggerEnvelope, intervalMs)
-  }
-  
-  private stopEnvelopeModulation(): void {
-    if (this.modulationTimerId !== null) {
-      clearInterval(this.modulationTimerId)
-      this.modulationTimerId = null
-    }
-    
-    // Reset envelope gain to max if available
-    if (this.audioNodes.envelopeGain) {
-      const ctx = getAudioContext()
-      this.audioNodes.envelopeGain.gain.cancelScheduledValues(ctx.currentTime)
-      this.audioNodes.envelopeGain.gain.setValueAtTime(ENVELOPE_MAX_GAIN, ctx.currentTime)
-    }
-  }
-  
   public dispose(): void {
     this.setPlaying(false)
     this.stopSweep()
-    this.stopEnvelopeModulation()
   }
   
   // Add this new public method to expose the current path position
@@ -663,7 +587,7 @@ class GlyphGridAudioPlayer {
     preEQGain.gain.value = 1.0
     
     // Connect if we're playing and have a source
-    if (this.isPlaying && this.audioNodes.filter && this.audioNodes.panner) {
+    if (this.isPlaying && this.audioNodes.oscillatorSource && this.audioNodes.panner) {
       // Disconnect the panner from its current destination
       this.audioNodes.panner.disconnect()
       
@@ -695,8 +619,8 @@ class GlyphGridAudioPlayer {
     let panning = 0;
     
     // Get values from audio nodes if available
-    if (this.audioNodes.filter) {
-      frequency = this.audioNodes.filter.frequency.value;
+    if (this.audioNodes.oscillatorSource) {
+      frequency = this.audioNodes.oscillatorSource.frequency.value;
     }
     
     if (this.audioNodes.panner) {
@@ -783,10 +707,10 @@ class GlyphGridAudioPlayer {
     // Clamp gain between 0 and 1
     this.distortionGain = Math.max(0, Math.min(1, gain));
     
-    // If playing, apply to active gain node
-    if (this.isPlaying && this.audioNodes.gain) {
-      // Apply directly to the gain node
-      this.audioNodes.gain.gain.value = MASTER_GAIN * this.distortionGain;
+    // If playing, apply to active mixer gain node
+    if (this.isPlaying && this.audioNodes.mixerGain) {
+      // Apply directly to the mixer gain node, remove MASTER_GAIN multiplication
+      this.audioNodes.mixerGain.gain.value = this.distortionGain; 
       console.log(`🔊 Glyph Grid distortion gain set to ${this.distortionGain.toFixed(2)}`);
     }
   }

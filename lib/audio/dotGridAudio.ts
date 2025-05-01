@@ -19,7 +19,10 @@ const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
 const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
 
 // Volume pattern settings
-const VOLUME_PATTERN = [0, -12, -6, -12]; // The fixed pattern in dB: 0dB, -12dB, -6dB, -12dB
+const VOLUME_PATTERN = [0, 0, 0, 0];
+
+// Define the possible states for a dot
+export type DotState = 'on' | 'quiet' | 'off';
 
 class DotGridAudioPlayer {
   private static instance: DotGridAudioPlayer;
@@ -32,6 +35,7 @@ class DotGridAudioPlayer {
     panner: StereoPannerNode;
     filter: BiquadFilterNode;
     position: number; // Position for sorting
+    state: 'on' | 'quiet'; // Add state to track 'on' or 'quiet'
   }> = new Map();
   private gridSize: number = 3; // Default row count
   private columnCount: number = COLUMNS; // Default column count
@@ -267,12 +271,12 @@ class DotGridAudioPlayer {
   }
 
   /**
-   * Update the set of active dots
-   * @param dots Set of dot coordinates
+   * Update the set of active dots and their states
+   * @param dots Map of dot coordinates to their state ('on' or 'quiet')
    * @param currentGridSize Optional grid size update
    * @param currentColumns Optional column count update
    */
-  public updateDots(dots: Set<string>, currentGridSize?: number, currentColumns?: number): void {
+  public updateDots(dots: Map<string, 'on' | 'quiet'>, currentGridSize?: number, currentColumns?: number): void {
     // Update grid size if provided and changed
     if (currentGridSize && currentGridSize !== this.gridSize) {
       this.setGridSize(currentGridSize, currentColumns);
@@ -282,39 +286,37 @@ class DotGridAudioPlayer {
       this.setGridSize(this.gridSize, currentColumns);
     }
     
-    // Get current dots
+    // Get current dots (dots that are not 'off')
     const currentDots = new Set(this.audioNodes.keys());
-    
-    // Remove dots that are no longer selected
+    const newDotsMap = new Map(dots); // Create a mutable map
+
+    // Remove dots that are now 'off' (not in the new dots map)
     currentDots.forEach(dotKey => {
-      if (!dots.has(dotKey)) {
+      if (!newDotsMap.has(dotKey)) {
         this.removeDot(dotKey);
       }
     });
     
-    // Add new dots
-    dots.forEach(dotKey => {
+    // Add new dots or update state of existing dots
+    newDotsMap.forEach((state, dotKey) => {
       if (!this.audioNodes.has(dotKey)) {
-        this.addDot(dotKey);
+        // Add new dot with its state
+        this.addDot(dotKey, state);
+      } else {
+        // Update the state of an existing dot
+        const nodes = this.audioNodes.get(dotKey);
+        if (nodes) {
+          nodes.state = state;
+        }
       }
     });
     
     // If playing, restart rhythm
     if (this.isPlaying) {
       this.stopAllRhythms();
-      this.stopAllSources();
-      this.startAllSources();
-      this.startAllRhythms();
-      
-    //   // If we just added the first dot, trigger it immediately without delay
-    //   if (isAddingFirstDot) {
-    //     const firstDotKey = Array.from(dots)[0];
-    //     if (this.audioNodes.has(firstDotKey)) {
-    //       // Use the current pattern volume
-    //       const volumeDb = this.baseDbLevel + VOLUME_PATTERN[this.volumePatternIndex];
-    //       this.triggerDotEnvelope(firstDotKey, volumeDb);
-    //     }
-    //   }
+      this.stopAllSources(); // Stop sources before restarting
+      this.startAllSources(); // Start sources with updated nodes
+      this.startAllRhythms(); // Restart rhythm
     }
   }
 
@@ -531,7 +533,7 @@ class DotGridAudioPlayer {
   /**
    * Trigger the envelope for a specific dot with volume parameter
    * @param dotKey The dot to trigger
-   * @param volumeDb Volume in dB to apply
+   * @param volumeDb Volume in dB to apply (base level)
    */
   private triggerDotEnvelope(dotKey: string, volumeDb: number = 0): void {
     const nodes = this.audioNodes.get(dotKey);
@@ -539,6 +541,12 @@ class DotGridAudioPlayer {
     
     const ctx = audioContext.getAudioContext();
     const now = ctx.currentTime;
+
+    // Determine effective volume based on state
+    let effectiveVolumeDb = volumeDb;
+    if (nodes.state === 'quiet') {
+      effectiveVolumeDb -= 18; // Reduce volume by 18dB for quiet state
+    }
     
     // Calculate release time based on frequency
     // Get the center frequency from the filter
@@ -563,7 +571,7 @@ class DotGridAudioPlayer {
     
     // Apply volume in dB to gain
     // Convert dB to gain ratio (0dB = 1.0)
-    const gainRatio = Math.pow(10, volumeDb / 20);
+    const gainRatio = Math.pow(10, effectiveVolumeDb / 20); // Use effectiveVolumeDb
     
     // Apply to this node's gain
     nodes.gain.gain.cancelScheduledValues(now);
@@ -591,8 +599,10 @@ class DotGridAudioPlayer {
 
   /**
    * Add a new dot to the audio system
+   * @param dotKey The dot identifier string "x,y"
+   * @param state The initial state ('on' or 'quiet')
    */
-  private addDot(dotKey: string): void {
+  private addDot(dotKey: string, state: 'on' | 'quiet'): void {
     const [x, y] = dotKey.split(',').map(Number);
     
     // Create audio nodes for this dot
@@ -631,7 +641,7 @@ class DotGridAudioPlayer {
     filter.frequency.value = centerFreq;
     filter.Q.value = qValue;
     
-    // Store the nodes with simplified structure
+    // Store the nodes with simplified structure and initial state
     this.audioNodes.set(dotKey, {
       source: ctx.createBufferSource(), // Dummy source (will be replaced when playing)
       gain,
@@ -639,6 +649,7 @@ class DotGridAudioPlayer {
       panner,
       filter,
       position: y * this.columnCount + x, // Store position for sorting
+      state: state, // Store the initial state
     });
   }
   

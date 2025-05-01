@@ -4,6 +4,7 @@ import type React from "react"
 import { useRef, useEffect, useState, useMemo } from "react"
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
 import { usePlayerStore } from "@/lib/stores"
+import { DotState } from '@/lib/audio/dotGridAudio'
 
 interface DotGridProps {
   selectedDot: [number, number] | null
@@ -123,11 +124,11 @@ export function LegacyDotGrid({ selectedDot, setSelectedDot, gridSize, disabled 
 // New interface for multi-selection DotGrid
 interface MultiSelectionDotGridProps {
   gridSize: number; // Range: 3-9, now controls only rows
-  selectedDots: Set<string>; // Format: "x,y" string for each dot
-  onDotToggle: (x: number, y: number) => void;
+  dotStates: Map<string, 'on' | 'quiet'>; // Use Map for state: "x,y" -> state
+  onDotCycleState: (x: number, y: number) => void; // Changed from onDotToggle
   disabled?: boolean;
   isPlaying?: boolean;
-  selectionMode?: 'single' | 'multiple';
+  columnCount?: number;
 }
 
 // Constants for the grid
@@ -141,13 +142,12 @@ const BASE_DOT_RADIUS = 6; // Base dot size, will be adjusted as needed
 // New DotGrid component with multiple selection support
 export function DotGrid({ 
   gridSize,
-  selectedDots,
-  onDotToggle,
+  dotStates, // Changed from selectedDots
+  onDotCycleState, // Changed from onDotToggle
   disabled = false,
   isPlaying = false,
   columnCount = DEFAULT_COLUMNS,
-  selectionMode = 'multiple'
-}: MultiSelectionDotGridProps & { columnCount?: number, selectionMode?: 'single' | 'multiple' }) {
+}: MultiSelectionDotGridProps & { columnCount?: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 })
@@ -266,16 +266,22 @@ export function DotGrid({
         const centerX = hGap + (x * (dotRadius * 2 + hGap)) + dotRadius
         const centerY = vGap + (y * (dotRadius * 2 + vGap)) + dotRadius
         
-        // Check if this dot is selected
-        const isSelected = selectedDots.has(`${x},${y}`)
+        // Check the state of this dot
+        const dotKey = `${x},${y}`;
+        const state = dotStates.get(dotKey); // Get state ('on', 'quiet', or undefined for 'off')
         
-        // Draw pulsing animation for playing dots
-        if (isPlaying && isSelected) {
+        // Draw pulsing animation for playing dots ('on' or 'quiet')
+        if (isPlaying && state) { // Pulse if state is 'on' or 'quiet'
           // Draw pulse background
           const pulseSize = 2 + Math.sin(Date.now() / 200) * 0.5
           ctx.beginPath()
           ctx.arc(centerX, centerY, dotRadius * pulseSize, 0, Math.PI * 2)
-          ctx.fillStyle = isDarkMode ? "rgba(56, 189, 248, 0.2)" : "rgba(2, 132, 199, 0.2)"
+          // Pulse color depends on state
+          if (state === 'on') {
+            ctx.fillStyle = isDarkMode ? "rgba(56, 189, 248, 0.2)" : "rgba(2, 132, 199, 0.2)" // Blue pulse
+          } else { // state === 'quiet'
+            ctx.fillStyle = isDarkMode ? "rgba(248, 113, 113, 0.2)" : "rgba(220, 38, 38, 0.2)" // Red pulse
+          }
           ctx.fill()
         }
 
@@ -283,9 +289,14 @@ export function DotGrid({
         ctx.beginPath()
         ctx.arc(centerX, centerY, dotRadius, 0, Math.PI * 2)
 
-        if (isSelected && !disabled) {
-          ctx.fillStyle = isDarkMode ? "#38bdf8" : "#0284c7" // sky-400 or sky-600
+        if (state && !disabled) {
+          if (state === 'on') {
+            ctx.fillStyle = isDarkMode ? "#38bdf8" : "#0284c7" // sky-400 or sky-600 (Blue)
+          } else { // state === 'quiet'
+            ctx.fillStyle = isDarkMode ? "#f87171" : "#dc2626" // red-400 or red-600 (Red)
+          }
         } else {
+          // Default style for 'off' or disabled dots
           ctx.fillStyle = disabled
             ? isDarkMode
               ? "#27272a" // zinc-800 - darker for better contrast in dark mode
@@ -299,14 +310,14 @@ export function DotGrid({
       }
     }
     
-    // Request animation frame if playing to handle pulsing animation
-    if (isPlaying && selectedDots.size > 0) {
+    // Request animation frame if playing to handle pulsing animation for any active dot
+    if (isPlaying && dotStates.size > 0) {
       requestAnimationFrame(() => {
         // Force a re-render for animation
         setCanvasSize(prev => ({ ...prev }));
       });
     }
-  }, [selectedDots, gridSize, disabled, isDarkMode, canvasSize, isPlaying, gridDimensions])
+  }, [dotStates, gridSize, disabled, isDarkMode, canvasSize, isPlaying, gridDimensions]) // Updated dependency
 
   // Track drag events for continuous selection
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -339,8 +350,8 @@ export function DotGrid({
       }
     }
     
-    // Only process selection during drag if actually moving AND in multiple selection mode
-    if (hasMoved && selectionMode === 'multiple') {
+    // Only process selection during drag if actually moving
+    if (hasMoved) { // Removed selectionMode check
       handleDotSelection(e);
     }
   }
@@ -397,7 +408,7 @@ export function DotGrid({
     // 2. We're dragging and this is a new dot (different from the last clicked)
     if ((!isDragging || !isSameAsPrevious)) {
       setLastClickedDot(closestDot);
-      onDotToggle(closestDot.x, closestDot.y);
+      onDotCycleState(closestDot.x, closestDot.y); // Use onDotCycleState
     }
   }
 
@@ -419,8 +430,8 @@ interface DotCalibrationProps {
   setIsPlaying: (isPlaying: boolean) => void;
   disabled?: boolean;
   preEQAnalyser?: AnalyserNode | null;
-  selectedDots?: Set<string>;
-  setSelectedDots?: React.Dispatch<React.SetStateAction<Set<string>>>;
+  dotStates?: Map<string, 'on' | 'quiet'>; // Use Map for state
+  setDotStates?: React.Dispatch<React.SetStateAction<Map<string, 'on' | 'quiet'>>>; // Use Map for state
 }
 
 export function DotCalibration({ 
@@ -428,28 +439,25 @@ export function DotCalibration({
   setIsPlaying, 
   disabled = false, 
   preEQAnalyser = null,
-  selectedDots: externalSelectedDots,
-  setSelectedDots: externalSetSelectedDots 
+  dotStates: externalDotStates, // Changed from selectedDots
+  setDotStates: externalSetDotStates // Changed from setSelectedDots
 }: DotCalibrationProps) {
   // Always use odd numbers for grid dimensions
   const [gridSize, setGridSize] = useState(5); // Start with 5 rows (odd number)
   const [columnCount, setColumnCount] = useState(5); // Start with 5 columns (odd number)
   
-  // Use either external or internal state for selected dots
-  const [internalSelectedDots, setInternalSelectedDots] = useState<Set<string>>(new Set()); // Start with no dots selected
+  // Use either external or internal state for dot states
+  const [internalDotStates, setInternalDotStates] = useState<Map<string, 'on' | 'quiet'>>(new Map()); // Use Map
   
   // Use either external or internal state
-  const selectedDots = externalSelectedDots !== undefined ? externalSelectedDots : internalSelectedDots;
-  const setSelectedDots = externalSetSelectedDots !== undefined ? externalSetSelectedDots : setInternalSelectedDots;
+  const dotStates = externalDotStates !== undefined ? externalDotStates : internalDotStates;
+  const setDotStates = externalSetDotStates !== undefined ? externalSetDotStates : setInternalDotStates;
   
-  // Always use multiple selection mode
-  const selectionMode = 'multiple';
-  
-  // Update audio player when selected dots change
+  // Update audio player when dot states change
   useEffect(() => {
     const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
-    audioPlayer.updateDots(selectedDots, gridSize, columnCount);
-  }, [selectedDots, gridSize, columnCount]);
+    audioPlayer.updateDots(dotStates, gridSize, columnCount); // Pass dotStates map
+  }, [dotStates, gridSize, columnCount]);
   
   // Direct control of audio player playback state - no fancy logic
   useEffect(() => {
@@ -471,19 +479,19 @@ export function DotCalibration({
   
   // Handle arrow key navigation
   useEffect(() => {
-    if (disabled || selectedDots.size === 0) return;
+    if (disabled || dotStates.size === 0) return; // Check dotStates.size
     
     const handleKeyDown = (e: KeyboardEvent) => {
       // Skip if disabled or no dots selected
-      if (disabled || selectedDots.size === 0) return;
+      if (disabled || dotStates.size === 0) return; // Check dotStates.size
       
       // Only handle arrow keys
       if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
       
-      // Parse all selected dots
-      const parsedDots = Array.from(selectedDots).map(dot => {
-        const [x, y] = dot.split(',').map(Number);
-        return { x, y };
+      // Parse all active dots (on or quiet)
+      const activeDots = Array.from(dotStates.entries()).map(([key, state]) => {
+        const [x, y] = key.split(',').map(Number);
+        return { x, y, state }; // Keep state info
       });
       
       // Calculate new positions based on arrow key
@@ -495,23 +503,23 @@ export function DotCalibration({
         case 'ArrowRight': dx = 1; break;
       }
       
-      // Check if all dots can move in the desired direction
-      const canAllMove = parsedDots.every(dot => {
+      // Check if all active dots can move in the desired direction
+      const canAllMove = activeDots.every(dot => {
         const newX = dot.x + dx;
         const newY = dot.y + dy;
         return newX >= 0 && newX < columnCount && newY >= 0 && newY < gridSize;
       });
       
-      // If all dots can move, update the selection
+      // If all dots can move, update the selection map, preserving state
       if (canAllMove) {
-        const newSelectedDots = new Set<string>();
-        parsedDots.forEach(dot => {
+        const newDotStates = new Map<string, 'on' | 'quiet'>();
+        activeDots.forEach(dot => {
           const newX = dot.x + dx;
           const newY = dot.y + dy;
-          newSelectedDots.add(`${newX},${newY}`);
+          newDotStates.set(`${newX},${newY}`, dot.state); // Preserve state
         });
         
-        setSelectedDots(newSelectedDots);
+        setDotStates(newDotStates);
         
         // Prevent default behavior (scrolling)
         e.preventDefault();
@@ -525,27 +533,38 @@ export function DotCalibration({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [disabled, selectedDots, setSelectedDots, columnCount, gridSize]);
+  }, [disabled, dotStates, setDotStates, columnCount, gridSize]); // Updated dependencies
   
-  // Modified dot toggle handler to support multiple selections
-  const handleDotToggle = (x: number, y: number) => {
+  // Cycle through dot states: off -> on -> quiet -> off
+  const handleDotCycleState = (x: number, y: number) => {
     const dotKey = `${x},${y}`;
-    const newSelectedDots = new Set<string>(selectedDots);
+    const currentState = dotStates.get(dotKey);
+    const newDotStates = new Map<string, 'on' | 'quiet'>(dotStates);
     
     // Get music player state
     const { isPlaying: isMusicPlaying, setIsPlaying: setMusicPlaying } = usePlayerStore.getState();
     
-    // Toggle this dot: if selected, deselect it; if not selected, select it
-    if (selectedDots.has(dotKey)) {
-      newSelectedDots.delete(dotKey);
-    } else {
-      newSelectedDots.add(dotKey);
+    // Determine the next state
+    let nextState: DotState;
+    if (currentState === 'on') {
+      nextState = 'quiet';
+    } else if (currentState === 'quiet') {
+      nextState = 'off';
+    } else { // Current state is 'off' (undefined)
+      nextState = 'on';
     }
     
-    setSelectedDots(newSelectedDots);
+    // Update the map based on the next state
+    if (nextState === 'off') {
+      newDotStates.delete(dotKey);
+    } else {
+      newDotStates.set(dotKey, nextState);
+    }
     
-    // Auto-start when selecting dots
-    if (newSelectedDots.size > 0 && !isPlaying) {
+    setDotStates(newDotStates);
+    
+    // Auto-start when selecting the first dot (to 'on' state)
+    if (newDotStates.size > 0 && !isPlaying) {
       // If music is playing, pause it first
       if (isMusicPlaying) {
         setMusicPlaying(false);
@@ -553,33 +572,33 @@ export function DotCalibration({
       setIsPlaying(true);
     }
     
-    // Auto-stop when deselecting all dots
-    if (newSelectedDots.size === 0 && isPlaying) {
+    // Auto-stop when deselecting the last dot (to 'off' state)
+    if (newDotStates.size === 0 && isPlaying) {
       setIsPlaying(false);
     }
   };
   
-  // Modify row adjustment to preserve relative dot positions
+  // Modify row adjustment to preserve relative dot positions and states
   const increaseRows = () => {
     if (gridSize < MAX_ROWS) {
       const oldGridSize = gridSize;
       const newGridSize = gridSize + 2; // Add 2 to maintain odd number
       
-      // Remap dots to preserve relative positions
-      const newSelectedDots = new Set<string>();
-      selectedDots.forEach(dot => {
-        const [x, y] = dot.split(',').map(Number);
+      // Remap dots to preserve relative positions and states
+      const newDotStates = new Map<string, 'on' | 'quiet'>();
+      dotStates.forEach((state, dotKey) => {
+        const [x, y] = dotKey.split(',').map(Number);
         if (x < columnCount) {
           // Calculate the relative position in the old grid (0-1)
           const relativePos = y / (oldGridSize - 1);
           // Map to the same relative position in the new grid
           const newY = Math.round(relativePos * (newGridSize - 1));
-          newSelectedDots.add(`${x},${newY}`);
+          newDotStates.set(`${x},${newY}`, state); // Preserve state
         }
       });
       
       setGridSize(newGridSize);
-      setSelectedDots(newSelectedDots);
+      setDotStates(newDotStates);
     }
   };
   
@@ -588,45 +607,45 @@ export function DotCalibration({
       const oldGridSize = gridSize;
       const newGridSize = gridSize - 2; // Subtract 2 to maintain odd number
       
-      // Remap dots to preserve relative positions
-      const newSelectedDots = new Set<string>();
-      selectedDots.forEach(dot => {
-        const [x, y] = dot.split(',').map(Number);
+      // Remap dots to preserve relative positions and states
+      const newDotStates = new Map<string, 'on' | 'quiet'>();
+      dotStates.forEach((state, dotKey) => {
+        const [x, y] = dotKey.split(',').map(Number);
         if (x < columnCount) {
           // Calculate the relative position in the old grid (0-1)
           const relativePos = y / (oldGridSize - 1);
           // Map to the same relative position in the new grid
           const newY = Math.round(relativePos * (newGridSize - 1));
-          newSelectedDots.add(`${x},${newY}`);
+          newDotStates.set(`${x},${newY}`, state); // Preserve state
         }
       });
       
       setGridSize(newGridSize);
-      setSelectedDots(newSelectedDots);
+      setDotStates(newDotStates);
     }
   };
 
-  // Modify column adjustment to preserve relative dot positions
+  // Modify column adjustment to preserve relative dot positions and states
   const increaseColumns = () => {
     if (columnCount < MAX_COLUMNS) {
       const oldColumnCount = columnCount;
       const newColumnCount = columnCount + 2; // Add 2 to maintain odd number
       
-      // Remap dots to preserve relative positions
-      const newSelectedDots = new Set<string>();
-      selectedDots.forEach(dot => {
-        const [x, y] = dot.split(',').map(Number);
+      // Remap dots to preserve relative positions and states
+      const newDotStates = new Map<string, 'on' | 'quiet'>();
+      dotStates.forEach((state, dotKey) => {
+        const [x, y] = dotKey.split(',').map(Number);
         if (y < gridSize) {
           // Calculate the relative position in the old grid (0-1)
           const relativePos = x / (oldColumnCount - 1);
           // Map to the same relative position in the new grid
           const newX = Math.round(relativePos * (newColumnCount - 1));
-          newSelectedDots.add(`${newX},${y}`);
+          newDotStates.set(`${newX},${y}`, state); // Preserve state
         }
       });
       
       setColumnCount(newColumnCount);
-      setSelectedDots(newSelectedDots);
+      setDotStates(newDotStates);
     }
   };
   
@@ -635,27 +654,27 @@ export function DotCalibration({
       const oldColumnCount = columnCount;
       const newColumnCount = columnCount - 2; // Subtract 2 to maintain odd number
       
-      // Remap dots to preserve relative positions
-      const newSelectedDots = new Set<string>();
-      selectedDots.forEach(dot => {
-        const [x, y] = dot.split(',').map(Number);
+      // Remap dots to preserve relative positions and states
+      const newDotStates = new Map<string, 'on' | 'quiet'>();
+      dotStates.forEach((state, dotKey) => {
+        const [x, y] = dotKey.split(',').map(Number);
         if (y < gridSize) {
           // Calculate the relative position in the old grid (0-1)
           const relativePos = x / (oldColumnCount - 1);
           // Map to the same relative position in the new grid
           const newX = Math.round(relativePos * (newColumnCount - 1));
-          newSelectedDots.add(`${newX},${y}`);
+          newDotStates.set(`${newX},${y}`, state); // Preserve state
         }
       });
       
       setColumnCount(newColumnCount);
-      setSelectedDots(newSelectedDots);
+      setDotStates(newDotStates);
     }
   };
   
   // Simple clear selection
   const clearSelection = () => {
-    setSelectedDots(new Set());
+    setDotStates(new Map()); // Clear the map
     if (isPlaying) {
       setIsPlaying(false);
     }
@@ -668,18 +687,17 @@ export function DotCalibration({
         <DotGrid
           gridSize={gridSize}
           columnCount={columnCount}
-          selectedDots={selectedDots}
-          onDotToggle={handleDotToggle}
+          dotStates={dotStates} // Pass dotStates
+          onDotCycleState={handleDotCycleState} // Pass cycle handler
           disabled={disabled}
           isPlaying={isPlaying}
-          selectionMode={selectionMode}
         />
         
         {/* Instruction text */}
         <div className="mt-2 text-xs text-center text-muted-foreground">
-          {selectedDots.size === 0 
-            ? "Click dots to play them"
-            : "Use arrow keys to move dots"}
+          {dotStates.size === 0 
+            ? "Click dots: On (blue) -> Quiet (red) -> Off"
+            : "Use arrow keys to move active dots"}
         </div>
       </div>
       
@@ -751,12 +769,12 @@ export function DotCalibration({
         {/* Clear button */}
         <button
           className={`px-2 py-1 rounded flex items-center justify-center text-xs border ${
-            selectedDots.size === 0 || disabled
+            dotStates.size === 0 || disabled
               ? 'opacity-50 cursor-not-allowed'
               : 'hover:bg-muted'
           }`}
           onClick={clearSelection}
-          disabled={selectedDots.size === 0 || disabled}
+          disabled={dotStates.size === 0 || disabled}
         >
           Clear
         </button>
