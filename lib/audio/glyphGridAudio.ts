@@ -18,7 +18,10 @@ const NOISE_GAIN = 0.5 // Adjust NOISE_GAIN as we now have two sources
 // const ENVELOPE_RELEASE_TIME = 0.05 // 100ms release
 const DEFAULT_SPEED = 1.0 // Default movement speed
 const NOISE_FILTER_Q = 3.0 // Q factor for the HP/LP noise filters (higher = steeper cutoff)
-const NOISE_BANDWIDTH_OCTAVES = 3.0 // Bandwidth between HP and LP filters in octaves
+const NOISE_BANDWIDTH_OCTAVES = 3.0 // Base bandwidth between HP and LP filters in octaves
+// Define bandwidth scaling multipliers for min/max frequencies
+const MIN_FREQ_BANDWIDTH_MULTIPLIER = 1.5 // Wider bandwidth at low frequencies
+const MAX_FREQ_BANDWIDTH_MULTIPLIER = 0.5 // Narrower bandwidth at high frequencies
 
 // Add constants for hit detection
 const DEFAULT_HIT_INTERVAL = 0.2 // Default interval between hits (20% of path)
@@ -325,10 +328,23 @@ class GlyphGridAudioPlayer {
     // Apply frequency multiplier
     const adjustedFreq = centerFreq * this.freqMultiplier
 
-    // Calculate HP and LP cutoff frequencies based on bandwidth
-    const octaveMultiplier = Math.pow(2, NOISE_BANDWIDTH_OCTAVES / 2)
-    let hpCutoff = adjustedFreq * octaveMultiplier
-    let lpCutoff = adjustedFreq / octaveMultiplier
+    // --- Calculate Dynamic Bandwidth --- 
+    // Normalize the current frequency within the log range (minFreq to maxFreq)
+    const logAdjustedFreq = Math.log2(Math.max(minFreq, Math.min(maxFreq, adjustedFreq)))
+    const normalizedLogFreq = (logAdjustedFreq - logMinFreq) / (logMaxFreq - logMinFreq)
+    
+    // Interpolate bandwidth multiplier based on frequency position
+    const dynamicBandwidthMultiplier = MIN_FREQ_BANDWIDTH_MULTIPLIER + 
+                                     (MAX_FREQ_BANDWIDTH_MULTIPLIER - MIN_FREQ_BANDWIDTH_MULTIPLIER) * normalizedLogFreq
+                                     
+    // Calculate effective bandwidth and the corresponding multiplier
+    const effectiveBandwidthOctaves = NOISE_BANDWIDTH_OCTAVES * dynamicBandwidthMultiplier
+    const effectiveOctaveMultiplier = Math.pow(2, effectiveBandwidthOctaves / 2)
+    // --- End Dynamic Bandwidth Calculation ---
+
+    // Calculate HP and LP cutoff frequencies based on dynamic bandwidth
+    let hpCutoff = adjustedFreq * effectiveOctaveMultiplier
+    let lpCutoff = adjustedFreq / effectiveOctaveMultiplier
 
     // Clamp frequencies to avoid issues
     const minClampFreq = 20
