@@ -5,8 +5,8 @@ import { useEQProfileStore } from '@/lib/stores'
 // Default values
 const DEFAULT_FREQ_MULTIPLIER = 1.0
 const DEFAULT_SWEEP_DURATION = 8.0 // 8 seconds per cycle
-const SINE_GAIN = 0.3 // Quieter gain for sine tone
-const NOISE_GAIN = 1.0 // Louder gain for noise
+const SINE_GAIN = 0.01 // Make sine tone much quieter
+const NOISE_GAIN = 0.5 // Adjust NOISE_GAIN as we now have two sources
 // const ENVELOPE_ATTACK = 0.01 // 10ms
 // const ENVELOPE_RELEASE_LOW_FREQ = 0.8 // 800ms for low frequencies
 // const ENVELOPE_RELEASE_HIGH_FREQ = 0.2 // 200ms for high frequencies
@@ -17,7 +17,8 @@ const NOISE_GAIN = 1.0 // Louder gain for noise
 // const ENVELOPE_ATTACK_TIME = 0.005 // 5ms attack
 // const ENVELOPE_RELEASE_TIME = 0.05 // 100ms release
 const DEFAULT_SPEED = 1.0 // Default movement speed
-const NOISE_FILTER_Q = 10.0 // Q factor for the noise notch filter
+const NOISE_FILTER_Q = 3.0 // Q factor for the HP/LP noise filters (higher = steeper cutoff)
+const NOISE_BANDWIDTH_OCTAVES = 3.0 // Bandwidth between HP and LP filters in octaves
 
 // Add constants for hit detection
 const DEFAULT_HIT_INTERVAL = 0.2 // Default interval between hits (20% of path)
@@ -45,17 +46,23 @@ class GlyphGridAudioPlayer {
   private audioNodes: {
     oscillatorSource: OscillatorNode | null;
     sineGain: GainNode | null;
-    noiseSource: AudioBufferSourceNode | null;
-    noiseGain: GainNode | null;
-    noiseFilter: BiquadFilterNode | null;
+    noiseSourceHP: AudioBufferSourceNode | null;
+    noiseFilterHP: BiquadFilterNode | null;
+    noiseGainHP: GainNode | null;
+    noiseSourceLP: AudioBufferSourceNode | null;
+    noiseFilterLP: BiquadFilterNode | null;
+    noiseGainLP: GainNode | null;
     mixerGain: GainNode | null;
     panner: StereoPannerNode | null;
   } = {
     oscillatorSource: null,
     sineGain: null,
-    noiseSource: null,
-    noiseGain: null,
-    noiseFilter: null,
+    noiseSourceHP: null,
+    noiseFilterHP: null,
+    noiseGainHP: null,
+    noiseSourceLP: null,
+    noiseFilterLP: null,
+    noiseGainLP: null,
     mixerGain: null,
     panner: null
   }
@@ -317,17 +324,33 @@ class GlyphGridAudioPlayer {
     
     // Apply frequency multiplier
     const adjustedFreq = centerFreq * this.freqMultiplier
+
+    // Calculate HP and LP cutoff frequencies based on bandwidth
+    const octaveMultiplier = Math.pow(2, NOISE_BANDWIDTH_OCTAVES / 2)
+    let hpCutoff = adjustedFreq * octaveMultiplier
+    let lpCutoff = adjustedFreq / octaveMultiplier
+
+    // Clamp frequencies to avoid issues
+    const minClampFreq = 20
+    const maxClampFreq = 20000 // Or use ctx.sampleRate / 2 if needed
+    hpCutoff = Math.max(minClampFreq, Math.min(maxClampFreq, hpCutoff))
+    lpCutoff = Math.max(minClampFreq, Math.min(maxClampFreq, lpCutoff))
+    const finalOscFreq = Math.max(minClampFreq, Math.min(maxClampFreq, adjustedFreq))
     
     // Map x to pan position (-1 to 1)
     const panPosition = x
     
     // Now update the audio nodes with these values
     if (this.audioNodes.oscillatorSource) {
-      this.audioNodes.oscillatorSource.frequency.value = adjustedFreq
+      this.audioNodes.oscillatorSource.frequency.value = finalOscFreq
     }
     
-    if (this.audioNodes.noiseFilter) {
-      this.audioNodes.noiseFilter.frequency.value = adjustedFreq
+    if (this.audioNodes.noiseFilterHP) {
+      this.audioNodes.noiseFilterHP.frequency.value = hpCutoff
+    }
+    
+    if (this.audioNodes.noiseFilterLP) {
+      this.audioNodes.noiseFilterLP.frequency.value = lpCutoff
     }
     
     if (this.audioNodes.panner) {
@@ -362,16 +385,27 @@ class GlyphGridAudioPlayer {
     const sineGain = ctx.createGain()
     sineGain.gain.value = SINE_GAIN
 
-    // --- Create Noise Path Nodes ---
-    const noiseSource = ctx.createBufferSource()
-    noiseSource.buffer = this.pinkNoiseBuffer 
-    noiseSource.loop = true 
-    const noiseGain = ctx.createGain()
-    noiseGain.gain.value = NOISE_GAIN
-    const noiseFilter = ctx.createBiquadFilter()
-    noiseFilter.type = 'notch'
-    noiseFilter.frequency.value = 500 // Default frequency, will be updated
-    noiseFilter.Q.value = NOISE_FILTER_Q 
+    // --- Create Noise Path Nodes (High Pass) ---
+    const noiseSourceHP = ctx.createBufferSource()
+    noiseSourceHP.buffer = this.pinkNoiseBuffer
+    noiseSourceHP.loop = true
+    const noiseFilterHP = ctx.createBiquadFilter()
+    noiseFilterHP.type = 'highpass'
+    noiseFilterHP.frequency.value = 800 // Default frequency, will be updated
+    noiseFilterHP.Q.value = NOISE_FILTER_Q
+    const noiseGainHP = ctx.createGain()
+    noiseGainHP.gain.value = NOISE_GAIN
+
+    // --- Create Noise Path Nodes (Low Pass) ---
+    const noiseSourceLP = ctx.createBufferSource()
+    noiseSourceLP.buffer = this.pinkNoiseBuffer // Use the same buffer
+    noiseSourceLP.loop = true
+    const noiseFilterLP = ctx.createBiquadFilter()
+    noiseFilterLP.type = 'lowpass'
+    noiseFilterLP.frequency.value = 200 // Default frequency, will be updated
+    noiseFilterLP.Q.value = NOISE_FILTER_Q
+    const noiseGainLP = ctx.createGain()
+    noiseGainLP.gain.value = NOISE_GAIN
 
     // --- Create Mixer and Panner Nodes ---
     const mixerGain = ctx.createGain()
@@ -384,10 +418,15 @@ class GlyphGridAudioPlayer {
     oscillatorSource.connect(sineGain)
     sineGain.connect(mixerGain)
     
-    // Noise Path: noiseSource -> noiseGain -> noiseFilter -> mixerGain
-    noiseSource.connect(noiseGain)
-    noiseGain.connect(noiseFilter)
-    noiseFilter.connect(mixerGain)
+    // Noise Path (HP): noiseSourceHP -> noiseFilterHP -> noiseGainHP -> mixerGain
+    noiseSourceHP.connect(noiseFilterHP)
+    noiseFilterHP.connect(noiseGainHP)
+    noiseGainHP.connect(mixerGain)
+
+    // Noise Path (LP): noiseSourceLP -> noiseFilterLP -> noiseGainLP -> mixerGain
+    noiseSourceLP.connect(noiseFilterLP)
+    noiseFilterLP.connect(noiseGainLP)
+    noiseGainLP.connect(mixerGain)
     
     // Combined Path: mixerGain -> panner -> Output
     mixerGain.connect(panner)
@@ -406,16 +445,20 @@ class GlyphGridAudioPlayer {
     this.audioNodes = {
       oscillatorSource,
       sineGain,
-      noiseSource,
-      noiseGain,
-      noiseFilter,
+      noiseSourceHP,
+      noiseFilterHP,
+      noiseGainHP,
+      noiseSourceLP,
+      noiseFilterLP,
+      noiseGainLP,
       mixerGain,
       panner,
     }
     
     // Start the sources
     oscillatorSource.start()
-    noiseSource.start()
+    noiseSourceHP.start()
+    noiseSourceLP.start()
     
     // Start the animation loop to update path position
     this.startAnimationLoop()
@@ -441,20 +484,30 @@ class GlyphGridAudioPlayer {
       this.audioNodes.oscillatorSource.stop()
       this.audioNodes.oscillatorSource.disconnect()
     }
-    if (this.audioNodes.noiseSource) {
-      this.audioNodes.noiseSource.stop()
-      this.audioNodes.noiseSource.disconnect()
+    if (this.audioNodes.noiseSourceHP) {
+      this.audioNodes.noiseSourceHP.stop()
+      this.audioNodes.noiseSourceHP.disconnect()
+    }
+    if (this.audioNodes.noiseSourceLP) {
+      this.audioNodes.noiseSourceLP.stop()
+      this.audioNodes.noiseSourceLP.disconnect()
     }
     
     // Disconnect gains and filters
     if (this.audioNodes.sineGain) {
       this.audioNodes.sineGain.disconnect()
     }
-    if (this.audioNodes.noiseGain) {
-      this.audioNodes.noiseGain.disconnect()
+    if (this.audioNodes.noiseGainHP) {
+      this.audioNodes.noiseGainHP.disconnect()
     }
-    if (this.audioNodes.noiseFilter) {
-      this.audioNodes.noiseFilter.disconnect()
+    if (this.audioNodes.noiseGainLP) {
+      this.audioNodes.noiseGainLP.disconnect()
+    }
+    if (this.audioNodes.noiseFilterHP) {
+      this.audioNodes.noiseFilterHP.disconnect()
+    }
+    if (this.audioNodes.noiseFilterLP) {
+      this.audioNodes.noiseFilterLP.disconnect()
     }
     
     // Disconnect mixer and panner
@@ -469,9 +522,12 @@ class GlyphGridAudioPlayer {
     this.audioNodes = {
       oscillatorSource: null,
       sineGain: null,
-      noiseSource: null,
-      noiseGain: null,
-      noiseFilter: null,
+      noiseSourceHP: null,
+      noiseFilterHP: null,
+      noiseGainHP: null,
+      noiseSourceLP: null,
+      noiseFilterLP: null,
+      noiseGainLP: null,
       mixerGain: null,
       panner: null,
     }
