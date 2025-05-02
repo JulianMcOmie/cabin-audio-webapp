@@ -391,14 +391,11 @@ class DotGridAudioPlayer {
         // Update global last trigger time
         this.lastTriggerTime = now;
         
-        // Advance volume pattern index FIRST
-        const previousVolumeIndex = this.volumePatternIndex;
+        // Advance to the next dot index
+        currentDotIndex = (currentDotIndex + 1) % orderedDots.length;
+        
+        // Advance volume pattern index
         this.volumePatternIndex = (this.volumePatternIndex + 1) % VOLUME_PATTERN.length;
-
-        // Advance to the next dot index ONLY if volume pattern completed
-        if (this.volumePatternIndex === 0) { // Check if it wrapped around
-          currentDotIndex = (currentDotIndex + 1) % orderedDots.length;
-        }
       }
       
       // Schedule next frame

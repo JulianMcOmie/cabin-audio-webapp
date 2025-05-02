@@ -132,11 +132,11 @@ interface MultiSelectionDotGridProps {
 }
 
 // Constants for the grid
-const DEFAULT_COLUMNS = 5; // Default number of columns (odd)
-const MIN_COLUMNS = 3; // Minimum columns (odd)
-const MAX_COLUMNS = 15; // Maximum columns (odd)
-const MIN_ROWS = 3; // Minimum rows (odd)
-const MAX_ROWS = 15; // Maximum rows (odd)
+const DEFAULT_COLUMNS = 5; // Default number of columns (odd) - CHANGING DEFAULT
+const MIN_COLUMNS = 2; // Minimum columns (odd) - CHANGED to 2
+const MAX_COLUMNS = 16; // Maximum columns (odd) - CHANGED to 16
+const MIN_ROWS = 2; // Minimum rows (odd) - CHANGED to 2
+const MAX_ROWS = 16; // Maximum rows (odd) - CHANGED to 16
 const BASE_DOT_RADIUS = 6; // Base dot size, will be adjusted as needed
 
 // New DotGrid component with multiple selection support
@@ -442,9 +442,9 @@ export function DotCalibration({
   dotStates: externalDotStates, // Changed from selectedDots
   setDotStates: externalSetDotStates // Changed from setSelectedDots
 }: DotCalibrationProps) {
-  // Always use odd numbers for grid dimensions
-  const [gridSize, setGridSize] = useState(5); // Start with 5 rows (odd number)
-  const [columnCount, setColumnCount] = useState(5); // Start with 5 columns (odd number)
+  // Always use odd numbers for grid dimensions - REMOVING THIS CONSTRAINT
+  const [gridSize, setGridSize] = useState(4); // Start with 4 rows (even number)
+  const [columnCount, setColumnCount] = useState(4); // Start with 4 columns (even number)
   
   // Use either external or internal state for dot states
   const [internalDotStates, setInternalDotStates] = useState<Map<string, 'on' | 'quiet'>>(new Map()); // Use Map
@@ -582,7 +582,7 @@ export function DotCalibration({
   const increaseRows = () => {
     if (gridSize < MAX_ROWS) {
       const oldGridSize = gridSize;
-      const newGridSize = gridSize + 2; // Add 2 to maintain odd number
+      const newGridSize = gridSize + 1; // Add 1 
       
       // Remap dots to preserve relative positions and states
       const newDotStates = new Map<string, 'on' | 'quiet'>();
@@ -605,7 +605,7 @@ export function DotCalibration({
   const decreaseRows = () => {
     if (gridSize > MIN_ROWS) {
       const oldGridSize = gridSize;
-      const newGridSize = gridSize - 2; // Subtract 2 to maintain odd number
+      const newGridSize = gridSize - 1; // Subtract 1
       
       // Remap dots to preserve relative positions and states
       const newDotStates = new Map<string, 'on' | 'quiet'>();
@@ -629,7 +629,7 @@ export function DotCalibration({
   const increaseColumns = () => {
     if (columnCount < MAX_COLUMNS) {
       const oldColumnCount = columnCount;
-      const newColumnCount = columnCount + 2; // Add 2 to maintain odd number
+      const newColumnCount = columnCount + 1; // Add 1
       
       // Remap dots to preserve relative positions and states
       const newDotStates = new Map<string, 'on' | 'quiet'>();
@@ -652,7 +652,7 @@ export function DotCalibration({
   const decreaseColumns = () => {
     if (columnCount > MIN_COLUMNS) {
       const oldColumnCount = columnCount;
-      const newColumnCount = columnCount - 2; // Subtract 2 to maintain odd number
+      const newColumnCount = columnCount - 1; // Subtract 1
       
       // Remap dots to preserve relative positions and states
       const newDotStates = new Map<string, 'on' | 'quiet'>();
