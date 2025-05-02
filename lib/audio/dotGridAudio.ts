@@ -5,6 +5,7 @@ import { useEQProfileStore } from '../stores';
 
 // Constants
 const COLUMNS = 5; // Always 5 panning positions - match the value in dot-grid.tsx (odd number ensures a middle column)
+const SEQUENTIAL_TRIGGER_DELAY = 0.1; // Delay between sequential dot triggers
 
 // Envelope settings
 const ENVELOPE_MIN_GAIN = 0.0; // Minimum gain during envelope cycle
@@ -19,7 +20,7 @@ const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
 const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
 
 // Volume pattern settings
-const VOLUME_PATTERN = [0, 0, 0, 0];
+const VOLUME_PATTERN = [0, 0, 0, 0]
 
 // Define the possible states for a dot
 export type DotState = 'on' | 'quiet' | 'off';
@@ -44,9 +45,9 @@ class DotGridAudioPlayer {
   
   // Animation frame properties
   private animationFrameId: number | null = null;
-  private lastTriggerTime: number = 0; // Track the last time all dots were triggered
+  private lastTriggerTime: number = 0; // REINTRODUCED global trigger time
   
-  // Volume pattern properties
+  // Volume pattern properties - REINTRODUCING INDEX
   private volumePatternIndex: number = 0; // Current position in volume pattern
   private baseDbLevel: number = 0; // Base volume level in dB (0dB = reference level)
   
@@ -334,22 +335,8 @@ class DotGridAudioPlayer {
       this.startAllSources();
       this.startAllRhythms();
       
-      // Reset volume pattern index
+      // Reset volume pattern index - REINTRODUCED
       this.volumePatternIndex = 0;
-      
-      // Immediately trigger all dots once for instant feedback
-      if (this.audioNodes.size > 0) {
-        // Get all dot keys ordered by position
-        const dotKeys = Array.from(this.audioNodes.keys());
-        
-        // Get the current volume from the pattern
-        const volumeDb = this.baseDbLevel + VOLUME_PATTERN[this.volumePatternIndex];
-        
-        // Trigger the first dot immediately without staggering
-        if (dotKeys.length > 0) {
-          this.triggerDotEnvelope(dotKeys[0], volumeDb);
-        }
-      }
     } else {
       this.stopAllRhythms();
       this.stopAllSources();
@@ -363,15 +350,6 @@ class DotGridAudioPlayer {
     // Initialize animation frame properties
     this.animationFrameId = null;
     
-    // Initialize timing system
-    this.lastTriggerTime = performance.now() / 1000;
-    
-    // Reset volume pattern index
-    this.volumePatternIndex = 0;
-    
-    // Get initial volume from pattern
-    const initialVolumeDb = this.baseDbLevel + VOLUME_PATTERN[this.volumePatternIndex];
-    
     // Get dots ordered left-to-right, top-to-bottom (like reading English text)
     const orderedDots = Array.from(this.audioNodes.entries())
       .sort(([keyA], [keyB]) => {
@@ -384,54 +362,43 @@ class DotGridAudioPlayer {
       })
       .map(([key]) => key);
     
-    if (orderedDots.length === 0) return;
+    if (orderedDots.length === 0) return; // Use ordered list length
     
     // State tracking for sequential dot playback
     let currentDotIndex = 0;
-    let cyclesPerDot = 0;
-    const CYCLES_BEFORE_NEXT_DOT = 2; // Play each dot for 2 full cycles
     
-    // Immediately trigger the first dot for instant feedback
-    if (this.isPlaying && this.audioNodes.has(orderedDots[0])) {
-      this.triggerDotEnvelope(orderedDots[0], initialVolumeDb);
-    }
-    
-    // Start the animation frame loop with pattern-based volume
+    // Start the animation frame loop for independent dot rhythms
     const frameLoop = (timestamp: number) => {
       if (!this.isPlaying) return;
       
-      const now = timestamp / 1000;
+      const ctx = audioContext.getAudioContext();
+      const now = ctx.currentTime; // Use precise audio context time
       
-      // Base delay between triggers - much faster now
-      const triggerDelay = 0.05;
-      
-      // Check if it's time to trigger the next dot
-      if (now - this.lastTriggerTime >= triggerDelay) {
-        // Advance to the next pattern index
-        this.volumePatternIndex = (this.volumePatternIndex + 1) % VOLUME_PATTERN.length;
+      // Check if it's time for the next sequential trigger
+      if (now - this.lastTriggerTime >= SEQUENTIAL_TRIGGER_DELAY) {
+        // Get the current dot to trigger
+        const dotKey = orderedDots[currentDotIndex];
         
-        // Get volume from pattern
-        const volumeDb = this.baseDbLevel + VOLUME_PATTERN[this.volumePatternIndex];
-        
-        // Check if we've completed a full volume pattern cycle
-        if (this.volumePatternIndex === 0) {
-          cyclesPerDot++;
+        // Trigger this specific dot if it exists
+        if (this.audioNodes.has(dotKey)) {
+          // Calculate volume using pattern
+          const volumeOffset = VOLUME_PATTERN[this.volumePatternIndex];
+          const effectiveVolumeDb = this.baseDbLevel + volumeOffset;
           
-          // If we've completed the required cycles for this dot, move to the next one
-          if (cyclesPerDot >= CYCLES_BEFORE_NEXT_DOT) {
-            cyclesPerDot = 0;
-            currentDotIndex = (currentDotIndex + 1) % orderedDots.length;
-          }
+          this.triggerDotEnvelope(dotKey, effectiveVolumeDb); // Use effective volume
         }
         
-        // Trigger the current dot
-        const currentDot = orderedDots[currentDotIndex];
-        if (this.audioNodes.has(currentDot)) {
-          this.triggerDotEnvelope(currentDot, volumeDb);
-        }
-        
-        // Update last trigger time
+        // Update global last trigger time
         this.lastTriggerTime = now;
+        
+        // Advance volume pattern index FIRST
+        const previousVolumeIndex = this.volumePatternIndex;
+        this.volumePatternIndex = (this.volumePatternIndex + 1) % VOLUME_PATTERN.length;
+
+        // Advance to the next dot index ONLY if volume pattern completed
+        if (this.volumePatternIndex === 0) { // Check if it wrapped around
+          currentDotIndex = (currentDotIndex + 1) % orderedDots.length;
+        }
       }
       
       // Schedule next frame
@@ -540,8 +507,8 @@ class DotGridAudioPlayer {
     if (!nodes) return;
     
     const ctx = audioContext.getAudioContext();
-    const now = ctx.currentTime;
-
+    const now = ctx.currentTime; // Always use current time now
+    
     // Determine effective volume based on state
     let effectiveVolumeDb = volumeDb;
     if (nodes.state === 'quiet') {
@@ -609,7 +576,7 @@ class DotGridAudioPlayer {
     const ctx = audioContext.getAudioContext();
     
     // Normalize y to 0-1 range (0 = bottom, 1 = top)
-    const normalizedY = 1 - (y / (this.gridSize - 1)); // Flip so higher y = higher position
+    const normalizedY = this.gridSize <= 1 ? 0.5 : 1 - (y / (this.gridSize - 1)); // Handle single row case
     
     // Calculate the frequency for this position
     const minFreq = 40;  // Lower minimum for better low-end
@@ -633,7 +600,7 @@ class DotGridAudioPlayer {
     panner.pan.value = panPosition;
     
     // Set Q value
-    const qValue = 6.0;
+    const qValue = 1.0;
     
     // Create filter
     const filter = ctx.createBiquadFilter();
