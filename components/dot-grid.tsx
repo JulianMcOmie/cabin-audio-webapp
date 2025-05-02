@@ -6,6 +6,9 @@ import * as dotGridAudio from '@/lib/audio/dotGridAudio'
 import { usePlayerStore } from "@/lib/stores"
 import { DotState } from '@/lib/audio/dotGridAudio'
 
+// Define the type for playback mode explicitly
+type PlaybackMode = 'sequential' | 'simultaneous_staggered';
+
 interface DotGridProps {
   selectedDot: [number, number] | null
   setSelectedDot: (dot: [number, number] | null) => void
@@ -446,6 +449,9 @@ export function DotCalibration({
   const [gridSize, setGridSize] = useState(4); // Start with 4 rows (even number)
   const [columnCount, setColumnCount] = useState(4); // Start with 4 columns (even number)
   
+  // Add state for playback mode
+  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>('sequential');
+  
   // Use either external or internal state for dot states
   const [internalDotStates, setInternalDotStates] = useState<Map<string, 'on' | 'quiet'>>(new Map()); // Use Map
   
@@ -672,6 +678,13 @@ export function DotCalibration({
     }
   };
   
+  // Handler to change playback mode
+  const handleSetPlaybackMode = (mode: PlaybackMode) => {
+    const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
+    audioPlayer.setPlaybackMode(mode);
+    setPlaybackMode(mode);
+  };
+
   // Simple clear selection
   const clearSelection = () => {
     setDotStates(new Map()); // Clear the map
@@ -763,6 +776,35 @@ export function DotCalibration({
                 <span className="text-xs">+</span>
               </button>
             </div>
+          </div>
+        </div>
+        
+        {/* Playback Mode Controls */}
+        <div className="space-y-1">
+          <span className="text-xs font-medium">Playback Mode</span>
+          <div className="flex items-center space-x-2">
+            <button
+              className={`px-2 py-1 rounded flex items-center justify-center text-xs border ${ 
+                playbackMode === 'sequential' 
+                  ? 'bg-teal-500 border-teal-500 text-white' 
+                  : 'hover:bg-muted' 
+              } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+              onClick={() => handleSetPlaybackMode('sequential')}
+              disabled={disabled}
+            >
+              Sequential
+            </button>
+            <button
+              className={`px-2 py-1 rounded flex items-center justify-center text-xs border ${ 
+                playbackMode === 'simultaneous_staggered' 
+                  ? 'bg-teal-500 border-teal-500 text-white' 
+                  : 'hover:bg-muted' 
+              } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+              onClick={() => handleSetPlaybackMode('simultaneous_staggered')}
+              disabled={disabled}
+            >
+              Staggered
+            </button>
           </div>
         </div>
         

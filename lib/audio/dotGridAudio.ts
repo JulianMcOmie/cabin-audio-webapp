@@ -6,6 +6,14 @@ import { useEQProfileStore } from '../stores';
 // Constants
 const COLUMNS = 5; // Always 5 panning positions - match the value in dot-grid.tsx (odd number ensures a middle column)
 const SEQUENTIAL_TRIGGER_DELAY = 0.1; // Delay between sequential dot triggers
+const SIMULTANEOUS_STAGGER_DELAY = 0.015; // Stagger offset for simultaneous mode start
+
+// Define Rhythmic Patterns (arrays of delays in seconds)
+const RHYTHM_1 = [0.2, 0.2, 0.2, 0.2]; // Steady 1/4 notes (if beat = 0.8s)
+const RHYTHM_2 = [0.3, 0.1, 0.3, 0.1]; // Syncopated
+const RHYTHM_3 = [0.4, 0.4];          // 1/2 notes
+const RHYTHM_4 = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]; // 1/8 notes
+const RHYTHMIC_PATTERNS = [RHYTHM_1, RHYTHM_2, RHYTHM_3, RHYTHM_4];
 
 // Envelope settings
 const ENVELOPE_MIN_GAIN = 0.0; // Minimum gain during envelope cycle
@@ -37,6 +45,10 @@ class DotGridAudioPlayer {
     filter: BiquadFilterNode;
     position: number; // Position for sorting
     state: 'on' | 'quiet'; // Add state to track 'on' or 'quiet'
+    // Timing/Rhythm Info (needed for different modes)
+    lastTriggerTime: number; 
+    rhythmPattern: number[];
+    rhythmIndex: number;
   }> = new Map();
   private gridSize: number = 3; // Default row count
   private columnCount: number = COLUMNS; // Default column count
@@ -45,10 +57,13 @@ class DotGridAudioPlayer {
   
   // Animation frame properties
   private animationFrameId: number | null = null;
-  private lastTriggerTime: number = 0; // REINTRODUCED global trigger time
+  private lastTriggerTime: number = 0; // Global trigger time (Sequential Mode)
   
+  // Playback Mode
+  private playbackMode: 'sequential' | 'simultaneous_staggered' = 'sequential';
+
   // Volume pattern properties - REINTRODUCING INDEX
-  private volumePatternIndex: number = 0; // Current position in volume pattern
+  private volumePatternIndex: number = 0; // Current position in volume pattern (Sequential Mode)
   private baseDbLevel: number = 0; // Base volume level in dB (0dB = reference level)
   
   // Add distortion gain property
@@ -335,8 +350,10 @@ class DotGridAudioPlayer {
       this.startAllSources();
       this.startAllRhythms();
       
-      // Reset volume pattern index - REINTRODUCED
-      this.volumePatternIndex = 0;
+      // Reset volume pattern index only for sequential mode
+      if (this.playbackMode === 'sequential') {
+        this.volumePatternIndex = 0;
+      }
     } else {
       this.stopAllRhythms();
       this.stopAllSources();
@@ -349,62 +366,103 @@ class DotGridAudioPlayer {
   private startAllRhythms(): void {
     // Initialize animation frame properties
     this.animationFrameId = null;
-    
-    // Get dots ordered left-to-right, top-to-bottom (like reading English text)
-    const orderedDots = Array.from(this.audioNodes.entries())
-      .sort(([keyA], [keyB]) => {
-        const [xA, yA] = keyA.split(',').map(Number);
-        const [xB, yB] = keyB.split(',').map(Number);
-        
-        // Compare row (y) first, then column (x)
-        if (yA !== yB) return yA - yB;
-        return xA - xB;
-      })
-      .map(([key]) => key);
-    
-    if (orderedDots.length === 0) return; // Use ordered list length
-    
-    // State tracking for sequential dot playback
-    let currentDotIndex = 0;
-    
-    // Start the animation frame loop for independent dot rhythms
-    const frameLoop = (timestamp: number) => {
-      if (!this.isPlaying) return;
-      
-      const ctx = audioContext.getAudioContext();
-      const now = ctx.currentTime; // Use precise audio context time
-      
-      // Check if it's time for the next sequential trigger
-      if (now - this.lastTriggerTime >= SEQUENTIAL_TRIGGER_DELAY) {
-        // Get the current dot to trigger
-        const dotKey = orderedDots[currentDotIndex];
-        
-        // Trigger this specific dot if it exists
-        if (this.audioNodes.has(dotKey)) {
-          // Calculate volume using pattern
-          const volumeOffset = VOLUME_PATTERN[this.volumePatternIndex];
-          const effectiveVolumeDb = this.baseDbLevel + volumeOffset;
-          
-          this.triggerDotEnvelope(dotKey, effectiveVolumeDb); // Use effective volume
-        }
-        
-        // Update global last trigger time
-        this.lastTriggerTime = now;
-        
-        // Advance volume pattern index FIRST
-        this.volumePatternIndex = (this.volumePatternIndex + 1) % VOLUME_PATTERN.length;
+    const ctx = audioContext.getAudioContext();
 
-        // Advance to the next dot index ONLY if the volume pattern has completed a cycle
-        if (this.volumePatternIndex === 0) {
-          currentDotIndex = (currentDotIndex + 1) % orderedDots.length;
-        }
-      }
+    // --- SEQUENTIAL MODE --- 
+    if (this.playbackMode === 'sequential') {
+      this.lastTriggerTime = ctx.currentTime; // Reset global timer
+
+      // Get dots ordered left-to-right, top-to-bottom
+      const orderedDots = Array.from(this.audioNodes.entries())
+        .sort(([keyA], [keyB]) => {
+          const [xA, yA] = keyA.split(',').map(Number);
+          const [xB, yB] = keyB.split(',').map(Number);
+          if (yA !== yB) return yA - yB;
+          return xA - xB;
+        })
+        .map(([key]) => key);
+        
+      if (orderedDots.length === 0) return;
       
-      // Schedule next frame
+      let currentDotIndex = 0;
+
+      const frameLoop = (timestamp: number) => {
+        if (!this.isPlaying || this.playbackMode !== 'sequential') return; // Stop if mode changes
+        
+        const now = ctx.currentTime;
+        
+        if (now - this.lastTriggerTime >= SEQUENTIAL_TRIGGER_DELAY) {
+          const dotKey = orderedDots[currentDotIndex];
+          
+          if (this.audioNodes.has(dotKey)) {
+            const volumeOffset = VOLUME_PATTERN[this.volumePatternIndex];
+            const effectiveVolumeDb = this.baseDbLevel + volumeOffset;
+            this.triggerDotEnvelope(dotKey, effectiveVolumeDb);
+          }
+          
+          this.lastTriggerTime = now;
+          this.volumePatternIndex = (this.volumePatternIndex + 1) % VOLUME_PATTERN.length;
+          if (this.volumePatternIndex === 0) {
+            currentDotIndex = (currentDotIndex + 1) % orderedDots.length;
+          }
+        }
+        
+        this.animationFrameId = requestAnimationFrame(frameLoop);
+      };
       this.animationFrameId = requestAnimationFrame(frameLoop);
-    };
-    
-    this.animationFrameId = requestAnimationFrame(frameLoop);
+
+    // --- SIMULTANEOUS STAGGERED MODE --- 
+    } else if (this.playbackMode === 'simultaneous_staggered') {
+      if (this.audioNodes.size === 0) return;
+      
+      // Get ordered dots just for assigning initial stagger
+      const orderedDotKeys = Array.from(this.audioNodes.keys()) // Get just keys
+          .sort((keyA, keyB) => { // Sort keys
+              const [xA, yA] = keyA.split(',').map(Number);
+              const [xB, yB] = keyB.split(',').map(Number);
+              if (yA !== yB) return yA - yB;
+              return xA - xB;
+          });
+
+      // Initialize start times with stagger and reset rhythm index
+      const startTime = ctx.currentTime;
+      orderedDotKeys.forEach((dotKey, index) => {
+          const nodes = this.audioNodes.get(dotKey);
+          if (nodes) {
+              nodes.lastTriggerTime = startTime + index * SIMULTANEOUS_STAGGER_DELAY;
+              nodes.rhythmIndex = 0; // Reset index
+          }
+      });
+
+      const frameLoop = (timestamp: number) => {
+        if (!this.isPlaying || this.playbackMode !== 'simultaneous_staggered') return; // Stop if mode changes
+        
+        const now = ctx.currentTime;
+        
+        this.audioNodes.forEach((nodes, dotKey) => {
+          const pattern = nodes.rhythmPattern;
+          const currentIndex = nodes.rhythmIndex;
+          const currentDelay = pattern[currentIndex];
+          
+          if (now - nodes.lastTriggerTime >= currentDelay) {
+            // Trigger using base volume, no volume pattern here
+            this.triggerDotEnvelope(dotKey, this.baseDbLevel); 
+            
+            // Update time and index for this dot
+            nodes.lastTriggerTime += currentDelay; // Use += for rhythmic precision
+            nodes.rhythmIndex = (currentIndex + 1) % pattern.length;
+            
+            // Safety check for timing drift
+            if (nodes.lastTriggerTime < now - currentDelay) {
+              nodes.lastTriggerTime = now;
+            }
+          }
+        });
+        
+        this.animationFrameId = requestAnimationFrame(frameLoop);
+      };
+      this.animationFrameId = requestAnimationFrame(frameLoop);
+    }
   }
   
   /**
@@ -607,6 +665,17 @@ class DotGridAudioPlayer {
     filter.frequency.value = centerFreq;
     filter.Q.value = qValue;
     
+    // --- Initialize Last Trigger Time --- - Now initialized in startAllRhythms
+    // const initialOffset = Math.random() * triggerDelay; 
+    const lastTriggerTime = 0; // Initialize to 0, will be set on play
+    // ---------------------------------------
+
+    // --- Assign Rhythmic Pattern --- 
+    const patternIndex = x % RHYTHMIC_PATTERNS.length; // Assign based on column
+    const rhythmPattern = RHYTHMIC_PATTERNS[patternIndex];
+    const rhythmIndex = 0; // Start at beginning of pattern
+    // -------------------------------
+
     // Store the nodes with simplified structure and initial state
     this.audioNodes.set(dotKey, {
       source: ctx.createBufferSource(), // Dummy source (will be replaced when playing)
@@ -616,6 +685,10 @@ class DotGridAudioPlayer {
       filter,
       position: y * this.columnCount + x, // Store position for sorting
       state: state, // Store the initial state
+      // Timing/Rhythm Info
+      lastTriggerTime: lastTriggerTime, 
+      rhythmPattern: rhythmPattern, 
+      rhythmIndex: rhythmIndex, 
     });
   }
   
@@ -682,6 +755,23 @@ class DotGridAudioPlayer {
   private setDistortionGain(gain: number): void {
     // Clamp gain between 0 and 1
     this.distortionGain = Math.max(0, Math.min(1, gain));
+  }
+
+  /**
+   * Set the current playback mode.
+   * Restarts rhythms if changed while playing.
+   */
+  public setPlaybackMode(mode: 'sequential' | 'simultaneous_staggered'): void {
+    if (mode === this.playbackMode) return;
+    
+    console.log(`🔊 Setting playback mode to: ${mode}`);
+    this.playbackMode = mode;
+    
+    // Restart rhythms if currently playing to apply new mode logic
+    if (this.isPlaying) {
+      this.stopAllRhythms();
+      this.startAllRhythms();
+    }
   }
 }
 
