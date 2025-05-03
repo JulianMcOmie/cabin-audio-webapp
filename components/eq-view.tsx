@@ -19,8 +19,10 @@ import { FFTVisualizer } from "@/components/audio/FFTVisualizer"
 import { getReferenceCalibrationAudio } from "@/lib/audio/referenceCalibrationAudio"
 import { DotCalibration } from "@/components/dot-grid"
 import { GlyphGrid } from "@/components/glyph-grid"
+import { ShapeTool } from "@/components/shape-tool"
 import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
+import * as shapeToolAudio from '@/lib/audio/shapeToolAudio'
 
 interface EQViewProps {
 //   isPlaying: boolean
@@ -76,12 +78,12 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   // State for the glyph grid
   const [glyphGridPlaying, setGlyphGridPlaying] = useState(false)
   
-  // Add state for toggling between Glyph Grid and Dot Grid
-  const [activeGrid, setActiveGrid] = useState<"line" | "dot">("dot");
+  // Add state for toggling between grids
+  const [activeGrid, setActiveGrid] = useState<"line" | "dot" | "shape">("dot")
 
-  // New state to track selected dots for dot grid
-  const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set());
-  
+  // Add state for the shape tool
+  const [shapeToolPlaying, setShapeToolPlaying] = useState(false);
+
   // Add state to track if the device is mobile
   const [isMobile, setIsMobile] = useState(false)
 
@@ -154,14 +156,14 @@ export function EQView({ setEqEnabled }: EQViewProps) {
       const glyphAudio = glyphGridAudio.getGlyphGridAudioPlayer();
       const analyser = glyphAudio.createPreEQAnalyser();
       setPreEQAnalyser(analyser);
-    } else if (calibrationPlaying || dotGridPlaying) {
-      // Do nothing, handled by the calibration effect or dot grid effect
+    } else if (calibrationPlaying || dotGridPlaying || shapeToolPlaying) {
+      // Do nothing, handled by the calibration effect or dot grid effect or shape tool effect
       // This prevents clearing analyzer if glyph stops but others are playing
     } else {
       // Clean up when not playing
       setPreEQAnalyser(null);
     }
-  }, [glyphGridPlaying, calibrationPlaying, dotGridPlaying]);
+  }, [glyphGridPlaying, calibrationPlaying, dotGridPlaying, shapeToolPlaying]);
 
   // Add a new effect to handle the analyzer for dot grid
   useEffect(() => {
@@ -172,14 +174,31 @@ export function EQView({ setEqEnabled }: EQViewProps) {
       setPreEQAnalyser(analyser);
       
       console.log("🎯 Connected dot grid to FFT analyzer");
-    } else if (calibrationPlaying || glyphGridPlaying) {
+    } else if (calibrationPlaying || glyphGridPlaying || shapeToolPlaying) {
       // Do nothing, handled by other effects
       // This prevents clearing analyzer if dot grid stops but others are playing
     } else {
       // Clean up when not playing
       setPreEQAnalyser(null);
     }
-  }, [dotGridPlaying, calibrationPlaying, glyphGridPlaying]);
+  }, [dotGridPlaying, calibrationPlaying, glyphGridPlaying, shapeToolPlaying]);
+
+  // Add a new effect to handle the analyzer for shape tool
+  useEffect(() => {
+    if (shapeToolPlaying) {
+      // Create and connect the analyzer for shape tool
+      const shapeAudio = shapeToolAudio.getShapeToolAudioPlayer();
+      const analyser = shapeAudio.createPreEQAnalyser();
+      setPreEQAnalyser(analyser);
+      
+      console.log("📐 Connected shape tool to FFT analyzer");
+    } else if (calibrationPlaying || glyphGridPlaying || dotGridPlaying) {
+      // Do nothing, handled by other effects
+    } else {
+      // Clean up when not playing
+      setPreEQAnalyser(null);
+    }
+  }, [shapeToolPlaying, calibrationPlaying, glyphGridPlaying, dotGridPlaying]);
 
   // Initialize selected profile from the active profile and keep it synced
   useEffect(() => {
@@ -221,8 +240,11 @@ export function EQView({ setEqEnabled }: EQViewProps) {
       if (glyphGridPlaying) {
         setGlyphGridPlaying(false);
       }
+      if (shapeToolPlaying) {
+        setShapeToolPlaying(false);
+      }
     }
-  }, [isMusicPlaying, dotGridPlaying, glyphGridPlaying]);
+  }, [isMusicPlaying, dotGridPlaying, glyphGridPlaying, shapeToolPlaying]);
 
   const handleProfileClick = () => {
     setNewProfileName("");
@@ -291,6 +313,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     
     // Stop the glyph grid if it's playing
     if (glyphGridPlaying) setGlyphGridPlaying(false);
+    // Stop the shape tool if it's playing
+    if (shapeToolPlaying) setShapeToolPlaying(false);
   };
 
   // If on mobile, show a message instead of the EQ interface
@@ -345,7 +369,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
           {/* EQ Section - Now takes more of the width */}
           <div className="w-3/4 relative" ref={eqContainerRef}>
             {/* FFT Visualizer should always be visible during audio playback */}
-            {(calibrationPlaying || glyphGridPlaying || dotGridPlaying) && preEQAnalyser && (
+            {(calibrationPlaying || glyphGridPlaying || dotGridPlaying || shapeToolPlaying) && preEQAnalyser && (
               <div className="absolute inset-0 z-0">
                 <div className="w-full aspect-[2/1] frequency-graph rounded-lg border dark:border-gray-700 overflow-hidden opacity-80 relative pointer-events-none">
                   {/* The actual EQ visualization area has 40px margins on all sides */}
@@ -417,6 +441,16 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 >
                   Line Tool
                 </button>
+                <button
+                  className={`px-4 py-2 text-sm font-medium ${
+                    activeGrid === "shape" 
+                      ? "bg-teal-500 text-white" 
+                      : "bg-background hover:bg-muted"
+                  }`}
+                  onClick={() => setActiveGrid("shape")}
+                >
+                  Shape Tool
+                </button>
               </div>
             </div>
             
@@ -427,14 +461,17 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   isPlaying={glyphGridPlaying}
                   disabled={false}
                 />
+              ) : activeGrid === 'shape' ? (
+                <ShapeTool
+                  isPlaying={shapeToolPlaying}
+                  disabled={false}
+                />
               ) : (
                 <DotCalibration
                   isPlaying={dotGridPlaying}
                   setIsPlaying={setDotGridPlaying}
                   disabled={false}
                   preEQAnalyser={preEQAnalyser}
-                  selectedDots={selectedDots}
-                  setSelectedDots={setSelectedDots}
                 />
               )}
             </div>
@@ -443,26 +480,43 @@ export function EQView({ setEqEnabled }: EQViewProps) {
             <div className="flex justify-center mt-6">
               <Button
                 size="lg"
-                variant={activeGrid === "line" ? (glyphGridPlaying ? "default" : "outline") : (dotGridPlaying ? "default" : "outline")}
-                className={activeGrid === "line" ? (glyphGridPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "") : (dotGridPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")}
+                variant={ 
+                  activeGrid === "line" ? (glyphGridPlaying ? "default" : "outline") : 
+                  activeGrid === "dot" ? (dotGridPlaying ? "default" : "outline") :
+                  activeGrid === "shape" ? (shapeToolPlaying ? "default" : "outline") :
+                  "outline" // Default variant
+                }
+                className={ 
+                  activeGrid === "line" ? (glyphGridPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "") : 
+                  activeGrid === "dot" ? (dotGridPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "") :
+                  activeGrid === "shape" ? (shapeToolPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "") :
+                  "" // Default class
+                }
                 onClick={() => {
                   if (activeGrid === "line") {
                     setGlyphGridPlaying(!glyphGridPlaying);
                     if (dotGridPlaying) setDotGridPlaying(false);
+                    if (shapeToolPlaying) setShapeToolPlaying(false);
                     
                     // If enabling glyph grid playback and music is playing, pause the music
                     if (!glyphGridPlaying && isMusicPlaying) {
                       setMusicPlaying(false);
                     }
                   } else {
-                    handleDotGridPlayToggle();
+                    // Should not happen based on activeGrid type, but handle defensively
+                    console.warn("Play button clicked with unexpected active grid:", activeGrid)
                   }
                 }}
               >
                 <Play className="mr-2 h-5 w-5" />
                 {activeGrid === "line" 
                   ? (glyphGridPlaying ? "Stop Calibration" : "Play Calibration") 
-                  : (dotGridPlaying ? "Stop Calibration" : "Play Calibration")}
+                  : activeGrid === "dot" 
+                    ? (dotGridPlaying ? "Stop Calibration" : "Play Calibration")
+                    : activeGrid === "shape" 
+                      ? (shapeToolPlaying ? "Stop Calibration" : "Play Calibration")
+                      : "Play Calibration" // Default text
+                }
               </Button>
             </div>
             
