@@ -5,9 +5,11 @@ import { useRef, useEffect, useState, useMemo } from "react"
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
 import { usePlayerStore } from "@/lib/stores"
 import { DotState } from '@/lib/audio/dotGridAudio'
+import { Slider } from "@/components/ui/slider"
+import { Label } from "@/components/ui/label"
 
 // Define the type for playback mode explicitly
-type PlaybackMode = 'sequential' | 'simultaneous_staggered';
+// type PlaybackMode = 'sequential' | 'simultaneous_staggered';
 
 interface DotGridProps {
   selectedDot: [number, number] | null
@@ -127,8 +129,8 @@ export function LegacyDotGrid({ selectedDot, setSelectedDot, gridSize, disabled 
 // New interface for multi-selection DotGrid
 interface MultiSelectionDotGridProps {
   gridSize: number; // Range: 3-9, now controls only rows
-  dotStates: Map<string, 'on' | 'quiet'>; // Use Map for state: "x,y" -> state
-  onDotCycleState: (x: number, y: number) => void; // Changed from onDotToggle
+  dotStates: Map<string, 'on'>; // Use Map for state: "x,y" -> 'on' (missing means 'off')
+  onDotToggle: (x: number, y: number) => void; // Changed from onDotCycleState to simple toggle
   disabled?: boolean;
   isPlaying?: boolean;
   columnCount?: number;
@@ -146,7 +148,7 @@ const BASE_DOT_RADIUS = 6; // Base dot size, will be adjusted as needed
 export function DotGrid({ 
   gridSize,
   dotStates, // Changed from selectedDots
-  onDotCycleState, // Changed from onDotToggle
+  onDotToggle, // Changed from onDotCycleState
   disabled = false,
   isPlaying = false,
   columnCount = DEFAULT_COLUMNS,
@@ -271,20 +273,19 @@ export function DotGrid({
         
         // Check the state of this dot
         const dotKey = `${x},${y}`;
-        const state = dotStates.get(dotKey); // Get state ('on', 'quiet', or undefined for 'off')
+        const state = dotStates.has(dotKey) ? 'on' : 'off'; // Simplified check: exists in map means 'on'
         
-        // Draw pulsing animation for playing dots ('on' or 'quiet')
-        if (isPlaying && state) { // Pulse if state is 'on' or 'quiet'
+        // Draw pulsing animation for playing dots ('on' only)
+        if (isPlaying && state === 'on') { // Pulse only if state is 'on'
           // Draw pulse background
           const pulseSize = 2 + Math.sin(Date.now() / 200) * 0.5
           ctx.beginPath()
           ctx.arc(centerX, centerY, dotRadius * pulseSize, 0, Math.PI * 2)
-          // Pulse color depends on state
-          if (state === 'on') {
-            ctx.fillStyle = isDarkMode ? "rgba(56, 189, 248, 0.2)" : "rgba(2, 132, 199, 0.2)" // Blue pulse
-          } else { // state === 'quiet'
-            ctx.fillStyle = isDarkMode ? "rgba(248, 113, 113, 0.2)" : "rgba(220, 38, 38, 0.2)" // Red pulse
-          }
+          // Pulse color is always blue now
+          ctx.fillStyle = isDarkMode ? "rgba(56, 189, 248, 0.2)" : "rgba(2, 132, 199, 0.2)" // Blue pulse
+          // } else { // state === 'quiet' // Removed quiet logic
+          //   ctx.fillStyle = isDarkMode ? "rgba(248, 113, 113, 0.2)" : "rgba(220, 38, 38, 0.2)" // Red pulse
+          // }
           ctx.fill()
         }
 
@@ -292,12 +293,12 @@ export function DotGrid({
         ctx.beginPath()
         ctx.arc(centerX, centerY, dotRadius, 0, Math.PI * 2)
 
-        if (state && !disabled) {
-          if (state === 'on') {
-            ctx.fillStyle = isDarkMode ? "#38bdf8" : "#0284c7" // sky-400 or sky-600 (Blue)
-          } else { // state === 'quiet'
-            ctx.fillStyle = isDarkMode ? "#f87171" : "#dc2626" // red-400 or red-600 (Red)
-          }
+        if (state === 'on' && !disabled) { // Only 'on' state has special color
+          // if (state === 'on') { // Condition simplified
+          ctx.fillStyle = isDarkMode ? "#38bdf8" : "#0284c7" // sky-400 or sky-600 (Blue)
+          // } else { // state === 'quiet' // Removed quiet logic
+          //   ctx.fillStyle = isDarkMode ? "#f87171" : "#dc2626" // red-400 or red-600 (Red)
+          // }
         } else {
           // Default style for 'off' or disabled dots
           ctx.fillStyle = disabled
@@ -411,7 +412,7 @@ export function DotGrid({
     // 2. We're dragging and this is a new dot (different from the last clicked)
     if ((!isDragging || !isSameAsPrevious)) {
       setLastClickedDot(closestDot);
-      onDotCycleState(closestDot.x, closestDot.y); // Use onDotCycleState
+      onDotToggle(closestDot.x, closestDot.y); // Use onDotToggle
     }
   }
 
@@ -433,8 +434,8 @@ interface DotCalibrationProps {
   setIsPlaying: (isPlaying: boolean) => void;
   disabled?: boolean;
   preEQAnalyser?: AnalyserNode | null;
-  dotStates?: Map<string, 'on' | 'quiet'>; // Use Map for state
-  setDotStates?: React.Dispatch<React.SetStateAction<Map<string, 'on' | 'quiet'>>>; // Use Map for state
+  dotStates?: Map<string, 'on'>; // Use Map for state ('on' only)
+  setDotStates?: React.Dispatch<React.SetStateAction<Map<string, 'on'>>>; // Use Map for state
 }
 
 export function DotCalibration({ 
@@ -442,22 +443,26 @@ export function DotCalibration({
   setIsPlaying, 
   disabled = false, 
   preEQAnalyser = null,
-  dotStates: externalDotStates, // Changed from selectedDots
-  setDotStates: externalSetDotStates // Changed from setSelectedDots
+  dotStates: externalDotStates, // Changed key type
+  setDotStates: externalSetDotStates // Changed key type
 }: DotCalibrationProps) {
   // Always use odd numbers for grid dimensions - REMOVING THIS CONSTRAINT
   const [gridSize, setGridSize] = useState(4); // Start with 4 rows (even number)
   const [columnCount, setColumnCount] = useState(4); // Start with 4 columns (even number)
   
-  // Add state for playback mode
-  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>('sequential');
+  // Add state for playback mode - REMOVED
+  // const [playbackMode, setPlaybackMode] = useState<PlaybackMode>('sequential');
   
   // Use either external or internal state for dot states
-  const [internalDotStates, setInternalDotStates] = useState<Map<string, 'on' | 'quiet'>>(new Map()); // Use Map
+  const [internalDotStates, setInternalDotStates] = useState<Map<string, 'on'>>(new Map()); // Use Map ('on' only)
   
   // Use either external or internal state
   const dotStates = externalDotStates !== undefined ? externalDotStates : internalDotStates;
   const setDotStates = externalSetDotStates !== undefined ? externalSetDotStates : setInternalDotStates;
+  
+  // NEW: State for volume levels (-60dB to +12dB range typical for UI)
+  const [selectedVolume, setSelectedVolume] = useState<number>(0); // dB
+  const [unselectedVolume, setUnselectedVolume] = useState<number>(0); // dB
   
   // Update audio player when dot states change
   useEffect(() => {
@@ -482,6 +487,17 @@ export function DotCalibration({
       };
     }
   }, [preEQAnalyser, isPlaying]);
+  
+  // NEW: Update audio player volume when slider state changes
+  useEffect(() => {
+    const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
+    audioPlayer.setSelectedVolumeDb(selectedVolume);
+  }, [selectedVolume]);
+  
+  useEffect(() => {
+    const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
+    audioPlayer.setUnselectedVolumeDb(unselectedVolume);
+  }, [unselectedVolume]);
   
   // Handle arrow key navigation
   useEffect(() => {
@@ -518,11 +534,12 @@ export function DotCalibration({
       
       // If all dots can move, update the selection map, preserving state
       if (canAllMove) {
-        const newDotStates = new Map<string, 'on' | 'quiet'>();
+        const newDotStates = new Map<string, 'on'>(); // Only 'on' state
         activeDots.forEach(dot => {
           const newX = dot.x + dx;
           const newY = dot.y + dy;
-          newDotStates.set(`${newX},${newY}`, dot.state); // Preserve state
+          // Since only 'on' dots are in activeDots, always set state to 'on'
+          newDotStates.set(`${newX},${newY}`, 'on'); 
         });
         
         setDotStates(newDotStates);
@@ -541,30 +558,20 @@ export function DotCalibration({
     };
   }, [disabled, dotStates, setDotStates, columnCount, gridSize]); // Updated dependencies
   
-  // Cycle through dot states: off -> on -> quiet -> off
-  const handleDotCycleState = (x: number, y: number) => {
+  // Toggle dot state: off <-> on
+  const handleDotToggle = (x: number, y: number) => {
     const dotKey = `${x},${y}`;
     const currentState = dotStates.get(dotKey);
-    const newDotStates = new Map<string, 'on' | 'quiet'>(dotStates);
+    const newDotStates = new Map<string, 'on'>(dotStates); // Only 'on' state
     
     // Get music player state
     const { isPlaying: isMusicPlaying, setIsPlaying: setMusicPlaying } = usePlayerStore.getState();
     
-    // Determine the next state
-    let nextState: DotState;
+    // Determine the next state: if currently 'on' (exists in map), remove it; otherwise, add it.
     if (currentState === 'on') {
-      nextState = 'quiet';
-    } else if (currentState === 'quiet') {
-      nextState = 'off';
-    } else { // Current state is 'off' (undefined)
-      nextState = 'on';
-    }
-    
-    // Update the map based on the next state
-    if (nextState === 'off') {
       newDotStates.delete(dotKey);
-    } else {
-      newDotStates.set(dotKey, nextState);
+    } else { // Current state is 'off' (undefined)
+      newDotStates.set(dotKey, 'on'); // Set state to 'on'
     }
     
     setDotStates(newDotStates);
@@ -591,7 +598,7 @@ export function DotCalibration({
       const newGridSize = gridSize + 1; // Add 1 
       
       // Remap dots to preserve relative positions and states
-      const newDotStates = new Map<string, 'on' | 'quiet'>();
+      const newDotStates = new Map<string, 'on'>(); // Only 'on' state
       dotStates.forEach((state, dotKey) => {
         const [x, y] = dotKey.split(',').map(Number);
         if (x < columnCount) {
@@ -599,7 +606,7 @@ export function DotCalibration({
           const relativePos = y / (oldGridSize - 1);
           // Map to the same relative position in the new grid
           const newY = Math.round(relativePos * (newGridSize - 1));
-          newDotStates.set(`${x},${newY}`, state); // Preserve state
+          newDotStates.set(`${x},${newY}`, 'on'); // Preserve state as 'on'
         }
       });
       
@@ -614,7 +621,7 @@ export function DotCalibration({
       const newGridSize = gridSize - 1; // Subtract 1
       
       // Remap dots to preserve relative positions and states
-      const newDotStates = new Map<string, 'on' | 'quiet'>();
+      const newDotStates = new Map<string, 'on'>(); // Only 'on' state
       dotStates.forEach((state, dotKey) => {
         const [x, y] = dotKey.split(',').map(Number);
         if (x < columnCount) {
@@ -622,7 +629,7 @@ export function DotCalibration({
           const relativePos = y / (oldGridSize - 1);
           // Map to the same relative position in the new grid
           const newY = Math.round(relativePos * (newGridSize - 1));
-          newDotStates.set(`${x},${newY}`, state); // Preserve state
+          newDotStates.set(`${x},${newY}`, 'on'); // Preserve state as 'on'
         }
       });
       
@@ -638,7 +645,7 @@ export function DotCalibration({
       const newColumnCount = columnCount + 1; // Add 1
       
       // Remap dots to preserve relative positions and states
-      const newDotStates = new Map<string, 'on' | 'quiet'>();
+      const newDotStates = new Map<string, 'on'>(); // Only 'on' state
       dotStates.forEach((state, dotKey) => {
         const [x, y] = dotKey.split(',').map(Number);
         if (y < gridSize) {
@@ -646,7 +653,7 @@ export function DotCalibration({
           const relativePos = x / (oldColumnCount - 1);
           // Map to the same relative position in the new grid
           const newX = Math.round(relativePos * (newColumnCount - 1));
-          newDotStates.set(`${newX},${y}`, state); // Preserve state
+          newDotStates.set(`${newX},${y}`, 'on'); // Preserve state as 'on'
         }
       });
       
@@ -661,7 +668,7 @@ export function DotCalibration({
       const newColumnCount = columnCount - 1; // Subtract 1
       
       // Remap dots to preserve relative positions and states
-      const newDotStates = new Map<string, 'on' | 'quiet'>();
+      const newDotStates = new Map<string, 'on'>(); // Only 'on' state
       dotStates.forEach((state, dotKey) => {
         const [x, y] = dotKey.split(',').map(Number);
         if (y < gridSize) {
@@ -669,7 +676,7 @@ export function DotCalibration({
           const relativePos = x / (oldColumnCount - 1);
           // Map to the same relative position in the new grid
           const newX = Math.round(relativePos * (newColumnCount - 1));
-          newDotStates.set(`${newX},${y}`, state); // Preserve state
+          newDotStates.set(`${newX},${y}`, 'on'); // Preserve state as 'on'
         }
       });
       
@@ -678,12 +685,12 @@ export function DotCalibration({
     }
   };
   
-  // Handler to change playback mode
-  const handleSetPlaybackMode = (mode: PlaybackMode) => {
-    const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
-    audioPlayer.setPlaybackMode(mode);
-    setPlaybackMode(mode);
-  };
+  // Handler to change playback mode - REMOVED
+  // const handleSetPlaybackMode = (mode: PlaybackMode) => {
+  //   const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
+  //   audioPlayer.setPlaybackMode(mode);
+  //   setPlaybackMode(mode);
+  // };
 
   // Simple clear selection
   const clearSelection = () => {
@@ -701,7 +708,7 @@ export function DotCalibration({
           gridSize={gridSize}
           columnCount={columnCount}
           dotStates={dotStates} // Pass dotStates
-          onDotCycleState={handleDotCycleState} // Pass cycle handler
+          onDotToggle={handleDotToggle} // Pass toggle handler
           disabled={disabled}
           isPlaying={isPlaying}
         />
@@ -709,7 +716,7 @@ export function DotCalibration({
         {/* Instruction text */}
         <div className="mt-2 text-xs text-center text-muted-foreground">
           {dotStates.size === 0 
-            ? "Click dots: On (blue) -> Quiet (red) -> Off"
+            ? "Click dots to toggle On (blue) / Off"
             : "Use arrow keys to move active dots"}
         </div>
       </div>
@@ -779,34 +786,37 @@ export function DotCalibration({
           </div>
         </div>
         
-        {/* Playback Mode Controls */}
-        <div className="space-y-1">
-          <span className="text-xs font-medium">Playback Mode</span>
-          <div className="flex items-center space-x-2">
-            <button
-              className={`px-2 py-1 rounded flex items-center justify-center text-xs border ${ 
-                playbackMode === 'sequential' 
-                  ? 'bg-teal-500 border-teal-500 text-white' 
-                  : 'hover:bg-muted' 
-              } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-              onClick={() => handleSetPlaybackMode('sequential')}
+        {/* NEW: Volume Controls */}
+        <div className="space-y-3 pt-3 border-t">
+          <div className="space-y-1.5">
+            <Label htmlFor="selected-volume" className="text-xs font-medium">Selected Dot Volume ({selectedVolume.toFixed(1)} dB)</Label>
+            <Slider
+              id="selected-volume"
+              min={-60}
+              max={12}
+              step={0.5}
+              value={[selectedVolume]}
+              onValueChange={(value) => setSelectedVolume(value[0])}
               disabled={disabled}
-            >
-              Sequential
-            </button>
-            <button
-              className={`px-2 py-1 rounded flex items-center justify-center text-xs border ${ 
-                playbackMode === 'simultaneous_staggered' 
-                  ? 'bg-teal-500 border-teal-500 text-white' 
-                  : 'hover:bg-muted' 
-              } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-              onClick={() => handleSetPlaybackMode('simultaneous_staggered')}
+              className="h-2"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="unselected-volume" className="text-xs font-medium">Unselected Dot Volume ({unselectedVolume.toFixed(1)} dB)</Label>
+            <Slider
+              id="unselected-volume"
+              min={-60}
+              max={12}
+              step={0.5}
+              value={[unselectedVolume]}
+              onValueChange={(value) => setUnselectedVolume(value[0])}
               disabled={disabled}
-            >
-              Staggered
-            </button>
+              className="h-2"
+            />
           </div>
         </div>
+        
+        {/* Playback Mode Controls - REMOVED */}
         
         {/* Clear button */}
         <button

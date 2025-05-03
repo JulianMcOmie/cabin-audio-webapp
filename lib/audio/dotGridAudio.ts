@@ -4,16 +4,14 @@ import * as eqProcessor from './eqProcessor';
 import { useEQProfileStore } from '../stores';
 
 // Constants
-const COLUMNS = 5; // Always 5 panning positions - match the value in dot-grid.tsx (odd number ensures a middle column)
-const SEQUENTIAL_TRIGGER_DELAY = 0.1; // Delay between sequential dot triggers
+const COLUMNS = 5; // Default panning positions - match the value in dot-grid.tsx (odd number ensures a middle column)
 const SIMULTANEOUS_STAGGER_DELAY = 0.015; // Stagger offset for simultaneous mode start
 
 // Define Rhythmic Patterns (arrays of delays in seconds)
-const RHYTHM_1 = [0.2, 0.2, 0.2, 0.2]; // Steady 1/4 notes (if beat = 0.8s)
-const RHYTHM_2 = [0.3, 0.1, 0.3, 0.1]; // Syncopated
-const RHYTHM_3 = [0.4, 0.4];          // 1/2 notes
-const RHYTHM_4 = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]; // 1/8 notes
-const RHYTHMIC_PATTERNS = [RHYTHM_1, RHYTHM_2, RHYTHM_3, RHYTHM_4];
+// Assuming 120 BPM (0.5s beat)
+// Dotted 8th = 0.375s, 8th = 0.25s
+const SELECTED_RHYTHM = [0.375, 0.375, 0.25]; // Dotted 8th - Dotted 8th - 8th
+const UNSELECTED_RHYTHM = [0.5, 0.5, 0.5, 0.5]; // Steady 1/4 notes for unselected dots
 
 // Envelope settings
 const ENVELOPE_MIN_GAIN = 0.0; // Minimum gain during envelope cycle
@@ -27,11 +25,11 @@ const MASTER_GAIN = 6.0; // Much louder master gain for calibration
 const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
 const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
 
-// Volume pattern settings
-const VOLUME_PATTERN = [0, 0, 0, 0]
+// Volume pattern settings - REMOVED
+// const VOLUME_PATTERN = [0, 0, 0, 0]
 
-// Define the possible states for a dot
-export type DotState = 'on' | 'quiet' | 'off';
+// Define the possible states for a dot - REMOVED 'quiet'
+export type DotState = 'on' | 'off'; // Simplified state
 
 class DotGridAudioPlayer {
   private static instance: DotGridAudioPlayer;
@@ -44,10 +42,10 @@ class DotGridAudioPlayer {
     panner: StereoPannerNode;
     filter: BiquadFilterNode;
     position: number; // Position for sorting
-    state: 'on' | 'quiet'; // Add state to track 'on' or 'quiet'
+    state: DotState; // Updated state type
     // Timing/Rhythm Info (needed for different modes)
     lastTriggerTime: number; 
-    rhythmPattern: number[];
+    rhythmPattern: number[]; // Will be SELECTED_RHYTHM or UNSELECTED_RHYTHM based on state
     rhythmIndex: number;
   }> = new Map();
   private gridSize: number = 3; // Default row count
@@ -57,15 +55,17 @@ class DotGridAudioPlayer {
   
   // Animation frame properties
   private animationFrameId: number | null = null;
-  private lastTriggerTime: number = 0; // Global trigger time (Sequential Mode)
   
-  // Playback Mode
-  private playbackMode: 'sequential' | 'simultaneous_staggered' = 'sequential';
+  // Playback Mode - REMOVED
+  // private playbackMode: 'sequential' | 'simultaneous_staggered' = 'sequential';
 
-  // Volume pattern properties - REINTRODUCING INDEX
-  private volumePatternIndex: number = 0; // Current position in volume pattern (Sequential Mode)
-  private baseDbLevel: number = 0; // Base volume level in dB (0dB = reference level)
+  // Volume pattern properties - REMOVED INDEX
+  // private volumePatternIndex: number = 0; // Current position in volume pattern (Sequential Mode)
   
+  // Volume Control - NEW PROPERTIES
+  private selectedVolumeDb: number = 0; // Volume for 'on' dots
+  private unselectedVolumeDb: number = 0; // Volume for 'off' dots
+
   // Add distortion gain property
   private distortionGain: number = 1.0;
   
@@ -96,18 +96,49 @@ class DotGridAudioPlayer {
    * Set the current grid size
    */
   public setGridSize(rows: number, columns?: number): void {
-    this.gridSize = rows;
+    const oldGridSize = this.gridSize;
+    const oldColumnCount = this.columnCount;
 
+    this.gridSize = rows;
     if (columns !== undefined) {
       this.columnCount = columns;
-      this.updateAllDotPanning();
     }
-    
-    // Update playback if playing
-    if (this.isPlaying) {
-      this.stopAllRhythms();
-      this.startAllRhythms();
+
+    // --- Rebuild Nodes if Grid Size Changed ---
+    // More robust handling: remove old nodes, add all new potential nodes
+    if (rows !== oldGridSize || (columns !== undefined && columns !== oldColumnCount)) {
+        // Stop existing playback before rebuilding nodes
+        const wasPlaying = this.isPlaying;
+        if (wasPlaying) {
+          this.setPlaying(false);
+        }
+
+        // Clear existing nodes
+        this.audioNodes.forEach((nodes, key) => this.removeDotInternal(key, false)); // Internal remove without map deletion during iteration
+        this.audioNodes.clear(); // Clear the map after stopping/disconnecting all
+
+        // Add nodes for all positions in the new grid
+        for (let y = 0; y < this.gridSize; y++) {
+          for (let x = 0; x < this.columnCount; x++) {
+            const dotKey = `${x},${y}`;
+            // Add dots initially as 'off'
+            this.addDotInternal(dotKey, 'off'); 
+          }
+        }
+        
+        // Restart playback if it was playing before
+        if (wasPlaying) {
+          this.setPlaying(true);
+        } else {
+          // Ensure sources are connected even if not playing immediately
+          this.reconnectAllSources(); 
+        }
     }
+    // --- End Rebuild ---
+    // Original panning update (still needed if only columns change without size rebuild)
+    // else if (columns !== undefined && columns !== oldColumnCount) {
+    //   this.updateAllDotPanning(); // Might be redundant if rebuild handled it
+    // }
   }
 
   /**
@@ -288,52 +319,49 @@ class DotGridAudioPlayer {
 
   /**
    * Update the set of active dots and their states
-   * @param dots Map of dot coordinates to their state ('on' or 'quiet')
+   * @param dots Map of dot coordinates to their state ('on' only, missing means 'off')
    * @param currentGridSize Optional grid size update
    * @param currentColumns Optional column count update
    */
-  public updateDots(dots: Map<string, 'on' | 'quiet'>, currentGridSize?: number, currentColumns?: number): void {
-    // Update grid size if provided and changed
-    if (currentGridSize && currentGridSize !== this.gridSize) {
-      this.setGridSize(currentGridSize, currentColumns);
+  public updateDots(dots: Map<string, 'on'>, currentGridSize?: number, currentColumns?: number): void {
+    // Update grid size if provided and changed - This will rebuild nodes
+    if ((currentGridSize && currentGridSize !== this.gridSize) || (currentColumns && currentColumns !== this.columnCount)) {
+      this.setGridSize(currentGridSize ?? this.gridSize, currentColumns ?? this.columnCount);
     }
-    // Also update column count if only it changed but grid size didn't
-    else if (currentColumns && currentColumns !== this.columnCount) {
-      this.setGridSize(this.gridSize, currentColumns);
-    }
-    
-    // Get current dots (dots that are not 'off')
-    const currentDots = new Set(this.audioNodes.keys());
-    const newDotsMap = new Map(dots); // Create a mutable map
 
-    // Remove dots that are now 'off' (not in the new dots map)
-    currentDots.forEach(dotKey => {
-      if (!newDotsMap.has(dotKey)) {
-        this.removeDot(dotKey);
-      }
-    });
-    
-    // Add new dots or update state of existing dots
-    newDotsMap.forEach((state, dotKey) => {
-      if (!this.audioNodes.has(dotKey)) {
-        // Add new dot with its state
-        this.addDot(dotKey, state);
-      } else {
-        // Update the state of an existing dot
-        const nodes = this.audioNodes.get(dotKey);
-        if (nodes) {
-          nodes.state = state;
+    // Get current dots keys from the internal map
+    const currentDotKeys = new Set(this.audioNodes.keys());
+
+    // Iterate through all possible dots in the grid
+    currentDotKeys.forEach(dotKey => {
+      const nodes = this.audioNodes.get(dotKey);
+      if (nodes) {
+        const newState = dots.has(dotKey) ? 'on' : 'off';
+        
+        // Update state and rhythm pattern if it changed
+        if (nodes.state !== newState) {
+          nodes.state = newState;
+          nodes.rhythmPattern = (newState === 'on') ? SELECTED_RHYTHM : UNSELECTED_RHYTHM;
+          nodes.rhythmIndex = 0; // Reset rhythm index on state change
+          
+          // Optional: Immediately silence envelope if changing state while playing?
+          // if (this.isPlaying) {
+          //   nodes.envelopeGain.gain.cancelScheduledValues(audioContext.getAudioContext().currentTime);
+          //   nodes.envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, audioContext.getAudioContext().currentTime);
+          // }
         }
       }
     });
-    
-    // If playing, restart rhythm
-    if (this.isPlaying) {
-      this.stopAllRhythms();
-      this.stopAllSources(); // Stop sources before restarting
-      this.startAllSources(); // Start sources with updated nodes
-      this.startAllRhythms(); // Restart rhythm
-    }
+
+    // If playing, restart rhythm to apply new states immediately
+    // Note: Restarting sources might cause clicks, consider just updating states
+    // and letting the animation loop pick up the changes. Let's try without restart first.
+    // if (this.isPlaying) {
+    //   this.stopAllRhythms();
+    //   // this.stopAllSources(); // Avoid stopping/starting sources if possible
+    //   // this.startAllSources(); 
+    //   this.startAllRhythms(); // Restart rhythm logic
+    // }
   }
 
   /**
@@ -347,230 +375,281 @@ class DotGridAudioPlayer {
     console.log('🔊 Set playing state:', playing);
     
     if (playing) {
-      this.startAllSources();
-      this.startAllRhythms();
-      
-      // Reset volume pattern index only for sequential mode
-      if (this.playbackMode === 'sequential') {
-        this.volumePatternIndex = 0;
+      // Ensure all sources are created and connected if not already
+      if (this.audioNodes.size === 0 || !Array.from(this.audioNodes.values())[0]?.source?.buffer) {
+         // Re-initialize nodes if needed (e.g., after dispose or initial load)
+         this.rebuildAllNodesAndSources(); 
+      } else {
+        // Ensure all nodes have sources connected
+        this.ensureAllSourcesConnected();
       }
+      this.startAllRhythms();
     } else {
-      this.stopAllRhythms();
-      this.stopAllSources();
+      this.silenceAllEnvelopes(); // Gently silence instead of hard stop
+      // this.stopAllSources(); // Consider if immediate stop is needed
     }
   }
 
-  /**
-   * Start all rhythm timers - using requestAnimationFrame
-   */
-  private startAllRhythms(): void {
-    // Initialize animation frame properties
-    this.animationFrameId = null;
+  // Helper to gently silence envelopes
+  private silenceAllEnvelopes(): void {
+    const now = audioContext.getAudioContext().currentTime;
+    this.audioNodes.forEach(nodes => {
+        nodes.envelopeGain.gain.cancelScheduledValues(now);
+        // Ramp down quickly
+        nodes.envelopeGain.gain.linearRampToValueAtTime(ENVELOPE_MIN_GAIN, now + 0.05); 
+    });
+  }
+
+  // Helper to ensure all nodes have connected sources (used in setPlaying(true))
+  private ensureAllSourcesConnected(): void {
     const ctx = audioContext.getAudioContext();
-
-    // --- SEQUENTIAL MODE --- 
-    if (this.playbackMode === 'sequential') {
-      this.lastTriggerTime = ctx.currentTime; // Reset global timer
-
-      // Get dots ordered left-to-right, top-to-bottom
-      const orderedDots = Array.from(this.audioNodes.entries())
-        .sort(([keyA], [keyB]) => {
-          const [xA, yA] = keyA.split(',').map(Number);
-          const [xB, yB] = keyB.split(',').map(Number);
-          if (yA !== yB) return yA - yB;
-          return xA - xB;
-        })
-        .map(([key]) => key);
-        
-      if (orderedDots.length === 0) return;
-      
-      let currentDotIndex = 0;
-
-      const frameLoop = (timestamp: number) => {
-        if (!this.isPlaying || this.playbackMode !== 'sequential') return; // Stop if mode changes
-        
-        const now = ctx.currentTime;
-        
-        if (now - this.lastTriggerTime >= SEQUENTIAL_TRIGGER_DELAY) {
-          const dotKey = orderedDots[currentDotIndex];
-          
-          if (this.audioNodes.has(dotKey)) {
-            const volumeOffset = VOLUME_PATTERN[this.volumePatternIndex];
-            const effectiveVolumeDb = this.baseDbLevel + volumeOffset;
-            this.triggerDotEnvelope(dotKey, effectiveVolumeDb);
-          }
-          
-          this.lastTriggerTime = now;
-          this.volumePatternIndex = (this.volumePatternIndex + 1) % VOLUME_PATTERN.length;
-          if (this.volumePatternIndex === 0) {
-            currentDotIndex = (currentDotIndex + 1) % orderedDots.length;
-          }
-        }
-        
-        this.animationFrameId = requestAnimationFrame(frameLoop);
-      };
-      this.animationFrameId = requestAnimationFrame(frameLoop);
-
-    // --- SIMULTANEOUS STAGGERED MODE --- 
-    } else if (this.playbackMode === 'simultaneous_staggered') {
-      if (this.audioNodes.size === 0) return;
-      
-      // Get ordered dots just for assigning initial stagger
-      const orderedDotKeys = Array.from(this.audioNodes.keys()) // Get just keys
-          .sort((keyA, keyB) => { // Sort keys
-              const [xA, yA] = keyA.split(',').map(Number);
-              const [xB, yB] = keyB.split(',').map(Number);
-              if (yA !== yB) return yA - yB;
-              return xA - xB;
-          });
-
-      // Initialize start times with stagger and reset rhythm index
-      const startTime = ctx.currentTime;
-      orderedDotKeys.forEach((dotKey, index) => {
-          const nodes = this.audioNodes.get(dotKey);
-          if (nodes) {
-              nodes.lastTriggerTime = startTime + index * SIMULTANEOUS_STAGGER_DELAY;
-              nodes.rhythmIndex = 0; // Reset index
-          }
-      });
-
-      const frameLoop = (timestamp: number) => {
-        if (!this.isPlaying || this.playbackMode !== 'simultaneous_staggered') return; // Stop if mode changes
-        
-        const now = ctx.currentTime;
-        
-        this.audioNodes.forEach((nodes, dotKey) => {
-          const pattern = nodes.rhythmPattern;
-          const currentIndex = nodes.rhythmIndex;
-          const currentDelay = pattern[currentIndex];
-          
-          if (now - nodes.lastTriggerTime >= currentDelay) {
-            // Trigger using base volume, no volume pattern here
-            this.triggerDotEnvelope(dotKey, this.baseDbLevel); 
-            
-            // Update time and index for this dot
-            nodes.lastTriggerTime += currentDelay; // Use += for rhythmic precision
-            nodes.rhythmIndex = (currentIndex + 1) % pattern.length;
-            
-            // Safety check for timing drift
-            if (nodes.lastTriggerTime < now - currentDelay) {
-              nodes.lastTriggerTime = now;
-            }
-          }
-        });
-        
-        this.animationFrameId = requestAnimationFrame(frameLoop);
-      };
-      this.animationFrameId = requestAnimationFrame(frameLoop);
-    }
-  }
-  
-  /**
-   * Stop all rhythm timers
-   */
-  private stopAllRhythms(): void {
-    if (this.animationFrameId !== null) {
-      cancelAnimationFrame(this.animationFrameId);
-      this.animationFrameId = null;
-    }
-  }
-
-  /**
-   * Start all audio sources
-   */
-  private startAllSources(): void {
-    const ctx = audioContext.getAudioContext();
-    
-    // Make sure we have pink noise buffer
     if (!this.pinkNoiseBuffer) {
-      this.generatePinkNoiseBuffer();
+      console.warn("Pink noise buffer not ready in ensureAllSourcesConnected");
+      this.generatePinkNoiseBuffer().then(() => this.ensureAllSourcesConnected()); // Retry after generation
       return;
     }
     
-    // Simplify: use preEQGain if available, otherwise connect directly to EQ
-    const destinationNode = this.preEQGain || eqProcessor.getEQProcessor().getInputNode();
-    
-    // If we need to create a preEQGain for analyzer but don't have one yet
-    if (this.preEQAnalyser && !this.preEQGain) {
-      this.preEQGain = ctx.createGain();
-      this.preEQGain.gain.value = 1.0;
-      this.preEQGain.connect(this.preEQAnalyser);
-      
-      // Connect directly to EQ input
-      const eq = eqProcessor.getEQProcessor();
-      this.preEQGain.connect(eq.getInputNode());
-    }
-    
-    // Start each source with the determined destination
+    const destinationNode = this.getDestinationNode();
+
     this.audioNodes.forEach((nodes, dotKey) => {
-      try {
-        // Create a new source
-        const source = ctx.createBufferSource();
-        source.buffer = this.pinkNoiseBuffer;
-        source.loop = true;
-        
-        // Connect the audio chain - simple bandpass approach
-        // source -> filter -> panner -> envelopeGain -> gain -> destinationNode
-        source.connect(nodes.filter);
-        nodes.filter.connect(nodes.panner);
-        nodes.panner.connect(nodes.envelopeGain);
-        nodes.envelopeGain.connect(nodes.gain);
-        
-        // Apply the distortion gain to each individual node's gain
-        // Initial gain value - will be modified by volumeDb in triggerDotEnvelope
-        nodes.gain.gain.value = MASTER_GAIN * this.distortionGain;
-        
-        // Connect to the single determined destination point
-        nodes.gain.connect(destinationNode);
-        
-        // Start with gain at minimum (silent)
-        nodes.envelopeGain.gain.value = ENVELOPE_MIN_GAIN;
-        
-        // Start playback
-        source.start();
-        
-        // Store the new source
-        nodes.source = source;
-      } catch (e) {
-        console.error(`Error starting source for dot ${dotKey}:`, e);
+      // Check if source exists and is connected; if not, create and connect
+      // Basic check: assumes if nodes.source exists, it's connected correctly
+      // A more robust check might involve try/catch on connect or tracking connection state
+      if (!nodes.source || !nodes.source.buffer) { 
+        try {
+          const source = ctx.createBufferSource();
+          source.buffer = this.pinkNoiseBuffer;
+          source.loop = true;
+
+          source.connect(nodes.filter);
+          nodes.filter.connect(nodes.panner);
+          nodes.panner.connect(nodes.envelopeGain);
+          nodes.envelopeGain.connect(nodes.gain);
+          nodes.gain.connect(destinationNode);
+
+          // Set initial gain based on distortion + master, envelope handles actual sounding
+          nodes.gain.gain.value = MASTER_GAIN * this.distortionGain; 
+          nodes.envelopeGain.gain.value = ENVELOPE_MIN_GAIN; // Start silent
+
+          source.start();
+          nodes.source = source;
+        } catch (e) {
+            console.error(`Error ensuring source connection for dot ${dotKey}:`, e);
+            // Attempt to clean up partially created nodes?
+            if (nodes.source) {
+                try { nodes.source.disconnect(); } catch (_) {}
+            }
+        }
       }
     });
   }
+  
+  // Helper to rebuild all nodes and sources (e.g., after dispose)
+  private rebuildAllNodesAndSources(): void {
+    console.log("Rebuilding all nodes and sources...");
+    this.audioNodes.clear();
+    for (let y = 0; y < this.gridSize; y++) {
+        for (let x = 0; x < this.columnCount; x++) {
+            const dotKey = `${x},${y}`;
+            this.addDotInternal(dotKey, 'off'); // Add as off initially
+        }
+    }
+    this.ensureAllSourcesConnected(); // Create and connect sources
+  }
 
   /**
-   * Stop all audio sources
+   * Start the hybrid rhythm loop
+   */
+  private startAllRhythms(): void {
+    if (this.animationFrameId !== null) {
+      cancelAnimationFrame(this.animationFrameId); // Ensure previous loop is stopped
+    }
+    
+    const ctx = audioContext.getAudioContext();
+    const now = ctx.currentTime;
+
+    // --- Identify and Sort Dots ---
+    const onDots: string[] = [];
+    const offDots: string[] = [];
+    this.audioNodes.forEach((nodes, key) => {
+      if (nodes.state === 'on') {
+        onDots.push(key);
+      } else {
+        offDots.push(key);
+      }
+    });
+    
+    // Sort 'on' dots: top-to-bottom, then left-to-right
+    onDots.sort((keyA, keyB) => {
+      const [xA, yA] = keyA.split(',').map(Number);
+      const [xB, yB] = keyB.split(',').map(Number);
+      if (xA !== xB) return xA - xB; // Sort by column first (left-to-right)
+      return yA - yB; // Then by row within column (top-to-bottom) - *CORRECTION: User wants top-to-bottom first*
+    });
+    
+     // Sort 'on' dots: top-to-bottom, then left-to-right (*Corrected order*)
+    onDots.sort((keyA, keyB) => {
+      const [xA, yA] = keyA.split(',').map(Number);
+      const [xB, yB] = keyB.split(',').map(Number);
+      if (yA !== yB) return yA - yB; // Sort by row first (top-to-bottom)
+      return xA - xB; // Then by column within row (left-to-right)
+    });
+    
+    // Sort 'off' dots for consistent stagger assignment (e.g., reading order)
+     offDots.sort((keyA, keyB) => {
+         const [xA, yA] = keyA.split(',').map(Number);
+         const [xB, yB] = keyB.split(',').map(Number);
+         if (yA !== yB) return yA - yB;
+         return xA - xB;
+     });
+
+    // --- Initialize Rhythm State ---
+    let onDotIndex = 0;
+    let onDotLastTriggerTime = now; // Tracks the time the *sequence* last triggered
+    let onDotRhythmIndex = 0; // Index within SELECTED_RHYTHM
+
+    // Initialize 'off' dots with stagger and reset rhythm index
+    offDots.forEach((dotKey, index) => {
+        const nodes = this.audioNodes.get(dotKey);
+        if (nodes) {
+            nodes.lastTriggerTime = now + index * SIMULTANEOUS_STAGGER_DELAY;
+            nodes.rhythmIndex = 0; // Reset index
+            nodes.rhythmPattern = UNSELECTED_RHYTHM; // Ensure correct pattern
+        }
+    });
+    
+    // Initialize 'on' dots (no stagger needed, sequence handles timing)
+    onDots.forEach(dotKey => {
+        const nodes = this.audioNodes.get(dotKey);
+        if (nodes) {
+            // lastTriggerTime for 'on' dots isn't used individually here, sequence time is key
+            nodes.rhythmIndex = 0; 
+            nodes.rhythmPattern = SELECTED_RHYTHM; // Ensure correct pattern
+        }
+    });
+
+    // --- Animation Frame Loop ---
+    const frameLoop = (timestamp: number) => {
+      if (!this.isPlaying) {
+          this.animationFrameId = null; // Ensure stopped
+          return; 
+      }
+      
+      const currentCtxTime = ctx.currentTime;
+      
+      // --- Process 'on' Dots (Sequential Rhythm) ---
+      if (onDots.length > 0) {
+          const currentOnDelay = SELECTED_RHYTHM[onDotRhythmIndex];
+          
+          if (currentCtxTime >= onDotLastTriggerTime + currentOnDelay) {
+              const dotKeyToTrigger = onDots[onDotIndex];
+              
+              // Trigger the current 'on' dot
+              this.triggerDotEnvelope(dotKeyToTrigger, this.selectedVolumeDb); 
+              
+              // Update time for the *next* trigger in the sequence
+              onDotLastTriggerTime += currentOnDelay; 
+              
+              // Move to the next rhythm step
+              onDotRhythmIndex = (onDotRhythmIndex + 1) % SELECTED_RHYTHM.length;
+              
+              // If rhythm pattern completed, move to the next dot in sequence
+              if (onDotRhythmIndex === 0) {
+                  onDotIndex = (onDotIndex + 1) % onDots.length;
+              }
+
+              // Safety check for timing drift in the sequence
+              if (onDotLastTriggerTime < currentCtxTime - currentOnDelay) {
+                  console.warn("Selected dot sequence timing drift detected, resetting.");
+                  onDotLastTriggerTime = currentCtxTime; 
+              }
+          }
+      }
+
+      // --- Process 'off' Dots (Staggered Steady Rhythm) ---
+      offDots.forEach(dotKey => {
+          const nodes = this.audioNodes.get(dotKey);
+          if (nodes && nodes.state === 'off') { // Double check state
+              const pattern = UNSELECTED_RHYTHM; // Use the steady pattern
+              const currentIndex = nodes.rhythmIndex;
+              const currentDelay = pattern[currentIndex];
+              
+              if (currentCtxTime >= nodes.lastTriggerTime + currentDelay) {
+                  // Trigger using unselected volume
+                  this.triggerDotEnvelope(dotKey, this.unselectedVolumeDb); 
+                  
+                  // Update time and index for this dot
+                  nodes.lastTriggerTime += currentDelay; 
+                  nodes.rhythmIndex = (currentIndex + 1) % pattern.length;
+                  
+                  // Safety check for timing drift for this specific dot
+                  if (nodes.lastTriggerTime < currentCtxTime - currentDelay) {
+                      // console.warn(`Unselected dot ${dotKey} timing drift, resetting.`);
+                      nodes.lastTriggerTime = currentCtxTime;
+                  }
+              }
+          }
+      });
+      
+      this.animationFrameId = requestAnimationFrame(frameLoop);
+    };
+    this.animationFrameId = requestAnimationFrame(frameLoop);
+  }
+  
+  /**
+   * Start all audio sources - REVISED: Ensure sources exist for all nodes
+   */
+  private startAllSources(): void {
+      console.warn("startAllSources() called - this should likely be handled by ensureAllSourcesConnected() now.");
+      // This method might become redundant or just call ensureAllSourcesConnected
+      this.ensureAllSourcesConnected();
+  }
+
+  /**
+   * Stop all audio sources - REVISED: Prefer gentle silence or disconnect
    */
   private stopAllSources(): void {
+    console.log("Stopping all sources...");
     this.audioNodes.forEach((nodes, dotKey) => {
       try {
         if (nodes.source) {
-          // Add a property to track if the source has been started
           nodes.source.stop();
-          nodes.source.disconnect();
+          nodes.source.disconnect(); // Disconnect everything associated with the source
+          // Clear the reference to indicate it's stopped and disconnected
+          // nodes.source = null; // Problematic if we need to restart later
         }
+        // Also disconnect gain nodes to be safe
+        if(nodes.gain) nodes.gain.disconnect();
+        if(nodes.envelopeGain) nodes.envelopeGain.disconnect();
+        if(nodes.panner) nodes.panner.disconnect();
+        if(nodes.filter) nodes.filter.disconnect();
       } catch (e) {
-        console.error(`Error stopping source for dot ${dotKey}:`, e);
+        // Ignore errors often thrown if stop() was already called or node was disconnected
+        // console.warn(`Warning stopping source for dot ${dotKey}:`, e);
       }
     });
+     // Optionally clear the map if stopping means full cleanup
+     // this.audioNodes.clear(); 
   }
 
   /**
    * Trigger the envelope for a specific dot with volume parameter
    * @param dotKey The dot to trigger
-   * @param volumeDb Volume in dB to apply (base level)
+   * @param volumeDb Volume in dB for the group ('on' or 'off')
    */
-  private triggerDotEnvelope(dotKey: string, volumeDb: number = 0): void {
+  private triggerDotEnvelope(dotKey: string, volumeDb: number): void { // Removed default volumeDb = 0
     const nodes = this.audioNodes.get(dotKey);
-    if (!nodes) return;
+    // Ensure node exists and has an envelopeGain node
+    if (!nodes || !nodes.envelopeGain || !nodes.gain) return; 
     
     const ctx = audioContext.getAudioContext();
-    const now = ctx.currentTime; // Always use current time now
+    const now = ctx.currentTime;
     
-    // Determine effective volume based on state
-    let effectiveVolumeDb = volumeDb;
-    if (nodes.state === 'quiet') {
-      effectiveVolumeDb -= 18; // Reduce volume by 18dB for quiet state
-    }
+    // Determine effective volume based on state - REMOVED 'quiet' logic
+    let effectiveVolumeDb = volumeDb; 
+    // if (nodes.state === 'quiet') { // Logic removed
+    //   effectiveVolumeDb -= 18; 
+    // }
     
     // Calculate release time based on frequency
     // Get the center frequency from the filter
@@ -594,48 +673,60 @@ class DotGridAudioPlayer {
       normalizedFreq * (ENVELOPE_RELEASE_HIGH_FREQ - ENVELOPE_RELEASE_LOW_FREQ);
     
     // Apply volume in dB to gain
-    // Convert dB to gain ratio (0dB = 1.0)
-    const gainRatio = Math.pow(10, effectiveVolumeDb / 20); // Use effectiveVolumeDb
+    const gainRatio = Math.pow(10, effectiveVolumeDb / 20);
     
-    // Apply to this node's gain
-    nodes.gain.gain.cancelScheduledValues(now);
-    nodes.gain.gain.setValueAtTime(MASTER_GAIN * this.distortionGain * gainRatio, now);
+    // Apply to this node's gain (Master * Distortion * GroupVolumeRatio)
+    // Ensure gain node exists before accessing property
+    if (nodes.gain?.gain) { 
+        nodes.gain.gain.cancelScheduledValues(now);
+        nodes.gain.gain.setValueAtTime(MASTER_GAIN * this.distortionGain * gainRatio, now);
+    } else {
+        console.error(`Gain node or gain property missing for dot ${dotKey}`);
+        return; // Exit if essential nodes are missing
+    }
     
     // Reset envelope to minimum gain
-    nodes.envelopeGain.gain.cancelScheduledValues(now);
-    nodes.envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, now);
-    
-    // Attack - extremely fast rise for punchy sound
-    nodes.envelopeGain.gain.linearRampToValueAtTime(
-      ENVELOPE_MAX_GAIN, 
-      now + ENVELOPE_ATTACK
-    );
-    
-    // Release - frequency-dependent tail
-    nodes.envelopeGain.gain.exponentialRampToValueAtTime(
-      0.001, // Can't go to zero with exponentialRamp, use very small value
-      now + ENVELOPE_ATTACK + releaseTime
-    );
-    
-    // Finally set to zero after the exponential ramp
-    nodes.envelopeGain.gain.setValueAtTime(0, now + ENVELOPE_ATTACK + releaseTime + 0.001);
+    // Ensure envelopeGain node exists before accessing property
+    if (nodes.envelopeGain?.gain) {
+        nodes.envelopeGain.gain.cancelScheduledValues(now);
+        nodes.envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, now);
+        
+        // Attack
+        nodes.envelopeGain.gain.linearRampToValueAtTime(
+          ENVELOPE_MAX_GAIN, 
+          now + ENVELOPE_ATTACK
+        );
+        
+        // Release
+        nodes.envelopeGain.gain.exponentialRampToValueAtTime(
+          0.001, 
+          now + ENVELOPE_ATTACK + releaseTime
+        );
+        
+        // Final silence
+        nodes.envelopeGain.gain.setValueAtTime(0, now + ENVELOPE_ATTACK + releaseTime + 0.001);
+    } else {
+         console.error(`EnvelopeGain node or gain property missing for dot ${dotKey}`);
+    }
   }
 
   /**
-   * Add a new dot to the audio system
+   * Add a new dot to the audio system - INTERNAL HELPER
+   * Creates nodes but doesn't connect source immediately.
    * @param dotKey The dot identifier string "x,y"
-   * @param state The initial state ('on' or 'quiet')
+   * @param initialState The initial state ('on' or 'off')
    */
-  private addDot(dotKey: string, state: 'on' | 'quiet'): void {
-    const [x, y] = dotKey.split(',').map(Number);
+  private addDotInternal(dotKey: string, initialState: DotState): void {
+    if (this.audioNodes.has(dotKey)) {
+        // console.warn(`Dot ${dotKey} already exists in addDotInternal.`);
+        return; // Avoid duplicate node creation
+    }
     
-    // Create audio nodes for this dot
+    const [x, y] = dotKey.split(',').map(Number);
     const ctx = audioContext.getAudioContext();
     
-    // Normalize y to 0-1 range (0 = bottom, 1 = top)
-    const normalizedY = this.gridSize <= 1 ? 0.5 : 1 - (y / (this.gridSize - 1)); // Handle single row case
-    
-    // Calculate the frequency for this position
+    // Calculate frequency based on normalized Y
+    const normalizedY = this.gridSize <= 1 ? 0.5 : 1 - (y / (this.gridSize - 1));
     const minFreq = 40;  // Lower minimum for better low-end
     const maxFreq = 15000; // Lower maximum to avoid harsh high-end
     const logMinFreq = Math.log2(minFreq);
@@ -643,92 +734,107 @@ class DotGridAudioPlayer {
     const logFreqRange = logMaxFreq - logMinFreq;
     const centerFreq = Math.pow(2, logMinFreq + normalizedY * logFreqRange);
     
-    // Create a gain node for volume
     const gain = ctx.createGain();
-    gain.gain.value = MASTER_GAIN;
+    gain.gain.value = MASTER_GAIN * this.distortionGain; // Initial gain includes distortion
     
-    // Create a panner node for stereo positioning
     const panner = ctx.createStereoPanner();
-    
-    // Simple panning calculation that evenly distributes columns from -1 to 1
-    // First column (x=0) will be -1 (full left), last column will be 1 (full right)
     const panPosition = this.columnCount <= 1 ? 0 : (2 * (x / (this.columnCount - 1)) - 1);
-    
     panner.pan.value = panPosition;
     
-    // Set Q value
     const qValue = 1.0;
-    
-    // Create filter
     const filter = ctx.createBiquadFilter();
     filter.type = 'bandpass';
     filter.frequency.value = centerFreq;
     filter.Q.value = qValue;
-    
-    // --- Initialize Last Trigger Time --- - Now initialized in startAllRhythms
-    // const initialOffset = Math.random() * triggerDelay; 
-    const lastTriggerTime = 0; // Initialize to 0, will be set on play
-    // ---------------------------------------
 
-    // --- Assign Rhythmic Pattern --- 
-    const patternIndex = x % RHYTHMIC_PATTERNS.length; // Assign based on column
-    const rhythmPattern = RHYTHMIC_PATTERNS[patternIndex];
-    const rhythmIndex = 0; // Start at beginning of pattern
-    // -------------------------------
+    // Create a dummy source initially, will be replaced and connected on play
+    const dummySource = ctx.createBufferSource(); 
 
-    // Store the nodes with simplified structure and initial state
+    // Store the nodes
     this.audioNodes.set(dotKey, {
-      source: ctx.createBufferSource(), // Dummy source (will be replaced when playing)
+      source: dummySource, // Start with dummy
       gain,
-      envelopeGain: ctx.createGain(),
+      envelopeGain: ctx.createGain(), // Envelope gain created here
       panner,
       filter,
-      position: y * this.columnCount + x, // Store position for sorting
-      state: state, // Store the initial state
-      // Timing/Rhythm Info
-      lastTriggerTime: lastTriggerTime, 
-      rhythmPattern: rhythmPattern, 
-      rhythmIndex: rhythmIndex, 
+      position: y * this.columnCount + x,
+      state: initialState,
+      // Timing/Rhythm Info - Initialized properly in startAllRhythms
+      lastTriggerTime: 0, 
+      rhythmPattern: (initialState === 'on') ? SELECTED_RHYTHM : UNSELECTED_RHYTHM,
+      rhythmIndex: 0, 
     });
   }
   
   /**
-   * Remove a dot from the audio system
+   * Remove a dot from the audio system - INTERNAL HELPER
+   * Stops/disconnects nodes but doesn't remove from map immediately (if called during iteration).
+   * @param dotKey The dot identifier string "x,y"
+   * @param removeFromMap Whether to delete the entry from this.audioNodes map
    */
-  private removeDot(dotKey: string): void {
+  private removeDotInternal(dotKey: string, removeFromMap: boolean = true): void {
     const nodes = this.audioNodes.get(dotKey);
     if (!nodes) return;
     
-    // Stop and disconnect the source if it's playing
-    if (this.isPlaying && nodes.source) {
-      try {
-        nodes.source.stop();
-        nodes.source.disconnect();
-      } catch (e) {
-        // Ignore errors when stopping
-        console.warn(`Warning when stopping source for dot ${dotKey}:`, e);
-      }
+    // Stop and disconnect the source node
+    if (nodes.source && nodes.source.buffer) { // Check if it's a real source
+        try {
+            nodes.source.stop();
+        } catch (e) { /* Ignore error if already stopped */ }
+        try {
+            nodes.source.disconnect();
+        } catch (e) { /* Ignore error if already disconnected */ }
     }
     
-    // Remove from the map
-    this.audioNodes.delete(dotKey);
+    // Disconnect other nodes in the chain
+    try { nodes.gain.disconnect(); } catch (e) {}
+    try { nodes.envelopeGain.disconnect(); } catch (e) {}
+    try { nodes.panner.disconnect(); } catch (e) {}
+    try { nodes.filter.disconnect(); } catch (e) {}
+
+    // Remove from the map if requested
+    if (removeFromMap) {
+        this.audioNodes.delete(dotKey);
+    }
   }
 
   /**
-   * Set the master volume in dB
+   * Public method to remove a dot (used by external logic if needed, though updateDots is primary)
+   */
+  public removeDot(dotKey: string): void {
+    this.removeDotInternal(dotKey, true);
+  }
+
+  /**
+   * Set the master volume in dB - RENAMED/REPLACED by specific volumes
    * @param dbLevel Volume level in dB (0dB = reference level)
    */
-  public setVolumeDb(dbLevel: number): void {
-    this.baseDbLevel = dbLevel;
+  // public setVolumeDb(dbLevel: number): void {
+  //   this.baseDbLevel = dbLevel;
+  // }
+  
+  /**
+   * Set the volume for SELECTED ('on') dots in dB
+   */
+  public setSelectedVolumeDb(dbLevel: number): void {
+    this.selectedVolumeDb = dbLevel;
+    // No need to update gain nodes directly here, triggerDotEnvelope handles it
+  }
+  
+  /**
+   * Set the volume for UNSELECTED ('off') dots in dB
+   */
+  public setUnselectedVolumeDb(dbLevel: number): void {
+    this.unselectedVolumeDb = dbLevel;
+    // No need to update gain nodes directly here, triggerDotEnvelope handles it
   }
 
   /**
    * Clean up resources
    */
   public dispose(): void {
-    this.setPlaying(false);
-    this.stopAllRhythms();
-    this.stopAllSources();
+    this.setPlaying(false); // Stops rhythms and silences envelopes
+    this.stopAllSources(); // Full stop and disconnect of sources
     
     // Ensure animation frames are cancelled
     if (this.animationFrameId !== null) {
@@ -738,17 +844,17 @@ class DotGridAudioPlayer {
     
     // Clean up analyzer nodes
     if (this.preEQGain) {
-      this.preEQGain.disconnect();
+      try { this.preEQGain.disconnect(); } catch(e) {}
       this.preEQGain = null;
     }
-    
     if (this.preEQAnalyser) {
-      this.preEQAnalyser.disconnect();
+      try { this.preEQAnalyser.disconnect(); } catch(e) {}
       this.preEQAnalyser = null;
     }
     
+    // Clear nodes map after stopping/disconnecting everything
     this.audioNodes.clear();
-    this.pinkNoiseBuffer = null;
+    this.pinkNoiseBuffer = null; // Release buffer reference
   }
 
   // Add method to handle distortion gain
@@ -758,20 +864,29 @@ class DotGridAudioPlayer {
   }
 
   /**
-   * Set the current playback mode.
+   * Set the current playback mode. - REMOVED
    * Restarts rhythms if changed while playing.
    */
-  public setPlaybackMode(mode: 'sequential' | 'simultaneous_staggered'): void {
-    if (mode === this.playbackMode) return;
-    
-    console.log(`🔊 Setting playback mode to: ${mode}`);
-    this.playbackMode = mode;
-    
-    // Restart rhythms if currently playing to apply new mode logic
-    if (this.isPlaying) {
-      this.stopAllRhythms();
-      this.startAllRhythms();
-    }
+  // public setPlaybackMode(mode: 'sequential' | 'simultaneous_staggered'): void {
+  // ... existing code ...
+  // }
+  
+  // Helper to get the destination node (EQ input or Gain)
+  private getDestinationNode(): AudioNode {
+      // Ensure preEQGain exists if analyzer is present
+      if (this.preEQAnalyser && !this.preEQGain) {
+          const ctx = audioContext.getAudioContext();
+          this.preEQGain = ctx.createGain();
+          this.preEQGain.gain.value = 1.0;
+          const eq = eqProcessor.getEQProcessor();
+          
+          // Connect Gain -> Analyzer (for visualization only)
+          this.preEQGain.connect(this.preEQAnalyser); 
+          // Connect Gain -> EQ Input (actual audio path)
+          this.preEQGain.connect(eq.getInputNode()); 
+      }
+      
+      return this.preEQGain || eqProcessor.getEQProcessor().getInputNode();
   }
 }
 
