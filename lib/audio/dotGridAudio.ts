@@ -10,7 +10,8 @@ const SIMULTANEOUS_STAGGER_DELAY = 0.015; // Stagger offset for simultaneous mod
 // Define Rhythmic Patterns (arrays of delays in seconds)
 // Assuming 120 BPM (0.5s beat)
 // Dotted 8th = 0.375s, 8th = 0.25s
-const SELECTED_RHYTHM = [0.375, 0.375, 0.25]; // Dotted 8th - Dotted 8th - 8th
+// const SELECTED_RHYTHM = [0.375, 0.375, 0.25]; // Dotted 8th - Dotted 8th - 8th
+const SELECTED_RHYTHM = [0.125, 0.125, 0.125]; // Faster: Straight 16th notes at 120 BPM
 const UNSELECTED_RHYTHM = [0.5, 0.5, 0.5, 0.5]; // Steady 1/4 notes for unselected dots
 
 // Envelope settings
@@ -468,63 +469,39 @@ class DotGridAudioPlayer {
     const ctx = audioContext.getAudioContext();
     const now = ctx.currentTime;
 
-    // --- Identify and Sort Dots ---
-    const onDots: string[] = [];
-    const offDots: string[] = [];
-    this.audioNodes.forEach((nodes, key) => {
-      if (nodes.state === 'on') {
-        onDots.push(key);
-      } else {
-        offDots.push(key);
-      }
-    });
-    
-    // Sort 'on' dots: top-to-bottom, then left-to-right
-    onDots.sort((keyA, keyB) => {
-      const [xA, yA] = keyA.split(',').map(Number);
-      const [xB, yB] = keyB.split(',').map(Number);
-      if (xA !== xB) return xA - xB; // Sort by column first (left-to-right)
-      return yA - yB; // Then by row within column (top-to-bottom) - *CORRECTION: User wants top-to-bottom first*
-    });
-    
-     // Sort 'on' dots: top-to-bottom, then left-to-right (*Corrected order*)
-    onDots.sort((keyA, keyB) => {
-      const [xA, yA] = keyA.split(',').map(Number);
-      const [xB, yB] = keyB.split(',').map(Number);
-      if (yA !== yB) return yA - yB; // Sort by row first (top-to-bottom)
-      return xA - xB; // Then by column within row (left-to-right)
-    });
-    
-    // Sort 'off' dots for consistent stagger assignment (e.g., reading order)
-     offDots.sort((keyA, keyB) => {
-         const [xA, yA] = keyA.split(',').map(Number);
-         const [xB, yB] = keyB.split(',').map(Number);
-         if (yA !== yB) return yA - yB;
-         return xA - xB;
-     });
-
-    // --- Initialize Rhythm State ---
+    // --- Initialize Rhythm State for 'on' dots (persists across frames) ---
     let onDotIndex = 0;
     let onDotLastTriggerTime = now; // Tracks the time the *sequence* last triggered
     let onDotRhythmIndex = 0; // Index within SELECTED_RHYTHM
 
-    // Initialize 'off' dots with stagger and reset rhythm index
-    offDots.forEach((dotKey, index) => {
-        const nodes = this.audioNodes.get(dotKey);
-        if (nodes) {
-            nodes.lastTriggerTime = now + index * SIMULTANEOUS_STAGGER_DELAY;
-            nodes.rhythmIndex = 0; // Reset index
-            nodes.rhythmPattern = UNSELECTED_RHYTHM; // Ensure correct pattern
+    // --- Initialize 'off' dots (stagger is set once initially) ---
+    // Scan nodes *once* here to set initial stagger times
+    const initialOffDots: string[] = [];
+    this.audioNodes.forEach((nodes, key) => {
+        if (nodes.state === 'off') {
+            initialOffDots.push(key);
         }
     });
-    
-    // Initialize 'on' dots (no stagger needed, sequence handles timing)
-    onDots.forEach(dotKey => {
+    initialOffDots.sort((keyA, keyB) => { // Sort for consistent stagger
+        const [xA, yA] = keyA.split(',').map(Number);
+        const [xB, yB] = keyB.split(',').map(Number);
+        if (yA !== yB) return yA - yB;
+        return xA - xB;
+    });
+    initialOffDots.forEach((dotKey, index) => {
         const nodes = this.audioNodes.get(dotKey);
         if (nodes) {
-            // lastTriggerTime for 'on' dots isn't used individually here, sequence time is key
-            nodes.rhythmIndex = 0; 
-            nodes.rhythmPattern = SELECTED_RHYTHM; // Ensure correct pattern
+            // Only set lastTriggerTime initially; rhythm logic will advance it
+            nodes.lastTriggerTime = now + index * SIMULTANEOUS_STAGGER_DELAY;
+            nodes.rhythmIndex = 0;
+            nodes.rhythmPattern = UNSELECTED_RHYTHM;
+        }
+    });
+    // Initialize 'on' dots (rhythm index needs reset)
+    this.audioNodes.forEach((nodes, key) => {
+        if (nodes.state === 'on') {
+            nodes.rhythmIndex = 0;
+            nodes.rhythmPattern = SELECTED_RHYTHM;
         }
     });
 
@@ -537,29 +514,61 @@ class DotGridAudioPlayer {
       
       const currentCtxTime = ctx.currentTime;
       
+      // --- DYNAMICALLY Identify and Sort Dots ON EACH FRAME ---
+      const currentOnDots: string[] = [];
+      const currentOffDots: string[] = [];
+      this.audioNodes.forEach((nodes, key) => {
+        if (nodes.state === 'on') {
+          currentOnDots.push(key);
+        } else {
+          currentOffDots.push(key);
+        }
+      });
+      
+      // Sort 'on' dots: top-to-bottom, then left-to-right
+      currentOnDots.sort((keyA, keyB) => {
+        const [xA, yA] = keyA.split(',').map(Number);
+        const [xB, yB] = keyB.split(',').map(Number);
+        if (yA !== yB) return yA - yB; // Sort by row first
+        return xA - xB; // Then by column
+      });
+      
+      // Sort 'off' dots for consistent stagger (optional, but good practice)
+      currentOffDots.sort((keyA, keyB) => {
+           const [xA, yA] = keyA.split(',').map(Number);
+           const [xB, yB] = keyB.split(',').map(Number);
+           if (yA !== yB) return yA - yB;
+           return xA - xB;
+       });
+      // --- End Dynamic Identification ---
+      
       // --- Process 'on' Dots (Sequential Rhythm) ---
-      if (onDots.length > 0) {
-          const currentOnDelay = SELECTED_RHYTHM[onDotRhythmIndex];
+      if (currentOnDots.length > 0) {
+          // Get the delay from the rhythm pattern based on its current index
+          const currentRhythmDelay = SELECTED_RHYTHM[onDotRhythmIndex];
           
-          if (currentCtxTime >= onDotLastTriggerTime + currentOnDelay) {
-              const dotKeyToTrigger = onDots[onDotIndex];
+          // Check if it's time for the next sequential trigger
+          if (currentCtxTime >= onDotLastTriggerTime + currentRhythmDelay) {
+              // Ensure onDotIndex is valid for the current list length
+              if (onDotIndex >= currentOnDots.length) {
+                  onDotIndex = 0; // Reset if index is out of bounds
+              }
+              const dotKeyToTrigger = currentOnDots[onDotIndex];
               
               // Trigger the current 'on' dot
               this.triggerDotEnvelope(dotKeyToTrigger, this.selectedVolumeDb); 
               
               // Update time for the *next* trigger in the sequence
-              onDotLastTriggerTime += currentOnDelay; 
+              onDotLastTriggerTime += currentRhythmDelay; 
               
-              // Move to the next rhythm step
+              // Move to the next dot in the sequence (wrap around)
+              onDotIndex = (onDotIndex + 1) % currentOnDots.length;
+              
+              // Move to the next step in the rhythm pattern (wrap around)
               onDotRhythmIndex = (onDotRhythmIndex + 1) % SELECTED_RHYTHM.length;
               
-              // If rhythm pattern completed, move to the next dot in sequence
-              if (onDotRhythmIndex === 0) {
-                  onDotIndex = (onDotIndex + 1) % onDots.length;
-              }
-
               // Safety check for timing drift in the sequence
-              if (onDotLastTriggerTime < currentCtxTime - currentOnDelay) {
+              if (onDotLastTriggerTime < currentCtxTime - currentRhythmDelay) {
                   console.warn("Selected dot sequence timing drift detected, resetting.");
                   onDotLastTriggerTime = currentCtxTime; 
               }
@@ -567,9 +576,9 @@ class DotGridAudioPlayer {
       }
 
       // --- Process 'off' Dots (Staggered Steady Rhythm) ---
-      offDots.forEach(dotKey => {
+      currentOffDots.forEach(dotKey => {
           const nodes = this.audioNodes.get(dotKey);
-          if (nodes && nodes.state === 'off') { // Double check state
+          if (nodes) { 
               const pattern = UNSELECTED_RHYTHM; // Use the steady pattern
               const currentIndex = nodes.rhythmIndex;
               const currentDelay = pattern[currentIndex];
