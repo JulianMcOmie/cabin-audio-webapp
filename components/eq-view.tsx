@@ -81,6 +81,9 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   // Add state for toggling between grids
   const [activeGrid, setActiveGrid] = useState<"line" | "dot" | "shape">("dot")
 
+  // State for dot grid frequency shift
+  const [dotGridFrequencyShift, setDotGridFrequencyShift] = useState(1.0);
+
   // Add state for the shape tool
   const [shapeToolPlaying, setShapeToolPlaying] = useState(false);
 
@@ -476,6 +479,36 @@ export function EQView({ setEqEnabled }: EQViewProps) {
               )}
             </div>
             
+            {/* Controls specific to Dot Grid */}
+            {activeGrid === 'dot' && (
+              <div className="mt-4 space-y-3">
+                {/* Frequency Shift Slider */}
+                <div>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">
+                    Frequency Shift (Shift: {dotGridFrequencyShift.toFixed(2)}x)
+                  </label>
+                  <Slider
+                    value={[dotGridFrequencyShift]}
+                    min={0.5} // e.g., one octave down
+                    max={2.0} // e.g., one octave up
+                    step={0.01}
+                    onValueChange={(value) => {
+                      const newShift = value[0];
+                      setDotGridFrequencyShift(newShift);
+                      // Update the audio player
+                      const player = dotGridAudio.getDotGridAudioPlayer();
+                      player.setFrequencyShiftFactor(newShift);
+                    }}
+                    className="w-full"
+                  />
+                  <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                    <span>Lower Freq.</span>
+                    <span>Higher Freq.</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Play button moved to bottom of grid section */}
             <div className="flex justify-center mt-6">
               <Button
@@ -502,9 +535,19 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                     if (!glyphGridPlaying && isMusicPlaying) {
                       setMusicPlaying(false);
                     }
+                  } else if (activeGrid === "shape") {
+                    setShapeToolPlaying(!shapeToolPlaying);
+                    // Stop other tools
+                    if (dotGridPlaying) setDotGridPlaying(false);
+                    if (glyphGridPlaying) setGlyphGridPlaying(false);
+                    
+                    // If enabling shape tool playback and music is playing, pause the music
+                    if (!shapeToolPlaying && isMusicPlaying) {
+                      setMusicPlaying(false);
+                    }
                   } else {
-                    // Should not happen based on activeGrid type, but handle defensively
-                    console.warn("Play button clicked with unexpected active grid:", activeGrid)
+                    // This case should handle the 'dot' grid
+                    handleDotGridPlayToggle(); // Use the existing handler for dot grid
                   }
                 }}
               >

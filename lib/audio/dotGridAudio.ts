@@ -48,6 +48,8 @@ class DotGridAudioPlayer {
     lastTriggerTime: number; 
     rhythmPattern: number[]; // Will be SELECTED_RHYTHM or UNSELECTED_RHYTHM based on state
     rhythmIndex: number;
+    // Add frequency shift properties
+    originalCenterFreq: number; // Original calculated frequency (added to type)
   }> = new Map();
   private gridSize: number = 3; // Default row count
   private columnCount: number = COLUMNS; // Default column count
@@ -70,6 +72,9 @@ class DotGridAudioPlayer {
   // Add distortion gain property
   private distortionGain: number = 1.0;
   
+  // Add frequency shift factor property
+  private frequencyShiftFactor: number = 1.0; // 1.0 means no shift
+
   private constructor() {
     // Initialize pink noise buffer
     this.generatePinkNoiseBuffer();
@@ -743,6 +748,9 @@ class DotGridAudioPlayer {
     const logFreqRange = logMaxFreq - logMinFreq;
     const centerFreq = Math.pow(2, logMinFreq + normalizedY * logFreqRange);
     
+    // Apply the frequency shift factor immediately
+    const initialShiftedFreq = this.calculateShiftedFrequency(y, this.frequencyShiftFactor);
+    
     const gain = ctx.createGain();
     gain.gain.value = MASTER_GAIN * this.distortionGain; // Initial gain includes distortion
     
@@ -753,11 +761,14 @@ class DotGridAudioPlayer {
     const qValue = 1.0;
     const filter = ctx.createBiquadFilter();
     filter.type = 'bandpass';
-    filter.frequency.value = centerFreq;
+    filter.frequency.value = initialShiftedFreq; // Use the shifted frequency
     filter.Q.value = qValue;
 
     // Create a dummy source initially, will be replaced and connected on play
     const dummySource = ctx.createBufferSource(); 
+
+    // Store the original calculated frequency before shift
+    const originalCenterFreq = centerFreq / this.frequencyShiftFactor; // Store the pre-shift value
 
     // Store the nodes
     this.audioNodes.set(dotKey, {
@@ -768,6 +779,8 @@ class DotGridAudioPlayer {
       filter,
       position: y * this.columnCount + x,
       state: initialState,
+      // Store original frequency for recalculation on shift
+      originalCenterFreq: originalCenterFreq, // Store the original frequency
       // Timing/Rhythm Info - Initialized properly in startAllRhythms
       lastTriggerTime: 0, 
       rhythmPattern: (initialState === 'on') ? SELECTED_RHYTHM : UNSELECTED_RHYTHM,
@@ -896,6 +909,56 @@ class DotGridAudioPlayer {
       }
       
       return this.preEQGain || eqProcessor.getEQProcessor().getInputNode();
+  }
+
+  /**
+   * Recalculate center frequency based on Y and shift factor, clamping result.
+   * @param y The row index (0-based)
+   * @param shiftFactor The current shift factor
+   * @returns Clamped center frequency
+   */
+  private calculateShiftedFrequency(y: number, shiftFactor: number): number {
+    const normalizedY = this.gridSize <= 1 ? 0.5 : 1 - (y / (this.gridSize - 1));
+    const minFreq = 40;  // Lower minimum for better low-end
+    const maxFreq = 15000; // Lower maximum to avoid harsh high-end
+    const logMinFreq = Math.log2(minFreq);
+    const logMaxFreq = Math.log2(maxFreq);
+    const logFreqRange = logMaxFreq - logMinFreq;
+    const baseFreq = Math.pow(2, logMinFreq + normalizedY * logFreqRange);
+    
+    // Apply shift factor and clamp
+    let shiftedFreq = baseFreq * shiftFactor;
+    shiftedFreq = Math.max(minFreq, Math.min(maxFreq, shiftedFreq)); // Clamp within min/max
+    
+    return shiftedFreq;
+  }
+
+  /**
+   * Update the frequencies of all existing dot filters based on the current shift factor.
+   */
+  private updateAllDotFrequencies(): void {
+    const now = audioContext.getAudioContext().currentTime;
+    this.audioNodes.forEach((nodes, dotKey) => {
+      const y = parseInt(dotKey.split(',')[1], 10); // Get y coordinate from key
+      const newFreq = this.calculateShiftedFrequency(y, this.frequencyShiftFactor);
+      
+      if (nodes.filter) {
+        // Use setTargetAtTime for smoother transitions, though immediate might be fine too
+        // nodes.filter.frequency.setTargetAtTime(newFreq, now, 0.01); 
+        // Or set immediately:
+        nodes.filter.frequency.setValueAtTime(newFreq, now);
+      }
+    });
+  }
+
+  /**
+   * Set the frequency shift factor for all dots.
+   * @param factor Multiplier for frequency (e.g., 1.0 = no shift, 2.0 = octave up, 0.5 = octave down)
+   */
+  public setFrequencyShiftFactor(factor: number): void {
+      // Add reasonable clamping for the factor if desired, e.g., 0.1 to 10.0
+      this.frequencyShiftFactor = Math.max(0.1, Math.min(10.0, factor)); 
+      this.updateAllDotFrequencies(); // Update existing nodes
   }
 }
 
