@@ -17,17 +17,19 @@ const NOISE_GAIN = 0.15 // Adjust NOISE_GAIN as we now have 5 x 2 sources
 // const ENVELOPE_ATTACK_TIME = 0.005 // 5ms attack
 // const ENVELOPE_RELEASE_TIME = 0.05 // 100ms release
 const DEFAULT_SPEED = 1.0 // Default movement speed
-const NOISE_FILTER_Q = 3.0 // Q factor for the HP/LP noise filters (higher = steeper cutoff)
-const NOISE_BANDWIDTH_OCTAVES = 2.0 // Base bandwidth between HP and LP filters in octaves
+// const NOISE_FILTER_Q = 3.0 // Q factor for the HP/LP noise filters (higher = steeper cutoff)
+// const NOISE_BANDWIDTH_OCTAVES = 2.0 // Base bandwidth between HP and LP filters in octaves
 // Define bandwidth scaling multipliers for min/max frequencies
-const MIN_FREQ_BANDWIDTH_MULTIPLIER = 3.0 // Wider bandwidth at low frequencies
-const MAX_FREQ_BANDWIDTH_MULTIPLIER = 0.5 // Narrower bandwidth at high frequencies
+// const MIN_FREQ_BANDWIDTH_MULTIPLIER = 3.0 // Wider bandwidth at low frequencies
+// const MAX_FREQ_BANDWIDTH_MULTIPLIER = 0.5 // Narrower bandwidth at high frequencies
 // Define number of noise sources and their fixed panning
-const NUM_NOISE_SOURCES = 5
-const NOISE_PANNING_POSITIONS = [-1.0, -0.5, 0.0, 0.5, 1.0] 
+// const NUM_NOISE_SOURCES = 5
+// const NOISE_PANNING_POSITIONS = [-1.0, -0.5, 0.0, 0.5, 1.0] 
 
 // Add constants for hit detection
 const DEFAULT_HIT_INTERVAL = 0.2 // Default interval between hits (20% of path)
+
+const BANDPASS_FILTER_Q = 0.5; // Q factor for the new bandpass filter
 
 export enum PlaybackMode {
   PATH = 'path', // Follow the path continuously back and forth
@@ -50,33 +52,26 @@ class GlyphGridAudioPlayer {
   private pinkNoiseBuffer: AudioBuffer | null = null
   private isPlaying: boolean = false
   private audioNodes: {
-    // Sine Path
-    oscillatorSource: OscillatorNode | null;
-    sineGain: GainNode | null;
-    sinePanner: StereoPannerNode | null; // Panner for sine (fixed center)
-    // Noise Paths (Arrays for multiple sources)
-    noiseSourcesHP: AudioBufferSourceNode[];
-    noiseFiltersHP: BiquadFilterNode[];
-    noiseGainsHP: GainNode[];
-    noiseSourcesLP: AudioBufferSourceNode[];
-    noiseFiltersLP: BiquadFilterNode[];
-    noiseGainsLP: GainNode[];
-    noisePanners: StereoPannerNode[]; // Panners for each noise source pair
+    // Sine Path - REMOVED
+    // oscillatorSource: OscillatorNode | null;
+    // sineGain: GainNode | null;
+    // sinePanner: StereoPannerNode | null;
+
+    // Single Bandpassed Noise Path
+    noiseSource: AudioBufferSourceNode | null;
+    noiseFilter: BiquadFilterNode | null; // Bandpass filter
+    noiseGain: GainNode | null;
+    noisePanner: StereoPannerNode | null;
+
     // Master Mixer
-    masterMixerGain: GainNode | null; // Combines sine and all noise, applies distortion
+    masterMixerGain: GainNode | null;
   } = {
-    // Sine
-    oscillatorSource: null,
-    sineGain: null,
-    sinePanner: null,
-    // Noise (initialize as empty arrays)
-    noiseSourcesHP: [],
-    noiseFiltersHP: [],
-    noiseGainsHP: [],
-    noiseSourcesLP: [],
-    noiseFiltersLP: [],
-    noiseGainsLP: [],
-    noisePanners: [],
+    // Single Bandpassed Noise Path
+    noiseSource: null,
+    noiseFilter: null,
+    noiseGain: null,
+    noisePanner: null,
+
     // Mixer
     masterMixerGain: null,
   }
@@ -339,47 +334,41 @@ class GlyphGridAudioPlayer {
     // Apply frequency multiplier
     const adjustedFreq = centerFreq * this.freqMultiplier
 
-    // --- Calculate Dynamic Bandwidth --- 
-    // Normalize the current frequency within the log range (minFreq to maxFreq)
-    const logAdjustedFreq = Math.log2(Math.max(minFreq, Math.min(maxFreq, adjustedFreq)))
-    const normalizedLogFreq = (logAdjustedFreq - logMinFreq) / (logMaxFreq - logMinFreq)
-    
-    // Interpolate bandwidth multiplier based on frequency position
-    const dynamicBandwidthMultiplier = MIN_FREQ_BANDWIDTH_MULTIPLIER + 
-                                     (MAX_FREQ_BANDWIDTH_MULTIPLIER - MIN_FREQ_BANDWIDTH_MULTIPLIER) * normalizedLogFreq
-                                     
-    // Calculate effective bandwidth and the corresponding multiplier
-    const effectiveBandwidthOctaves = NOISE_BANDWIDTH_OCTAVES * dynamicBandwidthMultiplier
-    const effectiveOctaveMultiplier = Math.pow(2, effectiveBandwidthOctaves / 2)
-    // --- End Dynamic Bandwidth Calculation ---
-
-    // Calculate HP and LP cutoff frequencies based on dynamic bandwidth
-    let hpCutoff = adjustedFreq * effectiveOctaveMultiplier
-    let lpCutoff = adjustedFreq / effectiveOctaveMultiplier
+    // --- REMOVE Dynamic Bandwidth Calculation ---
+    // const logAdjustedFreq = Math.log2(Math.max(minFreq, Math.min(maxFreq, adjustedFreq)))
+    // const normalizedLogFreq = (logAdjustedFreq - logMinFreq) / (logMaxFreq - logMinFreq)
+    // const dynamicBandwidthMultiplier = MIN_FREQ_BANDWIDTH_MULTIPLIER + 
+    //                                  (MAX_FREQ_BANDWIDTH_MULTIPLIER - MIN_FREQ_BANDWIDTH_MULTIPLIER) * normalizedLogFreq
+    // const effectiveBandwidthOctaves = NOISE_BANDWIDTH_OCTAVES * dynamicBandwidthMultiplier
+    // const effectiveOctaveMultiplier = Math.pow(2, effectiveBandwidthOctaves / 2)
+    // let hpCutoff = adjustedFreq * effectiveOctaveMultiplier
+    // let lpCutoff = adjustedFreq / effectiveOctaveMultiplier
+    // --- End REMOVE Dynamic Bandwidth Calculation ---
 
     // Clamp frequencies to avoid issues
     const minClampFreq = 20
     const maxClampFreq = 20000 // Or use ctx.sampleRate / 2 if needed
-    hpCutoff = Math.max(minClampFreq, Math.min(maxClampFreq, hpCutoff))
-    lpCutoff = Math.max(minClampFreq, Math.min(maxClampFreq, lpCutoff))
-    const finalOscFreq = Math.max(minClampFreq, Math.min(maxClampFreq, adjustedFreq))
+    // hpCutoff = Math.max(minClampFreq, Math.min(maxClampFreq, hpCutoff)) // REMOVED
+    // lpCutoff = Math.max(minClampFreq, Math.min(maxClampFreq, lpCutoff)) // REMOVED
+    const finalFreq = Math.max(minClampFreq, Math.min(maxClampFreq, adjustedFreq)) // Renamed for clarity
     
     // Map x to pan position (-1 to 1)
     const panPosition = x
     
     // Now update the audio nodes with these values
-    if (this.audioNodes.oscillatorSource) {
-      this.audioNodes.oscillatorSource.frequency.value = finalOscFreq
-    }
+    // if (this.audioNodes.oscillatorSource) { // REMOVED
+    //   this.audioNodes.oscillatorSource.frequency.value = finalOscFreq
+    // }
     
-    // Update noise filter frequencies for all sources
-    for (let i = 0; i < NUM_NOISE_SOURCES; i++) {
-      if (this.audioNodes.noiseFiltersHP[i]) {
-        this.audioNodes.noiseFiltersHP[i].frequency.value = hpCutoff
-      }
-      if (this.audioNodes.noiseFiltersLP[i]) {
-        this.audioNodes.noiseFiltersLP[i].frequency.value = lpCutoff
-      }
+    // Update noise filter frequencies for all sources - REMOVED
+    // for (let i = 0; i < NUM_NOISE_SOURCES; i++) { ... }
+
+    // Update the single bandpass filter and panner
+    if (this.audioNodes.noiseFilter) {
+      this.audioNodes.noiseFilter.frequency.value = finalFreq
+    }
+    if (this.audioNodes.noisePanner) {
+      this.audioNodes.noisePanner.pan.value = panPosition
     }
   }
   
@@ -404,93 +393,49 @@ class GlyphGridAudioPlayer {
     
     const ctx = getAudioContext()
     
-    // --- Create Sine Path Nodes ---
-    const oscillatorSource = ctx.createOscillator()
-    oscillatorSource.type = 'sine' // Use sine wave
-    const sineGain = ctx.createGain()
-    sineGain.gain.value = SINE_GAIN
-    const sinePanner = ctx.createStereoPanner()
-    sinePanner.pan.value = 0 // Center pan the sine tone
+    // --- REMOVE Sine Path Nodes ---
+    // const oscillatorSource = ctx.createOscillator()
+    // oscillatorSource.type = 'sine'
+    // const sineGain = ctx.createGain()
+    // sineGain.gain.value = SINE_GAIN
+    // const sinePanner = ctx.createStereoPanner()
+    // sinePanner.pan.value = 0
 
     // --- Master Mixer --- 
     const masterMixerGain = ctx.createGain()
     masterMixerGain.gain.value = this.distortionGain // Apply initial distortion
 
-    // --- Connect Sine Path ---
-    oscillatorSource.connect(sineGain)
-    sineGain.connect(sinePanner)
-    sinePanner.connect(masterMixerGain)
+    // --- REMOVE Sine Path Connections ---
+    // oscillatorSource.connect(sineGain)
+    // sineGain.connect(sinePanner)
+    // sinePanner.connect(masterMixerGain)
 
-    // --- Create and Connect Noise Paths (Loop) ---
-    const noiseSourcesHP: AudioBufferSourceNode[] = []
-    const noiseFiltersHP: BiquadFilterNode[] = []
-    const noiseGainsHP: GainNode[] = []
-    const noiseSourcesLP: AudioBufferSourceNode[] = []
-    const noiseFiltersLP: BiquadFilterNode[] = []
-    const noiseGainsLP: GainNode[] = []
-    const noisePanners: StereoPannerNode[] = []
+    // --- Create and Connect Single Bandpassed Noise Path ---
+    const noiseSource = ctx.createBufferSource();
+    noiseSource.buffer = this.pinkNoiseBuffer;
+    noiseSource.loop = true;
 
-    for (let i = 0; i < NUM_NOISE_SOURCES; i++) {
-      // HP Path Nodes
-      const sourceHP = ctx.createBufferSource()
-      sourceHP.buffer = this.pinkNoiseBuffer
-      sourceHP.loop = true
-      const filterHP = ctx.createBiquadFilter()
-      filterHP.type = 'highpass'
-      filterHP.frequency.value = 800 // Default
-      filterHP.Q.value = NOISE_FILTER_Q
-      const gainHP = ctx.createGain()
-      gainHP.gain.value = NOISE_GAIN
+    const noiseFilter = ctx.createBiquadFilter();
+    noiseFilter.type = 'bandpass';
+    noiseFilter.frequency.value = 440; // Default, will be updated by path
+    noiseFilter.Q.value = BANDPASS_FILTER_Q;
 
-      // LP Path Nodes
-      const sourceLP = ctx.createBufferSource()
-      sourceLP.buffer = this.pinkNoiseBuffer
-      sourceLP.loop = true
-      const filterLP = ctx.createBiquadFilter()
-      filterLP.type = 'lowpass'
-      filterLP.frequency.value = 200 // Default
-      filterLP.Q.value = NOISE_FILTER_Q
-      const gainLP = ctx.createGain()
-      gainLP.gain.value = NOISE_GAIN
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.value = NOISE_GAIN;
 
-      // Noise Mixer for this pair
-      const noiseMixer = ctx.createGain()
+    const noisePanner = ctx.createStereoPanner();
+    noisePanner.pan.value = 0; // Default, will be updated by path
 
-      // Panner for this pair
-      const panner = ctx.createStereoPanner()
-      if (i < NOISE_PANNING_POSITIONS.length) {
-        panner.pan.value = NOISE_PANNING_POSITIONS[i]
-      } else {
-        panner.pan.value = 0 // Default to center if not enough positions defined
-      }
-
-      // Connect HP Path -> Noise Mixer
-      sourceHP.connect(filterHP)
-      filterHP.connect(gainHP)
-      gainHP.connect(noiseMixer)
-
-      // Connect LP Path -> Noise Mixer
-      sourceLP.connect(filterLP)
-      filterLP.connect(gainLP)
-      gainLP.connect(noiseMixer)
-
-      // Connect Noise Mixer -> Panner -> Master Mixer
-      noiseMixer.connect(panner)
-      panner.connect(masterMixerGain)
-
-      // Store nodes
-      noiseSourcesHP.push(sourceHP)
-      noiseFiltersHP.push(filterHP)
-      noiseGainsHP.push(gainHP)
-      noiseSourcesLP.push(sourceLP)
-      noiseFiltersLP.push(filterLP)
-      noiseGainsLP.push(gainLP)
-      noisePanners.push(panner)
-
-      // Start sources
-      sourceHP.start()
-      sourceLP.start()
-    }
+    // Connect Noise Path: source -> filter -> panner -> gain -> masterMixer
+    noiseSource.connect(noiseFilter);
+    noiseFilter.connect(noisePanner);
+    noisePanner.connect(noiseGain);
+    noiseGain.connect(masterMixerGain);
+    
+    // --- REMOVE Multiple Noise Paths Loop ---
+    // const noiseSourcesHP: AudioBufferSourceNode[] = []
+    // ... (all related array initializations and the loop itself) ...
+    // for (let i = 0; i < NUM_NOISE_SOURCES; i++) { ... }
 
     // --- Connect Master Mixer to Output ---
     if (this.preEQAnalyser && this.preEQGain) {
@@ -504,24 +449,28 @@ class GlyphGridAudioPlayer {
     
     // Store the nodes
     this.audioNodes = {
-      // Sine
-      oscillatorSource,
-      sineGain,
-      sinePanner,
-      // Noise (arrays)
-      noiseSourcesHP,
-      noiseFiltersHP,
-      noiseGainsHP,
-      noiseSourcesLP,
-      noiseFiltersLP,
-      noiseGainsLP,
-      noisePanners,
+      // REMOVE Sine
+      // oscillatorSource,
+      // sineGain,
+      // sinePanner,
+      
+      // Single Bandpassed Noise
+      noiseSource,
+      noiseFilter,
+      noiseGain,
+      noisePanner,
+      
+      // REMOVE Multiple Noise Arrays
+      // noiseSourcesHP,
+      // ... (all related array properties)
+
       // Mixer
       masterMixerGain,
     }
     
-    // Start the sine source
-    oscillatorSource.start()
+    // Start the noise source
+    noiseSource.start()
+    // oscillatorSource.start() // REMOVED
     
     // Start the animation loop to update path position
     this.startAnimationLoop()
@@ -542,44 +491,35 @@ class GlyphGridAudioPlayer {
       this.animationFrameId = null
     }
     
-    // Stop sources
-    if (this.audioNodes.oscillatorSource) {
-      this.audioNodes.oscillatorSource.stop()
-      this.audioNodes.oscillatorSource.disconnect()
+    // Stop sine source - REMOVED
+    // if (this.audioNodes.oscillatorSource) {
+    //   this.audioNodes.oscillatorSource.stop()
+    //   this.audioNodes.oscillatorSource.disconnect()
+    // }
+    // if (this.audioNodes.sineGain) {
+    //   this.audioNodes.sineGain.disconnect()
+    // }
+    // if (this.audioNodes.sinePanner) {
+    //   this.audioNodes.sinePanner.disconnect()
+    // }
+
+    // Stop and disconnect the single noise path
+    if (this.audioNodes.noiseSource) {
+        this.audioNodes.noiseSource.stop();
+        this.audioNodes.noiseSource.disconnect();
     }
-    if (this.audioNodes.sineGain) {
-      this.audioNodes.sineGain.disconnect()
+    if (this.audioNodes.noiseFilter) {
+        this.audioNodes.noiseFilter.disconnect();
     }
-    if (this.audioNodes.sinePanner) {
-      this.audioNodes.sinePanner.disconnect()
+    if (this.audioNodes.noisePanner) {
+        this.audioNodes.noisePanner.disconnect();
+    }
+    if (this.audioNodes.noiseGain) {
+        this.audioNodes.noiseGain.disconnect();
     }
 
-    // Stop and disconnect all noise sources, filters, gains, and panners
-    for (let i = 0; i < this.audioNodes.noiseSourcesHP.length; i++) {
-        if (this.audioNodes.noiseSourcesHP[i]) {
-            this.audioNodes.noiseSourcesHP[i].stop()
-            this.audioNodes.noiseSourcesHP[i].disconnect()
-        }
-        if (this.audioNodes.noiseFiltersHP[i]) {
-            this.audioNodes.noiseFiltersHP[i].disconnect()
-        }
-        if (this.audioNodes.noiseGainsHP[i]) {
-            this.audioNodes.noiseGainsHP[i].disconnect()
-        }
-        if (this.audioNodes.noiseSourcesLP[i]) {
-            this.audioNodes.noiseSourcesLP[i].stop()
-            this.audioNodes.noiseSourcesLP[i].disconnect()
-        }
-        if (this.audioNodes.noiseFiltersLP[i]) {
-            this.audioNodes.noiseFiltersLP[i].disconnect()
-        }
-        if (this.audioNodes.noiseGainsLP[i]) {
-            this.audioNodes.noiseGainsLP[i].disconnect()
-        }
-        if (this.audioNodes.noisePanners[i]) {
-            this.audioNodes.noisePanners[i].disconnect()
-        }
-    }
+    // Stop and disconnect all noise sources, filters, gains, and panners - REMOVED LOOP
+    // for (let i = 0; i < this.audioNodes.noiseSourcesHP.length; i++) { ... }
     
     // Disconnect master mixer gain
     if (this.audioNodes.masterMixerGain) {
@@ -588,18 +528,21 @@ class GlyphGridAudioPlayer {
     
     // Reset audio nodes
     this.audioNodes = {
-      // Sine
-      oscillatorSource: null,
-      sineGain: null,
-      sinePanner: null,
-      // Noise (reset to empty arrays)
-      noiseSourcesHP: [],
-      noiseFiltersHP: [],
-      noiseGainsHP: [],
-      noiseSourcesLP: [],
-      noiseFiltersLP: [],
-      noiseGainsLP: [],
-      noisePanners: [],
+      // REMOVE Sine
+      // oscillatorSource: null,
+      // sineGain: null,
+      // sinePanner: null,
+      
+      // Single Bandpassed Noise Path
+      noiseSource: null,
+      noiseFilter: null,
+      noiseGain: null,
+      noisePanner: null,
+
+      // REMOVE Multiple Noise Arrays
+      // noiseSourcesHP: [],
+      // ... (all related array properties reset)
+
       // Mixer
       masterMixerGain: null,
     }
@@ -746,8 +689,11 @@ class GlyphGridAudioPlayer {
     let frequency = 0;
     
     // Get values from audio nodes if available
-    if (this.audioNodes.oscillatorSource) {
-      frequency = this.audioNodes.oscillatorSource.frequency.value;
+    // if (this.audioNodes.oscillatorSource) { // REMOVED
+    //   frequency = this.audioNodes.oscillatorSource.frequency.value;
+    // }
+    if (this.audioNodes.noiseFilter) {
+        frequency = this.audioNodes.noiseFilter.frequency.value;
     }
     
     // Return only frequency

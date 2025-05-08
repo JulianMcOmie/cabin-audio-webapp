@@ -69,7 +69,7 @@ class ShapeToolAudioPlayer {
   private lastTriggerTime: number = 0; // Global trigger time (Sequential Mode)
   
   // Playback Mode
-  private playbackMode: 'sequential' | 'simultaneous_staggered' = 'sequential';
+  private playbackMode: 'sequential' | 'simultaneous_staggered' = 'simultaneous_staggered'; // Default to staggered
 
   // Volume pattern properties - REINTRODUCING INDEX
   private volumePatternIndex: number = 0; // Current position in volume pattern (Sequential Mode)
@@ -78,6 +78,14 @@ class ShapeToolAudioPlayer {
   // Add distortion gain property
   private distortionGain: number = 1.0;
   
+  // Add shape parameters and morph factor
+  private currentShapeParams: DiamondParams = { // Store the base shape
+    center: { x: 0, y: 0 },
+    size: { width: 1, height: 1 },
+    pointCount: 12,
+  };
+  private morphFactor: number = 0; // 0 = diamond, 1 = X
+
   private constructor() {
     // Initialize pink noise buffer
     this.generatePinkNoiseBuffer();
@@ -237,10 +245,14 @@ class ShapeToolAudioPlayer {
    * Update the shape and calculate points to render as audio nodes.
    */
   public updateShape(params: DiamondParams): void {
-    console.log('[ShapeTool] Updating shape:', params);
+    console.log('[ShapeTool] Updating base shape:', params);
+    // Store the new base shape parameters
+    this.currentShapeParams = { ...params };
     
     const calculatedPoints: Map<string, { x: number; y: number; index: number }> = new Map();
-    const { center, size, pointCount } = params;
+    // Use stored parameters and current morph factor for calculation
+    const { center, size, pointCount } = this.currentShapeParams;
+    const factor = this.morphFactor; // Use the current morph factor
     
     if (pointCount <= 0) {
         console.warn("[ShapeTool] Point count must be positive.");
@@ -278,9 +290,47 @@ class ShapeToolAudioPlayer {
           const pointX = startVertex.x + t * (endVertex.x - startVertex.x);
           const pointY = startVertex.y + t * (endVertex.y - startVertex.y);
           
-          // Clamp coordinates just in case
-          const clampedX = Math.max(-1, Math.min(1, pointX));
-          const clampedY = Math.max(-1, Math.min(1, pointY));
+          // --- Calculate Target X position --- 
+          // Simple X: interpolate X towards center X, keep Y the same
+          // const targetX = center.x;
+          // const targetY = pointY; 
+
+          // Diagonal X interpolation:
+          let targetX, targetY;
+          const diamondCenter = center; // center is from this.currentShapeParams
+          const t_edge = t; // t is j / pointsPerEdge, progress along current diamond edge
+
+          // Normalized bounding box corners (topY, bottomY, leftX, rightX are already defined in this scope)
+          const corner_BR_bb = { x: rightX, y: bottomY };
+          const corner_TR_bb = { x: rightX, y: topY };
+          const corner_TL_bb = { x: leftX, y: topY };
+          const corner_BL_bb = { x: leftX, y: bottomY };
+
+          if (i === 0) { // Edge 0: Diamond's Bottom point to Right point
+                         // Target: X-arm from diamondCenter to bounding_box_BottomRight_corner
+              targetX = diamondCenter.x + t_edge * (corner_BR_bb.x - diamondCenter.x);
+              targetY = diamondCenter.y + t_edge * (corner_BR_bb.y - diamondCenter.y);
+          } else if (i === 1) { // Edge 1: Diamond's Right point to Top point
+                                // Target: X-arm from diamondCenter to bounding_box_TopRight_corner
+              targetX = diamondCenter.x + t_edge * (corner_TR_bb.x - diamondCenter.x);
+              targetY = diamondCenter.y + t_edge * (corner_TR_bb.y - diamondCenter.y);
+          } else if (i === 2) { // Edge 2: Diamond's Top point to Left point
+                                // Target: X-arm from diamondCenter to bounding_box_TopLeft_corner
+              targetX = diamondCenter.x + t_edge * (corner_TL_bb.x - diamondCenter.x);
+              targetY = diamondCenter.y + t_edge * (corner_TL_bb.y - diamondCenter.y);
+          } else { // i === 3 // Edge 3: Diamond's Left point to Bottom point
+                             // Target: X-arm from diamondCenter to bounding_box_BottomLeft_corner
+              targetX = diamondCenter.x + t_edge * (corner_BL_bb.x - diamondCenter.x);
+              targetY = diamondCenter.y + t_edge * (corner_BL_bb.y - diamondCenter.y);
+          }
+
+          // --- Interpolate between diamond point and target X point --- 
+          const interpolatedX = pointX + (targetX - pointX) * factor;
+          const interpolatedY = pointY + (targetY - pointY) * factor;
+          
+          // Clamp final interpolated coordinates
+          const clampedX = Math.max(-1, Math.min(1, interpolatedX));
+          const clampedY = Math.max(-1, Math.min(1, interpolatedY));
 
           const pointKey = `point_${pointIndex}`; // Unique key for each point
           calculatedPoints.set(pointKey, { x: clampedX, y: clampedY, index: pointIndex });
@@ -297,6 +347,8 @@ class ShapeToolAudioPlayer {
   private updateAudioNodes(calculatedPoints: Map<string, { x: number; y: number; index: number }>): void {
     const currentKeys = new Set(this.audioNodes.keys());
     const newKeys = new Set(calculatedPoints.keys());
+    const ctx = audioContext.getAudioContext(); // Get context for timing
+    const now = ctx.currentTime;
 
     // Remove nodes that are no longer needed
     currentKeys.forEach(key => {
@@ -315,21 +367,14 @@ class ShapeToolAudioPlayer {
         if (nodes) {
           const centerFreq = this.calculateFrequency(pointData.y);
           const panPosition = this.calculatePan(pointData.x);
-          nodes.filter.frequency.value = centerFreq;
-          nodes.panner.pan.value = panPosition;
+          // Use setTargetAtTime for potentially smoother transitions
+          nodes.filter.frequency.setTargetAtTime(centerFreq, now, 0.01); 
+          nodes.panner.pan.setTargetAtTime(panPosition, now, 0.01);
           nodes.position = pointData.index; // Update position index
           // Could update rhythm pattern here too if needed
         }
       }
     });
-
-    // If playing, restart rhythm to apply changes
-    if (this.isPlaying) {
-      this.stopAllRhythms();
-      this.stopAllSources(); // Stop sources before restarting
-      this.startAllSources(); // Start sources with updated nodes
-      this.startAllRhythms(); // Restart rhythm
-    }
   }
 
   /**
@@ -713,6 +758,16 @@ class ShapeToolAudioPlayer {
             nodes.gain.gain.setValueAtTime(MASTER_GAIN * this.distortionGain * currentGainRatio, audioContext.getAudioContext().currentTime);
         });
     }
+  }
+
+  /**
+   * Set the morph factor and trigger shape update.
+   * @param factor 0 for diamond, 1 for X
+   */
+  public setMorphFactor(factor: number): void {
+      this.morphFactor = Math.max(0, Math.min(1, factor)); // Clamp 0-1
+      // Recalculate points using the stored shape params and new factor
+      this.updateShape(this.currentShapeParams);
   }
 }
 

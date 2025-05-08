@@ -34,6 +34,13 @@ export function ShapeTool({ isPlaying, disabled = false }: ShapeToolProps) {
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [hoverState, setHoverState] = useState<DragTarget>('none') // Reuse DragTarget type for hover
   
+  // State for morph animation
+  const [visualMorphFactor, setVisualMorphFactor] = useState(0); // 0=diamond, 1=X
+  const morphAnimationRef = useRef<number | null>(null);
+  const morphDirectionRef = useRef<number>(1); // 1 for X, -1 for Diamond
+  const morphSpeed = 0.01; // Adjust for desired morph speed (0 to 1 range)
+  // No need for local morphFactor state unless displaying it
+
   // Constants for interaction
   const HANDLE_RADIUS = 10; // Pixel radius for interaction
   const CENTER_RADIUS = 12;
@@ -55,7 +62,9 @@ export function ShapeTool({ isPlaying, disabled = false }: ShapeToolProps) {
   // Initialize the audio player and update it when shape changes
   useEffect(() => {
     const audioPlayer = shapeToolAudio.getShapeToolAudioPlayer();
-    audioPlayer.updateShape(shapeParams);
+    // Update the base shape parameters in the audio player when they change
+    // The morph factor will be applied on top during animation
+    audioPlayer.updateShape(shapeParams); 
     // No cleanup needed here unless the component itself unmounts
   }, [shapeParams])
 
@@ -93,6 +102,67 @@ export function ShapeTool({ isPlaying, disabled = false }: ShapeToolProps) {
     return () => window.removeEventListener('resize', updateCanvasSize)
   }, [])
   
+  // Morph Animation Loop
+  useEffect(() => {
+    let currentMorphFactor = visualMorphFactor; // Start from current visual state
+    const animate = () => {
+      if (!isPlaying || disabled) {
+        if (morphAnimationRef.current) cancelAnimationFrame(morphAnimationRef.current); 
+        morphAnimationRef.current = null;
+        return; 
+      }
+
+      // Calculate next morph factor
+      currentMorphFactor += morphDirectionRef.current * morphSpeed;
+
+      // Clamp and reverse direction
+      if (currentMorphFactor >= 1) {
+        currentMorphFactor = 1;
+        morphDirectionRef.current = -1; // Move towards diamond
+      } else if (currentMorphFactor <= 0) {
+        currentMorphFactor = 0;
+        morphDirectionRef.current = 1; // Move towards X
+      }
+
+      // Update the audio player's morph factor
+      shapeToolAudio.getShapeToolAudioPlayer().setMorphFactor(currentMorphFactor);
+      // Update the visual morph factor state
+      setVisualMorphFactor(currentMorphFactor);
+
+      morphAnimationRef.current = requestAnimationFrame(animate);
+    };
+
+    if (isPlaying && !disabled) {
+      // Start animation only if not already running
+      if (morphAnimationRef.current === null) {
+          // Reset starting factor and direction when play starts
+          setVisualMorphFactor(0); // Reset visual state
+          const player = shapeToolAudio.getShapeToolAudioPlayer();
+          player.setMorphFactor(0); // Start as diamond
+          currentMorphFactor = 0;
+          morphDirectionRef.current = 1; // Start moving towards X
+        morphAnimationRef.current = requestAnimationFrame(animate);
+      }
+    } else {
+      // Stop animation if playing stops or component is disabled
+      if (morphAnimationRef.current !== null) {
+        cancelAnimationFrame(morphAnimationRef.current);
+        morphAnimationRef.current = null;
+        // Optionally reset morph factor when stopping?
+        // shapeToolAudio.getShapeToolAudioPlayer().setMorphFactor(0);
+        // setVisualMorphFactor(0);
+      }
+    }
+
+    // Cleanup function to stop animation on unmount or when isPlaying changes
+    return () => {
+      if (morphAnimationRef.current !== null) {
+        cancelAnimationFrame(morphAnimationRef.current);
+        morphAnimationRef.current = null;
+      }
+    };
+  }, [isPlaying, disabled]); // Rerun effect if isPlaying or disabled changes
+  
   // Draw the diamond and points on the canvas
   useEffect(() => {
     const canvas = canvasRef.current
@@ -116,6 +186,14 @@ export function ShapeTool({ isPlaying, disabled = false }: ShapeToolProps) {
         y: (1 - normY) / 2 * rect.height // Y is inverted
     });
 
+    // Define normalized vertices array *after* normToCanvas is defined, but *before* use
+    const vertices = [
+      { x: center.x, y: bottomY_norm }, // Bottom (normalized)
+      { x: rightX_norm, y: center.y },  // Right (normalized)
+      { x: center.x, y: topY_norm },    // Top (normalized)
+      { x: leftX_norm, y: center.y },   // Left (normalized)
+    ];
+
     const center_canvas = normToCanvas(center.x, center.y);
     const vertices_canvas = [
       normToCanvas(center.x, bottomY_norm), // Bottom
@@ -124,7 +202,7 @@ export function ShapeTool({ isPlaying, disabled = false }: ShapeToolProps) {
       normToCanvas(leftX_norm, center.y)    // Left
     ];
     
-    // --- Draw Diamond Outline --- 
+    // --- Draw Diamond Outline (always draw the base diamond) --- 
     ctx.strokeStyle = isDarkMode ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.2)';
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -144,17 +222,61 @@ export function ShapeTool({ isPlaying, disabled = false }: ShapeToolProps) {
     let currentPointIndex = 0;
     for (let i = 0; i < 4; i++) {
         const startVertex = vertices_canvas[i];
+        const startVertexNorm = vertices[i]; // Use correct normalized vertices
         const endVertex = vertices_canvas[(i + 1) % 4];
+        const endVertexNorm = vertices[(i + 1) % 4]; // Use correct normalized vertices
         
         for (let j = 0; j < pointsPerEdge; j++) {
             if (currentPointIndex >= totalPointsToGenerate) break;
             
             const t = j / pointsPerEdge;
+            // Calculate diamond point position in canvas coords
             const pointX = startVertex.x + t * (endVertex.x - startVertex.x);
             const pointY = startVertex.y + t * (endVertex.y - startVertex.y);
             
+            // Calculate diamond point position in normalized coords
+            const pointX_norm = startVertexNorm.x + t * (endVertexNorm.x - startVertexNorm.x);
+            const pointY_norm = startVertexNorm.y + t * (endVertexNorm.y - startVertexNorm.y);
+
+            // --- Calculate Target X position (Normalized Coords) ---
+            let targetX_norm, targetY_norm;
+            const diamondCenter = shapeParams.center; // Center of the diamond
+            const t_edge = t; // t is j / pointsPerEdge, progress along current diamond edge
+
+            // Normalized bounding box corners (topY_norm, bottomY_norm, etc. are already defined in this scope)
+            const corner_BR_bb = { x: rightX_norm, y: bottomY_norm };
+            const corner_TR_bb = { x: rightX_norm, y: topY_norm };
+            const corner_TL_bb = { x: leftX_norm, y: topY_norm };
+            const corner_BL_bb = { x: leftX_norm, y: bottomY_norm };
+
+            if (i === 0) { // Edge 0: Diamond\'s Bottom point to Right point
+                           // Target: X-arm from diamondCenter to bounding_box_BottomRight_corner
+                targetX_norm = diamondCenter.x + t_edge * (corner_BR_bb.x - diamondCenter.x);
+                targetY_norm = diamondCenter.y + t_edge * (corner_BR_bb.y - diamondCenter.y);
+            } else if (i === 1) { // Edge 1: Diamond\'s Right point to Top point
+                                  // Target: X-arm from diamondCenter to bounding_box_TopRight_corner
+                targetX_norm = diamondCenter.x + t_edge * (corner_TR_bb.x - diamondCenter.x);
+                targetY_norm = diamondCenter.y + t_edge * (corner_TR_bb.y - diamondCenter.y);
+            } else if (i === 2) { // Edge 2: Diamond\'s Top point to Left point
+                                  // Target: X-arm from diamondCenter to bounding_box_TopLeft_corner
+                targetX_norm = diamondCenter.x + t_edge * (corner_TL_bb.x - diamondCenter.x);
+                targetY_norm = diamondCenter.y + t_edge * (corner_TL_bb.y - diamondCenter.y);
+            } else { // i === 3 // Edge 3: Diamond\'s Left point to Bottom point
+                               // Target: X-arm from diamondCenter to bounding_box_BottomLeft_corner
+                targetX_norm = diamondCenter.x + t_edge * (corner_BL_bb.x - diamondCenter.x);
+                targetY_norm = diamondCenter.y + t_edge * (corner_BL_bb.y - diamondCenter.y);
+            }
+
+            // --- Interpolate (Normalized Coords) ---
+            const interpolatedX_norm = pointX_norm + (targetX_norm - pointX_norm) * visualMorphFactor;
+            const interpolatedY_norm = pointY_norm + (targetY_norm - pointY_norm) * visualMorphFactor;
+
+            // Convert final interpolated position to canvas coords
+            const finalCanvasPos = normToCanvas(interpolatedX_norm, interpolatedY_norm);
+
+            // Draw the point at the final interpolated position
             ctx.beginPath();
-            ctx.arc(pointX, pointY, pointRadius, 0, Math.PI * 2);
+            ctx.arc(finalCanvasPos.x, finalCanvasPos.y, pointRadius, 0, Math.PI * 2);
             ctx.fill();
             currentPointIndex++;
         }
@@ -190,7 +312,7 @@ export function ShapeTool({ isPlaying, disabled = false }: ShapeToolProps) {
       });
     }
 
-  }, [shapeParams, isPlaying, disabled, isDarkMode, hoverState, isDragging, isResizing])
+  }, [shapeParams, isPlaying, disabled, isDarkMode, hoverState, isDragging, isResizing, visualMorphFactor])
   
   // Function to check what interaction handle is under the cursor
   const checkHoverTarget = (mouseX: number, mouseY: number): DragTarget => {
