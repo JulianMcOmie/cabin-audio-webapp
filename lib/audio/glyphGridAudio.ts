@@ -92,7 +92,9 @@ class GlyphGridAudioPlayer {
   private playbackMode: PlaybackMode = PlaybackMode.SWEEP;
   
   // Add a counter for alternating mode
-  private _alternateCounter: number = 0;
+  private _alternateToggleTime: number = 0;
+  private _alternateState: 0 | 1 = 0;
+  private lastAnimationTime: number = 0;
   
   // Add new properties to the class
   private hitPoints: number[] = [] // Points along the path where "hits" occur
@@ -185,11 +187,15 @@ class GlyphGridAudioPlayer {
     
     // If in manual control mode, use the manually set position
     if (this.isManualControl) {
-      const position = this.manualPosition
-      // In manual mode, always update parameters (for responsive UI)
-      this.updateAudioParametersFromPosition(position)
+      this.updateAudioParametersFromPosition(this.pathPosition)
       return
     }
+    
+    if (!this.isPlaying) return; // Only update if playing and not in manual control
+
+    const ctx = getAudioContext()
+    const currentTime = ctx.currentTime;
+    const deltaTime = currentTime - this.lastAnimationTime;
     
     // Store previous position to detect hit crossing
     const previousPosition = this.pathPosition
@@ -197,7 +203,9 @@ class GlyphGridAudioPlayer {
     // Calculate new position based on playback mode
     if (this.playbackMode === PlaybackMode.SWEEP) {
       // Apply speed factor to the position increment
-      this.pathPosition += 0.005 * this.pathDirection * this.speed
+      const effectiveSpeed = this.speed === 0 ? 0.00001 : this.speed;
+      const step = (1 / this.sweepDuration) * effectiveSpeed * deltaTime;
+      this.pathPosition += step * this.pathDirection;
       
       // If using subsection, check subsection boundaries
       if (this.useSubsection) {
@@ -257,30 +265,28 @@ class GlyphGridAudioPlayer {
         }
       }
     } else if (this.playbackMode === PlaybackMode.ALTERNATE) {
-      // Alternate mode: jump between start and end points
-      const stayDuration = 30 / this.speed // Number of frames to stay at each point
-      
-      // Increment a counter to track when to alternate
-      this._alternateCounter = (this._alternateCounter || 0) + 1
-      
-      if (this._alternateCounter >= stayDuration) {
-        this._alternateCounter = 0
-        
-        // Switch between start and end
-        if (this.pathDirection === 1) {
-          // We're at start point, move to end
-          this.pathPosition = this.useSubsection ? this.subsectionEnd : 1
-          this.pathDirection = -1
+      const effectiveSpeed = this.speed === 0 ? 0.00001 : this.speed; // Avoid division by zero
+      // Use sweepDuration for the full cycle time, so alternateInterval is half of that, adjusted by speed.
+      const alternateInterval = (this.sweepDuration / 2) / effectiveSpeed;
+
+      if (currentTime >= this._alternateToggleTime + alternateInterval) {
+        this._alternateState = this._alternateState === 0 ? 1 : 0;
+        this._alternateToggleTime = currentTime;
+
+        let targetPosition;
+        if (this.useSubsection) {
+          // Ensure subsectionStart and subsectionEnd define the two points correctly
+          targetPosition = this._alternateState === 0 ? Math.min(this.subsectionStart, this.subsectionEnd) : Math.max(this.subsectionStart, this.subsectionEnd);
         } else {
-          // We're at end point, move to start
-          this.pathPosition = this.useSubsection ? this.subsectionStart : 0
-          this.pathDirection = 1
+          targetPosition = this._alternateState === 0 ? 0 : 1;
         }
-        
-        // Update audio parameters at each alternation point
-        this.updateAudioParametersFromPosition(this.pathPosition)
+        this.pathPosition = targetPosition;
+        this.updateAudioParametersFromPosition(this.pathPosition);
       }
+      // For ALTERNATE mode, pathPosition only changes at intervals, so no continuous update here.
     }
+
+    this.lastAnimationTime = currentTime; // Update for the next frame calculation for all modes
   }
   
   // New method to update audio parameters from a position
@@ -330,11 +336,31 @@ class GlyphGridAudioPlayer {
   }
   
   public setPlaying(playing: boolean): void {
-    if (playing === this.isPlaying) return
-    
+    if (this.isPlaying === playing) return
     this.isPlaying = playing
     
-    if (playing) {
+    const ctx = getAudioContext()
+
+    if (this.isPlaying) {
+      // If switching to playing, and in manual control, release manual control
+      if (this.isManualControl) {
+        this.isManualControl = false;
+      }
+      this.lastAnimationTime = ctx.currentTime; // Initialize for time-based animation
+
+      if (this.playbackMode === PlaybackMode.ALTERNATE) {
+        this._alternateToggleTime = ctx.currentTime;
+        this._alternateState = 0; // Start at the first point
+        this.pathPosition = this.useSubsection ? Math.min(this.subsectionStart, this.subsectionEnd) : 0;
+        // this.updateAudioParametersFromPosition(this.pathPosition); // Called by startSound if needed
+      }
+      // else if (this.playbackMode === PlaybackMode.SWEEP) {
+        // Ensure direction is correct if starting mid-path
+        // if (this.pathPosition >= (this.useSubsection ? Math.max(this.subsectionStart, this.subsectionEnd) : 1)) this.pathDirection = -1;
+        // else if (this.pathPosition <= (this.useSubsection ? Math.min(this.subsectionStart, this.subsectionEnd) : 0)) this.pathDirection = 1;
+        // else if (this.pathDirection === 0) this.pathDirection = 1; // Default if direction is somehow 0
+      // }
+
       this.startSound()
     } else {
       this.stopSound()
@@ -342,80 +368,99 @@ class GlyphGridAudioPlayer {
   }
   
   private startSound(): void {
-    if (!this.pinkNoiseBuffer) {
-      console.warn('🔊 Tried to start sound but pink noise buffer is not ready')
+    if (!this.pinkNoiseBuffer || !this.currentGlyph) {
+      console.warn('🔊 Cannot start sound: buffer or glyph not ready.')
       return
     }
     
+    // Stop any existing sound first to avoid multiple instances
+    this.stopSound()
+    
     const ctx = getAudioContext()
+    this.audioNodes.source = ctx.createBufferSource()
+    this.audioNodes.source.buffer = this.pinkNoiseBuffer
+    this.audioNodes.source.loop = true
     
-    // Create new audio nodes
-    const source = ctx.createBufferSource()
-    source.buffer = this.pinkNoiseBuffer
-    source.loop = true
+    this.audioNodes.gain = ctx.createGain()
+    this.audioNodes.gain.gain.value = MASTER_GAIN * this.distortionGain;
     
-    // Create gain node for volume - apply distortion gain
-    const gain = ctx.createGain()
-    gain.gain.value = MASTER_GAIN * this.distortionGain;
+    this.audioNodes.envelopeGain = ctx.createGain()
+    // this.audioNodes.envelopeGain.gain.value = ENVELOPE_MIN_GAIN // Start silent
     
-    // Create envelope gain node
-    const envelopeGain = ctx.createGain()
-    envelopeGain.gain.value = ENVELOPE_MAX_GAIN
+    this.audioNodes.panner = ctx.createStereoPanner()
+    this.audioNodes.filter = ctx.createBiquadFilter()
     
-    // Create panner node
-    const panner = ctx.createStereoPanner()
-    panner.pan.value = 0 // Start centered
+    if (!this.audioNodes.source || !this.audioNodes.gain || !this.audioNodes.envelopeGain || !this.audioNodes.panner || !this.audioNodes.filter) {
+        console.error("Audio nodes not properly initialized.");
+        return;
+    }
+
+    // Connect nodes: source -> filter -> panner -> envelopeGain -> mainGain -> destination
+    this.audioNodes.source.connect(this.audioNodes.filter)
+    this.audioNodes.filter.connect(this.audioNodes.panner)
+    this.audioNodes.panner.connect(this.audioNodes.envelopeGain)
+    this.audioNodes.envelopeGain.connect(this.audioNodes.gain)
+
+    // Connect to preEQGain if it exists, otherwise directly to EQ processor
+    const destinationNode = this.preEQGain || eqProcessor.getEQProcessor().getInputNode();
+    this.audioNodes.gain.connect(destinationNode)
     
-    // Create filter node (bandpass filter)
-    const filter = ctx.createBiquadFilter()
-    filter.type = 'bandpass'
-    filter.frequency.value = 500 // Default frequency
-    filter.Q.value = 5.0 // Default Q
-    
-    // Connect the audio chain
-    source.connect(gain)
-    gain.connect(envelopeGain)
-    envelopeGain.connect(filter)
-    filter.connect(panner)
-    
-    // If we have an analyzer, connect through it
-    if (this.preEQAnalyser && this.preEQGain) {
-      panner.connect(this.preEQGain)
-      // preEQGain is already connected to destination and analyzer
+    // Set initial parameters based on current path position
+    // If playback just started in ALTERNATE mode, pathPosition is already set by setPlaying
+    // Otherwise, ensure it's up-to-date.
+    if (this.playbackMode !== PlaybackMode.ALTERNATE || !this.isPlaying) {
+        this.updateAudioParametersFromPosition(this.pathPosition);
     } else {
-      // Connect to EQ processor directly
-      const eq = eqProcessor.getEQProcessor()
-      panner.connect(eq.getInputNode())
+        // For ALTERNATE mode starting, setPlaying has already set pathPosition and _alternateState
+        // We just need to ensure audio params are applied for this initial state.
+        this.updateAudioParametersFromPosition(this.pathPosition);
     }
+
+
+    this.audioNodes.source.start()
     
-    // Store the nodes
-    this.audioNodes = {
-      source,
-      gain,
-      envelopeGain,
-      panner,
-      filter
-    }
+    if (this.isSweeping) this.startSweep()
+    if (this.isModulating) this.startEnvelopeModulation()
     
-    // Start the source
-    source.start()
-    
-    // Start the animation loop to update path position
+    // Start animation loop
     this.startAnimationLoop()
     
-    // Start envelope modulation if enabled
-    if (this.isModulating) {
-      this.startEnvelopeModulation()
-    }
+    console.log('🔊 Sound started for glyph grid')
   }
   
   private startAnimationLoop(): void {
-    const animate = () => {
-      this.updateAudioNodesFromGlyph()
-      this.animationFrameId = requestAnimationFrame(animate)
+    // Cancel any existing animation frame
+    if (this.animationFrameId) {
+      cancelAnimationFrame(this.animationFrameId)
+      this.animationFrameId = null; // Ensure it's null after cancelling
     }
+
+    this.lastAnimationTime = getAudioContext().currentTime; // Initialize for time-based animation
     
-    animate()
+    const animate = () => {
+      if (this.isPlaying || this.isManualControl) { // Condition for CONTINUING the loop
+        // updatePathPosition has its own internal checks for currentGlyph and whether it should run logic when isPlaying is false (it shouldn't for actual path updates)
+        this.updatePathPosition(); 
+        this.animationFrameId = requestAnimationFrame(animate);
+      } else {
+        // Loop is stopping or has stopped. Ensure animationFrameId is null.
+        if (this.animationFrameId) { // Should ideally already be null if stopSound was called
+            cancelAnimationFrame(this.animationFrameId);
+        }
+        this.animationFrameId = null; 
+      }
+    };
+    
+    // Only start the loop if it should be running. Redundant if check inside animate is robust, but safe.
+    if (this.isPlaying || this.isManualControl) {
+         this.animationFrameId = requestAnimationFrame(animate);
+    } else {
+        // Ensure it's null if we're not starting the loop
+        if (this.animationFrameId) {
+            cancelAnimationFrame(this.animationFrameId);
+        }
+        this.animationFrameId = null;
+    }
   }
   
   private stopSound(): void {
@@ -759,8 +804,40 @@ class GlyphGridAudioPlayer {
   
   // Add method to set playback mode
   public setPlaybackMode(mode: PlaybackMode): void {
+    if (this.playbackMode === mode) return;
     this.playbackMode = mode;
-    this._alternateCounter = 0; // Reset counter when changing modes
+    
+    const ctx = getAudioContext();
+
+    if (mode === PlaybackMode.ALTERNATE) {
+      this._alternateState = 0; // Start at the first point
+      this.pathPosition = this.useSubsection ? Math.min(this.subsectionStart, this.subsectionEnd) : 0;
+      this._alternateToggleTime = ctx.currentTime;
+      // this.pathDirection = 0; // Direction is not used in ALTERNATE mode
+      
+      if (this.isPlaying) { // If already playing, update immediately
+        this.updateAudioParametersFromPosition(this.pathPosition);
+        this.lastAnimationTime = ctx.currentTime; // Reset for timing
+      }
+    } else if (mode === PlaybackMode.SWEEP) {
+      // When switching to SWEEP, ensure direction is valid.
+      // If at an endpoint, set direction outwards, otherwise maintain or default.
+      const currentMin = this.useSubsection ? Math.min(this.subsectionStart, this.subsectionEnd) : 0;
+      const currentMax = this.useSubsection ? Math.max(this.subsectionStart, this.subsectionEnd) : 1;
+
+      if (this.pathPosition <= currentMin) {
+        this.pathDirection = 1;
+      } else if (this.pathPosition >= currentMax) {
+        this.pathDirection = -1;
+      } else if (this.pathDirection === 0) { // If direction was 0 (e.g. from ALTERNATE)
+        this.pathDirection = 1; // Default to forward
+      }
+      // If already playing, ensure lastAnimationTime is current
+      if (this.isPlaying) {
+        this.lastAnimationTime = ctx.currentTime;
+      }
+    }
+    console.log(`🔊 Playback mode set to: ${mode}`);
   }
   
   // Add method to get current playback mode

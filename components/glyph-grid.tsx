@@ -3,7 +3,7 @@
 import { useRef, useEffect, useState } from "react"
 import { Slider } from "@/components/ui/slider"
 import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
-// import { PlaybackMode } from '@/lib/audio/glyphGridAudio'
+import { PlaybackMode } from '@/lib/audio/glyphGridAudio'
 
 // Glyph interface for representing a shape that defines a path
 interface Glyph {
@@ -51,6 +51,9 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
 
   // Add a reference to store the animation frame ID
   const animationFrameRef = useRef<number | null>(null);
+
+  // Add state for playback mode
+  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>(PlaybackMode.SWEEP);
 
   // Set up observer to detect theme changes
   useEffect(() => {
@@ -595,6 +598,12 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     audioPlayer.setSpeed(speed)
   }, [speed])
 
+  // Add a useEffect to update the audio player when playbackMode changes
+  useEffect(() => {
+    const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer();
+    audioPlayer.setPlaybackMode(playbackMode);
+  }, [playbackMode]);
+
   // Add a handler for speed slider change
   const handleSpeedChange = (values: number[]) => {
     setSpeed(values[0])
@@ -702,6 +711,36 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
             <span>Fast</span>
           </div>
         </div>
+
+        {/* Playback Mode control */}
+        <div className="space-y-1">
+          <span className="text-xs font-medium">Playback Mode</span>
+          <div className="flex space-x-2 pt-1">
+            <button
+              className={`px-3 py-1.5 text-xs rounded-md border transition-colors font-medium 
+                ${playbackMode === PlaybackMode.SWEEP 
+                  ? 'bg-primary text-primary-foreground border-primary'
+                  : 'bg-transparent hover:bg-muted border-border'}
+                ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+              onClick={() => !disabled && setPlaybackMode(PlaybackMode.SWEEP)}
+              disabled={disabled}
+            >
+              Sweep
+            </button>
+            <button
+              className={`px-3 py-1.5 text-xs rounded-md border transition-colors font-medium 
+                ${playbackMode === PlaybackMode.ALTERNATE 
+                  ? 'bg-primary text-primary-foreground border-primary'
+                  : 'bg-transparent hover:bg-muted border-border'}
+                ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+              onClick={() => !disabled && setPlaybackMode(PlaybackMode.ALTERNATE)}
+              disabled={disabled}
+            >
+              Alternate
+            </button>
+          </div>
+        </div>
+
       </div>
     </div>
   )
