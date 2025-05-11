@@ -19,20 +19,21 @@ const NUM_BANDS = 12; // Number of frequency bands for shaping
 const SLOPE_REF_FREQUENCY = 1000; // Hz, reference frequency for slope calculations
 const MIN_AUDIBLE_FREQ = 20; // Hz
 const MAX_AUDIBLE_FREQ = 20000; // Hz
-const BAND_Q_VALUE = 6.0; // Q value for the bandpass filters
+const BAND_Q_VALUE = 1.5; // Q value for the bandpass filters (reduced from 6.0)
 const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
 
 // Target overall slopes
 const LOW_SLOPE_DB_PER_OCT = -7.5; // For low y positions (darker sound)
 const CENTER_SLOPE_DB_PER_OCT = -4.5; // For middle y positions
 const HIGH_SLOPE_DB_PER_OCT = -1.5; // For high y positions (brighter sound)
+const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of SlopedPinkNoiseGenerator (approx -12dB)
 
 // Analyzer settings
 const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
 const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
 
-// Volume pattern settings
-const VOLUME_PATTERN = [0, -12, -6, -12]; // The fixed pattern in dB: 0dB, -12dB, -6dB, -12dB
+// Volume pattern settings -- REMOVING
+// const VOLUME_PATTERN = [0, -12, -6, -12]; // The fixed pattern in dB: 0dB, -12dB, -6dB, -12dB
 
 class DotGridAudioPlayer {
   private static instance: DotGridAudioPlayer;
@@ -55,10 +56,9 @@ class DotGridAudioPlayer {
   
   // Animation frame properties
   private animationFrameId: number | null = null;
-  private lastTriggerTime: number = 0; // Track the last time all dots were triggered
   
-  // Volume pattern properties
-  private volumePatternIndex: number = 0; // Current position in volume pattern
+  // Volume pattern properties -- REMOVING
+  // private volumePatternIndex: number = 0; // Current position in volume pattern
   private baseDbLevel: number = 0; // Base volume level in dB (0dB = reference level)
   
   // Add distortion gain property
@@ -320,16 +320,6 @@ class DotGridAudioPlayer {
       this.stopAllSources();
       this.startAllSources();
       this.startAllRhythms();
-      
-    //   // If we just added the first dot, trigger it immediately without delay
-    //   if (isAddingFirstDot) {
-    //     const firstDotKey = Array.from(dots)[0];
-    //     if (this.audioNodes.has(firstDotKey)) {
-    //       // Use the current pattern volume
-    //       const volumeDb = this.baseDbLevel + VOLUME_PATTERN[this.volumePatternIndex];
-    //       this.triggerDotEnvelope(firstDotKey, volumeDb);
-    //     }
-    //   }
     }
   }
 
@@ -347,22 +337,17 @@ class DotGridAudioPlayer {
       this.startAllSources();
       this.startAllRhythms();
       
-      // Reset volume pattern index
-      this.volumePatternIndex = 0;
+      // Reset volume pattern index -- REMOVING
+      // this.volumePatternIndex = 0;
       
       // Immediately trigger all dots once for instant feedback
-      if (this.audioNodes.size > 0) {
-        // Get all dot keys ordered by position
-        const dotKeys = Array.from(this.audioNodes.keys());
-        
-        // Get the current volume from the pattern
-        const volumeDb = this.baseDbLevel + VOLUME_PATTERN[this.volumePatternIndex];
-        
-        // Trigger the first dot immediately without staggering
-        if (dotKeys.length > 0) {
-          this.triggerDotEnvelope(dotKeys[0], volumeDb);
-        }
-      }
+      // if (this.audioNodes.size > 0) {
+      //   const dotKeys = Array.from(this.audioNodes.keys());
+      //   const volumeDb = this.baseDbLevel;
+      //   if (dotKeys.length > 0) {
+      //     // This was an attempt to trigger only the first, startAllRhythms handles all now
+      //   }
+      // }
     } else {
       this.stopAllRhythms();
       this.stopAllSources();
@@ -377,13 +362,14 @@ class DotGridAudioPlayer {
     this.animationFrameId = null;
     
     // Initialize timing system
-    this.lastTriggerTime = performance.now() / 1000;
+    // this.lastTriggerTime = performance.now() / 1000; // No longer needed for re-triggering logic
     
-    // Reset volume pattern index
-    this.volumePatternIndex = 0;
+    // Reset volume pattern index -- REMOVING
+    // this.volumePatternIndex = 0;
     
-    // Get initial volume from pattern
-    const initialVolumeDb = this.baseDbLevel + VOLUME_PATTERN[this.volumePatternIndex];
+    // Get initial volume from pattern -- REMOVING (use baseDbLevel)
+    // const initialVolumeDb = this.baseDbLevel + VOLUME_PATTERN[this.volumePatternIndex];
+    const initialVolumeDb = this.baseDbLevel;
     
     // Get dots ordered left-to-right, top-to-bottom (like reading English text)
     const orderedDots = Array.from(this.audioNodes.entries())
@@ -399,59 +385,13 @@ class DotGridAudioPlayer {
     
     if (orderedDots.length === 0) return;
     
-    // State tracking for sequential dot playback
-    let currentDotIndex = 0;
-    let cyclesPerDot = 0;
-    const CYCLES_BEFORE_NEXT_DOT = 2; // Play each dot for 2 full cycles
-    
-    // Immediately trigger the first dot for instant feedback
-    if (this.isPlaying && this.audioNodes.has(orderedDots[0])) {
-      this.triggerDotEnvelope(orderedDots[0], initialVolumeDb);
-    }
-    
-    // Start the animation frame loop with pattern-based volume
-    const frameLoop = (timestamp: number) => {
-      if (!this.isPlaying) return;
-      
-      const now = timestamp / 1000;
-      
-      // Base delay between triggers - much faster now
-      const triggerDelay = 0.05;
-      
-      // Check if it's time to trigger the next dot
-      if (now - this.lastTriggerTime >= triggerDelay) {
-        // Advance to the next pattern index
-        this.volumePatternIndex = (this.volumePatternIndex + 1) % VOLUME_PATTERN.length;
-        
-        // Get volume from pattern
-        const volumeDb = this.baseDbLevel + VOLUME_PATTERN[this.volumePatternIndex];
-        
-        // Check if we've completed a full volume pattern cycle
-        if (this.volumePatternIndex === 0) {
-          cyclesPerDot++;
-          
-          // If we've completed the required cycles for this dot, move to the next one
-          if (cyclesPerDot >= CYCLES_BEFORE_NEXT_DOT) {
-            cyclesPerDot = 0;
-            currentDotIndex = (currentDotIndex + 1) % orderedDots.length;
-          }
-        }
-        
-        // Trigger the current dot
-        const currentDot = orderedDots[currentDotIndex];
-        if (this.audioNodes.has(currentDot)) {
-          this.triggerDotEnvelope(currentDot, volumeDb);
-        }
-        
-        // Update last trigger time
-        this.lastTriggerTime = now;
+    // New logic: Apply sound parameters to all active dots once.
+    if (!this.isPlaying) return;
+    orderedDots.forEach(dotKey => {
+      if (this.audioNodes.has(dotKey)) {
+        this.applyDotSoundParameters(dotKey, initialVolumeDb); // initialVolumeDb is now this.baseDbLevel
       }
-      
-      // Schedule next frame
-      this.animationFrameId = requestAnimationFrame(frameLoop);
-    };
-    
-    this.animationFrameId = requestAnimationFrame(frameLoop);
+    });
   }
   
   /**
@@ -462,6 +402,15 @@ class DotGridAudioPlayer {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
     }
+    // Optionally, explicitly silence envelopeGains, though stopAllSources should also lead to silence.
+    // This provides a more immediate stop to the perceived sound if sources take a moment to fully stop.
+    this.audioNodes.forEach(nodes => {
+      if (nodes.envelopeGain) {
+        const now = audioContext.getAudioContext().currentTime;
+        nodes.envelopeGain.gain.cancelScheduledValues(now);
+        nodes.envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, now);
+      }
+    });
   }
 
   /**
@@ -548,7 +497,8 @@ class DotGridAudioPlayer {
    * @param dotKey The dot to trigger
    * @param volumeDb Volume in dB to apply
    */
-  private triggerDotEnvelope(dotKey: string, volumeDb: number = 0): void {
+  // private triggerDotEnvelope(dotKey: string, volumeDb: number = 0): void { // RENAMING
+  private applyDotSoundParameters(dotKey: string, volumeDb: number = 0): void {
     const nodes = this.audioNodes.get(dotKey);
     if (!nodes) return;
     
@@ -571,36 +521,40 @@ class DotGridAudioPlayer {
     }
     slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
     
-    // 2. Calculate release time based on normalizedY (which correlates with slope)
+    // 2. Calculate release time based on normalizedY (which correlates with slope) -- REMOVING
     // Low Y (darker slope, e.g. LOW_SLOPE_DB_PER_OCT) = longer release
     // High Y (brighter slope, e.g. HIGH_SLOPE_DB_PER_OCT) = shorter release
     // normalizedY: 0 (bottom, darkest) -> 1 (top, brightest)
-    const releaseTime = ENVELOPE_RELEASE_LOW_FREQ + 
-      normalizedY * (ENVELOPE_RELEASE_HIGH_FREQ - ENVELOPE_RELEASE_LOW_FREQ);
+    // const releaseTime = ENVELOPE_RELEASE_LOW_FREQ + 
+    //   normalizedY * (ENVELOPE_RELEASE_HIGH_FREQ - ENVELOPE_RELEASE_LOW_FREQ);
 
+    // (The old frequency-dependent release calculation is removed)
+    // ... (omitting removed commented out code for brevity)
+    
     // 3. Apply volume in dB to the dot's main gain node
     const gainRatio = Math.pow(10, volumeDb / 20);
     dotMainGain.gain.cancelScheduledValues(now);
     dotMainGain.gain.setValueAtTime(MASTER_GAIN * this.distortionGain * gainRatio, now);
     
-    // 4. ADSR Envelope on the envelopeGain node
+    // 4. ADSR Envelope on the envelopeGain node -- SIMPLIFYING to set gain to max
     dotEnvelopeGain.gain.cancelScheduledValues(now);
-    dotEnvelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, now);
+    // dotEnvelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, now); // Start at min is not needed for continuous sound
+    dotEnvelopeGain.gain.setValueAtTime(ENVELOPE_MAX_GAIN, now); // Set to max gain directly
     
-    // Attack
-    dotEnvelopeGain.gain.linearRampToValueAtTime(
-      ENVELOPE_MAX_GAIN, 
-      now + ENVELOPE_ATTACK
-    );
+    // Attack -- REMOVING
+    // dotEnvelopeGain.gain.linearRampToValueAtTime(
+    //   ENVELOPE_MAX_GAIN, 
+    //   now + ENVELOPE_ATTACK
+    // );
     
-    // Release
-    dotEnvelopeGain.gain.exponentialRampToValueAtTime(
-      0.001, // Can't go to zero with exponentialRamp, use very small value
-      now + ENVELOPE_ATTACK + releaseTime
-    );
+    // Release -- REMOVING
+    // dotEnvelopeGain.gain.exponentialRampToValueAtTime(
+    //   0.001, // Can't go to zero with exponentialRamp, use very small value
+    //   now + ENVELOPE_ATTACK + releaseTime
+    // );
     
-    // Finally set to zero after the exponential ramp
-    dotEnvelopeGain.gain.setValueAtTime(0, now + ENVELOPE_ATTACK + releaseTime + 0.001);
+    // Finally set to zero after the exponential ramp -- REMOVING
+    // dotEnvelopeGain.gain.setValueAtTime(0, now + ENVELOPE_ATTACK + releaseTime + 0.001);
   }
 
   /**
@@ -750,6 +704,7 @@ class SlopedPinkNoiseGenerator {
     this.ctx = audioCtx;
     this.inputGainNode = this.ctx.createGain();
     this.outputGainNode = this.ctx.createGain();
+    this.outputGainNode.gain.value = SLOPED_NOISE_OUTPUT_GAIN_SCALAR; // Apply output gain reduction
 
     const logMinFreq = Math.log2(MIN_AUDIBLE_FREQ);
     const logMaxFreq = Math.log2(MAX_AUDIBLE_FREQ);
