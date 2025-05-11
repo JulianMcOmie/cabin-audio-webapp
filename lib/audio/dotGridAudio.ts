@@ -14,6 +14,19 @@ const ENVELOPE_RELEASE_LOW_FREQ = 0.2; // Release time for lowest frequencies (s
 const ENVELOPE_RELEASE_HIGH_FREQ = 0.02; // Release time for highest frequencies (seconds)
 const MASTER_GAIN = 6.0; // Much louder master gain for calibration
 
+// New constants for Sloped Pink Noise
+const NUM_BANDS = 12; // Number of frequency bands for shaping
+const SLOPE_REF_FREQUENCY = 1000; // Hz, reference frequency for slope calculations
+const MIN_AUDIBLE_FREQ = 20; // Hz
+const MAX_AUDIBLE_FREQ = 20000; // Hz
+const BAND_Q_VALUE = 6.0; // Q value for the bandpass filters
+const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
+
+// Target overall slopes
+const LOW_SLOPE_DB_PER_OCT = -7.5; // For low y positions (darker sound)
+const CENTER_SLOPE_DB_PER_OCT = -4.5; // For middle y positions
+const HIGH_SLOPE_DB_PER_OCT = -1.5; // For high y positions (brighter sound)
+
 // Analyzer settings
 const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
 const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
@@ -27,11 +40,13 @@ class DotGridAudioPlayer {
   private isPlaying: boolean = false;
   private audioNodes: Map<string, {
     source: AudioBufferSourceNode;
-    gain: GainNode;
-    envelopeGain: GainNode;
+    gain: GainNode; // Overall gain for the dot
+    envelopeGain: GainNode; // For ADSR envelope
     panner: StereoPannerNode;
-    filter: BiquadFilterNode;
+    // filter: BiquadFilterNode; // Will be replaced
+    slopedNoiseGenerator: SlopedPinkNoiseGenerator; // New generator
     position: number; // Position for sorting
+    normalizedY: number; // Store normalized Y (0 to 1, 0=bottom)
   }> = new Map();
   private gridSize: number = 3; // Default row count
   private columnCount: number = COLUMNS; // Default column count
@@ -483,10 +498,10 @@ class DotGridAudioPlayer {
         source.buffer = this.pinkNoiseBuffer;
         source.loop = true;
         
-        // Connect the audio chain - simple bandpass approach
-        // source -> filter -> panner -> envelopeGain -> gain -> destinationNode
-        source.connect(nodes.filter);
-        nodes.filter.connect(nodes.panner);
+        // Connect the audio chain using SlopedPinkNoiseGenerator
+        // source -> slopedNoiseGenerator.input -> slopedNoiseGenerator.output -> panner -> envelopeGain -> gain -> destinationNode
+        source.connect(nodes.slopedNoiseGenerator.getInputNode());
+        nodes.slopedNoiseGenerator.getOutputNode().connect(nodes.panner);
         nodes.panner.connect(nodes.envelopeGain);
         nodes.envelopeGain.connect(nodes.gain);
         
@@ -539,54 +554,53 @@ class DotGridAudioPlayer {
     
     const ctx = audioContext.getAudioContext();
     const now = ctx.currentTime;
+    const { slopedNoiseGenerator, normalizedY, gain: dotMainGain, envelopeGain: dotEnvelopeGain } = nodes;
+
+    // 1. Calculate and set the spectral slope
+    let targetOverallSlopeDbPerOctave;
+    if (normalizedY < 0.5) {
+      // Interpolate between LOW_SLOPE and CENTER_SLOPE
+      // normalizedY from 0 to 0.499... corresponds to t from 0 to 0.999...
+      const t = normalizedY * 2;
+      targetOverallSlopeDbPerOctave = LOW_SLOPE_DB_PER_OCT + t * (CENTER_SLOPE_DB_PER_OCT - LOW_SLOPE_DB_PER_OCT);
+    } else {
+      // Interpolate between CENTER_SLOPE and HIGH_SLOPE
+      // normalizedY from 0.5 to 1.0 corresponds to t from 0 to 1.0
+      const t = (normalizedY - 0.5) * 2;
+      targetOverallSlopeDbPerOctave = CENTER_SLOPE_DB_PER_OCT + t * (HIGH_SLOPE_DB_PER_OCT - CENTER_SLOPE_DB_PER_OCT);
+    }
+    slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
     
-    // Calculate release time based on frequency
-    // Get the center frequency from the filter
-    const centerFreq = nodes.filter.frequency.value;
-    
-    // Calculate normalized frequency position (0 to 1) on logarithmic scale
-    // Using 20Hz and 20kHz as reference points for human hearing range
-    const minFreqLog = Math.log2(20);
-    const maxFreqLog = Math.log2(20000);
-    const freqLog = Math.log2(centerFreq);
-    
-    // Normalized position between 0 (lowest freq) and 1 (highest freq)
-    const normalizedFreq = Math.max(0, Math.min(1, 
-      (freqLog - minFreqLog) / (maxFreqLog - minFreqLog)
-    ));
-    
-    // Interpolate release time based on frequency
-    // Low frequencies get longer release (ENVELOPE_RELEASE_LOW_FREQ)
-    // High frequencies get shorter release (ENVELOPE_RELEASE_HIGH_FREQ)
+    // 2. Calculate release time based on normalizedY (which correlates with slope)
+    // Low Y (darker slope, e.g. LOW_SLOPE_DB_PER_OCT) = longer release
+    // High Y (brighter slope, e.g. HIGH_SLOPE_DB_PER_OCT) = shorter release
+    // normalizedY: 0 (bottom, darkest) -> 1 (top, brightest)
     const releaseTime = ENVELOPE_RELEASE_LOW_FREQ + 
-      normalizedFreq * (ENVELOPE_RELEASE_HIGH_FREQ - ENVELOPE_RELEASE_LOW_FREQ);
-    
-    // Apply volume in dB to gain
-    // Convert dB to gain ratio (0dB = 1.0)
+      normalizedY * (ENVELOPE_RELEASE_HIGH_FREQ - ENVELOPE_RELEASE_LOW_FREQ);
+
+    // 3. Apply volume in dB to the dot's main gain node
     const gainRatio = Math.pow(10, volumeDb / 20);
+    dotMainGain.gain.cancelScheduledValues(now);
+    dotMainGain.gain.setValueAtTime(MASTER_GAIN * this.distortionGain * gainRatio, now);
     
-    // Apply to this node's gain
-    nodes.gain.gain.cancelScheduledValues(now);
-    nodes.gain.gain.setValueAtTime(MASTER_GAIN * this.distortionGain * gainRatio, now);
+    // 4. ADSR Envelope on the envelopeGain node
+    dotEnvelopeGain.gain.cancelScheduledValues(now);
+    dotEnvelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, now);
     
-    // Reset envelope to minimum gain
-    nodes.envelopeGain.gain.cancelScheduledValues(now);
-    nodes.envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, now);
-    
-    // Attack - extremely fast rise for punchy sound
-    nodes.envelopeGain.gain.linearRampToValueAtTime(
+    // Attack
+    dotEnvelopeGain.gain.linearRampToValueAtTime(
       ENVELOPE_MAX_GAIN, 
       now + ENVELOPE_ATTACK
     );
     
-    // Release - frequency-dependent tail
-    nodes.envelopeGain.gain.exponentialRampToValueAtTime(
+    // Release
+    dotEnvelopeGain.gain.exponentialRampToValueAtTime(
       0.001, // Can't go to zero with exponentialRamp, use very small value
       now + ENVELOPE_ATTACK + releaseTime
     );
     
     // Finally set to zero after the exponential ramp
-    nodes.envelopeGain.gain.setValueAtTime(0, now + ENVELOPE_ATTACK + releaseTime + 0.001);
+    dotEnvelopeGain.gain.setValueAtTime(0, now + ENVELOPE_ATTACK + releaseTime + 0.001);
   }
 
   /**
@@ -599,15 +613,15 @@ class DotGridAudioPlayer {
     const ctx = audioContext.getAudioContext();
     
     // Normalize y to 0-1 range (0 = bottom, 1 = top)
-    const normalizedY = 1 - (y / (this.gridSize - 1)); // Flip so higher y = higher position
+    const normalizedY = this.gridSize <= 1 ? 0.5 : 1 - (y / (this.gridSize - 1)); // Flip so higher y = higher position, handle single row case
     
-    // Calculate the frequency for this position
-    const minFreq = 40;  // Lower minimum for better low-end
-    const maxFreq = 15000; // Lower maximum to avoid harsh high-end
-    const logMinFreq = Math.log2(minFreq);
-    const logMaxFreq = Math.log2(maxFreq);
-    const logFreqRange = logMaxFreq - logMinFreq;
-    const centerFreq = Math.pow(2, logMinFreq + normalizedY * logFreqRange);
+    // Calculate the frequency for this position -- (This section is no longer needed as frequency is handled by SlopedPinkNoiseGenerator)
+    // const minFreq = 40;  // Lower minimum for better low-end
+    // const maxFreq = 15000; // Lower maximum to avoid harsh high-end
+    // const logMinFreq = Math.log2(minFreq);
+    // const logMaxFreq = Math.log2(maxFreq);
+    // const logFreqRange = logMaxFreq - logMinFreq;
+    // const centerFreq = Math.pow(2, logMinFreq + normalizedY * logFreqRange);
     
     // Create a gain node for volume
     const gain = ctx.createGain();
@@ -622,14 +636,17 @@ class DotGridAudioPlayer {
     
     panner.pan.value = panPosition;
     
-    // Set Q value
-    const qValue = 6.0;
+    // Set Q value -- (No longer needed here, Q is fixed in SlopedPinkNoiseGenerator)
+    // const qValue = 6.0;
     
-    // Create filter
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.frequency.value = centerFreq;
-    filter.Q.value = qValue;
+    // Create filter -- (No longer needed here, filters are in SlopedPinkNoiseGenerator)
+    // const filter = ctx.createBiquadFilter();
+    // filter.type = 'bandpass';
+    // filter.frequency.value = centerFreq;
+    // filter.Q.value = qValue;
+
+    // Create the sloped noise generator for this dot
+    const slopedNoiseGenerator = new SlopedPinkNoiseGenerator(ctx);
     
     // Store the nodes with simplified structure
     this.audioNodes.set(dotKey, {
@@ -637,8 +654,9 @@ class DotGridAudioPlayer {
       gain,
       envelopeGain: ctx.createGain(),
       panner,
-      filter,
+      slopedNoiseGenerator, // Store the new generator instance
       position: y * this.columnCount + x, // Store position for sorting
+      normalizedY, // Store normalized Y
     });
   }
   
@@ -658,6 +676,11 @@ class DotGridAudioPlayer {
         // Ignore errors when stopping
         console.warn(`Warning when stopping source for dot ${dotKey}:`, e);
       }
+    }
+
+    // Dispose the sloped noise generator
+    if (nodes.slopedNoiseGenerator) {
+      nodes.slopedNoiseGenerator.dispose();
     }
     
     // Remove from the map
@@ -697,6 +720,13 @@ class DotGridAudioPlayer {
       this.preEQAnalyser = null;
     }
     
+    // Dispose SlopedPinkNoiseGenerator for each dot
+    this.audioNodes.forEach(node => {
+      if (node.slopedNoiseGenerator) {
+        node.slopedNoiseGenerator.dispose();
+      }
+    });
+    
     this.audioNodes.clear();
     this.pinkNoiseBuffer = null;
   }
@@ -705,6 +735,72 @@ class DotGridAudioPlayer {
   private setDistortionGain(gain: number): void {
     // Clamp gain between 0 and 1
     this.distortionGain = Math.max(0, Math.min(1, gain));
+  }
+}
+
+class SlopedPinkNoiseGenerator {
+  private ctx: AudioContext;
+  private inputGainNode: GainNode;
+  private outputGainNode: GainNode;
+  private bandFilters: BiquadFilterNode[] = [];
+  private bandGains: GainNode[] = [];
+  private centerFrequencies: number[] = [];
+
+  constructor(audioCtx: AudioContext) {
+    this.ctx = audioCtx;
+    this.inputGainNode = this.ctx.createGain();
+    this.outputGainNode = this.ctx.createGain();
+
+    const logMinFreq = Math.log2(MIN_AUDIBLE_FREQ);
+    const logMaxFreq = Math.log2(MAX_AUDIBLE_FREQ);
+    const step = (logMaxFreq - logMinFreq) / (NUM_BANDS + 1);
+
+    for (let i = 0; i < NUM_BANDS; i++) {
+      const centerFreq = Math.pow(2, logMinFreq + (i + 1) * step);
+      this.centerFrequencies.push(centerFreq);
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = centerFreq;
+      filter.Q.value = BAND_Q_VALUE;
+      this.bandFilters.push(filter);
+
+      const gain = this.ctx.createGain();
+      this.bandGains.push(gain);
+
+      // Connect input to filter, filter to bandGain, bandGain to output
+      this.inputGainNode.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.outputGainNode);
+    }
+  }
+
+  public getInputNode(): GainNode {
+    return this.inputGainNode;
+  }
+
+  public getOutputNode(): GainNode {
+    return this.outputGainNode;
+  }
+
+  public setSlope(targetOverallSlopeDbPerOctave: number): void {
+    const shapingSlope = targetOverallSlopeDbPerOctave - PINK_NOISE_SLOPE_DB_PER_OCT;
+
+    for (let i = 0; i < NUM_BANDS; i++) {
+      const fc = this.centerFrequencies[i];
+      const gainDb = shapingSlope * Math.log2(fc / SLOPE_REF_FREQUENCY);
+      const linearGain = Math.pow(10, gainDb / 20);
+      this.bandGains[i].gain.value = linearGain;
+    }
+  }
+
+  public dispose(): void {
+    this.inputGainNode.disconnect();
+    this.outputGainNode.disconnect();
+    this.bandFilters.forEach(filter => filter.disconnect());
+    this.bandGains.forEach(gain => gain.disconnect());
+    // Nullify references if needed, though JS garbage collection should handle it
+    // once these nodes are no longer referenced elsewhere.
   }
 }
 
