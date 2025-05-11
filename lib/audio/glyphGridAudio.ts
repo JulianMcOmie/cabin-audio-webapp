@@ -2,6 +2,21 @@ import { getAudioContext } from '@/lib/audio/audioContext'
 import * as eqProcessor from '@/lib/audio/eqProcessor'
 import { useEQProfileStore } from '@/lib/stores'
 
+// --- Constants for SlopedPinkNoiseGenerator ---
+const NUM_BANDS = 12; // Number of frequency bands for shaping
+const SLOPE_REF_FREQUENCY = 600; // Hz, reference frequency for slope calculations
+const MIN_AUDIBLE_FREQ = 20; // Hz
+const MAX_AUDIBLE_FREQ = 20000; // Hz
+const BAND_Q_VALUE = 1.5; // Q value for the bandpass filters
+const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
+
+// Target overall slopes for glyphs
+const LOW_SLOPE_DB_PER_OCT = -9.0; // For low y positions (darker sound)
+const CENTER_SLOPE_DB_PER_OCT = -3.0; // For middle y positions
+const HIGH_SLOPE_DB_PER_OCT = 3.0; // For high y positions (brighter sound)
+const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of SlopedPinkNoiseGenerator
+// --- End Constants for SlopedPinkNoiseGenerator ---
+
 // Default values
 const DEFAULT_FREQ_MULTIPLIER = 1.0
 const DEFAULT_SWEEP_DURATION = 8.0 // 8 seconds per cycle
@@ -11,10 +26,10 @@ const MASTER_GAIN = 1.5
 // const ENVELOPE_RELEASE_HIGH_FREQ = 0.2 // 200ms for high frequencies
 const ENVELOPE_MAX_GAIN = 1.0
 // const ENVELOPE_MIN_GAIN = 0.001
-const DEFAULT_MODULATION_RATE = 8.0 // modulations per second
-const DEFAULT_MODULATION_DEPTH = 0.8 // how much to modulate (0-1)
-const ENVELOPE_ATTACK_TIME = 0.005 // 5ms attack
-const ENVELOPE_RELEASE_TIME = 0.05 // 100ms release
+// const DEFAULT_MODULATION_RATE = 8.0 // modulations per second -- REMOVING
+// const DEFAULT_MODULATION_DEPTH = 0.8 // how much to modulate (0-1) -- REMOVING
+// const ENVELOPE_ATTACK_TIME = 0.005 // 5ms attack -- REMOVING
+// const ENVELOPE_RELEASE_TIME = 0.05 // 100ms release -- REMOVING
 const DEFAULT_SPEED = 1.0 // Default movement speed
 
 // Add constants for hit detection
@@ -26,6 +41,73 @@ export enum PlaybackMode {
   SWEEP = 'sweep',    // Smoothly sweep through the path
   ALTERNATE = 'alternate'  // Alternate between start and end points
 }
+
+// --- SlopedPinkNoiseGenerator Class Definition ---
+// (Copied from dotGridAudio.ts - ensure imports like MIN_AUDIBLE_FREQ etc. are available in this scope)
+class SlopedPinkNoiseGenerator {
+  private ctx: AudioContext;
+  private inputGainNode: GainNode;
+  private outputGainNode: GainNode;
+  private bandFilters: BiquadFilterNode[] = [];
+  private bandGains: GainNode[] = [];
+  private centerFrequencies: number[] = [];
+
+  constructor(audioCtx: AudioContext) {
+    this.ctx = audioCtx;
+    this.inputGainNode = this.ctx.createGain();
+    this.outputGainNode = this.ctx.createGain();
+    this.outputGainNode.gain.value = SLOPED_NOISE_OUTPUT_GAIN_SCALAR;
+
+    const logMinFreq = Math.log2(MIN_AUDIBLE_FREQ);
+    const logMaxFreq = Math.log2(MAX_AUDIBLE_FREQ);
+    const step = (logMaxFreq - logMinFreq) / (NUM_BANDS + 1);
+
+    for (let i = 0; i < NUM_BANDS; i++) {
+      const centerFreq = Math.pow(2, logMinFreq + (i + 1) * step);
+      this.centerFrequencies.push(centerFreq);
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = centerFreq;
+      filter.Q.value = BAND_Q_VALUE;
+      this.bandFilters.push(filter);
+
+      const gainNode = this.ctx.createGain(); // Renamed from gain to gainNode to avoid conflict
+      this.bandGains.push(gainNode);
+
+      this.inputGainNode.connect(filter);
+      filter.connect(gainNode);
+      gainNode.connect(this.outputGainNode);
+    }
+  }
+
+  public getInputNode(): GainNode {
+    return this.inputGainNode;
+  }
+
+  public getOutputNode(): GainNode {
+    return this.outputGainNode;
+  }
+
+  public setSlope(targetOverallSlopeDbPerOctave: number): void {
+    const shapingSlope = targetOverallSlopeDbPerOctave - PINK_NOISE_SLOPE_DB_PER_OCT;
+
+    for (let i = 0; i < NUM_BANDS; i++) {
+      const fc = this.centerFrequencies[i];
+      const gainDb = shapingSlope * Math.log2(fc / SLOPE_REF_FREQUENCY);
+      const linearGain = Math.pow(10, gainDb / 20);
+      this.bandGains[i].gain.value = linearGain;
+    }
+  }
+
+  public dispose(): void {
+    this.inputGainNode.disconnect();
+    this.outputGainNode.disconnect();
+    this.bandFilters.forEach(filter => filter.disconnect());
+    this.bandGains.forEach(gain => gain.disconnect());
+  }
+}
+// --- End SlopedPinkNoiseGenerator Class Definition ---
 
 // Simple glyph representation
 export interface GlyphData {
@@ -43,15 +125,13 @@ class GlyphGridAudioPlayer {
   private audioNodes: {
     source: AudioBufferSourceNode | null;
     gain: GainNode | null;
-    envelopeGain: GainNode | null;
     panner: StereoPannerNode | null;
-    filter: BiquadFilterNode | null;
+    slopedNoiseGenerator: SlopedPinkNoiseGenerator | null;
   } = {
     source: null,
     gain: null,
-    envelopeGain: null,
     panner: null,
-    filter: null
+    slopedNoiseGenerator: null,
   }
   
   // Path related properties
@@ -69,11 +149,6 @@ class GlyphGridAudioPlayer {
   private currentGlyph: GlyphData | null = null
   
   // Add these properties to the class
-  private isModulating: boolean = true
-  private modulationRate: number = DEFAULT_MODULATION_RATE
-  private modulationDepth: number = DEFAULT_MODULATION_DEPTH
-  private modulationTimerId: number | null = null
-  
   private isManualControl: boolean = false
   private manualPosition: number = 0
   
@@ -320,8 +395,17 @@ class GlyphGridAudioPlayer {
     const panPosition = x
     
     // Now update the audio nodes with these values
-    if (this.audioNodes.filter) {
-      this.audioNodes.filter.frequency.value = adjustedFreq
+    if (this.audioNodes.slopedNoiseGenerator) {
+      let targetOverallSlopeDbPerOctave;
+      // Interpolate slope based on normalizedY (0=bottom, 1=top)
+      if (normalizedY < 0.5) {
+        const t = normalizedY * 2;
+        targetOverallSlopeDbPerOctave = LOW_SLOPE_DB_PER_OCT + t * (CENTER_SLOPE_DB_PER_OCT - LOW_SLOPE_DB_PER_OCT);
+      } else {
+        const t = (normalizedY - 0.5) * 2;
+        targetOverallSlopeDbPerOctave = CENTER_SLOPE_DB_PER_OCT + t * (HIGH_SLOPE_DB_PER_OCT - CENTER_SLOPE_DB_PER_OCT);
+      }
+      this.audioNodes.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
     }
     
     if (this.audioNodes.panner) {
@@ -358,25 +442,17 @@ class GlyphGridAudioPlayer {
     const gain = ctx.createGain()
     gain.gain.value = MASTER_GAIN * this.distortionGain;
     
-    // Create envelope gain node
-    const envelopeGain = ctx.createGain()
-    envelopeGain.gain.value = ENVELOPE_MAX_GAIN
-    
     // Create panner node
     const panner = ctx.createStereoPanner()
     panner.pan.value = 0 // Start centered
     
-    // Create filter node (bandpass filter)
-    const filter = ctx.createBiquadFilter()
-    filter.type = 'bandpass'
-    filter.frequency.value = 500 // Default frequency
-    filter.Q.value = 5.0 // Default Q
+    // Create SlopedNoiseGenerator
+    const slopedNoiseGenerator = new SlopedPinkNoiseGenerator(ctx);
     
     // Connect the audio chain
-    source.connect(gain)
-    gain.connect(envelopeGain)
-    envelopeGain.connect(filter)
-    filter.connect(panner)
+    source.connect(slopedNoiseGenerator.getInputNode());
+    slopedNoiseGenerator.getOutputNode().connect(gain);
+    gain.connect(panner);
     
     // If we have an analyzer, connect through it
     if (this.preEQAnalyser && this.preEQGain) {
@@ -392,9 +468,8 @@ class GlyphGridAudioPlayer {
     this.audioNodes = {
       source,
       gain,
-      envelopeGain,
       panner,
-      filter
+      slopedNoiseGenerator,
     }
     
     // Start the source
@@ -402,11 +477,6 @@ class GlyphGridAudioPlayer {
     
     // Start the animation loop to update path position
     this.startAnimationLoop()
-    
-    // Start envelope modulation if enabled
-    if (this.isModulating) {
-      this.startEnvelopeModulation()
-    }
   }
   
   private startAnimationLoop(): void {
@@ -419,9 +489,6 @@ class GlyphGridAudioPlayer {
   }
   
   private stopSound(): void {
-    // Stop envelope modulation
-    this.stopEnvelopeModulation()
-    
     if (this.animationFrameId) {
       cancelAnimationFrame(this.animationFrameId)
       this.animationFrameId = null
@@ -445,12 +512,8 @@ class GlyphGridAudioPlayer {
       this.audioNodes.gain.disconnect()
     }
     
-    if (this.audioNodes.envelopeGain) {
-      this.audioNodes.envelopeGain.disconnect()
-    }
-    
-    if (this.audioNodes.filter) {
-      this.audioNodes.filter.disconnect()
+    if (this.audioNodes.slopedNoiseGenerator) {
+      this.audioNodes.slopedNoiseGenerator.dispose();
     }
     
     if (this.audioNodes.panner) {
@@ -461,9 +524,8 @@ class GlyphGridAudioPlayer {
     this.audioNodes = {
       source: null,
       gain: null,
-      envelopeGain: null,
       panner: null,
-      filter: null
+      slopedNoiseGenerator: null,
     }
   }
   
@@ -527,95 +589,9 @@ class GlyphGridAudioPlayer {
     }
   }
   
-  public setModulating(enabled: boolean): void {
-    if (this.isModulating === enabled) return
-    
-    this.isModulating = enabled
-    
-    if (enabled && this.isPlaying) {
-      this.startEnvelopeModulation()
-    } else {
-      this.stopEnvelopeModulation()
-    }
-  }
-  
-  public isModulationEnabled(): boolean {
-    return this.isModulating
-  }
-  
-  public setModulationRate(rate: number): void {
-    this.modulationRate = rate
-    
-    // If we're already modulating, restart with new rate
-    if (this.isModulating && this.isPlaying) {
-      this.stopEnvelopeModulation()
-      this.startEnvelopeModulation()
-    }
-  }
-  
-  public setModulationDepth(depth: number): void {
-    this.modulationDepth = Math.max(0, Math.min(1, depth)) // Clamp between 0 and 1
-  }
-  
-  private startEnvelopeModulation(): void {
-    if (this.modulationTimerId !== null) {
-      clearInterval(this.modulationTimerId)
-    }
-    
-    // Calculate interval in milliseconds based on rate
-    const intervalMs = 1000 / this.modulationRate
-    
-    const triggerEnvelope = () => {
-      if (!this.audioNodes.envelopeGain) return
-      
-      const ctx = getAudioContext()
-      const now = ctx.currentTime
-      
-      // Calculate the minimum gain based on modulation depth
-      const minGain = ENVELOPE_MAX_GAIN * (1 - this.modulationDepth)
-      
-      // Reset to minimum gain
-      this.audioNodes.envelopeGain.gain.cancelScheduledValues(now)
-      this.audioNodes.envelopeGain.gain.setValueAtTime(minGain, now)
-      
-      // Attack phase - quick ramp to max gain
-      this.audioNodes.envelopeGain.gain.linearRampToValueAtTime(
-        ENVELOPE_MAX_GAIN, 
-        now + ENVELOPE_ATTACK_TIME
-      )
-      
-      // Release phase - slower decay back to min gain
-      this.audioNodes.envelopeGain.gain.linearRampToValueAtTime(
-        minGain,
-        now + ENVELOPE_ATTACK_TIME + ENVELOPE_RELEASE_TIME
-      )
-
-      console.log('🔊 Envelope modulation triggered')
-    }
-    
-    // Trigger immediately then start interval
-    triggerEnvelope()
-    this.modulationTimerId = window.setInterval(triggerEnvelope, intervalMs)
-  }
-  
-  private stopEnvelopeModulation(): void {
-    if (this.modulationTimerId !== null) {
-      clearInterval(this.modulationTimerId)
-      this.modulationTimerId = null
-    }
-    
-    // Reset envelope gain to max if available
-    if (this.audioNodes.envelopeGain) {
-      const ctx = getAudioContext()
-      this.audioNodes.envelopeGain.gain.cancelScheduledValues(ctx.currentTime)
-      this.audioNodes.envelopeGain.gain.setValueAtTime(ENVELOPE_MAX_GAIN, ctx.currentTime)
-    }
-  }
-  
   public dispose(): void {
     this.setPlaying(false)
     this.stopSweep()
-    this.stopEnvelopeModulation()
   }
   
   // Add this new public method to expose the current path position
@@ -663,7 +639,7 @@ class GlyphGridAudioPlayer {
     preEQGain.gain.value = 1.0
     
     // Connect if we're playing and have a source
-    if (this.isPlaying && this.audioNodes.filter && this.audioNodes.panner) {
+    if (this.isPlaying && this.audioNodes.panner) {
       // Disconnect the panner from its current destination
       this.audioNodes.panner.disconnect()
       
@@ -695,10 +671,6 @@ class GlyphGridAudioPlayer {
     let panning = 0;
     
     // Get values from audio nodes if available
-    if (this.audioNodes.filter) {
-      frequency = this.audioNodes.filter.frequency.value;
-    }
-    
     if (this.audioNodes.panner) {
       panning = this.audioNodes.panner.pan.value;
     }
