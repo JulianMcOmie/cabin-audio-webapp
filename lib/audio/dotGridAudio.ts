@@ -38,44 +38,197 @@ const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
 // Volume pattern settings -- REMOVING
 // const VOLUME_PATTERN = [0, -12, -6, -12]; // The fixed pattern in dB: 0dB, -12dB, -6dB, -12dB
 
+// Interface for nodes managed by PositionedAudioService
+interface PointAudioNodes {
+  source: AudioBufferSourceNode;
+  mainGain: GainNode;
+  envelopeGain: GainNode;
+  panner: StereoPannerNode;
+  slopedNoiseGenerator: SlopedPinkNoiseGenerator;
+  pinkNoiseBuffer: AudioBuffer;
+  normalizedYPos: number; // To recalculate slope without re-passing y, totalRows
+  // isPlaying: boolean; // Source starts on creation and loops, envelopeGain controls sound
+}
+
+class PositionedAudioService {
+  private ctx: AudioContext;
+  private audioPoints: Map<string, PointAudioNodes> = new Map();
+  private outputGain: GainNode;
+  private currentDistortionGain: number = 1.0;
+  private currentBaseDbLevel: number = 0;
+
+  constructor(audioContextInstance: AudioContext) {
+    this.ctx = audioContextInstance;
+    this.outputGain = this.ctx.createGain();
+    this.outputGain.gain.value = 1.0; // Master output for this service
+  }
+
+  // Moved from DotGridAudioPlayer
+  private _generateSinglePinkNoiseBuffer(): AudioBuffer {
+    const bufferSize = this.ctx.sampleRate * 2; // 2 seconds of noise
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+
+    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+    for (let i = 0; i < bufferSize; i++) {
+      const white = Math.random() * 2 - 1;
+      b0 = 0.99886 * b0 + white * 0.0555179;
+      b1 = 0.99332 * b1 + white * 0.0750759;
+      b2 = 0.96900 * b2 + white * 0.1538520;
+      b3 = 0.86650 * b3 + white * 0.3104856;
+      b4 = 0.55000 * b4 + white * 0.5329522;
+      b5 = -0.7616 * b5 - white * 0.0168980;
+      b6 = white * 0.5362;
+      data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.11) * 0.11; // Adjusted last term slightly
+    }
+
+    let peak = 0;
+    for (let i = 0; i < bufferSize; i++) {
+      const abs = Math.abs(data[i]);
+      if (abs > peak) peak = abs;
+    }
+    const normalizationFactor = peak > 0.8 ? 0.8 / peak : 1.0;
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] *= normalizationFactor;
+    }
+    return buffer;
+  }
+
+  public getOutputNode(): GainNode {
+    return this.outputGain;
+  }
+
+  // More methods (addPoint, removePoint, activatePoint, etc.) will be added here later
+  public setDistortion(gain: number): void {
+    this.currentDistortionGain = Math.max(0, Math.min(1, gain));
+  }
+
+  public setBaseVolumeDb(db: number): void {
+    this.currentBaseDbLevel = db;
+  }
+
+  public addPoint(id: string, x: number, y: number, totalRows: number, totalCols: number): void {
+    if (this.audioPoints.has(id)) {
+      console.warn(`Audio point with id ${id} already exists.`);
+      return;
+    }
+
+    const normalizedY = totalRows <= 1 ? 0.5 : 1 - (y / (totalRows - 1));
+    const panPosition = totalCols <= 1 ? 0 : (2 * (x / (totalCols - 1)) - 1);
+
+    const pinkNoiseBuffer = this._generateSinglePinkNoiseBuffer();
+    const source = this.ctx.createBufferSource();
+    source.buffer = pinkNoiseBuffer;
+    source.loop = true;
+
+    const slopedNoiseGenerator = new SlopedPinkNoiseGenerator(this.ctx);
+    const mainGain = this.ctx.createGain();
+    const envelopeGain = this.ctx.createGain();
+    envelopeGain.gain.value = ENVELOPE_MIN_GAIN; // Start silent
+    const panner = this.ctx.createStereoPanner();
+    panner.pan.value = panPosition;
+
+    // Connect chain: source -> slopedGen -> mainGain -> envelopeGain -> panner -> serviceOutput
+    source.connect(slopedNoiseGenerator.getInputNode());
+    slopedNoiseGenerator.getOutputNode().connect(mainGain);
+    mainGain.connect(envelopeGain);
+    envelopeGain.connect(panner);
+    panner.connect(this.outputGain);
+
+    this.audioPoints.set(id, {
+      source,
+      mainGain,
+      envelopeGain,
+      panner,
+      slopedNoiseGenerator,
+      pinkNoiseBuffer,
+      normalizedYPos: normalizedY,
+    });
+
+    source.start(); // Start source immediately, loop, control with envelopeGain
+  }
+
+  public removePoint(id: string): void {
+    const point = this.audioPoints.get(id);
+    if (!point) return;
+
+    point.envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, this.ctx.currentTime);
+    try {
+      point.source.stop();
+    } catch (e) { /* ignore if already stopped */ }
+    point.source.disconnect();
+    point.slopedNoiseGenerator.dispose();
+    point.mainGain.disconnect();
+    point.envelopeGain.disconnect();
+    point.panner.disconnect();
+    // point.pinkNoiseBuffer = null; // Buffer is managed by JS GC once source is gone
+
+    this.audioPoints.delete(id);
+  }
+
+  public activatePoint(id: string): void {
+    const point = this.audioPoints.get(id);
+    if (!point) return;
+
+    // Set slope
+    let targetOverallSlopeDbPerOctave;
+    if (point.normalizedYPos < 0.5) {
+      const t = point.normalizedYPos * 2;
+      targetOverallSlopeDbPerOctave = LOW_SLOPE_DB_PER_OCT + t * (CENTER_SLOPE_DB_PER_OCT - LOW_SLOPE_DB_PER_OCT);
+    } else {
+      const t = (point.normalizedYPos - 0.5) * 2;
+      targetOverallSlopeDbPerOctave = CENTER_SLOPE_DB_PER_OCT + t * (HIGH_SLOPE_DB_PER_OCT - CENTER_SLOPE_DB_PER_OCT);
+    }
+    point.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
+
+    // Set main gain
+    const gainRatio = Math.pow(10, this.currentBaseDbLevel / 20);
+    point.mainGain.gain.setValueAtTime(MASTER_GAIN * this.currentDistortionGain * gainRatio, this.ctx.currentTime);
+
+    // Activate sound
+    point.envelopeGain.gain.cancelScheduledValues(this.ctx.currentTime);
+    point.envelopeGain.gain.setValueAtTime(ENVELOPE_MAX_GAIN, this.ctx.currentTime);
+  }
+
+  public deactivatePoint(id: string): void {
+    const point = this.audioPoints.get(id);
+    if (!point) return;
+    point.envelopeGain.gain.cancelScheduledValues(this.ctx.currentTime);
+    point.envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, this.ctx.currentTime);
+  }
+  
+  public deactivateAllPoints(): void {
+    this.audioPoints.forEach((_, id) => this.deactivatePoint(id));
+  }
+
+  public dispose(): void {
+    this.audioPoints.forEach((_, id) => this.removePoint(id));
+    this.outputGain.disconnect();
+  }
+}
+
 class DotGridAudioPlayer {
   private static instance: DotGridAudioPlayer;
   private isPlaying: boolean = false;
-  private audioNodes: Map<string, {
-    source: AudioBufferSourceNode;
-    gain: GainNode; // Overall gain for the dot
-    envelopeGain: GainNode; // For ADSR envelope
-    panner: StereoPannerNode;
-    // filter: BiquadFilterNode; // Will be replaced
-    slopedNoiseGenerator: SlopedPinkNoiseGenerator; // New generator
-    position: number; // Position for sorting
-    normalizedY: number; // Store normalized Y (0 to 1, 0=bottom)
-    pinkNoiseBuffer: AudioBuffer | null; // ADDING: Per-dot pink noise buffer
-  }> = new Map();
-  private gridSize: number = 3; // Default row count
-  private columnCount: number = COLUMNS; // Default column count
-  private preEQAnalyser: AnalyserNode | null = null; // Pre-EQ analyzer node
-  private preEQGain: GainNode | null = null; // Gain node for connecting all sources to analyzer
-  
-  // Animation frame properties
-  private animationFrameId: number | null = null;
-  
-  // Volume pattern properties -- REMOVING
-  // private volumePatternIndex: number = 0; // Current position in volume pattern
-  private baseDbLevel: number = 0; // Base volume level in dB (0dB = reference level)
-  
-  // Add distortion gain property
-  private distortionGain: number = 1.0;
-  
+  // private audioNodes: Map<string, ...> // REMOVED - Will manage keys/state, not nodes directly
+  private activeDotKeys: Set<string> = new Set(); // To track which dots are selected
+  private audioService: PositionedAudioService;
+
+  private gridSize: number = 3;
+  private columnCount: number = COLUMNS;
+  private preEQAnalyser: AnalyserNode | null = null;
+  private preEQGain: GainNode | null = null;
+  private animationFrameId: number | null = null; // Keep for now if any other visual might use it
+
   private constructor() {
-    // Apply initial distortion gain from store
-    const distortionGain = useEQProfileStore.getState().distortionGain;
-    this.setDistortionGain(distortionGain);
+    this.audioService = new PositionedAudioService(audioContext.getAudioContext());
     
-    // Subscribe to distortion gain changes from the store
+    const initialDistortionGain = useEQProfileStore.getState().distortionGain;
+    this.audioService.setDistortion(initialDistortionGain);
+
     useEQProfileStore.subscribe(
       (state) => {
-        this.setDistortionGain(state.distortionGain);
+        this.audioService.setDistortion(state.distortionGain);
       }
     );
   }
@@ -109,65 +262,25 @@ class DotGridAudioPlayer {
    * Update panning for all dots based on current column count
    */
   private updateAllDotPanning(): void {
-    this.audioNodes.forEach((nodes, dotKey) => {
-      const x = dotKey.split(',').map(Number)[0];
-      
-      // Recalculate panning based on new column count
-      // Simple panning calculation that evenly distributes columns from -1 to 1
-      // First column (x=0) will be -1 (full left), last column will be 1 (full right)
-      const panPosition = this.columnCount <= 1 ? 0 : (2 * (x / (this.columnCount - 1)) - 1);
-      
-      // Update panner value
-      nodes.panner.pan.value = panPosition;
-    });
-  }
+    // This method is tricky with the new service model.
+    // Panning is set when a point is added to PositionedAudioService.
+    // If columnCount changes, existing points in the service won't automatically update their pan.
+    // The current setGridSize -> updateDots flow (which removes/re-adds points) handles this.
+    // Thus, this specific method might be redundant or needs to trigger a re-add of all points.
+    // For now, let's rely on the setGridSize -> updateDots flow.
+    // If direct pan updates are needed without re-adding, PositionedAudioService would need a method like:
+    // updatePointPanning(id: string, newPanPosition: number)
+    // and DotGridAudioPlayer would iterate its activeDotKeys and call it.
 
-  /**
-   * Generate pink noise buffer
-   */
-  private _generateSinglePinkNoiseBuffer(): AudioBuffer {
-    const ctx = audioContext.getAudioContext();
-    const bufferSize = ctx.sampleRate * 2; // 2 seconds of noise
-    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-
-    // Improved pink noise generation using Paul Kellet's refined method
-    // This produces a true -3dB/octave spectrum characteristic of pink noise
-    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
-    
-    for (let i = 0; i < bufferSize; i++) {
-      // Generate white noise sample
-      const white = Math.random() * 2 - 1;
-      
-      // Pink noise filtering - refined coefficients for accurate spectral slope
-      b0 = 0.99886 * b0 + white * 0.0555179;
-      b1 = 0.99332 * b1 + white * 0.0750759;
-      b2 = 0.96900 * b2 + white * 0.1538520;
-      b3 = 0.86650 * b3 + white * 0.3104856;
-      b4 = 0.55000 * b4 + white * 0.5329522;
-      b5 = -0.7616 * b5 - white * 0.0168980;
-      b6 = white * 0.5362;
-      
-      // Combine with proper scaling to maintain pink noise characteristics
-      // The sum is multiplied by 0.11 to normalize the output
-      data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6) * 0.11;
-    }
-    
-    // Apply a second-pass normalization to ensure consistent volume
-    // Find the peak amplitude
-    let peak = 0;
-    for (let i = 0; i < bufferSize; i++) {
-      const abs = Math.abs(data[i]);
-      if (abs > peak) peak = abs;
-    }
-    
-    // Normalize to avoid clipping but maintain energy
-    const normalizationFactor = peak > 0.8 ? 0.8 / peak : 1.0;
-    for (let i = 0; i < bufferSize; i++) {
-      data[i] *= normalizationFactor;
-    }
-
-    return buffer;
+    // Old logic that accessed service internals (incorrect):
+    // this.audioService.audioPoints.forEach((nodes, dotKey) => {
+    //   const x = dotKey.split(',').map(Number)[0];
+    //   const panPosition = this.columnCount <= 1 ? 0 : (2 * (x / (this.columnCount - 1)) - 1);
+    //   if (nodes.panner) {
+    //      nodes.panner.pan.value = panPosition;
+    //   }
+    // });
+    console.warn("updateAllDotPanning called; panning updates now primarily occur when dots are re-added via updateDots after grid size change.")
   }
 
   /**
@@ -261,24 +374,36 @@ class DotGridAudioPlayer {
    * Reconnect all sources to include the analyzer in the signal chain
    */
   private reconnectAllSources(): void {
-    // Skip if no audio nodes
-    if (this.audioNodes.size === 0) return;
+    // Skip if no audio nodes -- This logic needs to adapt or be removed if preEQGain connects to service output
+    // if (this.audioNodes.size === 0) return;
+    if (!this.preEQGain) return; // If no preEQGain, nothing to reconnect to it
+
+    // Disconnect preEQGain from its current source (which should be audioService.getOutputNode() or EQ processor)
+    this.preEQGain.disconnect();
     
-    // Simplify: always use preEQGain if available, otherwise connect directly to EQ
-    const destinationNode = this.preEQGain || eqProcessor.getEQProcessor().getInputNode();
-    
-    // Reconnect all sources to our single determined destination
-    this.audioNodes.forEach((nodes, dotKey) => {
-      try {
-        // Disconnect gain from its current destination
-        nodes.gain.disconnect();
-        
-        // Connect to the appropriate destination
-        nodes.gain.connect(destinationNode);
-      } catch (e) {
-        console.error(`Error reconnecting source for dot ${dotKey}:`, e);
-      }
-    });
+    // Reconnect preEQGain to the audioService output, then to analyzer and EQ
+    const eqInput = eqProcessor.getEQProcessor().getInputNode();
+    this.preEQGain.connect(this.audioService.getOutputNode()); // This seems wrong. preEQGain *receives* from audioService
+                                                               // And then preEQGain outputs to analyzer AND eqInput.
+                                                               // Correct connection order should be:
+                                                               // audioService.output -> preEQGain
+                                                               // preEQGain -> preEQAnalyser (if exists)
+                                                               // preEQGain -> eqInput
+
+    // Let's try to simplify the connection logic for preEQGain
+    // The audioService.outputGain is the single source for preEQGain now.
+    this.preEQGain.disconnect(); // Ensure clean state
+    this.audioService.getOutputNode().connect(this.preEQGain);
+
+    if (this.preEQAnalyser) {
+        this.preEQGain.connect(this.preEQAnalyser);
+    }
+    this.preEQGain.connect(eqInput);                                                       
+
+    // The old logic iterated sources to connect to preEQGain. 
+    // Now, preEQGain has a single input from audioService.getOutputNode().
+    // This method might be entirely rethought or simplified.
+    // For now, the key is that audioService.getOutputNode() should feed into preEQGain.
   }
 
   /**
@@ -290,36 +415,40 @@ class DotGridAudioPlayer {
   public updateDots(dots: Set<string>, currentGridSize?: number, currentColumns?: number): void {
     // Update grid size if provided and changed
     if (currentGridSize && currentGridSize !== this.gridSize) {
-      this.setGridSize(currentGridSize, currentColumns);
-    }
-    // Also update column count if only it changed but grid size didn't
-    else if (currentColumns && currentColumns !== this.columnCount) {
+      this.setGridSize(currentGridSize, currentColumns); // This will update internal gridSize/columnCount
+    } else if (currentColumns && currentColumns !== this.columnCount) {
       this.setGridSize(this.gridSize, currentColumns);
     }
     
-    // Get current dots
-    const currentDots = new Set(this.audioNodes.keys());
-    
+    const oldDotKeys = new Set(this.activeDotKeys);
+    this.activeDotKeys = new Set(dots);
+
     // Remove dots that are no longer selected
-    currentDots.forEach(dotKey => {
-      if (!dots.has(dotKey)) {
-        this.removeDot(dotKey);
+    oldDotKeys.forEach(dotKey => {
+      if (!this.activeDotKeys.has(dotKey)) {
+        this.audioService.removePoint(dotKey);
       }
     });
     
     // Add new dots
-    dots.forEach(dotKey => {
-      if (!this.audioNodes.has(dotKey)) {
-        this.addDot(dotKey);
+    this.activeDotKeys.forEach(dotKey => {
+      if (!oldDotKeys.has(dotKey)) {
+        // x, y are part of dotKey string "x,y"
+        const [xStr, yStr] = dotKey.split(',');
+        const x = parseInt(xStr, 10);
+        const y = parseInt(yStr, 10);
+        if (!isNaN(x) && !isNaN(y)) {
+            this.audioService.addPoint(dotKey, x, y, this.gridSize, this.columnCount);
+        }
       }
     });
     
-    // If playing, restart rhythm
     if (this.isPlaying) {
-      this.stopAllRhythms();
-      this.stopAllSources();
-      this.startAllSources();
-      this.startAllRhythms();
+      // Deactivate all points first, then activate only the current ones
+      this.audioService.deactivateAllPoints(); 
+      this.activeDotKeys.forEach(dotKey => {
+        this.audioService.activatePoint(dotKey);
+      });
     }
   }
 
@@ -334,23 +463,9 @@ class DotGridAudioPlayer {
     console.log('🔊 Set playing state:', playing);
     
     if (playing) {
-      this.startAllSources();
-      this.startAllRhythms();
-      
-      // Reset volume pattern index -- REMOVING
-      // this.volumePatternIndex = 0;
-      
-      // Immediately trigger all dots once for instant feedback
-      // if (this.audioNodes.size > 0) {
-      //   const dotKeys = Array.from(this.audioNodes.keys());
-      //   const volumeDb = this.baseDbLevel;
-      //   if (dotKeys.length > 0) {
-      //     // This was an attempt to trigger only the first, startAllRhythms handles all now
-      //   }
-      // }
+      this.startAllRhythms(); // This will activate current dots
     } else {
-      this.stopAllRhythms();
-      this.stopAllSources();
+      this.stopAllRhythms(); // This will deactivate current dots
     }
   }
 
@@ -358,7 +473,6 @@ class DotGridAudioPlayer {
    * Start all rhythm timers - using requestAnimationFrame
    */
   private startAllRhythms(): void {
-    // Cancel any previous animation frame if it exists (though it shouldn't with this new logic)
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
@@ -366,26 +480,8 @@ class DotGridAudioPlayer {
     
     if (!this.isPlaying) return;
 
-    const initialVolumeDb = this.baseDbLevel;
-    
-    // Get dots ordered left-to-right, top-to-bottom (like reading English text)
-    const orderedDots = Array.from(this.audioNodes.entries())
-      .sort(([keyA], [keyB]) => {
-        const [xA, yA] = keyA.split(',').map(Number);
-        const [xB, yB] = keyB.split(',').map(Number);
-        
-        if (yA !== yB) return yA - yB;
-        return xA - xB;
-      })
-      .map(([key]) => key);
-    
-    if (orderedDots.length === 0) return;
-    
-    // New logic: Apply sound parameters to all active dots once to turn them on continuously.
-    orderedDots.forEach(dotKey => {
-      if (this.audioNodes.has(dotKey)) {
-        this.applyDotSoundParameters(dotKey, initialVolumeDb);
-      }
+    this.activeDotKeys.forEach(dotKey => {
+        this.audioService.activatePoint(dotKey);
     });
   }
   
@@ -393,264 +489,11 @@ class DotGridAudioPlayer {
    * Stop all rhythm timers
    */
   private stopAllRhythms(): void {
-    // Cancel any previous animation frame if it exists (though it shouldn't with this new logic)
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
     }
-    // Optionally, explicitly silence envelopeGains, though stopAllSources should also lead to silence.
-    // This provides a more immediate stop to the perceived sound if sources take a moment to fully stop.
-    this.audioNodes.forEach(nodes => {
-      if (nodes.envelopeGain) {
-        const now = audioContext.getAudioContext().currentTime;
-        nodes.envelopeGain.gain.cancelScheduledValues(now);
-        nodes.envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, now);
-      }
-    });
-  }
-
-  /**
-   * Start all audio sources
-   */
-  private startAllSources(): void {
-    const ctx = audioContext.getAudioContext();
-    
-    // Simplify: use preEQGain if available, otherwise connect directly to EQ
-    const destinationNode = this.preEQGain || eqProcessor.getEQProcessor().getInputNode();
-    
-    // If we need to create a preEQGain for analyzer but don't have one yet
-    if (this.preEQAnalyser && !this.preEQGain) {
-      this.preEQGain = ctx.createGain();
-      this.preEQGain.gain.value = 1.0;
-      this.preEQGain.connect(this.preEQAnalyser);
-      
-      // Connect directly to EQ input
-      const eq = eqProcessor.getEQProcessor();
-      this.preEQGain.connect(eq.getInputNode());
-    }
-    
-    // Start each source with the determined destination
-    this.audioNodes.forEach((nodes, dotKey) => {
-      try {
-        // Create a new source
-        const source = ctx.createBufferSource();
-        if (!nodes.pinkNoiseBuffer) {
-          console.warn(`Pink noise buffer not ready for dot ${dotKey}, skipping source start.`);
-          return;
-        }
-        source.buffer = nodes.pinkNoiseBuffer;
-        source.loop = true;
-        
-        // Connect the audio chain using SlopedPinkNoiseGenerator
-        // source -> slopedNoiseGenerator.input -> slopedNoiseGenerator.output -> panner -> envelopeGain -> gain -> destinationNode
-        source.connect(nodes.slopedNoiseGenerator.getInputNode());
-        nodes.slopedNoiseGenerator.getOutputNode().connect(nodes.panner);
-        nodes.panner.connect(nodes.envelopeGain);
-        nodes.envelopeGain.connect(nodes.gain);
-        
-        // Apply the distortion gain to each individual node's gain
-        // Initial gain value - will be modified by volumeDb in triggerDotEnvelope
-        nodes.gain.gain.value = MASTER_GAIN * this.distortionGain;
-        
-        // Connect to the single determined destination point
-        nodes.gain.connect(destinationNode);
-        
-        // Start with gain at minimum (silent)
-        nodes.envelopeGain.gain.value = ENVELOPE_MIN_GAIN;
-        
-        // Start playback
-        source.start();
-        
-        // Store the new source
-        nodes.source = source;
-      } catch (e) {
-        console.error(`Error starting source for dot ${dotKey}:`, e);
-      }
-    });
-  }
-
-  /**
-   * Stop all audio sources
-   */
-  private stopAllSources(): void {
-    this.audioNodes.forEach((nodes, dotKey) => {
-      try {
-        if (nodes.source) {
-          // Add a property to track if the source has been started
-          nodes.source.stop();
-          nodes.source.disconnect();
-        }
-      } catch (e) {
-        console.error(`Error stopping source for dot ${dotKey}:`, e);
-      }
-    });
-  }
-
-  /**
-   * Trigger the envelope for a specific dot with volume parameter
-   * @param dotKey The dot to trigger
-   * @param volumeDb Volume in dB to apply
-   */
-  // private triggerDotEnvelope(dotKey: string, volumeDb: number = 0): void { // RENAMING
-  private applyDotSoundParameters(dotKey: string, volumeDb: number = 0): void {
-    const nodes = this.audioNodes.get(dotKey);
-    if (!nodes) return;
-    
-    const ctx = audioContext.getAudioContext();
-    const now = ctx.currentTime;
-    const { slopedNoiseGenerator, normalizedY, gain: dotMainGain, envelopeGain: dotEnvelopeGain } = nodes;
-
-    // 1. Calculate and set the spectral slope
-    let targetOverallSlopeDbPerOctave;
-    if (normalizedY < 0.5) {
-      // Interpolate between LOW_SLOPE and CENTER_SLOPE
-      // normalizedY from 0 to 0.499... corresponds to t from 0 to 0.999...
-      const t = normalizedY * 2;
-      targetOverallSlopeDbPerOctave = LOW_SLOPE_DB_PER_OCT + t * (CENTER_SLOPE_DB_PER_OCT - LOW_SLOPE_DB_PER_OCT);
-    } else {
-      // Interpolate between CENTER_SLOPE and HIGH_SLOPE
-      // normalizedY from 0.5 to 1.0 corresponds to t from 0 to 1.0
-      const t = (normalizedY - 0.5) * 2;
-      targetOverallSlopeDbPerOctave = CENTER_SLOPE_DB_PER_OCT + t * (HIGH_SLOPE_DB_PER_OCT - CENTER_SLOPE_DB_PER_OCT);
-    }
-    slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
-    
-    // 2. Calculate release time based on normalizedY (which correlates with slope) -- REMOVING
-    // Low Y (darker slope, e.g. LOW_SLOPE_DB_PER_OCT) = longer release
-    // High Y (brighter slope, e.g. HIGH_SLOPE_DB_PER_OCT) = shorter release
-    // normalizedY: 0 (bottom, darkest) -> 1 (top, brightest)
-    // const releaseTime = ENVELOPE_RELEASE_LOW_FREQ + 
-    //   normalizedY * (ENVELOPE_RELEASE_HIGH_FREQ - ENVELOPE_RELEASE_LOW_FREQ);
-
-    // (The old frequency-dependent release calculation is removed)
-    // ... (omitting removed commented out code for brevity)
-    
-    // 3. Apply volume in dB to the dot's main gain node
-    // Calculate deviation from pink noise slope for additional attenuation
-    const slopeDeviation = Math.abs(targetOverallSlopeDbPerOctave - PINK_NOISE_SLOPE_DB_PER_OCT);
-    const additionalAttenuationDb = slopeDeviation * ATTENUATION_PER_DB_OCT_DEVIATION_DB;
-    const finalVolumeDb = volumeDb + additionalAttenuationDb;
-
-    const gainRatio = Math.pow(10, finalVolumeDb / 20);
-    dotMainGain.gain.cancelScheduledValues(now);
-    dotMainGain.gain.setValueAtTime(MASTER_GAIN * this.distortionGain * gainRatio, now);
-    
-    // 4. Sound On for dotEnvelopeGain (continuous, no ADSR, no scheduled silence)
-    dotEnvelopeGain.gain.cancelScheduledValues(now);
-    dotEnvelopeGain.gain.setValueAtTime(ENVELOPE_MAX_GAIN, now); // Turn sound on
-
-    // Clear any existing timeout for this dot before setting a new one -- REMOVING
-    // if (nodes.silenceTimeoutId !== null) {
-    //   clearTimeout(nodes.silenceTimeoutId);
-    // }
-
-    // Schedule the sound to turn off after DOT_ACTIVE_DURATION_S -- REMOVING
-    // nodes.silenceTimeoutId = window.setTimeout(() => {
-    //   if (audioContext.getAudioContext().state === 'running') { // Ensure context is still running
-    //     const turnOffTime = audioContext.getAudioContext().currentTime;
-    //     dotEnvelopeGain.gain.cancelScheduledValues(turnOffTime);
-    //     dotEnvelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, turnOffTime);
-    //   }
-    //   nodes.silenceTimeoutId = null; // Clear the ID once executed or if context closed
-    // }, DOT_ACTIVE_DURATION_S * 1000);
-
-    // ---- OLD ADSR ENVELOPE LOGIC - REMOVED ----
-    // ... (rest of removed ADSR logic)
-  }
-
-  /**
-   * Add a new dot to the audio system
-   */
-  private addDot(dotKey: string): void {
-    const [x, y] = dotKey.split(',').map(Number);
-    
-    // Create audio nodes for this dot
-    const ctx = audioContext.getAudioContext();
-    
-    // Normalize y to 0-1 range (0 = bottom, 1 = top)
-    const normalizedY = this.gridSize <= 1 ? 0.5 : 1 - (y / (this.gridSize - 1)); // Flip so higher y = higher position, handle single row case
-    
-    // Calculate the frequency for this position -- (This section is no longer needed as frequency is handled by SlopedPinkNoiseGenerator)
-    // const minFreq = 40;  // Lower minimum for better low-end
-    // const maxFreq = 15000; // Lower maximum to avoid harsh high-end
-    // const logMinFreq = Math.log2(minFreq);
-    // const logMaxFreq = Math.log2(maxFreq);
-    // const logFreqRange = logMaxFreq - logMinFreq;
-    // const centerFreq = Math.pow(2, logMinFreq + normalizedY * logFreqRange);
-    
-    // Create a gain node for volume
-    const gain = ctx.createGain();
-    gain.gain.value = MASTER_GAIN;
-    
-    // Create a panner node for stereo positioning
-    const panner = ctx.createStereoPanner();
-    
-    // Simple panning calculation that evenly distributes columns from -1 to 1
-    // First column (x=0) will be -1 (full left), last column will be 1 (full right)
-    const panPosition = this.columnCount <= 1 ? 0 : (2 * (x / (this.columnCount - 1)) - 1);
-    
-    panner.pan.value = panPosition;
-    
-    // Set Q value -- (No longer needed here, Q is fixed in SlopedPinkNoiseGenerator)
-    // const qValue = 6.0;
-    
-    // Create filter -- (No longer needed here, filters are in SlopedPinkNoiseGenerator)
-    // const filter = ctx.createBiquadFilter();
-    // filter.type = 'bandpass';
-    // filter.frequency.value = centerFreq;
-    // filter.Q.value = qValue;
-
-    // Create the sloped noise generator for this dot
-    const slopedNoiseGenerator = new SlopedPinkNoiseGenerator(ctx);
-    
-    // Store the nodes with simplified structure
-    this.audioNodes.set(dotKey, {
-      source: ctx.createBufferSource(), // Dummy source (will be replaced when playing)
-      gain,
-      envelopeGain: ctx.createGain(),
-      panner,
-      slopedNoiseGenerator, // Store the new generator instance
-      position: y * this.columnCount + x, // Store position for sorting
-      normalizedY, // Store normalized Y
-      pinkNoiseBuffer: this._generateSinglePinkNoiseBuffer(), // GENERATE and store per-dot buffer
-    });
-  }
-  
-  /**
-   * Remove a dot from the audio system
-   */
-  private removeDot(dotKey: string): void {
-    const nodes = this.audioNodes.get(dotKey);
-    if (!nodes) return;
-
-    // Ensure the dot is silenced if it has an envelopeGain
-    if (nodes.envelopeGain) {
-      const now = audioContext.getAudioContext().currentTime;
-      nodes.envelopeGain.gain.cancelScheduledValues(now);
-      nodes.envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, now);
-    }
-    
-    // Stop and disconnect the source if it's playing
-    if (this.isPlaying && nodes.source) {
-      try {
-        nodes.source.stop();
-        nodes.source.disconnect();
-      } catch (e) {
-        // Ignore errors when stopping
-        console.warn(`Warning when stopping source for dot ${dotKey}:`, e);
-      }
-    }
-
-    // Dispose the sloped noise generator
-    if (nodes.slopedNoiseGenerator) {
-      nodes.slopedNoiseGenerator.dispose();
-    }
-    
-    // Clear the dot's pink noise buffer reference
-    nodes.pinkNoiseBuffer = null;
-    
-    // Remove from the map
-    this.audioNodes.delete(dotKey);
+    this.audioService.deactivateAllPoints();
   }
 
   /**
@@ -658,7 +501,7 @@ class DotGridAudioPlayer {
    * @param dbLevel Volume level in dB (0dB = reference level)
    */
   public setVolumeDb(dbLevel: number): void {
-    this.baseDbLevel = dbLevel;
+    this.audioService.setBaseVolumeDb(dbLevel);
   }
 
   /**
@@ -667,7 +510,6 @@ class DotGridAudioPlayer {
   public dispose(): void {
     this.setPlaying(false);
     this.stopAllRhythms();
-    this.stopAllSources();
     
     // Ensure animation frames are cancelled
     if (this.animationFrameId !== null) {
@@ -686,20 +528,13 @@ class DotGridAudioPlayer {
       this.preEQAnalyser = null;
     }
     
-    // Dispose SlopedPinkNoiseGenerator for each dot
-    this.audioNodes.forEach(node => {
-      if (node.slopedNoiseGenerator) {
-        node.slopedNoiseGenerator.dispose();
-      }
-    });
-    
-    this.audioNodes.clear();
+    this.activeDotKeys.clear();
+    this.audioService.dispose(); // This correctly disposes all points within the service
   }
 
-  // Add method to handle distortion gain
+  // Add method to handle distortion gain -- Now delegates to service
   private setDistortionGain(gain: number): void {
-    // Clamp gain between 0 and 1
-    this.distortionGain = Math.max(0, Math.min(1, gain));
+    this.audioService.setDistortion(gain); 
   }
 }
 
