@@ -16,17 +16,24 @@ const MASTER_GAIN = 6.0; // Much louder master gain for calibration
 
 // New constants for Sloped Pink Noise
 const NUM_BANDS = 12; // Number of frequency bands for shaping
-const SLOPE_REF_FREQUENCY = 1000; // Hz, reference frequency for slope calculations
+const SLOPE_REF_FREQUENCY = 600; // Hz, reference frequency for slope calculations
 const MIN_AUDIBLE_FREQ = 20; // Hz
 const MAX_AUDIBLE_FREQ = 20000; // Hz
 const BAND_Q_VALUE = 1.5; // Q value for the bandpass filters (reduced from 6.0)
 const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
 
 // Target overall slopes
-const LOW_SLOPE_DB_PER_OCT = -7.5; // For low y positions (darker sound)
-const CENTER_SLOPE_DB_PER_OCT = -4.5; // For middle y positions
-const HIGH_SLOPE_DB_PER_OCT = -1.5; // For high y positions (brighter sound)
+const LOW_SLOPE_DB_PER_OCT = -9.0; // For low y positions (darker sound)
+const CENTER_SLOPE_DB_PER_OCT = -3.0; // For middle y positions
+const HIGH_SLOPE_DB_PER_OCT = 3.0; // For high y positions (brighter sound)
 const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of SlopedPinkNoiseGenerator (approx -12dB)
+
+// New constant for attenuation based on slope deviation from pink noise
+const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 0.0; // dB reduction per dB/octave deviation from -3dB/oct
+
+// New constant for sequential dot playback
+const DOT_ACTIVE_DURATION_S = 0.5; // Seconds each dot stays active in sequence
+const DOT_STAGGER_INTERVAL_S = 0.1; // Seconds between triggering each dot in the sequence for overlap
 
 // Analyzer settings
 const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
@@ -56,6 +63,10 @@ class DotGridAudioPlayer {
   
   // Animation frame properties
   private animationFrameId: number | null = null;
+  
+  // Properties for sequential dot playback
+  private currentDotIndex: number = 0;
+  private lastSwitchTime: number = 0;
   
   // Volume pattern properties -- REMOVING
   // private volumePatternIndex: number = 0; // Current position in volume pattern
@@ -358,14 +369,10 @@ class DotGridAudioPlayer {
    * Start all rhythm timers - using requestAnimationFrame
    */
   private startAllRhythms(): void {
-    // Initialize animation frame properties
-    this.animationFrameId = null;
-    
-    // Initialize timing system
-    // this.lastTriggerTime = performance.now() / 1000; // No longer needed for re-triggering logic
-    
-    // Reset volume pattern index -- REMOVING
-    // this.volumePatternIndex = 0;
+    if (this.animationFrameId !== null) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
     
     // Get initial volume from pattern -- REMOVING (use baseDbLevel)
     // const initialVolumeDb = this.baseDbLevel + VOLUME_PATTERN[this.volumePatternIndex];
@@ -385,13 +392,75 @@ class DotGridAudioPlayer {
     
     if (orderedDots.length === 0) return;
     
-    // New logic: Apply sound parameters to all active dots once.
+    // New logic: Apply sound parameters to all active dots once. -- REPLACING WITH SEQUENCER
+    // if (!this.isPlaying) return;
+    // orderedDots.forEach(dotKey => {
+    //   if (this.audioNodes.has(dotKey)) {
+    //     this.applyDotSoundParameters(dotKey, initialVolumeDb); // initialVolumeDb is now this.baseDbLevel
+    //   }
+    // });
+
     if (!this.isPlaying) return;
-    orderedDots.forEach(dotKey => {
-      if (this.audioNodes.has(dotKey)) {
-        this.applyDotSoundParameters(dotKey, initialVolumeDb); // initialVolumeDb is now this.baseDbLevel
-      }
+
+    // Ensure all dots are initially silent (their envelopeGain is min)
+    const nowCtxTime = audioContext.getAudioContext().currentTime;
+    this.audioNodes.forEach(nodes => {
+      nodes.envelopeGain.gain.cancelScheduledValues(nowCtxTime);
+      nodes.envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, nowCtxTime);
     });
+
+    this.currentDotIndex = 0;
+    this.lastSwitchTime = performance.now() / 1000; // Use performance.now for timing animation frames
+
+    // Activate the first dot immediately
+    if (orderedDots.length > 0 && this.audioNodes.has(orderedDots[this.currentDotIndex])) {
+      this.applyDotSoundParameters(orderedDots[this.currentDotIndex], initialVolumeDb);
+      // Prepare for the loop: advance index for the *next* trigger in the frame loop
+      this.currentDotIndex = (this.currentDotIndex + 1) % orderedDots.length; 
+    }
+
+    const frameLoop = (timestamp: number) => {
+      if (!this.isPlaying) return;
+
+      const now = timestamp / 1000;
+      // Check if it's time to trigger the NEXT dot in the sequence
+      if (now - this.lastSwitchTime >= DOT_STAGGER_INTERVAL_S) {
+        // const currentCtxTime = audioContext.getAudioContext().currentTime; // Not needed here
+
+        // Silence the previous dot -- REMOVING THIS. Each dot plays its full envelope.
+        // const prevDotKey = orderedDots[this.currentDotIndex]; // This logic is now incorrect for currentDotIndex
+        // const prevNodes = this.audioNodes.get(prevDotKey);
+        // if (prevNodes) {
+        //   prevNodes.envelopeGain.gain.cancelScheduledValues(currentCtxTime);
+        //   prevNodes.envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, currentCtxTime);
+        // }
+
+        // Activate the current dot in the sequence
+        if (orderedDots.length > 0) { // Check if still dots, e.g. if all were removed mid-sequence
+          const dotToTriggerKey = orderedDots[this.currentDotIndex];
+          if (this.audioNodes.has(dotToTriggerKey)) {
+            this.applyDotSoundParameters(dotToTriggerKey, initialVolumeDb);
+          }
+          // Advance index for the next trigger
+          this.currentDotIndex = (this.currentDotIndex + 1) % orderedDots.length;
+        }
+        
+        this.lastSwitchTime = now; // Or this.lastSwitchTime += DOT_STAGGER_INTERVAL_S for precision
+      }
+      
+      this.animationFrameId = requestAnimationFrame(frameLoop);
+    };
+
+    // Start the loop only if there are dots to play
+    if (orderedDots.length > 0) {
+      this.animationFrameId = requestAnimationFrame(frameLoop);
+    } else {
+      // If no dots, ensure any lingering animation frame is cancelled
+      if (this.animationFrameId !== null) {
+        cancelAnimationFrame(this.animationFrameId);
+        this.animationFrameId = null;
+      }
+    }
   }
   
   /**
@@ -532,29 +601,42 @@ class DotGridAudioPlayer {
     // ... (omitting removed commented out code for brevity)
     
     // 3. Apply volume in dB to the dot's main gain node
-    const gainRatio = Math.pow(10, volumeDb / 20);
+    // Calculate deviation from pink noise slope for additional attenuation
+    const slopeDeviation = Math.abs(targetOverallSlopeDbPerOctave - PINK_NOISE_SLOPE_DB_PER_OCT);
+    const additionalAttenuationDb = slopeDeviation * ATTENUATION_PER_DB_OCT_DEVIATION_DB;
+    const finalVolumeDb = volumeDb + additionalAttenuationDb;
+
+    const gainRatio = Math.pow(10, finalVolumeDb / 20);
     dotMainGain.gain.cancelScheduledValues(now);
     dotMainGain.gain.setValueAtTime(MASTER_GAIN * this.distortionGain * gainRatio, now);
     
-    // 4. ADSR Envelope on the envelopeGain node -- SIMPLIFYING to set gain to max
+    // 4. ADSR Envelope on the envelopeGain node
     dotEnvelopeGain.gain.cancelScheduledValues(now);
-    // dotEnvelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, now); // Start at min is not needed for continuous sound
-    dotEnvelopeGain.gain.setValueAtTime(ENVELOPE_MAX_GAIN, now); // Set to max gain directly
+    dotEnvelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, now); // Start at min
     
-    // Attack -- REMOVING
-    // dotEnvelopeGain.gain.linearRampToValueAtTime(
-    //   ENVELOPE_MAX_GAIN, 
-    //   now + ENVELOPE_ATTACK
-    // );
+    // Calculate release time based on normalizedY (which correlates with slope)
+    // Low Y (darker slope) = longer release, High Y (brighter slope) = shorter release
+    const releaseTime = ENVELOPE_RELEASE_LOW_FREQ + 
+      normalizedY * (ENVELOPE_RELEASE_HIGH_FREQ - ENVELOPE_RELEASE_LOW_FREQ);
     
-    // Release -- REMOVING
-    // dotEnvelopeGain.gain.exponentialRampToValueAtTime(
-    //   0.001, // Can't go to zero with exponentialRamp, use very small value
-    //   now + ENVELOPE_ATTACK + releaseTime
-    // );
+    // Attack
+    dotEnvelopeGain.gain.linearRampToValueAtTime(
+      ENVELOPE_MAX_GAIN, 
+      now + ENVELOPE_ATTACK
+    );
     
-    // Finally set to zero after the exponential ramp -- REMOVING
-    // dotEnvelopeGain.gain.setValueAtTime(0, now + ENVELOPE_ATTACK + releaseTime + 0.001);
+    // Release - Ensure release doesn't go beyond the dot's active duration too much, 
+    // though the hard cut-off in startAllRhythms will truncate it if it's longer.
+    // For a 0.5s slot, a long release might be mostly cut off.
+    const effectiveReleaseTime = releaseTime; // For now, use full calculated release
+
+    dotEnvelopeGain.gain.exponentialRampToValueAtTime(
+      0.001, // Can't go to zero with exponentialRamp, use very small value
+      now + ENVELOPE_ATTACK + effectiveReleaseTime
+    );
+    
+    // Finally set to zero after the exponential ramp
+    dotEnvelopeGain.gain.setValueAtTime(0, now + ENVELOPE_ATTACK + effectiveReleaseTime + 0.001);
   }
 
   /**
