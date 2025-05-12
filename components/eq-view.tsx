@@ -92,7 +92,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const [numShapeDots, setNumShapeDots] = useState(12); // Default number of dots for the shape tool
 
   // New state for dot grid sub-hit playback toggle
-  const [isSubHitPlaybackEnabled, setIsSubHitPlaybackEnabled] = useState(true);
+  const [isSubHitPlaybackEnabled, setIsSubHitPlaybackEnabled] = useState(false); // Default false
 
   // Detect mobile devices
   useEffect(() => {
