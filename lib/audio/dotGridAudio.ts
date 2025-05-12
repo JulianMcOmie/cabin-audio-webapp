@@ -31,6 +31,10 @@ const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of Slope
 // New constant for attenuation based on slope deviation from pink noise
 const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 0.0; // dB reduction per dB/octave deviation from -3dB/oct
 
+// Constants for sequential playback with click prevention
+const DOT_DURATION_S = 0.5; // Each dot plays for this duration
+const CLICK_PREVENTION_ENVELOPE_TIME = 0.005; // Short attack/release to prevent clicks
+
 // Analyzer settings
 const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
 const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
@@ -183,18 +187,23 @@ class PositionedAudioService {
 
     // Set main gain
     const gainRatio = Math.pow(10, this.currentBaseDbLevel / 20);
-    point.mainGain.gain.setValueAtTime(MASTER_GAIN * this.currentDistortionGain * gainRatio, this.ctx.currentTime);
+    // Apply MASTER_GAIN, distortion, and base level to mainGain
+    const effectiveMasterGain = MASTER_GAIN * this.currentDistortionGain * gainRatio;
+    point.mainGain.gain.setValueAtTime(effectiveMasterGain, this.ctx.currentTime);
 
-    // Activate sound
+    // Activate sound with a very short attack to prevent clicks
     point.envelopeGain.gain.cancelScheduledValues(this.ctx.currentTime);
-    point.envelopeGain.gain.setValueAtTime(ENVELOPE_MAX_GAIN, this.ctx.currentTime);
+    point.envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, this.ctx.currentTime);
+    point.envelopeGain.gain.linearRampToValueAtTime(ENVELOPE_MAX_GAIN, this.ctx.currentTime + CLICK_PREVENTION_ENVELOPE_TIME);
   }
 
   public deactivatePoint(id: string): void {
     const point = this.audioPoints.get(id);
     if (!point) return;
+    // Deactivate with a very short release to prevent clicks
     point.envelopeGain.gain.cancelScheduledValues(this.ctx.currentTime);
-    point.envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, this.ctx.currentTime);
+    point.envelopeGain.gain.setValueAtTime(point.envelopeGain.gain.value, this.ctx.currentTime); // Hold current value before ramping
+    point.envelopeGain.gain.linearRampToValueAtTime(ENVELOPE_MIN_GAIN, this.ctx.currentTime + CLICK_PREVENTION_ENVELOPE_TIME);
   }
   
   public deactivateAllPoints(): void {
@@ -214,18 +223,22 @@ class DotGridAudioPlayer {
   private activeDotKeys: Set<string> = new Set(); // To track which dots are selected
   private audioService: PositionedAudioService;
 
+  // Properties for sequential playback
+  private currentDotIndex: number = 0;
+  private lastSwitchTime: number = 0;
+
   private gridSize: number = 3;
   private columnCount: number = COLUMNS;
   private preEQAnalyser: AnalyserNode | null = null;
   private preEQGain: GainNode | null = null;
   private animationFrameId: number | null = null; // Keep for now if any other visual might use it
-
+  
   private constructor() {
     this.audioService = new PositionedAudioService(audioContext.getAudioContext());
     
     const initialDistortionGain = useEQProfileStore.getState().distortionGain;
     this.audioService.setDistortion(initialDistortionGain);
-
+    
     useEQProfileStore.subscribe(
       (state) => {
         this.audioService.setDistortion(state.distortionGain);
@@ -422,7 +435,7 @@ class DotGridAudioPlayer {
     
     const oldDotKeys = new Set(this.activeDotKeys);
     this.activeDotKeys = new Set(dots);
-
+    
     // Remove dots that are no longer selected
     oldDotKeys.forEach(dotKey => {
       if (!this.activeDotKeys.has(dotKey)) {
@@ -444,11 +457,13 @@ class DotGridAudioPlayer {
     });
     
     if (this.isPlaying) {
-      // Deactivate all points first, then activate only the current ones
-      this.audioService.deactivateAllPoints(); 
-      this.activeDotKeys.forEach(dotKey => {
-        this.audioService.activatePoint(dotKey);
-      });
+      // Deactivate all points first, then activate only the current ones -- REVISING THIS BLOCK
+      // this.audioService.deactivateAllPoints(); 
+      // this.activeDotKeys.forEach(dotKey => {
+      //   this.audioService.activatePoint(dotKey);
+      // });
+      this.stopAllRhythms();  // This will call audioService.deactivateAllPoints()
+      this.startAllRhythms(); // This will restart the sequence with the new activeDotKeys
     }
   }
 
@@ -475,14 +490,73 @@ class DotGridAudioPlayer {
   private startAllRhythms(): void {
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
-      this.animationFrameId = null;
+    this.animationFrameId = null;
     }
     
     if (!this.isPlaying) return;
 
-    this.activeDotKeys.forEach(dotKey => {
-        this.audioService.activatePoint(dotKey);
+    const orderedDots = Array.from(this.activeDotKeys).sort((keyA, keyB) => {
+        const [xA, yA] = keyA.split(',').map(Number);
+        const [xB, yB] = keyB.split(',').map(Number);
+        if (yA !== yB) return yA - yB;
+        return xA - xB;
     });
+
+    if (orderedDots.length === 0) {
+      // Ensure any lingering animation frame is cancelled if no dots to play
+      if (this.animationFrameId !== null) {
+        cancelAnimationFrame(this.animationFrameId);
+        this.animationFrameId = null;
+      }
+      return;
+    }
+    
+    // Deactivate all points before starting sequence to ensure clean state
+    // This is important if startAllRhythms is called while some points might still be active from a previous state.
+    this.audioService.deactivateAllPoints();
+
+    this.currentDotIndex = 0;
+    this.lastSwitchTime = performance.now() / 1000;
+
+    // Activate the first dot immediately
+    if (this.audioService.activatePoint) { // Check if method exists, good practice
+        this.audioService.activatePoint(orderedDots[this.currentDotIndex]);
+    }
+
+    const frameLoop = (timestamp: number) => {
+      if (!this.isPlaying || orderedDots.length === 0) {
+        // If playback stopped or no dots, ensure any lingering frame is cancelled
+        if (this.animationFrameId !== null) {
+            cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+        }
+        return;
+      }
+      
+      const now = timestamp / 1000;
+      const elapsedSinceSwitch = now - this.lastSwitchTime;
+
+      if (elapsedSinceSwitch >= DOT_DURATION_S) {
+        // Deactivate the previous dot
+        if (this.audioService.deactivatePoint) {
+            this.audioService.deactivatePoint(orderedDots[this.currentDotIndex]);
+        }
+
+        // Move to the next dot
+        this.currentDotIndex = (this.currentDotIndex + 1) % orderedDots.length;
+        
+        // Activate the new current dot
+        if (this.audioService.activatePoint) {
+            this.audioService.activatePoint(orderedDots[this.currentDotIndex]);
+        }
+        
+        this.lastSwitchTime = now;
+      }
+      
+      this.animationFrameId = requestAnimationFrame(frameLoop);
+    };
+    
+    this.animationFrameId = requestAnimationFrame(frameLoop);
   }
   
   /**
@@ -493,6 +567,7 @@ class DotGridAudioPlayer {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
     }
+    // Deactivate all points using the click-prevention envelope
     this.audioService.deactivateAllPoints();
   }
 
