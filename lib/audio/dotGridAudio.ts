@@ -15,7 +15,7 @@ const ENVELOPE_RELEASE_HIGH_FREQ = 0.02; // Release time for highest frequencies
 const MASTER_GAIN = 6.0; // Much louder master gain for calibration
 
 // New constants for Sloped Pink Noise
-const NUM_BANDS = 12; // Number of frequency bands for shaping
+const NUM_BANDS = 20; // Number of frequency bands for shaping
 const SLOPE_REF_FREQUENCY = 800; // Hz, reference frequency for slope calculations
 const MIN_AUDIBLE_FREQ = 20; // Hz
 const MAX_AUDIBLE_FREQ = 20000; // Hz
@@ -29,7 +29,7 @@ const HIGH_SLOPE_DB_PER_OCT = 20; // For high y positions (brighter sound)
 const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of SlopedPinkNoiseGenerator (approx -12dB)
 
 // New constant for attenuation based on slope deviation from pink noise
-const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 3.5; // dB reduction per dB/octave deviation from -3dB/oct
+const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 4.0; // dB reduction per dB/octave deviation from -3dB/oct
 
 // Constants for sequential playback with click prevention
 const DOT_DURATION_S = 1.0; // Each dot plays for this duration
@@ -70,7 +70,8 @@ class PositionedAudioService {
   private outputGain: GainNode;
   private currentDistortionGain: number = 1.0;
   private currentBaseDbLevel: number = 0;
-  private envelopeEnabled: boolean = true; // New: Toggle for ADSR envelope
+  private subHitAdsrEnabled: boolean = true; // Renamed from envelopeEnabled
+  private subHitPlaybackEnabled: boolean = true; // New: Toggle for sub-hit mechanism
 
   constructor(audioContextInstance: AudioContext) {
     this.ctx = audioContextInstance;
@@ -122,15 +123,19 @@ class PositionedAudioService {
     this.currentBaseDbLevel = db;
   }
 
-  public setEnvelopeMode(enabled: boolean): void {
-    this.envelopeEnabled = enabled;
+  public setSubHitAdsrMode(enabled: boolean): void { // Renamed from setEnvelopeMode
+    this.subHitAdsrEnabled = enabled;
+  }
+
+  public setSubHitPlaybackMode(enabled: boolean): void { // New method
+    this.subHitPlaybackEnabled = enabled;
   }
 
   private _triggerSubHitAdsr(pointNode: PointAudioNodes, scheduledTime: number): void {
     const now = scheduledTime; 
     const gainParam = pointNode.envelopeGain.gain;
 
-    if (this.envelopeEnabled) {
+    if (this.subHitAdsrEnabled) { // Use renamed flag
       // Calculate a fixed release time for sub-hits.
       // This makes each sub-hit "last longer" by filling most of its interval,
       // and "take the same amount of time" by not varying with y-position.
@@ -152,7 +157,7 @@ class PositionedAudioService {
       // Ensure silence after release (small offset after ramp)
       gainParam.setValueAtTime(ENVELOPE_MIN_GAIN, now + ENVELOPE_ATTACK + releaseTime + 0.001);
     } else {
-      // Envelope disabled: set gain to max and hold until deactivatePoint is called.
+      // ADSR disabled: set gain to max and hold until deactivatePoint is called.
       gainParam.cancelScheduledValues(now);
       gainParam.setValueAtTime(ENVELOPE_MAX_GAIN, now);
     }
@@ -230,6 +235,24 @@ class PositionedAudioService {
     const point = this.audioPoints.get(id);
     if (!point) return;
 
+    // --- Check if sub-hit playback is disabled --- 
+    if (!this.subHitPlaybackEnabled) {
+      // If disabled, just set envelope gain to max and skip sub-hit scheduling
+      const now = this.ctx.currentTime;
+      point.envelopeGain.gain.cancelScheduledValues(now);
+      point.envelopeGain.gain.setValueAtTime(ENVELOPE_MAX_GAIN, now);
+      
+      // Ensure any residual timer is cleared (shouldn't be necessary but safe)
+      if (point.subHitTimerId !== null) {
+          clearTimeout(point.subHitTimerId);
+          point.subHitTimerId = null;
+      }
+      // Set main gain (still needed for overall volume/slope)
+      this.setMainGainAndSlope(point); // Extract main gain/slope setting to helper
+      return; // Skip sub-hit logic
+    }
+    // --- End check ---
+
     // Clear any pending sub-hit timer from a previous activation or interruption
     if (point.subHitTimerId !== null) {
       clearTimeout(point.subHitTimerId);
@@ -249,7 +272,7 @@ class PositionedAudioService {
     point.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
 
     // Set main gain (once per main activation)
-    const slopeDeviation = Math.abs(targetOverallSlopeDbPerOctave - PINK_NOISE_SLOPE_DB_PER_OCT);
+    const slopeDeviation = Math.abs(targetOverallSlopeDbPerOctave - CENTER_SLOPE_DB_PER_OCT);
     const additionalAttenuationDb = -slopeDeviation * ATTENUATION_PER_DB_OCT_DEVIATION_DB; 
     const finalVolumeDb = this.currentBaseDbLevel + additionalAttenuationDb;
     const gainRatio = Math.pow(10, finalVolumeDb / 20);
@@ -312,17 +335,13 @@ class PositionedAudioService {
     const point = this.audioPoints.get(id);
     if (!point) return;
 
-    // Stop any pending sub-hit sequence for this point
+    // Stop any pending sub-hit sequence timer for this point
     if (point.subHitTimerId !== null) {
       clearTimeout(point.subHitTimerId);
       point.subHitTimerId = null; // Explicitly mark timer as cleared
     }
-    // point.subHitCount = NUM_SUB_HITS; // This line is less critical now with the new scheduling,
-                                      // as the clearTimeout above is the primary stop mechanism for future scheduled JS.
-                                      // Keeping it doesn't harm, might prevent edge cases if a timeout still fires.
-                                      // For clarity, let's rely on subHitTimerId being null.
 
-    // Deactivate with a very short release to prevent clicks on whatever the current gain is
+    // Deactivate by ramping envelopeGain down quickly, regardless of previous state
     const now = this.ctx.currentTime;
     point.envelopeGain.gain.cancelScheduledValues(now);
     point.envelopeGain.gain.setValueAtTime(point.envelopeGain.gain.value, now); // Hold current value
@@ -343,6 +362,39 @@ class PositionedAudioService {
     });
     // this.audioPoints.forEach((_, id) => this.removePoint(id)); // Original line
     this.outputGain.disconnect();
+  }
+
+  // Helper method to set main gain and slope (used in activatePoint)
+  private setMainGainAndSlope(point: PointAudioNodes): void {
+    let targetOverallSlopeDbPerOctave;
+    if (point.normalizedYPos < 0.5) {
+      const t = point.normalizedYPos * 2;
+      targetOverallSlopeDbPerOctave = LOW_SLOPE_DB_PER_OCT + t * (CENTER_SLOPE_DB_PER_OCT - LOW_SLOPE_DB_PER_OCT);
+    } else {
+      const t = (point.normalizedYPos - 0.5) * 2;
+      targetOverallSlopeDbPerOctave = CENTER_SLOPE_DB_PER_OCT + t * (HIGH_SLOPE_DB_PER_OCT - CENTER_SLOPE_DB_PER_OCT);
+    }
+    point.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
+
+    const slopeDeviation = Math.abs(targetOverallSlopeDbPerOctave - CENTER_SLOPE_DB_PER_OCT);
+    const additionalAttenuationDb = -slopeDeviation * ATTENUATION_PER_DB_OCT_DEVIATION_DB;
+    const finalVolumeDb = this.currentBaseDbLevel + additionalAttenuationDb;
+    const gainRatio = Math.pow(10, finalVolumeDb / 20);
+    const effectiveMasterGain = MASTER_GAIN * this.currentDistortionGain * gainRatio;
+    point.mainGain.gain.setValueAtTime(effectiveMasterGain, this.ctx.currentTime);
+  }
+
+  public setSubHitAdsrEnabled(enabled: boolean): void { // Renamed from setEnvelopeEnabled
+    this.audioService.setSubHitAdsrMode(enabled);
+  }
+
+  public setSubHitPlaybackEnabled(enabled: boolean): void { // New method
+    this.audioService.setSubHitPlaybackMode(enabled);
+  }
+
+  // Add method to handle distortion gain -- Now delegates to service
+  private setDistortionGain(gain: number): void {
+    this.audioService.setDistortion(gain); 
   }
 }
 
@@ -784,8 +836,12 @@ class DotGridAudioPlayer {
     this.audioService.setDistortion(gain); 
   }
 
-  public setEnvelopeEnabled(enabled: boolean): void {
-    this.audioService.setEnvelopeMode(enabled);
+  public setSubHitAdsrEnabled(enabled: boolean): void { // Renamed from setEnvelopeEnabled
+    this.audioService.setSubHitAdsrMode(enabled);
+  }
+
+  public setSubHitPlaybackEnabled(enabled: boolean): void { // New method
+    this.audioService.setSubHitPlaybackMode(enabled);
   }
 }
 

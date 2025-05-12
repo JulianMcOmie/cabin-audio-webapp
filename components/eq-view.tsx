@@ -21,6 +21,8 @@ import { DotCalibration } from "@/components/dot-grid"
 import { GlyphGrid } from "@/components/glyph-grid"
 import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
+import { Switch } from "@/components/ui/switch"
+import { Label } from "@/components/ui/label"
 
 interface EQViewProps {
 //   isPlaying: boolean
@@ -88,6 +90,9 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   // New states for the Shape Tool
   const [shapeToolPlaying, setShapeToolPlaying] = useState(false);
   const [numShapeDots, setNumShapeDots] = useState(12); // Default number of dots for the shape tool
+
+  // New state for dot grid sub-hit playback toggle
+  const [isSubHitPlaybackEnabled, setIsSubHitPlaybackEnabled] = useState(true);
 
   // Detect mobile devices
   useEffect(() => {
@@ -491,6 +496,22 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   </div>
                 </div>
               )}
+              {/* Add toggle for sub-hit playback below the grid content, only when dot grid is active */}
+              {activeGrid === "dot" && (
+                <div className="flex items-center justify-center space-x-2 mt-4">
+                  <Switch
+                    id="subhit-toggle"
+                    checked={isSubHitPlaybackEnabled}
+                    onCheckedChange={(checked) => {
+                      setIsSubHitPlaybackEnabled(checked);
+                      dotGridAudio.getDotGridAudioPlayer().setSubHitPlaybackEnabled(checked);
+                    }}
+                  />
+                  <Label htmlFor="subhit-toggle" className="text-sm">
+                    Pulsing Hits
+                  </Label>
+                </div>
+              )}
             </div>
             
             {/* Play button moved to bottom of grid section */}
@@ -505,18 +526,24 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                             : (shapeToolPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")}
                 onClick={() => {
                   if (activeGrid === "line") {
-                    setGlyphGridPlaying(!glyphGridPlaying);
-                    if (dotGridPlaying) setDotGridPlaying(false);
-                    if (shapeToolPlaying) setShapeToolPlaying(false);
-                    if (!glyphGridPlaying && isMusicPlaying) setMusicPlaying(false);
+                    const nextPlayingState = !glyphGridPlaying;
+                    setGlyphGridPlaying(nextPlayingState);
+                    if (nextPlayingState) { // If starting glyph
+                      if (dotGridPlaying) setDotGridPlaying(false);
+                      if (shapeToolPlaying) setShapeToolPlaying(false);
+                      if (isMusicPlaying) setMusicPlaying(false);
+                    }
                   } else if (activeGrid === "dot") {
-                    handleDotGridPlayToggle();
-                    if (shapeToolPlaying) setShapeToolPlaying(false);
-                  } else {
-                    setShapeToolPlaying(!shapeToolPlaying);
-                    if (dotGridPlaying) setDotGridPlaying(false);
-                    if (glyphGridPlaying) setGlyphGridPlaying(false);
-                    if (!shapeToolPlaying && isMusicPlaying) setMusicPlaying(false);
+                    // handleDotGridPlayToggle already handles stopping other modes
+                    handleDotGridPlayToggle(); 
+                  } else { // activeGrid === "shape"
+                    const nextPlayingState = !shapeToolPlaying;
+                    setShapeToolPlaying(nextPlayingState);
+                    if (nextPlayingState) { // If starting shape
+                      if (dotGridPlaying) setDotGridPlaying(false);
+                      if (glyphGridPlaying) setGlyphGridPlaying(false);
+                      if (isMusicPlaying) setMusicPlaying(false);
+                    }
                   }
                 }}
               >
