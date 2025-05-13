@@ -17,14 +17,10 @@ const MASTER_GAIN = 6.0; // Much louder master gain for calibration
 // New constants for Sloped Pink Noise
 const NUM_BANDS = 20; // Number of frequency bands for shaping
 const SLOPE_REF_FREQUENCY = 800; // Hz, reference frequency for slope calculations
-// const MIN_AUDIBLE_FREQ = 20; // Hz - Replaced by OVERALL_MIN_FREQ
-// const MAX_AUDIBLE_FREQ = 20000; // Hz - Replaced by OVERALL_MAX_FREQ
+const MIN_AUDIBLE_FREQ = 20; // Hz
+const MAX_AUDIBLE_FREQ = 20000; // Hz
 const BAND_Q_VALUE = 1.5; // Q value for the bandpass filters (reduced from 6.0)
 const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
-
-// New constants for configurable overall frequency range
-const OVERALL_MIN_FREQ = 400; // Hz - Minimum frequency for the soundstage
-const OVERALL_MAX_FREQ = 4000; // Hz - Maximum frequency for the soundstage
 
 // Target overall slopes
 const LOW_SLOPE_DB_PER_OCT = -24.5; // For low y positions (darker sound)
@@ -71,9 +67,7 @@ interface PointAudioNodes {
 class PositionedAudioService {
   private ctx: AudioContext;
   private audioPoints: Map<string, PointAudioNodes> = new Map();
-  private outputGain: GainNode; // This node sums the output of all panners
-  private overallHighPass: BiquadFilterNode; // Final high-pass filter
-  private overallLowPass: BiquadFilterNode; // Final low-pass filter (the actual output node)
+  private outputGain: GainNode;
   private currentDistortionGain: number = 1.0;
   private currentBaseDbLevel: number = 0;
   private subHitAdsrEnabled: boolean = true; // Renamed from envelopeEnabled
@@ -83,22 +77,6 @@ class PositionedAudioService {
     this.ctx = audioContextInstance;
     this.outputGain = this.ctx.createGain();
     this.outputGain.gain.value = 1.0; // Master output for this service
-
-    // Create and configure final output filters
-    this.overallHighPass = this.ctx.createBiquadFilter();
-    this.overallHighPass.type = 'highpass';
-    this.overallHighPass.frequency.value = OVERALL_MIN_FREQ;
-    // Q value for high/low pass often lower, 1 is common
-    this.overallHighPass.Q.value = 1;
-
-    this.overallLowPass = this.ctx.createBiquadFilter();
-    this.overallLowPass.type = 'lowpass';
-    this.overallLowPass.frequency.value = OVERALL_MAX_FREQ;
-    this.overallLowPass.Q.value = 1;
-
-    // Connect the summing gain to the filters
-    this.outputGain.connect(this.overallHighPass);
-    this.overallHighPass.connect(this.overallLowPass);
   }
 
   // Moved from DotGridAudioPlayer
@@ -132,8 +110,8 @@ class PositionedAudioService {
     return buffer;
   }
 
-  public getOutputNode(): AudioNode { // Return type is AudioNode as it's the lowpass filter
-    return this.overallLowPass; // The final output is the low-pass filter
+  public getOutputNode(): GainNode {
+    return this.outputGain;
   }
 
   // More methods (addPoint, removePoint, activatePoint, etc.) will be added here later
@@ -383,10 +361,7 @@ class PositionedAudioService {
         this.removePoint(id);
     });
     // this.audioPoints.forEach((_, id) => this.removePoint(id)); // Original line
-    // Disconnect the summing node and the final filters
-    this.outputGain.disconnect(); 
-    this.overallHighPass.disconnect();
-    // this.overallLowPass is the final output, it gets disconnected elsewhere
+    this.outputGain.disconnect();
   }
 
   // Helper method to set main gain and slope (used in activatePoint)
@@ -884,31 +859,13 @@ class SlopedPinkNoiseGenerator {
     this.outputGainNode = this.ctx.createGain();
     this.outputGainNode.gain.value = SLOPED_NOISE_OUTPUT_GAIN_SCALAR; // Apply output gain reduction
 
-    // Use the new OVERALL frequency constants for band calculation
-    const logMinFreq = Math.log2(OVERALL_MIN_FREQ);
-    const logMaxFreq = Math.log2(OVERALL_MAX_FREQ);
-    
-    // Ensure min < max to prevent errors
-    if (logMinFreq >= logMaxFreq) {
-        console.error("SlopedPinkNoiseGenerator: OVERALL_MIN_FREQ must be less than OVERALL_MAX_FREQ.");
-        // Provide default fallback frequencies for bands if range is invalid
-        const defaultMin = Math.log2(20);
-        const defaultMax = Math.log2(20000);
-        const defaultStep = (defaultMax - defaultMin) / (NUM_BANDS + 1);
-        for (let i = 0; i < NUM_BANDS; i++) {
-            this.centerFrequencies.push(Math.pow(2, defaultMin + (i + 1) * defaultStep));
-        }
-    } else {
-        const step = (logMaxFreq - logMinFreq) / (NUM_BANDS + 1);
-        for (let i = 0; i < NUM_BANDS; i++) {
-          const centerFreq = Math.pow(2, logMinFreq + (i + 1) * step);
-          this.centerFrequencies.push(centerFreq);
-        }
-    }
+    const logMinFreq = Math.log2(MIN_AUDIBLE_FREQ);
+    const logMaxFreq = Math.log2(MAX_AUDIBLE_FREQ);
+    const step = (logMaxFreq - logMinFreq) / (NUM_BANDS + 1);
 
-    // Create filters and gains based on calculated/default center frequencies
     for (let i = 0; i < NUM_BANDS; i++) {
-      const centerFreq = this.centerFrequencies[i];
+      const centerFreq = Math.pow(2, logMinFreq + (i + 1) * step);
+      this.centerFrequencies.push(centerFreq);
 
       const filter = this.ctx.createBiquadFilter();
       filter.type = 'bandpass';
