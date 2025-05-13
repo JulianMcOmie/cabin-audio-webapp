@@ -25,7 +25,7 @@ const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
 // Target overall slopes
 const LOW_SLOPE_DB_PER_OCT = -9; // For low y positions (darker sound)
 const CENTER_SLOPE_DB_PER_OCT = -4.5; // For middle y positions
-const HIGH_SLOPE_DB_PER_OCT = 4.5; // For high y positions (brighter sound)
+const HIGH_SLOPE_DB_PER_OCT = 0; // For high y positions (brighter sound)
 const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of SlopedPinkNoiseGenerator (approx -12dB)
 
 // New constant for attenuation based on slope deviation from pink noise
@@ -129,6 +129,10 @@ class PositionedAudioService {
 
   public setSubHitPlaybackMode(enabled: boolean): void { // New method
     this.subHitPlaybackEnabled = enabled;
+  }
+
+  public isSubHitPlaybackEnabled(): boolean { // New getter
+    return this.subHitPlaybackEnabled;
   }
 
   private _triggerSubHitAdsr(pointNode: PointAudioNodes, scheduledTime: number): void {
@@ -376,9 +380,19 @@ class PositionedAudioService {
     }
     point.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
 
-    const slopeDeviation = Math.abs(targetOverallSlopeDbPerOctave - CENTER_SLOPE_DB_PER_OCT);
-    const additionalAttenuationDb = -slopeDeviation * ATTENUATION_PER_DB_OCT_DEVIATION_DB;
-    const finalVolumeDb = this.currentBaseDbLevel + additionalAttenuationDb;
+    // Existing attenuation based on deviation from CENTER_SLOPE_DB_PER_OCT
+    const slopeDeviationForAttenuation = Math.abs(targetOverallSlopeDbPerOctave - CENTER_SLOPE_DB_PER_OCT);
+    const existingAttenuationDb = -slopeDeviationForAttenuation * ATTENUATION_PER_DB_OCT_DEVIATION_DB;
+
+    // New additional boost calculation based on normalizedYPos extremity
+    const MAX_ADDITIONAL_BOOST_DB = 6.0;
+    // extremityFactor goes from 0 (at center y=0.5) to 1 (at extremes y=0 or y=1)
+    const extremityFactor = Math.abs(point.normalizedYPos - 0.5) * 2;
+    const additionalSlopeBoostDb = extremityFactor * MAX_ADDITIONAL_BOOST_DB;
+
+    // Combine base level, existing attenuation, and new boost
+    const finalVolumeDb = this.currentBaseDbLevel + existingAttenuationDb + additionalSlopeBoostDb;
+    
     const gainRatio = Math.pow(10, finalVolumeDb / 20);
     const effectiveMasterGain = MASTER_GAIN * this.currentDistortionGain * gainRatio;
     point.mainGain.gain.setValueAtTime(effectiveMasterGain, this.ctx.currentTime);
@@ -607,34 +621,38 @@ class DotGridAudioPlayer {
     const oldDotKeys = new Set(this.activeDotKeys);
     this.activeDotKeys = new Set(dots);
     
+    const addedKeys: string[] = [];
+    // const removedKeys: string[] = []; // Not strictly needed for this logic path if removePoint deactivates
+    
     // Remove dots that are no longer selected
     oldDotKeys.forEach(dotKey => {
       if (!this.activeDotKeys.has(dotKey)) {
-        this.audioService.removePoint(dotKey);
+        this.audioService.removePoint(dotKey); // removePoint also handles deactivation
+        // removedKeys.push(dotKey);
       }
     });
     
     // Add new dots
     this.activeDotKeys.forEach(dotKey => {
       if (!oldDotKeys.has(dotKey)) {
-        // x, y are part of dotKey string "x,y"
         const [xStr, yStr] = dotKey.split(',');
         const x = parseInt(xStr, 10);
         const y = parseInt(yStr, 10);
         if (!isNaN(x) && !isNaN(y)) {
             this.audioService.addPoint(dotKey, x, y, this.gridSize, this.columnCount);
+            addedKeys.push(dotKey);
         }
       }
     });
     
     if (this.isPlaying) {
-      // Deactivate all points first, then activate only the current ones -- REVISING THIS BLOCK
-      // this.audioService.deactivateAllPoints(); 
-      // this.activeDotKeys.forEach(dotKey => {
-      //   this.audioService.activatePoint(dotKey);
-      // });
-      this.stopAllRhythms();  // This will call audioService.deactivateAllPoints()
-      this.startAllRhythms(); // This will restart the sequence with the new activeDotKeys
+      if (this.isContinuousSimultaneousMode()) {
+        addedKeys.forEach(key => this.audioService.activatePoint(key));
+        // Removed keys are handled by removePoint implicitly deactivating them
+      } else {
+      this.stopAllRhythms();
+      this.startAllRhythms();
+      }
     }
   }
 
@@ -645,13 +663,18 @@ class DotGridAudioPlayer {
     if (playing === this.isPlaying) return;
     
     this.isPlaying = playing;
-
     console.log('🔊 Set playing state:', playing);
     
     if (playing) {
-      this.startAllRhythms(); // This will activate current dots
+      if (this.isContinuousSimultaneousMode()){
+        this.stopAllRhythmsInternalCleanup(); // Clear any rAF/staggers from previous mode
+        this.audioService.deactivateAllPoints(); // Fresh start
+        this.activeDotKeys.forEach(dotKey => this.audioService.activatePoint(dotKey));
+      } else {
+      this.startAllRhythms();
+      }
     } else {
-      this.stopAllRhythms(); // This will deactivate current dots
+      this.stopAllRhythms();
     }
   }
 
@@ -659,13 +682,19 @@ class DotGridAudioPlayer {
    * Start all rhythm timers - using requestAnimationFrame
    */
   private startAllRhythms(): void {
+    if (this.isContinuousSimultaneousMode()) {
+      this.stopAllRhythmsInternalCleanup(); // Ensure cleanup if called in wrong mode
+      return;
+    }
+
+    // Existing startAllRhythms logic (from clearing animationFrameId onwards)
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
     this.animationFrameId = null;
     }
     this.clearCurrentRowStaggerTimeouts();
     
-    if (!this.isPlaying) return;
+    if (!this.isPlaying) return; // This check is important here too
 
     // Group active dots by row and sort them
     const groupedByRow: Map<number, string[]> = new Map();
@@ -751,7 +780,7 @@ class DotGridAudioPlayer {
     
     this.animationFrameId = requestAnimationFrame(frameLoop);
   }
-
+  
   private activateRowAndScheduleNextStaggers(rowIndexToActivate: number): void {
     this.clearCurrentRowStaggerTimeouts(); // Clear previous staggers before scheduling new ones
 
@@ -763,7 +792,7 @@ class DotGridAudioPlayer {
     if (!rowData || !rowData.dotKeys || rowData.dotKeys.length === 0) {
       return;
     }
-
+    
     rowData.dotKeys.forEach((dotKey, indexInRow) => {
       const staggerDelay = indexInRow * INTRA_ROW_STAGGER_S * 1000; // ms
 
@@ -783,15 +812,19 @@ class DotGridAudioPlayer {
     this.currentRowStaggerTimeouts = [];
   }
   
-  /**
-   * Stop all rhythm timers
-   */
-  private stopAllRhythms(): void {
+  private stopAllRhythmsInternalCleanup(): void {
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
     }
     this.clearCurrentRowStaggerTimeouts();
+  }
+
+  /**
+   * Stop all rhythm timers
+   */
+  private stopAllRhythms(): void {
+    this.stopAllRhythmsInternalCleanup();
     this.audioService.deactivateAllPoints();
   }
 
@@ -831,17 +864,31 @@ class DotGridAudioPlayer {
     this.audioService.dispose(); // This correctly disposes all points within the service
   }
 
-  public setSubHitAdsrEnabled(enabled: boolean): void { // Renamed from setEnvelopeEnabled
+  public setSubHitAdsrEnabled(enabled: boolean): void { 
     this.audioService.setSubHitAdsrMode(enabled);
   }
 
-  public setSubHitPlaybackEnabled(enabled: boolean): void { // New method
+  public setSubHitPlaybackEnabled(enabled: boolean): void { 
     this.audioService.setSubHitPlaybackMode(enabled);
+    if (this.isPlaying) {
+      this.stopAllRhythms(); // Stop current playback & deactivate all points
+      // Restart playback according to the new mode
+      if (this.isContinuousSimultaneousMode()) {
+        // No need to deactivate again, stopAllRhythms did it.
+        this.activeDotKeys.forEach(dotKey => this.audioService.activatePoint(dotKey));
+      } else {
+        this.startAllRhythms(); 
+      }
+    }
   }
 
   // Add method to handle distortion gain -- Now delegates to service
   private setDistortionGain(gain: number): void {
     this.audioService.setDistortion(gain); 
+  }
+
+  private isContinuousSimultaneousMode(): boolean {
+    return !this.audioService.isSubHitPlaybackEnabled();
   }
 }
 
