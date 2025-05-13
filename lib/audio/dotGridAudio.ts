@@ -17,10 +17,14 @@ const MASTER_GAIN = 6.0; // Much louder master gain for calibration
 // New constants for Sloped Pink Noise
 const NUM_BANDS = 20; // Number of frequency bands for shaping
 const SLOPE_REF_FREQUENCY = 800; // Hz, reference frequency for slope calculations
-const MIN_AUDIBLE_FREQ = 20; // Hz
-const MAX_AUDIBLE_FREQ = 20000; // Hz
+// const MIN_AUDIBLE_FREQ = 20; // Hz - Replaced by OVERALL_MIN_FREQ
+// const MAX_AUDIBLE_FREQ = 20000; // Hz - Replaced by OVERALL_MAX_FREQ
 const BAND_Q_VALUE = 1.5; // Q value for the bandpass filters (reduced from 6.0)
 const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
+
+// New constants for configurable overall frequency range
+const OVERALL_MIN_FREQ = 400; // Hz - Minimum frequency for the soundstage
+const OVERALL_MAX_FREQ = 4000; // Hz - Maximum frequency for the soundstage
 
 // Target overall slopes
 const LOW_SLOPE_DB_PER_OCT = -24.5; // For low y positions (darker sound)
@@ -30,13 +34,6 @@ const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of Slope
 
 // New constant for attenuation based on slope deviation from pink noise
 const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 3.8; // dB reduction per dB/octave deviation from -3dB/oct
-
-// New constants for extreme filtering
-const LOW_FILTER_FREQ = 100; // Hz
-const HIGH_FILTER_FREQ = 10000; // Hz
-const FILTER_Q = 2.5;
-const BYPASS_LOWPASS_FREQ = 20000; // Hz
-const BYPASS_HIGHPASS_FREQ = 10; // Hz
 
 // Constants for sequential playback with click prevention
 const DOT_DURATION_S = 1.0; // Each dot plays for this duration
@@ -65,9 +62,6 @@ interface PointAudioNodes {
   slopedNoiseGenerator: SlopedPinkNoiseGenerator;
   pinkNoiseBuffer: AudioBuffer;
   normalizedYPos: number; // To recalculate slope without re-passing y, totalRows
-  // New filters for extreme Y positions
-  lowpassFilter: BiquadFilterNode;
-  highpassFilter: BiquadFilterNode;
   // New properties for sub-hit sequencing
   subHitCount: number;
   subHitTimerId: number | null;
@@ -77,7 +71,9 @@ interface PointAudioNodes {
 class PositionedAudioService {
   private ctx: AudioContext;
   private audioPoints: Map<string, PointAudioNodes> = new Map();
-  private outputGain: GainNode;
+  private outputGain: GainNode; // This node sums the output of all panners
+  private overallHighPass: BiquadFilterNode; // Final high-pass filter
+  private overallLowPass: BiquadFilterNode; // Final low-pass filter (the actual output node)
   private currentDistortionGain: number = 1.0;
   private currentBaseDbLevel: number = 0;
   private subHitAdsrEnabled: boolean = true; // Renamed from envelopeEnabled
@@ -87,6 +83,22 @@ class PositionedAudioService {
     this.ctx = audioContextInstance;
     this.outputGain = this.ctx.createGain();
     this.outputGain.gain.value = 1.0; // Master output for this service
+
+    // Create and configure final output filters
+    this.overallHighPass = this.ctx.createBiquadFilter();
+    this.overallHighPass.type = 'highpass';
+    this.overallHighPass.frequency.value = OVERALL_MIN_FREQ;
+    // Q value for high/low pass often lower, 1 is common
+    this.overallHighPass.Q.value = 1;
+
+    this.overallLowPass = this.ctx.createBiquadFilter();
+    this.overallLowPass.type = 'lowpass';
+    this.overallLowPass.frequency.value = OVERALL_MAX_FREQ;
+    this.overallLowPass.Q.value = 1;
+
+    // Connect the summing gain to the filters
+    this.outputGain.connect(this.overallHighPass);
+    this.overallHighPass.connect(this.overallLowPass);
   }
 
   // Moved from DotGridAudioPlayer
@@ -120,8 +132,8 @@ class PositionedAudioService {
     return buffer;
   }
 
-  public getOutputNode(): GainNode {
-    return this.outputGain;
+  public getOutputNode(): AudioNode { // Return type is AudioNode as it's the lowpass filter
+    return this.overallLowPass; // The final output is the low-pass filter
   }
 
   // More methods (addPoint, removePoint, activatePoint, etc.) will be added here later
@@ -194,22 +206,9 @@ class PositionedAudioService {
     const panner = this.ctx.createStereoPanner();
     panner.pan.value = panPosition;
 
-    // Add new filters
-    const lowpassFilter = this.ctx.createBiquadFilter();
-    lowpassFilter.type = 'lowpass';
-    lowpassFilter.Q.value = FILTER_Q;
-    lowpassFilter.frequency.value = BYPASS_LOWPASS_FREQ; // Start bypassed
-
-    const highpassFilter = this.ctx.createBiquadFilter();
-    highpassFilter.type = 'highpass';
-    highpassFilter.Q.value = FILTER_Q;
-    highpassFilter.frequency.value = BYPASS_HIGHPASS_FREQ; // Start bypassed
-
-    // Connect chain: source -> slopedGen -> lowpass -> highpass -> mainGain -> envelopeGain -> panner -> serviceOutput
+    // Connect chain: source -> slopedGen -> mainGain -> envelopeGain -> panner -> serviceOutput
     source.connect(slopedNoiseGenerator.getInputNode());
-    slopedNoiseGenerator.getOutputNode().connect(lowpassFilter);
-    lowpassFilter.connect(highpassFilter);
-    highpassFilter.connect(mainGain);
+    slopedNoiseGenerator.getOutputNode().connect(mainGain);
     mainGain.connect(envelopeGain);
     envelopeGain.connect(panner);
     panner.connect(this.outputGain);
@@ -222,9 +221,6 @@ class PositionedAudioService {
       slopedNoiseGenerator,
       pinkNoiseBuffer,
       normalizedYPos: normalizedY,
-      // Add filters to stored nodes
-      lowpassFilter,
-      highpassFilter,
       // Initialize new properties
       subHitCount: 0,
       subHitTimerId: null,
@@ -252,9 +248,6 @@ class PositionedAudioService {
     point.mainGain.disconnect();
     point.envelopeGain.disconnect();
     point.panner.disconnect();
-    // Disconnect new filters
-    point.lowpassFilter.disconnect();
-    point.highpassFilter.disconnect();
     // point.pinkNoiseBuffer = null; // Buffer is managed by JS GC once source is gone
 
     this.audioPoints.delete(id);
@@ -277,7 +270,7 @@ class PositionedAudioService {
           point.subHitTimerId = null;
       }
       // Set main gain (still needed for overall volume/slope)
-      this._updateAudioParameters(point); // Update params even when sub-hits disabled
+      this.setMainGainAndSlope(point); // Extract main gain/slope setting to helper
       return; // Skip sub-hit logic
     }
     // --- End check ---
@@ -289,9 +282,24 @@ class PositionedAudioService {
     }
     // point.subHitCount = 0; // subHitCount will be managed by the scheduling loop
 
-    // --- Set ALL audio parameters based on Y position --- 
-    this._updateAudioParameters(point);
-    // --- End Parameter Setting ---
+    // Set slope (once per main activation)
+    let targetOverallSlopeDbPerOctave;
+    if (point.normalizedYPos < 0.5) {
+      const t = point.normalizedYPos * 2;
+      targetOverallSlopeDbPerOctave = LOW_SLOPE_DB_PER_OCT + t * (CENTER_SLOPE_DB_PER_OCT - LOW_SLOPE_DB_PER_OCT);
+    } else {
+      const t = (point.normalizedYPos - 0.5) * 2;
+      targetOverallSlopeDbPerOctave = CENTER_SLOPE_DB_PER_OCT + t * (HIGH_SLOPE_DB_PER_OCT - CENTER_SLOPE_DB_PER_OCT);
+    }
+    point.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
+
+    // Set main gain (once per main activation)
+    const slopeDeviation = Math.abs(targetOverallSlopeDbPerOctave - CENTER_SLOPE_DB_PER_OCT);
+    const additionalAttenuationDb = -slopeDeviation * ATTENUATION_PER_DB_OCT_DEVIATION_DB; 
+    const finalVolumeDb = this.currentBaseDbLevel + additionalAttenuationDb;
+    const gainRatio = Math.pow(10, finalVolumeDb / 20);
+    const effectiveMasterGain = MASTER_GAIN * this.currentDistortionGain * gainRatio;
+    point.mainGain.gain.setValueAtTime(effectiveMasterGain, this.ctx.currentTime);
 
     // --- Start sub-hit sequence with precise Web Audio API timing ---
     const startTime = this.ctx.currentTime; // Base time for all sub-hit Web Audio events
@@ -375,54 +383,30 @@ class PositionedAudioService {
         this.removePoint(id);
     });
     // this.audioPoints.forEach((_, id) => this.removePoint(id)); // Original line
-    this.outputGain.disconnect();
+    // Disconnect the summing node and the final filters
+    this.outputGain.disconnect(); 
+    this.overallHighPass.disconnect();
+    // this.overallLowPass is the final output, it gets disconnected elsewhere
   }
 
   // Helper method to set main gain and slope (used in activatePoint)
-  private _updateAudioParameters(point: PointAudioNodes): void {
-    const normalizedY = point.normalizedYPos;
-    let targetOverallSlopeDbPerOctave: number;
-    let lowpassFreq: number;
-    let highpassFreq: number;
-
-    const now = this.ctx.currentTime; // Use current time for filter freq setting
-
-    // Determine slope and filter settings based on normalizedY
-    if (normalizedY < 0.25) { // Bottom quarter: Lowpass
-      targetOverallSlopeDbPerOctave = LOW_SLOPE_DB_PER_OCT;
-      const t_filter = normalizedY / 0.25;
-      // Reverse interpolation: Start with most filtering (100Hz) at y=0, less (10000Hz) at y=0.25
-      lowpassFreq = LOW_FILTER_FREQ + t_filter * (HIGH_FILTER_FREQ - LOW_FILTER_FREQ); 
-      highpassFreq = BYPASS_HIGHPASS_FREQ;
-    } else if (normalizedY <= 0.75) { // Middle half: Slope interpolation
-      lowpassFreq = BYPASS_LOWPASS_FREQ;
-      highpassFreq = BYPASS_HIGHPASS_FREQ;
-      if (normalizedY <= 0.5) { // 0.25 to 0.5
-        const t_slope = (normalizedY - 0.25) / 0.25;
-        targetOverallSlopeDbPerOctave = LOW_SLOPE_DB_PER_OCT + t_slope * (CENTER_SLOPE_DB_PER_OCT - LOW_SLOPE_DB_PER_OCT);
-      } else { // 0.5 to 0.75
-        const t_slope = (normalizedY - 0.5) / 0.25;
-        targetOverallSlopeDbPerOctave = CENTER_SLOPE_DB_PER_OCT + t_slope * (HIGH_SLOPE_DB_PER_OCT - CENTER_SLOPE_DB_PER_OCT);
-      }
-    } else { // Top quarter: Highpass (normalizedY > 0.75)
-      targetOverallSlopeDbPerOctave = HIGH_SLOPE_DB_PER_OCT;
-      const t_filter = (normalizedY - 0.75) / 0.25;
-      highpassFreq = LOW_FILTER_FREQ + t_filter * (HIGH_FILTER_FREQ - LOW_FILTER_FREQ);
-      lowpassFreq = BYPASS_LOWPASS_FREQ;
+  private setMainGainAndSlope(point: PointAudioNodes): void {
+    let targetOverallSlopeDbPerOctave;
+    if (point.normalizedYPos < 0.5) {
+      const t = point.normalizedYPos * 2;
+      targetOverallSlopeDbPerOctave = LOW_SLOPE_DB_PER_OCT + t * (CENTER_SLOPE_DB_PER_OCT - LOW_SLOPE_DB_PER_OCT);
+    } else {
+      const t = (point.normalizedYPos - 0.5) * 2;
+      targetOverallSlopeDbPerOctave = CENTER_SLOPE_DB_PER_OCT + t * (HIGH_SLOPE_DB_PER_OCT - CENTER_SLOPE_DB_PER_OCT);
     }
-
-    // Apply settings
     point.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
-    point.lowpassFilter.frequency.setValueAtTime(lowpassFreq, now);
-    point.highpassFilter.frequency.setValueAtTime(highpassFreq, now);
 
-    // Calculate and apply gain based on slope deviation from center
     const slopeDeviation = Math.abs(targetOverallSlopeDbPerOctave - CENTER_SLOPE_DB_PER_OCT);
     const additionalAttenuationDb = -slopeDeviation * ATTENUATION_PER_DB_OCT_DEVIATION_DB;
     const finalVolumeDb = this.currentBaseDbLevel + additionalAttenuationDb;
     const gainRatio = Math.pow(10, finalVolumeDb / 20);
     const effectiveMasterGain = MASTER_GAIN * this.currentDistortionGain * gainRatio;
-    point.mainGain.gain.setValueAtTime(effectiveMasterGain, now);
+    point.mainGain.gain.setValueAtTime(effectiveMasterGain, this.ctx.currentTime);
   }
 
   public setSubHitAdsrEnabled(enabled: boolean): void { // Renamed from setEnvelopeEnabled
@@ -900,13 +884,31 @@ class SlopedPinkNoiseGenerator {
     this.outputGainNode = this.ctx.createGain();
     this.outputGainNode.gain.value = SLOPED_NOISE_OUTPUT_GAIN_SCALAR; // Apply output gain reduction
 
-    const logMinFreq = Math.log2(MIN_AUDIBLE_FREQ);
-    const logMaxFreq = Math.log2(MAX_AUDIBLE_FREQ);
-    const step = (logMaxFreq - logMinFreq) / (NUM_BANDS + 1);
+    // Use the new OVERALL frequency constants for band calculation
+    const logMinFreq = Math.log2(OVERALL_MIN_FREQ);
+    const logMaxFreq = Math.log2(OVERALL_MAX_FREQ);
+    
+    // Ensure min < max to prevent errors
+    if (logMinFreq >= logMaxFreq) {
+        console.error("SlopedPinkNoiseGenerator: OVERALL_MIN_FREQ must be less than OVERALL_MAX_FREQ.");
+        // Provide default fallback frequencies for bands if range is invalid
+        const defaultMin = Math.log2(20);
+        const defaultMax = Math.log2(20000);
+        const defaultStep = (defaultMax - defaultMin) / (NUM_BANDS + 1);
+        for (let i = 0; i < NUM_BANDS; i++) {
+            this.centerFrequencies.push(Math.pow(2, defaultMin + (i + 1) * defaultStep));
+        }
+    } else {
+        const step = (logMaxFreq - logMinFreq) / (NUM_BANDS + 1);
+        for (let i = 0; i < NUM_BANDS; i++) {
+          const centerFreq = Math.pow(2, logMinFreq + (i + 1) * step);
+          this.centerFrequencies.push(centerFreq);
+        }
+    }
 
+    // Create filters and gains based on calculated/default center frequencies
     for (let i = 0; i < NUM_BANDS; i++) {
-      const centerFreq = Math.pow(2, logMinFreq + (i + 1) * step);
-      this.centerFrequencies.push(centerFreq);
+      const centerFreq = this.centerFrequencies[i];
 
       const filter = this.ctx.createBiquadFilter();
       filter.type = 'bandpass';
