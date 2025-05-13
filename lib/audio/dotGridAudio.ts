@@ -31,6 +31,13 @@ const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of Slope
 // New constant for attenuation based on slope deviation from pink noise
 const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 3.8; // dB reduction per dB/octave deviation from -3dB/oct
 
+// New constants for extreme filtering
+const LOW_FILTER_FREQ = 100; // Hz
+const HIGH_FILTER_FREQ = 10000; // Hz
+const FILTER_Q = 2.5;
+const BYPASS_LOWPASS_FREQ = 20000; // Hz
+const BYPASS_HIGHPASS_FREQ = 10; // Hz
+
 // Constants for sequential playback with click prevention
 const DOT_DURATION_S = 1.0; // Each dot plays for this duration
 // const CLICK_PREVENTION_ENVELOPE_TIME = 0.005; // REMOVING - Replaced by ADSR for sub-hits
@@ -58,6 +65,9 @@ interface PointAudioNodes {
   slopedNoiseGenerator: SlopedPinkNoiseGenerator;
   pinkNoiseBuffer: AudioBuffer;
   normalizedYPos: number; // To recalculate slope without re-passing y, totalRows
+  // New filters for extreme Y positions
+  lowpassFilter: BiquadFilterNode;
+  highpassFilter: BiquadFilterNode;
   // New properties for sub-hit sequencing
   subHitCount: number;
   subHitTimerId: number | null;
@@ -184,9 +194,22 @@ class PositionedAudioService {
     const panner = this.ctx.createStereoPanner();
     panner.pan.value = panPosition;
 
-    // Connect chain: source -> slopedGen -> mainGain -> envelopeGain -> panner -> serviceOutput
+    // Add new filters
+    const lowpassFilter = this.ctx.createBiquadFilter();
+    lowpassFilter.type = 'lowpass';
+    lowpassFilter.Q.value = FILTER_Q;
+    lowpassFilter.frequency.value = BYPASS_LOWPASS_FREQ; // Start bypassed
+
+    const highpassFilter = this.ctx.createBiquadFilter();
+    highpassFilter.type = 'highpass';
+    highpassFilter.Q.value = FILTER_Q;
+    highpassFilter.frequency.value = BYPASS_HIGHPASS_FREQ; // Start bypassed
+
+    // Connect chain: source -> slopedGen -> lowpass -> highpass -> mainGain -> envelopeGain -> panner -> serviceOutput
     source.connect(slopedNoiseGenerator.getInputNode());
-    slopedNoiseGenerator.getOutputNode().connect(mainGain);
+    slopedNoiseGenerator.getOutputNode().connect(lowpassFilter);
+    lowpassFilter.connect(highpassFilter);
+    highpassFilter.connect(mainGain);
     mainGain.connect(envelopeGain);
     envelopeGain.connect(panner);
     panner.connect(this.outputGain);
@@ -199,6 +222,9 @@ class PositionedAudioService {
       slopedNoiseGenerator,
       pinkNoiseBuffer,
       normalizedYPos: normalizedY,
+      // Add filters to stored nodes
+      lowpassFilter,
+      highpassFilter,
       // Initialize new properties
       subHitCount: 0,
       subHitTimerId: null,
@@ -226,6 +252,9 @@ class PositionedAudioService {
     point.mainGain.disconnect();
     point.envelopeGain.disconnect();
     point.panner.disconnect();
+    // Disconnect new filters
+    point.lowpassFilter.disconnect();
+    point.highpassFilter.disconnect();
     // point.pinkNoiseBuffer = null; // Buffer is managed by JS GC once source is gone
 
     this.audioPoints.delete(id);
@@ -248,7 +277,7 @@ class PositionedAudioService {
           point.subHitTimerId = null;
       }
       // Set main gain (still needed for overall volume/slope)
-      this.setMainGainAndSlope(point); // Extract main gain/slope setting to helper
+      this._updateAudioParameters(point); // Update params even when sub-hits disabled
       return; // Skip sub-hit logic
     }
     // --- End check ---
@@ -260,24 +289,9 @@ class PositionedAudioService {
     }
     // point.subHitCount = 0; // subHitCount will be managed by the scheduling loop
 
-    // Set slope (once per main activation)
-    let targetOverallSlopeDbPerOctave;
-    if (point.normalizedYPos < 0.5) {
-      const t = point.normalizedYPos * 2;
-      targetOverallSlopeDbPerOctave = LOW_SLOPE_DB_PER_OCT + t * (CENTER_SLOPE_DB_PER_OCT - LOW_SLOPE_DB_PER_OCT);
-    } else {
-      const t = (point.normalizedYPos - 0.5) * 2;
-      targetOverallSlopeDbPerOctave = CENTER_SLOPE_DB_PER_OCT + t * (HIGH_SLOPE_DB_PER_OCT - CENTER_SLOPE_DB_PER_OCT);
-    }
-    point.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
-
-    // Set main gain (once per main activation)
-    const slopeDeviation = Math.abs(targetOverallSlopeDbPerOctave - CENTER_SLOPE_DB_PER_OCT);
-    const additionalAttenuationDb = -slopeDeviation * ATTENUATION_PER_DB_OCT_DEVIATION_DB; 
-    const finalVolumeDb = this.currentBaseDbLevel + additionalAttenuationDb;
-    const gainRatio = Math.pow(10, finalVolumeDb / 20);
-    const effectiveMasterGain = MASTER_GAIN * this.currentDistortionGain * gainRatio;
-    point.mainGain.gain.setValueAtTime(effectiveMasterGain, this.ctx.currentTime);
+    // --- Set ALL audio parameters based on Y position --- 
+    this._updateAudioParameters(point);
+    // --- End Parameter Setting ---
 
     // --- Start sub-hit sequence with precise Web Audio API timing ---
     const startTime = this.ctx.currentTime; // Base time for all sub-hit Web Audio events
@@ -365,23 +379,49 @@ class PositionedAudioService {
   }
 
   // Helper method to set main gain and slope (used in activatePoint)
-  private setMainGainAndSlope(point: PointAudioNodes): void {
-    let targetOverallSlopeDbPerOctave;
-    if (point.normalizedYPos < 0.5) {
-      const t = point.normalizedYPos * 2;
-      targetOverallSlopeDbPerOctave = LOW_SLOPE_DB_PER_OCT + t * (CENTER_SLOPE_DB_PER_OCT - LOW_SLOPE_DB_PER_OCT);
-    } else {
-      const t = (point.normalizedYPos - 0.5) * 2;
-      targetOverallSlopeDbPerOctave = CENTER_SLOPE_DB_PER_OCT + t * (HIGH_SLOPE_DB_PER_OCT - CENTER_SLOPE_DB_PER_OCT);
-    }
-    point.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
+  private _updateAudioParameters(point: PointAudioNodes): void {
+    const normalizedY = point.normalizedYPos;
+    let targetOverallSlopeDbPerOctave: number;
+    let lowpassFreq: number;
+    let highpassFreq: number;
 
+    const now = this.ctx.currentTime; // Use current time for filter freq setting
+
+    // Determine slope and filter settings based on normalizedY
+    if (normalizedY < 0.25) { // Bottom quarter: Lowpass
+      targetOverallSlopeDbPerOctave = LOW_SLOPE_DB_PER_OCT;
+      const t_filter = normalizedY / 0.25;
+      lowpassFreq = HIGH_FILTER_FREQ + t_filter * (LOW_FILTER_FREQ - HIGH_FILTER_FREQ);
+      highpassFreq = BYPASS_HIGHPASS_FREQ;
+    } else if (normalizedY <= 0.75) { // Middle half: Slope interpolation
+      lowpassFreq = BYPASS_LOWPASS_FREQ;
+      highpassFreq = BYPASS_HIGHPASS_FREQ;
+      if (normalizedY <= 0.5) { // 0.25 to 0.5
+        const t_slope = (normalizedY - 0.25) / 0.25;
+        targetOverallSlopeDbPerOctave = LOW_SLOPE_DB_PER_OCT + t_slope * (CENTER_SLOPE_DB_PER_OCT - LOW_SLOPE_DB_PER_OCT);
+      } else { // 0.5 to 0.75
+        const t_slope = (normalizedY - 0.5) / 0.25;
+        targetOverallSlopeDbPerOctave = CENTER_SLOPE_DB_PER_OCT + t_slope * (HIGH_SLOPE_DB_PER_OCT - CENTER_SLOPE_DB_PER_OCT);
+      }
+    } else { // Top quarter: Highpass (normalizedY > 0.75)
+      targetOverallSlopeDbPerOctave = HIGH_SLOPE_DB_PER_OCT;
+      const t_filter = (normalizedY - 0.75) / 0.25;
+      highpassFreq = LOW_FILTER_FREQ + t_filter * (HIGH_FILTER_FREQ - LOW_FILTER_FREQ);
+      lowpassFreq = BYPASS_LOWPASS_FREQ;
+    }
+
+    // Apply settings
+    point.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
+    point.lowpassFilter.frequency.setValueAtTime(lowpassFreq, now);
+    point.highpassFilter.frequency.setValueAtTime(highpassFreq, now);
+
+    // Calculate and apply gain based on slope deviation from center
     const slopeDeviation = Math.abs(targetOverallSlopeDbPerOctave - CENTER_SLOPE_DB_PER_OCT);
     const additionalAttenuationDb = -slopeDeviation * ATTENUATION_PER_DB_OCT_DEVIATION_DB;
     const finalVolumeDb = this.currentBaseDbLevel + additionalAttenuationDb;
     const gainRatio = Math.pow(10, finalVolumeDb / 20);
     const effectiveMasterGain = MASTER_GAIN * this.currentDistortionGain * gainRatio;
-    point.mainGain.gain.setValueAtTime(effectiveMasterGain, this.ctx.currentTime);
+    point.mainGain.gain.setValueAtTime(effectiveMasterGain, now);
   }
 
   public setSubHitAdsrEnabled(enabled: boolean): void { // Renamed from setEnvelopeEnabled
