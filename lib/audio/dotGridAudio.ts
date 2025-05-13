@@ -23,9 +23,9 @@ const BAND_Q_VALUE = 1.5; // Q value for the bandpass filters (reduced from 6.0)
 const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
 
 // Target overall slopes
-const LOW_SLOPE_DB_PER_OCT = -9; // For low y positions (darker sound)
+const LOW_SLOPE_DB_PER_OCT = -13.5; // For low y positions (darker sound)
 const CENTER_SLOPE_DB_PER_OCT = -4.5; // For middle y positions
-const HIGH_SLOPE_DB_PER_OCT = 0; // For high y positions (brighter sound)
+const HIGH_SLOPE_DB_PER_OCT = 4.5; // For high y positions (brighter sound)
 const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of SlopedPinkNoiseGenerator (approx -12dB)
 
 // New constant for attenuation based on slope deviation from pink noise
@@ -385,10 +385,12 @@ class PositionedAudioService {
     const existingAttenuationDb = -slopeDeviationForAttenuation * ATTENUATION_PER_DB_OCT_DEVIATION_DB;
 
     // New additional boost calculation based on normalizedYPos extremity
-    const MAX_ADDITIONAL_BOOST_DB = 6.0;
+    const MAX_ADDITIONAL_BOOST_DB = 9.0;
     // extremityFactor goes from 0 (at center y=0.5) to 1 (at extremes y=0 or y=1)
     const extremityFactor = Math.abs(point.normalizedYPos - 0.5) * 2;
-    const additionalSlopeBoostDb = extremityFactor * MAX_ADDITIONAL_BOOST_DB;
+    // Apply a curve (sqrt) to make the boost logarithmic-like (more boost earlier)
+    const curvedExtremityFactor = Math.sqrt(extremityFactor);
+    const additionalSlopeBoostDb = curvedExtremityFactor * MAX_ADDITIONAL_BOOST_DB;
 
     // Combine base level, existing attenuation, and new boost
     const finalVolumeDb = this.currentBaseDbLevel + existingAttenuationDb + additionalSlopeBoostDb;
