@@ -391,7 +391,8 @@ class PositionedAudioService {
     if (normalizedY < 0.25) { // Bottom quarter: Lowpass
       targetOverallSlopeDbPerOctave = LOW_SLOPE_DB_PER_OCT;
       const t_filter = normalizedY / 0.25;
-      lowpassFreq = HIGH_FILTER_FREQ + t_filter * (LOW_FILTER_FREQ - HIGH_FILTER_FREQ);
+      // Reverse interpolation: Start with most filtering (100Hz) at y=0, less (10000Hz) at y=0.25
+      lowpassFreq = LOW_FILTER_FREQ + t_filter * (HIGH_FILTER_FREQ - LOW_FILTER_FREQ); 
       highpassFreq = BYPASS_HIGHPASS_FREQ;
     } else if (normalizedY <= 0.75) { // Middle half: Slope interpolation
       lowpassFreq = BYPASS_LOWPASS_FREQ;
