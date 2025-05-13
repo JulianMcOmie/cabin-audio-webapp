@@ -23,9 +23,9 @@ const BAND_Q_VALUE = 1.5; // Q value for the bandpass filters (reduced from 6.0)
 const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
 
 // Target overall slopes
-const LOW_SLOPE_DB_PER_OCT = -24.5; // For low y positions (darker sound)
+const LOW_SLOPE_DB_PER_OCT = -9; // For low y positions (darker sound)
 const CENTER_SLOPE_DB_PER_OCT = -4.5; // For middle y positions
-const HIGH_SLOPE_DB_PER_OCT = 20; // For high y positions (brighter sound)
+const HIGH_SLOPE_DB_PER_OCT = 4.5; // For high y positions (brighter sound)
 const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of SlopedPinkNoiseGenerator (approx -12dB)
 
 // New constant for attenuation based on slope deviation from pink noise
@@ -892,9 +892,10 @@ class SlopedPinkNoiseGenerator {
   }
 
   public setSlope(targetOverallSlopeDbPerOctave: number): void {
-    // Calculate shaping slope relative to the CENTER slope, not PINK noise slope.
-    // This makes the shaping symmetrical around the desired center (-4.5 dB/oct).
-    const shapingSlope = targetOverallSlopeDbPerOctave - CENTER_SLOPE_DB_PER_OCT;
+    // Calculate shaping slope relative to the INHERENT PINK NOISE SLOPE.
+    // This ensures the generator actively shapes the input pink noise (-3dB/oct)
+    // to achieve the absolute targetOverallSlopeDbPerOctave.
+    const shapingSlope = targetOverallSlopeDbPerOctave - PINK_NOISE_SLOPE_DB_PER_OCT;
 
     for (let i = 0; i < NUM_BANDS; i++) {
       const fc = this.centerFrequencies[i];
