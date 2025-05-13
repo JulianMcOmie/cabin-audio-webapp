@@ -91,8 +91,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const [shapeToolPlaying, setShapeToolPlaying] = useState(false);
   const [numShapeDots, setNumShapeDots] = useState(12); // Default number of dots for the shape tool
 
-  // New state for dot grid sub-hit playback toggle
-  const [isSubHitPlaybackEnabled, setIsSubHitPlaybackEnabled] = useState(false); // Default false
+  // New state for Dot Grid sub-hit playback mode
+  const [isSubHitPlaybackEnabled, setIsSubHitPlaybackEnabled] = useState(true);
 
   // Detect mobile devices
   useEffect(() => {
@@ -496,21 +496,22 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   </div>
                 </div>
               )}
-              {/* Add toggle for sub-hit playback below the grid content, only when dot grid is active */}
+
+              {/* Add Toggle for Dot Grid Sub-Hit Playback Mode */} 
               {activeGrid === "dot" && (
-                <div className="flex items-center justify-center space-x-2 mt-4">
-                  <Switch
-                    id="subhit-toggle"
-                    checked={isSubHitPlaybackEnabled}
-                    onCheckedChange={(checked) => {
-                      setIsSubHitPlaybackEnabled(checked);
-                      dotGridAudio.getDotGridAudioPlayer().setSubHitPlaybackEnabled(checked);
-                    }}
-                  />
-                  <Label htmlFor="subhit-toggle" className="text-sm">
-                    Pulsing Hits
-                  </Label>
-                </div>
+                  <div className="flex items-center space-x-2 mt-4 justify-center">
+                    <Switch 
+                      id="subhit-playback-toggle"
+                      checked={isSubHitPlaybackEnabled}
+                      onCheckedChange={(checked) => {
+                        setIsSubHitPlaybackEnabled(checked);
+                        dotGridAudio.getDotGridAudioPlayer().setSubHitPlaybackEnabled(checked);
+                      }}
+                    />
+                    <Label htmlFor="subhit-playback-toggle" className="text-sm text-muted-foreground">
+                      {isSubHitPlaybackEnabled ? "Sub-Hits Enabled" : "Continuous Play"}
+                    </Label>
+                  </div>
               )}
             </div>
             
@@ -526,24 +527,18 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                             : (shapeToolPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")}
                 onClick={() => {
                   if (activeGrid === "line") {
-                    const nextPlayingState = !glyphGridPlaying;
-                    setGlyphGridPlaying(nextPlayingState);
-                    if (nextPlayingState) { // If starting glyph
-                      if (dotGridPlaying) setDotGridPlaying(false);
-                      if (shapeToolPlaying) setShapeToolPlaying(false);
-                      if (isMusicPlaying) setMusicPlaying(false);
-                    }
+                    setGlyphGridPlaying(!glyphGridPlaying);
+                    if (dotGridPlaying) setDotGridPlaying(false);
+                    if (shapeToolPlaying) setShapeToolPlaying(false);
+                    if (!glyphGridPlaying && isMusicPlaying) setMusicPlaying(false);
                   } else if (activeGrid === "dot") {
-                    // handleDotGridPlayToggle already handles stopping other modes
-                    handleDotGridPlayToggle(); 
-                  } else { // activeGrid === "shape"
-                    const nextPlayingState = !shapeToolPlaying;
-                    setShapeToolPlaying(nextPlayingState);
-                    if (nextPlayingState) { // If starting shape
-                      if (dotGridPlaying) setDotGridPlaying(false);
-                      if (glyphGridPlaying) setGlyphGridPlaying(false);
-                      if (isMusicPlaying) setMusicPlaying(false);
-                    }
+                    handleDotGridPlayToggle();
+                    if (shapeToolPlaying) setShapeToolPlaying(false);
+                  } else {
+                    setShapeToolPlaying(!shapeToolPlaying);
+                    if (dotGridPlaying) setDotGridPlaying(false);
+                    if (glyphGridPlaying) setGlyphGridPlaying(false);
+                    if (!shapeToolPlaying && isMusicPlaying) setMusicPlaying(false);
                   }
                 }}
               >
