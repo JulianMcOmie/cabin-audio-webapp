@@ -9,9 +9,6 @@ const COLUMNS = 5; // Always 5 panning positions - match the value in dot-grid.t
 // Envelope settings
 const ENVELOPE_MIN_GAIN = 0.0; // Minimum gain during envelope cycle
 const ENVELOPE_MAX_GAIN = 1.0; // Maximum gain during envelope cycle
-const ENVELOPE_ATTACK = 0.002; // Faster attack time in seconds - for very punchy transients
-const ENVELOPE_RELEASE_LOW_FREQ = 0.2; // Release time for lowest frequencies (seconds)
-const ENVELOPE_RELEASE_HIGH_FREQ = 0.02; // Release time for highest frequencies (seconds)
 const MASTER_GAIN = 6.0; // Much louder master gain for calibration
 
 // New constants for Sloped Pink Noise
@@ -224,7 +221,9 @@ class PositionedAudioService {
     point.envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, this.ctx.currentTime);
     try {
       point.source.stop();
-    } catch (e) { /* ignore if already stopped */ }
+    } catch (e) { 
+      console.log(`Error stopping source for point ${id}:`, e);
+    }
     point.source.disconnect();
     point.slopedNoiseGenerator.dispose();
     point.mainGain.disconnect();

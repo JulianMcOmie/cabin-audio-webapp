@@ -21,15 +21,6 @@ const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of Slope
 const DEFAULT_FREQ_MULTIPLIER = 1.0
 const DEFAULT_SWEEP_DURATION = 8.0 // 8 seconds per cycle
 const MASTER_GAIN = 1.5
-// const ENVELOPE_ATTACK = 0.01 // 10ms
-// const ENVELOPE_RELEASE_LOW_FREQ = 0.8 // 800ms for low frequencies
-// const ENVELOPE_RELEASE_HIGH_FREQ = 0.2 // 200ms for high frequencies
-const ENVELOPE_MAX_GAIN = 1.0
-// const ENVELOPE_MIN_GAIN = 0.001
-// const DEFAULT_MODULATION_RATE = 8.0 // modulations per second -- REMOVING
-// const DEFAULT_MODULATION_DEPTH = 0.8 // how much to modulate (0-1) -- REMOVING
-// const ENVELOPE_ATTACK_TIME = 0.005 // 5ms attack -- REMOVING
-// const ENVELOPE_RELEASE_TIME = 0.05 // 100ms release -- REMOVING
 const DEFAULT_SPEED = 1.0 // Default movement speed
 
 // Add constants for hit detection
@@ -375,21 +366,8 @@ class GlyphGridAudioPlayer {
     const x = startX + position * (endX - startX)
     const y = startY + position * (endY - startY)
     
-    // Map y to frequency (bottom = low, top = high)
-    const minFreq = 20
-    const maxFreq = 20000
-    
     // Properly normalize y from glyph space to full 0-1 range
     const normalizedY = Math.max(0, Math.min(1, (y + 1) / 2))
-    
-    // Map to logarithmic frequency scale
-    const logMinFreq = Math.log2(minFreq)
-    const logMaxFreq = Math.log2(maxFreq)
-    const logFreqRange = logMaxFreq - logMinFreq
-    const centerFreq = Math.pow(2, logMinFreq + normalizedY * logFreqRange)
-    
-    // Apply frequency multiplier
-    const adjustedFreq = centerFreq * this.freqMultiplier
     
     // Map x to pan position (-1 to 1)
     const panPosition = x
@@ -667,7 +645,7 @@ class GlyphGridAudioPlayer {
   // Add method to get current audio parameters
   public getAudioParameters(): { frequency: number, panning: number } {
     // Default values
-    let frequency = 0;
+    const frequency = 0;
     let panning = 0;
     
     // Get values from audio nodes if available
