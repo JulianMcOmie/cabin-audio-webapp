@@ -563,7 +563,7 @@ export function DotCalibration({
   const increaseRows = () => {
     if (gridSize < MAX_ROWS) {
       const oldGridSize = gridSize;
-      const newGridSize = gridSize + 1; // Changed from + 2
+      const newGridSize = gridSize + 1; // Changed from +2 to +1
       
       // Remap dots to preserve relative positions
       const newSelectedDots = new Set<string>();
@@ -586,7 +586,7 @@ export function DotCalibration({
   const decreaseRows = () => {
     if (gridSize > MIN_ROWS) {
       const oldGridSize = gridSize;
-      const newGridSize = gridSize - 1; // Changed from - 2
+      const newGridSize = gridSize - 1; // Changed from -2 to -1
       
       // Remap dots to preserve relative positions
       const newSelectedDots = new Set<string>();
@@ -610,7 +610,7 @@ export function DotCalibration({
   const increaseColumns = () => {
     if (columnCount < MAX_COLUMNS) {
       const oldColumnCount = columnCount;
-      const newColumnCount = columnCount + 1; // Changed from + 2
+      const newColumnCount = columnCount + 1; // Changed from +2 to +1
       
       // Remap dots to preserve relative positions
       const newSelectedDots = new Set<string>();
@@ -633,7 +633,7 @@ export function DotCalibration({
   const decreaseColumns = () => {
     if (columnCount > MIN_COLUMNS) {
       const oldColumnCount = columnCount;
-      const newColumnCount = columnCount - 1; // Changed from - 2
+      const newColumnCount = columnCount - 1; // Changed from -2 to -1
       
       // Remap dots to preserve relative positions
       const newSelectedDots = new Set<string>();

@@ -32,15 +32,17 @@ const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of Slope
 const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 3.8; // dB reduction per dB/octave deviation from -3dB/oct
 
 // Constants for sequential playback with click prevention
-const DOT_DURATION_S = 1.0; // Each dot plays for this duration
+// const DOT_DURATION_S = 1.0; // Each dot plays for this duration - REMOVING, duration now controlled by GLOBAL_STAGGER_RELEASE_S
 // const CLICK_PREVENTION_ENVELOPE_TIME = 0.005; // REMOVING - Replaced by ADSR for sub-hits
 
-// Constants for sub-hit ADSR playback
-const NUM_SUB_HITS = 4;
-const SUB_HIT_INTERVAL_S = DOT_DURATION_S / NUM_SUB_HITS; // Approx 0.125s if DOT_DURATION_S is 0.5s
+// Constants for sub-hit ADSR playback - REMOVING, replaced by global stagger
+// const NUM_SUB_HITS = 4;
+// const SUB_HIT_INTERVAL_S = DOT_DURATION_S / NUM_SUB_HITS; // Approx 0.125s if DOT_DURATION_S is 0.5s
 
-// New constant for intra-row staggering
-const INTRA_ROW_STAGGER_S = 0.05; // 50ms stagger between dots on the same row
+// New constants for Global Staggered Mode (when subHitPlaybackEnabled is true)
+const GLOBAL_STAGGER_ATTACK_S = 0.05; // Longer attack
+const GLOBAL_STAGGER_RELEASE_S = 0.4; // Longer release
+const ALL_DOTS_STAGGER_INTERVAL_S = 0.1; // Stagger between each dot in the global sequence
 
 // Analyzer settings
 const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
@@ -51,10 +53,10 @@ const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
 
 // Interface for nodes managed by PositionedAudioService
 interface PointAudioNodes {
-  source: AudioBufferSourceNode;
+    source: AudioBufferSourceNode;
   mainGain: GainNode;
-  envelopeGain: GainNode;
-  panner: StereoPannerNode;
+    envelopeGain: GainNode;
+    panner: StereoPannerNode;
   slopedNoiseGenerator: SlopedPinkNoiseGenerator;
   pinkNoiseBuffer: AudioBuffer;
   normalizedYPos: number; // To recalculate slope without re-passing y, totalRows
@@ -135,35 +137,33 @@ class PositionedAudioService {
     return this.subHitPlaybackEnabled;
   }
 
-  private _triggerSubHitAdsr(pointNode: PointAudioNodes, scheduledTime: number): void {
-    const now = scheduledTime; 
+  private _schedulePointActivationSound(pointNode: PointAudioNodes, scheduledTime: number): void {
     const gainParam = pointNode.envelopeGain.gain;
+    gainParam.cancelScheduledValues(scheduledTime);
 
-    if (this.subHitAdsrEnabled) { // Use renamed flag
-      // Calculate a fixed release time for sub-hits.
-      // This makes each sub-hit "last longer" by filling most of its interval,
-      // and "take the same amount of time" by not varying with y-position.
-      // Ensures at least 10ms release, and leaves a small 2ms silence gap within the sub-hit interval.
-      let releaseTime = Math.max(0.010, SUB_HIT_INTERVAL_S - ENVELOPE_ATTACK - 0.002);
-
-      gainParam.cancelScheduledValues(now);
-      gainParam.setValueAtTime(ENVELOPE_MIN_GAIN, now);
+    if (this.subHitAdsrEnabled) {
+      // Use ADSR for the global staggered hit
+      gainParam.setValueAtTime(ENVELOPE_MIN_GAIN, scheduledTime);
       // Attack
       gainParam.linearRampToValueAtTime(
         ENVELOPE_MAX_GAIN, 
-        now + ENVELOPE_ATTACK
+        scheduledTime + GLOBAL_STAGGER_ATTACK_S
       );
       // Release
       gainParam.exponentialRampToValueAtTime(
         0.001, // Target for exponential ramp (close to zero)
-        now + ENVELOPE_ATTACK + releaseTime
+        scheduledTime + GLOBAL_STAGGER_ATTACK_S + GLOBAL_STAGGER_RELEASE_S
       );
-      // Ensure silence after release (small offset after ramp)
-      gainParam.setValueAtTime(ENVELOPE_MIN_GAIN, now + ENVELOPE_ATTACK + releaseTime + 0.001);
+      // Ensure silence after release
+      gainParam.setValueAtTime(ENVELOPE_MIN_GAIN, scheduledTime + GLOBAL_STAGGER_ATTACK_S + GLOBAL_STAGGER_RELEASE_S + 0.001);
     } else {
-      // ADSR disabled: set gain to max and hold until deactivatePoint is called.
-      gainParam.cancelScheduledValues(now);
-      gainParam.setValueAtTime(ENVELOPE_MAX_GAIN, now);
+      // Use Attack-Sustain for the global staggered hit
+      gainParam.setValueAtTime(ENVELOPE_MIN_GAIN, scheduledTime); // Ensure it starts from silence or current value if retriggered
+      gainParam.linearRampToValueAtTime(
+        ENVELOPE_MAX_GAIN, 
+        scheduledTime + GLOBAL_STAGGER_ATTACK_S
+      );
+      // Gain remains at ENVELOPE_MAX_GAIN until deactivatePoint is called
     }
   }
 
@@ -235,103 +235,34 @@ class PositionedAudioService {
     this.audioPoints.delete(id);
   }
 
-  public activatePoint(id: string): void {
+  public activatePoint(id: string, activationTime: number): void { // Added activationTime parameter
     const point = this.audioPoints.get(id);
     if (!point) return;
 
-    // --- Check if sub-hit playback is disabled --- 
+    this.setMainGainAndSlope(point); // Set timbre and base volume first
+
     if (!this.subHitPlaybackEnabled) {
-      // If disabled, just set envelope gain to max and skip sub-hit scheduling
-      const now = this.ctx.currentTime;
+      // CONTINUOUS SIMULTANEOUS MODE (subHitPlaybackEnabled is false)
+      const now = this.ctx.currentTime; // For immediate activation
       point.envelopeGain.gain.cancelScheduledValues(now);
       point.envelopeGain.gain.setValueAtTime(ENVELOPE_MAX_GAIN, now);
       
-      // Ensure any residual timer is cleared (shouldn't be necessary but safe)
-      if (point.subHitTimerId !== null) {
+      if (point.subHitTimerId !== null) { // Clear any old timers if mode switched
           clearTimeout(point.subHitTimerId);
           point.subHitTimerId = null;
       }
-      // Set main gain (still needed for overall volume/slope)
-      this.setMainGainAndSlope(point); // Extract main gain/slope setting to helper
-      return; // Skip sub-hit logic
-    }
-    // --- End check ---
-
-    // Clear any pending sub-hit timer from a previous activation or interruption
-    if (point.subHitTimerId !== null) {
-      clearTimeout(point.subHitTimerId);
-      point.subHitTimerId = null;
-    }
-    // point.subHitCount = 0; // subHitCount will be managed by the scheduling loop
-
-    // Set slope (once per main activation)
-    let targetOverallSlopeDbPerOctave;
-    if (point.normalizedYPos < 0.5) {
-      const t = point.normalizedYPos * 2;
-      targetOverallSlopeDbPerOctave = LOW_SLOPE_DB_PER_OCT + t * (CENTER_SLOPE_DB_PER_OCT - LOW_SLOPE_DB_PER_OCT);
     } else {
-      const t = (point.normalizedYPos - 0.5) * 2;
-      targetOverallSlopeDbPerOctave = CENTER_SLOPE_DB_PER_OCT + t * (HIGH_SLOPE_DB_PER_OCT - CENTER_SLOPE_DB_PER_OCT);
-    }
-    point.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
-
-    // Set main gain (once per main activation)
-    const slopeDeviation = Math.abs(targetOverallSlopeDbPerOctave - CENTER_SLOPE_DB_PER_OCT);
-    const additionalAttenuationDb = -slopeDeviation * ATTENUATION_PER_DB_OCT_DEVIATION_DB; 
-    const finalVolumeDb = this.currentBaseDbLevel + additionalAttenuationDb;
-    const gainRatio = Math.pow(10, finalVolumeDb / 20);
-    const effectiveMasterGain = MASTER_GAIN * this.currentDistortionGain * gainRatio;
-    point.mainGain.gain.setValueAtTime(effectiveMasterGain, this.ctx.currentTime);
-
-    // --- Start sub-hit sequence with precise Web Audio API timing ---
-    const startTime = this.ctx.currentTime; // Base time for all sub-hit Web Audio events
-
-    const scheduleNextAudioEvent = (hitNumber: number) => {
-      // Ensure point still exists (it might have been removed/deactivated)
-      if (!this.audioPoints.has(id) || point.subHitTimerId === undefined) { // Check undefined if timer cleared by deactivate
-          // If subHitTimerId was explicitly cleared by deactivatePoint, it will be null.
-          // If point removed, it won't be in audioPoints.
-          // This check helps prevent errors if point is rapidly deactivated.
-          if (point.subHitTimerId !== null && point.subHitTimerId !== undefined ) { // Check if it has a value before clearing
-            clearTimeout(point.subHitTimerId);
-          }
-          if (this.audioPoints.has(id) && point) { // Check if point still exists
-            point.subHitTimerId = null;
-          }
-          return;
+      // NEW GLOBAL STAGGERED MODE (subHitPlaybackEnabled is true)
+      // Clear any pending sub-hit timer from a previous type of activation if any.
+      // This timer is not strictly used by _schedulePointActivationSound in the same way,
+      // but clearing it is good practice if modes change.
+      if (point.subHitTimerId !== null) {
+        clearTimeout(point.subHitTimerId);
+        point.subHitTimerId = null;
       }
-      
-      const scheduledAudioTimeForThisHit = startTime + hitNumber * SUB_HIT_INTERVAL_S;
-      
-      // Trigger the ADSR for the current sub-hit using the calculated precise time
-      this._triggerSubHitAdsr(point, scheduledAudioTimeForThisHit);
-      point.subHitCount = hitNumber + 1; // Mark this hit number as having its ADSR scheduled
+      // point.subHitCount = 0; // No longer relevant for this mode
 
-      // Schedule the JavaScript call for the *next* hit if there are more
-      if (hitNumber + 1 < NUM_SUB_HITS) {
-        const scheduledAudioTimeForNextHit = startTime + (hitNumber + 1) * SUB_HIT_INTERVAL_S;
-        // Calculate delay for setTimeout relative to the *actual* current audio context time
-        const delayForSetTimeout = Math.max(0, (scheduledAudioTimeForNextHit - this.ctx.currentTime) * 1000);
-        
-        point.subHitTimerId = window.setTimeout(() => {
-          // Check again if point exists before proceeding inside timeout,
-          // as deactivatePoint might have been called.
-          if (this.audioPoints.has(id) && point.subHitTimerId !== null) { // Check timer id is not null (cleared by deactivate)
-            scheduleNextAudioEvent(hitNumber + 1);
-          }
-        }, delayForSetTimeout);
-      } else {
-        point.subHitTimerId = null; // All sub-hits for this activation are scheduled
-      }
-    };
-
-    // Start the sequence with the first sub-hit (hitNumber 0)
-    if (NUM_SUB_HITS > 0) {
-      point.subHitCount = 0; // Initialize count before starting sequence
-      scheduleNextAudioEvent(0);
-    } else {
-      // Should not happen if NUM_SUB_HITS is always > 0
-      point.subHitTimerId = null; 
+      this._schedulePointActivationSound(point, activationTime);
     }
   }
 
@@ -404,10 +335,6 @@ class PositionedAudioService {
     this.subHitAdsrEnabled = enabled;
   }
 
-  public setSubHitPlaybackEnabled(enabled: boolean): void { // New method
-    this.subHitPlaybackEnabled = enabled;
-  }
-
   // Add method to handle distortion gain -- Now delegates to service
   private setDistortionGain(gain: number): void {
     this.currentDistortionGain = Math.max(0, Math.min(1, gain));
@@ -417,22 +344,21 @@ class PositionedAudioService {
 class DotGridAudioPlayer {
   private static instance: DotGridAudioPlayer;
   private isPlaying: boolean = false;
-  // private audioNodes: Map<string, ...> // REMOVED - Will manage keys/state, not nodes directly
-  private activeDotKeys: Set<string> = new Set(); // To track which dots are selected
+  private activeDotKeys: Set<string> = new Set();
   private audioService: PositionedAudioService;
 
-  // Properties for sequential playback (now row-by-row)
-  private orderedRowsToPlay: Array<{ rowIndex: number, dotKeys: string[] }> = [];
-  private currentRowIndex: number = 0; // Changed from currentDotIndex
-  private lastSwitchTime: number = 0;
-  private currentRowStaggerTimeouts: number[] = [];
-
+  // Properties for sequential playback (now row-by-row) - REMOVING
+  // private orderedRowsToPlay: Array<{ rowIndex: number, dotKeys: string[] }> = [];
+  // private currentRowIndex: number = 0;
+  // private lastSwitchTime: number = 0;
+  // private currentRowStaggerTimeouts: number[] = [];
+  private loopTimeoutId: number | null = null; // New: For the main sequence loop
 
   private gridSize: number = 3;
   private columnCount: number = COLUMNS;
   private preEQAnalyser: AnalyserNode | null = null;
   private preEQGain: GainNode | null = null;
-  private animationFrameId: number | null = null; // Keep for now if any other visual might use it
+  // private animationFrameId: number | null = null; // REMOVING, rAF not used for global stagger
   
   private constructor() {
     this.audioService = new PositionedAudioService(audioContext.getAudioContext());
@@ -649,7 +575,7 @@ class DotGridAudioPlayer {
     
     if (this.isPlaying) {
       if (this.isContinuousSimultaneousMode()) {
-        addedKeys.forEach(key => this.audioService.activatePoint(key));
+        addedKeys.forEach(key => this.audioService.activatePoint(key, audioContext.getAudioContext().currentTime));
         // Removed keys are handled by removePoint implicitly deactivating them
       } else {
       this.stopAllRhythms();
@@ -671,7 +597,7 @@ class DotGridAudioPlayer {
       if (this.isContinuousSimultaneousMode()){
         this.stopAllRhythmsInternalCleanup(); // Clear any rAF/staggers from previous mode
         this.audioService.deactivateAllPoints(); // Fresh start
-        this.activeDotKeys.forEach(dotKey => this.audioService.activatePoint(dotKey));
+        this.activeDotKeys.forEach(dotKey => this.audioService.activatePoint(dotKey, audioContext.getAudioContext().currentTime));
       } else {
       this.startAllRhythms();
       }
@@ -689,139 +615,77 @@ class DotGridAudioPlayer {
       return;
     }
 
-    // Existing startAllRhythms logic (from clearing animationFrameId onwards)
-    if (this.animationFrameId !== null) {
-      cancelAnimationFrame(this.animationFrameId);
-    this.animationFrameId = null;
-    }
-    this.clearCurrentRowStaggerTimeouts();
+    this.stopAllRhythmsInternalCleanup(); // Clear any previous timeouts/loop
     
-    if (!this.isPlaying) return; // This check is important here too
-
-    // Group active dots by row and sort them
-    const groupedByRow: Map<number, string[]> = new Map();
-    this.activeDotKeys.forEach(dotKey => {
-      const [xStr, yStr] = dotKey.split(',');
-      const y = parseInt(yStr, 10);
-      const x = parseInt(xStr, 10); // Keep x for sorting within row
-      if (!isNaN(x) && !isNaN(y)) {
-        if (!groupedByRow.has(y)) {
-          groupedByRow.set(y, []);
-        }
-        // Store key and x for sorting
-        groupedByRow.get(y)!.push(dotKey); 
-      }
-    });
-
-    this.orderedRowsToPlay = [];
-    const sortedRowIndices = Array.from(groupedByRow.keys()).sort((a, b) => a - b); // Sort rows top to bottom
-
-    sortedRowIndices.forEach(rowIndex => {
-      const dotKeysInRow = groupedByRow.get(rowIndex)!;
-      // Sort dots within the row by x-coordinate (left to right)
-      dotKeysInRow.sort((keyA, keyB) => {
-        const xA = parseInt(keyA.split(',')[0], 10);
-        const xB = parseInt(keyB.split(',')[0], 10);
-        return xA - xB;
-      });
-      this.orderedRowsToPlay.push({ rowIndex, dotKeys: dotKeysInRow });
-    });
-
-
-    if (this.orderedRowsToPlay.length === 0) {
-      if (this.animationFrameId !== null) { // Ensure cleanup if active then all dots removed
-        cancelAnimationFrame(this.animationFrameId);
-        this.animationFrameId = null;
-      }
-      return;
-    }
-    
-    this.audioService.deactivateAllPoints(); // Deactivate all before starting new sequence
-
-    this.currentRowIndex = 0;
-    this.lastSwitchTime = performance.now() / 1000;
-
-    this.activateRowAndScheduleNextStaggers(this.currentRowIndex);
-
-    const frameLoop = (timestamp: number) => {
-      if (!this.isPlaying || this.orderedRowsToPlay.length === 0) {
-        if (this.animationFrameId !== null) {
-            cancelAnimationFrame(this.animationFrameId);
-            this.animationFrameId = null;
-        }
-        this.clearCurrentRowStaggerTimeouts(); // Ensure any pending staggers are cleared on stop
-        // No need to deactivate points here, stopAllRhythms or new startAllRhythms handles it
+    if (!this.isPlaying || this.activeDotKeys.size === 0) {
         return;
-      }
-      
-      const now = timestamp / 1000;
-      const elapsedSinceSwitch = now - this.lastSwitchTime;
-
-      if (elapsedSinceSwitch >= DOT_DURATION_S) { // DOT_DURATION_S is now row duration
-        this.clearCurrentRowStaggerTimeouts(); // Clear staggers for the row that's ending
-
-        // Deactivate dots of the previous/current row
-        const previousRowData = this.orderedRowsToPlay[this.currentRowIndex];
-        if (previousRowData && previousRowData.dotKeys) {
-          previousRowData.dotKeys.forEach(dotKey => {
-            if (this.audioService.deactivatePoint) { // Good practice check
-              this.audioService.deactivatePoint(dotKey);
-            }
-          });
-        }
-
-        this.currentRowIndex = (this.currentRowIndex + 1) % this.orderedRowsToPlay.length;
-        
-        this.activateRowAndScheduleNextStaggers(this.currentRowIndex);
-        
-        this.lastSwitchTime = now;
-      }
-      
-      this.animationFrameId = requestAnimationFrame(frameLoop);
-    };
-    
-    this.animationFrameId = requestAnimationFrame(frameLoop);
-  }
-  
-  private activateRowAndScheduleNextStaggers(rowIndexToActivate: number): void {
-    this.clearCurrentRowStaggerTimeouts(); // Clear previous staggers before scheduling new ones
-
-    if (rowIndexToActivate < 0 || rowIndexToActivate >= this.orderedRowsToPlay.length) {
-      return; // Invalid index
-    }
-
-    const rowData = this.orderedRowsToPlay[rowIndexToActivate];
-    if (!rowData || !rowData.dotKeys || rowData.dotKeys.length === 0) {
-      return;
     }
     
-    rowData.dotKeys.forEach((dotKey, indexInRow) => {
-      const staggerDelay = indexInRow * INTRA_ROW_STAGGER_S * 1000; // ms
+    // Deactivate all points before starting new sequence to ensure clean state for envelopes
+    // especially if looping and sounds might overlap slightly if not fully released.
+    this.audioService.deactivateAllPoints(); 
 
-      const timeoutId = window.setTimeout(() => {
-        // Check if still playing and if this row is still the *current* one.
-        // This prevents late activations if stop/start or row changes happen quickly.
-        if (this.isPlaying && this.currentRowIndex === rowIndexToActivate && this.audioService.activatePoint) {
-          this.audioService.activatePoint(dotKey);
-        }
-      }, staggerDelay);
-      this.currentRowStaggerTimeouts.push(timeoutId);
+    const sortedDotKeys = Array.from(this.activeDotKeys).sort((keyA, keyB) => {
+      const [xAStr, yAStr] = keyA.split(',');
+      const [xBStr, yBStr] = keyB.split(',');
+      const yA = parseInt(yAStr, 10);
+      const yB = parseInt(yBStr, 10);
+      if (yA !== yB) return yA - yB; // Sort by row first (top to bottom)
+      const xA = parseInt(xAStr, 10);
+      const xB = parseInt(xBStr, 10);
+      return xA - xB; // Then by column (left to right)
     });
-  }
-  
-  private clearCurrentRowStaggerTimeouts(): void {
-    this.currentRowStaggerTimeouts.forEach(clearTimeout);
-    this.currentRowStaggerTimeouts = [];
+
+    const currentTime = audioContext.getAudioContext().currentTime;
+
+    sortedDotKeys.forEach((dotKey, index) => {
+      const activationTime = currentTime + index * ALL_DOTS_STAGGER_INTERVAL_S;
+      // Schedule activation directly. PositionedAudioService.activatePoint now handles
+      // the _schedulePointActivationSound which uses GLOBAL_STAGGER_ATTACK_S and GLOBAL_STAGGER_RELEASE_S.
+      // We store the timeout ID only if we need to clear it, but Web Audio events don't need explicit clearing like this.
+      // However, if activatePoint itself uses setTimeout internally for something NOT related to Web Audio scheduling, that might need clearing.
+      // For now, activatePoint for this mode directly schedules Web Audio events.
+      this.audioService.activatePoint(dotKey, activationTime);
+    });
+    
+    // Schedule the next iteration of the loop if there are dots
+    if (sortedDotKeys.length > 0) {
+      const loopDelayMs = sortedDotKeys.length * ALL_DOTS_STAGGER_INTERVAL_S * 1000;
+      if (loopDelayMs > 0) { // Ensure positive delay
+        this.loopTimeoutId = window.setTimeout(() => {
+          // Check playback state again before re-triggering
+          if (this.isPlaying && !this.isContinuousSimultaneousMode()) {
+            this.startAllRhythms(); // This will handle deactivating/cleanup and rescheduling
+          }
+        }, loopDelayMs);
+      }
+    }
+    // No rAF loop needed. The sounds are scheduled with the Web Audio API.
+    // The main loop is handled by setTimeout scheduling startAllRhythms again.
   }
   
   private stopAllRhythmsInternalCleanup(): void {
-    if (this.animationFrameId !== null) {
-      cancelAnimationFrame(this.animationFrameId);
-      this.animationFrameId = null;
+    // Clear the main sequence loop timeout
+    if (this.loopTimeoutId !== null) {
+      clearTimeout(this.loopTimeoutId);
+      this.loopTimeoutId = null;
     }
-    this.clearCurrentRowStaggerTimeouts();
-  }
 
+    // if (this.animationFrameId !== null) { // REMOVING rAF
+    //   cancelAnimationFrame(this.animationFrameId);
+    //   this.animationFrameId = null;
+    // }
+    // this.clearCurrentRowStaggerTimeouts(); // REMOVING row-based staggers
+    
+    // For the new global stagger, if activatePoint uses setTimeout for non-WebAudio things that need clearing,
+    // we would manage those timeouts (e.g., in this.globalStaggerTimeouts) and clear them here.
+    // However, _schedulePointActivationSound uses Web Audio's native scheduling which is managed via GainNode.cancelScheduledValues().
+    // DeactivateAllPoints should implicitly cancel these when it ramps gains down.
+    // If we were using setTimeout to trigger activatePoint itself, we'd clear them:
+    // this.globalStaggerTimeouts.forEach(clearTimeout); // REMOVING this array
+    // this.globalStaggerTimeouts = []; // REMOVING this array
+  }
+  
   /**
    * Stop all rhythm timers
    */
@@ -845,11 +709,11 @@ class DotGridAudioPlayer {
     this.setPlaying(false);
     this.stopAllRhythms();
     
-    // Ensure animation frames are cancelled
-    if (this.animationFrameId !== null) {
-      cancelAnimationFrame(this.animationFrameId);
-      this.animationFrameId = null;
-    }
+    // Ensure animation frames are cancelled - REMOVING rAF
+    // if (this.animationFrameId !== null) {
+    //   cancelAnimationFrame(this.animationFrameId);
+    //   this.animationFrameId = null;
+    // }
     
     // Clean up analyzer nodes
     if (this.preEQGain) {
@@ -877,7 +741,7 @@ class DotGridAudioPlayer {
       // Restart playback according to the new mode
       if (this.isContinuousSimultaneousMode()) {
         // No need to deactivate again, stopAllRhythms did it.
-        this.activeDotKeys.forEach(dotKey => this.audioService.activatePoint(dotKey));
+        this.activeDotKeys.forEach(dotKey => this.audioService.activatePoint(dotKey, audioContext.getAudioContext().currentTime));
       } else {
         this.startAllRhythms(); 
       }
