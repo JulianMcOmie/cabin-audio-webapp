@@ -30,6 +30,7 @@ export function GlyphGrid({ isPlaying, disabled = false, glyphType = 'triangle' 
     type: glyphType, // Use prop for initial type
     position: { x: 0, y: 0 }, // Center position (0,0) is center of canvas)
     size: { width: 1, height: 1 }, // Full size (1 = full extent of normalized space)
+    angle: glyphType === 'triangle' ? Math.PI / 4 : 0, // Default 45deg angle for triangle for testing
   })
   
   // Track the last mouse position for dragging and resizing
@@ -93,7 +94,8 @@ export function GlyphGrid({ isPlaying, disabled = false, glyphType = 'triangle' 
     setGlyph(prev => ({
       ...prev,
       id: `prop-driven-${glyphType}`,
-      type: glyphType
+      type: glyphType,
+      angle: glyphType === 'triangle' ? (prev.angle || Math.PI / 4) : 0, // Preserve angle or set default for triangle
     }));
 
     // Enable envelope modulation by default
@@ -222,20 +224,29 @@ export function GlyphGrid({ isPlaying, disabled = false, glyphType = 'triangle' 
       ctx.lineTo(bb_endX_canvas, bb_endY_canvas)
       ctx.stroke()
     } else if (glyph.type === 'triangle') {
-      // Define triangle vertices based on the bounding box
-      // Apex at the midpoint of the top edge of the bounding box
-      // Base is the bottom edge of the bounding box
-      const v1_canvas = { x: (bb_startX_canvas + bb_endX_canvas) / 2, y: bb_endY_canvas } // Apex
-      const v2_canvas = { x: bb_startX_canvas, y: bb_startY_canvas } // Base-left
-      const v3_canvas = { x: bb_endX_canvas, y: bb_startY_canvas } // Base-right
+      // Calculate center of the bounding box in canvas coordinates for rotation
+      const centerX_canvas = (bb_startX_canvas + bb_endX_canvas) / 2;
+      const centerY_canvas = (bb_startY_canvas + bb_endY_canvas) / 2;
+      const currentAngle = glyph.angle || 0;
+
+      ctx.save(); // Save context for rotation
+      ctx.translate(centerX_canvas, centerY_canvas); // Translate to rotation center
+      ctx.rotate(currentAngle); // Rotate
+      ctx.translate(-centerX_canvas, -centerY_canvas); // Translate back to origin relative to the new rotated axes
+
+      // Define triangle vertices based on the bounding box (as if unrotated and centered at origin, then translated)
+      // These are the coordinates used for drawing, and they will be affected by the context's rotation.
+      const v1_draw_unrotated = { x: (bb_startX_canvas + bb_endX_canvas) / 2, y: bb_endY_canvas }; // Apex relative to original canvas origin
+      const v2_draw_unrotated = { x: bb_startX_canvas, y: bb_startY_canvas }; // Base-left relative to original canvas origin
+      const v3_draw_unrotated = { x: bb_endX_canvas, y: bb_startY_canvas }; // Base-right relative to original canvas origin
 
       // Draw the triangle with hover effect if needed
       if (hoverState === 'shape_body' && !isDragging && !isResizing) {
         ctx.fillStyle = isDarkMode ? 'rgba(56, 189, 248, 0.3)' : 'rgba(2, 132, 199, 0.3)'
         ctx.beginPath()
-        ctx.moveTo(v1_canvas.x, v1_canvas.y)
-        ctx.lineTo(v2_canvas.x, v2_canvas.y)
-        ctx.lineTo(v3_canvas.x, v3_canvas.y)
+        ctx.moveTo(v1_draw_unrotated.x, v1_draw_unrotated.y)
+        ctx.lineTo(v2_draw_unrotated.x, v2_draw_unrotated.y)
+        ctx.lineTo(v3_draw_unrotated.x, v3_draw_unrotated.y)
         ctx.closePath()
         ctx.fill()
       }
@@ -243,11 +254,13 @@ export function GlyphGrid({ isPlaying, disabled = false, glyphType = 'triangle' 
       ctx.strokeStyle = isDarkMode ? '#38bdf8' : '#0284c7'
       ctx.lineWidth = 3
       ctx.beginPath()
-      ctx.moveTo(v1_canvas.x, v1_canvas.y)
-      ctx.lineTo(v2_canvas.x, v2_canvas.y)
-      ctx.lineTo(v3_canvas.x, v3_canvas.y)
+      ctx.moveTo(v1_draw_unrotated.x, v1_draw_unrotated.y)
+      ctx.lineTo(v2_draw_unrotated.x, v2_draw_unrotated.y)
+      ctx.lineTo(v3_draw_unrotated.x, v3_draw_unrotated.y)
       ctx.closePath()
       ctx.stroke()
+
+      ctx.restore(); // Restore context to remove rotation for other elements
     }
       
     // If playing, draw a moving dot along the path (diagonal of bounding box for all shapes)
@@ -259,36 +272,55 @@ export function GlyphGrid({ isPlaying, disabled = false, glyphType = 'triangle' 
       let dotY: number;
 
       if (glyph.type === 'triangle') {
-        // Triangle vertices in canvas coordinates (already calculated for drawing the triangle)
-        const v1_canvas = { x: (bb_startX_canvas + bb_endX_canvas) / 2, y: bb_endY_canvas }; // Apex
-        const v2_canvas = { x: bb_startX_canvas, y: bb_startY_canvas };               // Base-left
-        const v3_canvas = { x: bb_endX_canvas, y: bb_startY_canvas };               // Base-right
+        // Triangle vertices in canvas coordinates (unrotated, relative to canvas origin)
+        const v1_unrotated_canvas = { x: (bb_startX_canvas + bb_endX_canvas) / 2, y: bb_endY_canvas };
+        const v2_unrotated_canvas = { x: bb_startX_canvas, y: bb_startY_canvas };
+        const v3_unrotated_canvas = { x: bb_endX_canvas, y: bb_startY_canvas };
+
+        // Rotation center (bounding box center in canvas coordinates)
+        const rotCenterX_canvas = (bb_startX_canvas + bb_endX_canvas) / 2;
+        const rotCenterY_canvas = (bb_startY_canvas + bb_endY_canvas) / 2;
+        const currentAngle = glyph.angle || 0;
+        const cosA = Math.cos(currentAngle);
+        const sinA = Math.sin(currentAngle);
+
+        const rotateCanvasPoint = (p: {x:number, y:number}) => {
+            const translatedX = p.x - rotCenterX_canvas;
+            const translatedY = p.y - rotCenterY_canvas;
+            return {
+                x: rotCenterX_canvas + translatedX * cosA - translatedY * sinA,
+                y: rotCenterY_canvas + translatedX * sinA + translatedY * cosA,
+            };
+        };
+
+        const v1_rotated_canvas = rotateCanvasPoint(v1_unrotated_canvas);
+        const v2_rotated_canvas = rotateCanvasPoint(v2_unrotated_canvas);
+        const v3_rotated_canvas = rotateCanvasPoint(v3_unrotated_canvas);
 
         const dist = (p1: {x:number,y:number}, p2: {x:number,y:number}) => Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
 
-        const len12 = dist(v1_canvas, v2_canvas);
-        const len23 = dist(v2_canvas, v3_canvas);
-        const len31 = dist(v3_canvas, v1_canvas);
+        const len12 = dist(v1_rotated_canvas, v2_rotated_canvas);
+        const len23 = dist(v2_rotated_canvas, v3_rotated_canvas);
+        const len31 = dist(v3_rotated_canvas, v1_rotated_canvas);
         const totalPerimeter = len12 + len23 + len31;
 
         if (totalPerimeter === 0) {
-          dotX = v1_canvas.x;
-          dotY = v1_canvas.y;
+          dotX = v1_rotated_canvas.x;
+          dotY = v1_rotated_canvas.y;
         } else {
           let currentPerimeterPos = pathPosition * totalPerimeter;
-
           if (currentPerimeterPos <= len12) {
             const segmentPos = currentPerimeterPos / len12;
-            dotX = v1_canvas.x + segmentPos * (v2_canvas.x - v1_canvas.x);
-            dotY = v1_canvas.y + segmentPos * (v2_canvas.y - v1_canvas.y);
+            dotX = v1_rotated_canvas.x + segmentPos * (v2_rotated_canvas.x - v1_rotated_canvas.x);
+            dotY = v1_rotated_canvas.y + segmentPos * (v2_rotated_canvas.y - v1_rotated_canvas.y);
           } else if (currentPerimeterPos <= len12 + len23) {
             const segmentPos = (currentPerimeterPos - len12) / len23;
-            dotX = v2_canvas.x + segmentPos * (v3_canvas.x - v2_canvas.x);
-            dotY = v2_canvas.y + segmentPos * (v3_canvas.y - v2_canvas.y);
+            dotX = v2_rotated_canvas.x + segmentPos * (v3_rotated_canvas.x - v2_rotated_canvas.x);
+            dotY = v2_rotated_canvas.y + segmentPos * (v3_rotated_canvas.y - v2_rotated_canvas.y);
           } else {
             const segmentPos = (currentPerimeterPos - len12 - len23) / len31;
-            dotX = v3_canvas.x + segmentPos * (v1_canvas.x - v3_canvas.x);
-            dotY = v3_canvas.y + segmentPos * (v1_canvas.y - v3_canvas.y);
+            dotX = v3_rotated_canvas.x + segmentPos * (v1_rotated_canvas.x - v3_rotated_canvas.x);
+            dotY = v3_rotated_canvas.y + segmentPos * (v1_rotated_canvas.y - v3_rotated_canvas.y);
           }
         }
       } else { // Default to line (diagonal of bounding box)
@@ -400,19 +432,35 @@ export function GlyphGrid({ isPlaying, disabled = false, glyphType = 'triangle' 
         return 'shape_body'
       }
     } else if (glyph.type === 'triangle') {
-      // Point-in-triangle test
-      const v1 = { x: (bb_startX_canvas + bb_endX_canvas) / 2, y: bb_endY_canvas } // Apex
-      const v2 = { x: bb_startX_canvas, y: bb_startY_canvas } // Base-left
-      const v3 = { x: bb_endX_canvas, y: bb_startY_canvas } // Base-right
+      // Point-in-triangle test needs to account for rotation.
+      // Un-rotate the mouse point before testing against the unrotated triangle vertices.
+      const currentAngle = glyph.angle || 0;
+      const cosMinusA = Math.cos(-currentAngle);
+      const sinMinusA = Math.sin(-currentAngle);
+
+      // Center of bounding box in canvas coordinates (rotation center)
+      const centerX_canvas = (bb_startX_canvas + bb_endX_canvas) / 2;
+      const centerY_canvas = (bb_startY_canvas + bb_endY_canvas) / 2;
+
+      // Translate mouse point to be relative to center, rotate, then translate back
+      const translatedMouseX = mouseX - centerX_canvas;
+      const translatedMouseY = mouseY - centerY_canvas;
+      const unrotatedMouseX = centerX_canvas + translatedMouseX * cosMinusA - translatedMouseY * sinMinusA;
+      const unrotatedMouseY = centerY_canvas + translatedMouseX * sinMinusA + translatedMouseY * cosMinusA;
+      
+      // Unrotated triangle vertices in canvas coordinates
+      const v1_unrotated_canvas = { x: (bb_startX_canvas + bb_endX_canvas) / 2, y: bb_endY_canvas };
+      const v2_unrotated_canvas = { x: bb_startX_canvas, y: bb_startY_canvas };
+      const v3_unrotated_canvas = { x: bb_endX_canvas, y: bb_startY_canvas };
 
       const sign = (p1: {x:number, y:number}, p2: {x:number, y:number}, p3: {x:number, y:number}) => {
         return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
       }
 
-      const pt = { x: mouseX, y: mouseY };
-      const d1 = sign(pt, v1, v2);
-      const d2 = sign(pt, v2, v3);
-      const d3 = sign(pt, v3, v1);
+      const pt = { x: unrotatedMouseX, y: unrotatedMouseY }; // Use unrotated mouse point
+      const d1 = sign(pt, v1_unrotated_canvas, v2_unrotated_canvas);
+      const d2 = sign(pt, v2_unrotated_canvas, v3_unrotated_canvas);
+      const d3 = sign(pt, v3_unrotated_canvas, v1_unrotated_canvas);
 
       const has_neg = (d1 < 0) || (d2 < 0) || (d3 < 0);
       const has_pos = (d1 > 0) || (d2 > 0) || (d3 > 0);

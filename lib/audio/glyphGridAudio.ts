@@ -378,10 +378,37 @@ class GlyphGridAudioPlayer {
     let y: number;
 
     if (glyphType === 'triangle') {
-      const v1 = { x: (startX_bb + endX_bb) / 2, y: endY_bb }; // Apex
-      const v2 = { x: startX_bb, y: startY_bb };               // Base-left
-      const v3 = { x: endX_bb, y: startY_bb };               // Base-right
+      // Original vertices based on bounding box
+      const v1_unrotated = { x: (startX_bb + endX_bb) / 2, y: endY_bb }; // Apex
+      const v2_unrotated = { x: startX_bb, y: startY_bb };               // Base-left
+      const v3_unrotated = { x: endX_bb, y: startY_bb };               // Base-right
 
+      let v1 = { ...v1_unrotated };
+      let v2 = { ...v2_unrotated };
+      let v3 = { ...v3_unrotated };
+
+      const angle = this.currentGlyph.angle; // Angle in radians from glyph data
+
+      if (angle && angle !== 0) {
+        const centerX = glyphPos.x; // Center of rotation is the glyph's center
+        const centerY = glyphPos.y;
+        const cosTheta = Math.cos(angle);
+        const sinTheta = Math.sin(angle);
+
+        const rotatePoint = (point: {x: number, y: number}) => {
+          const tempX = point.x - centerX;
+          const tempY = point.y - centerY;
+          const rotatedX = tempX * cosTheta - tempY * sinTheta;
+          const rotatedY = tempX * sinTheta + tempY * cosTheta;
+          return { x: rotatedX + centerX, y: rotatedY + centerY };
+        };
+
+        v1 = rotatePoint(v1_unrotated);
+        v2 = rotatePoint(v2_unrotated);
+        v3 = rotatePoint(v3_unrotated);
+      }
+
+      // Perimeter calculation and path interpolation using v1, v2, v3 (which are now rotated if angle was present)
       const dist = (p1: {x:number,y:number}, p2: {x:number,y:number}) => Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
 
       const len12 = dist(v1, v2);
