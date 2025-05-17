@@ -3,24 +3,29 @@ import * as eqProcessor from '@/lib/audio/eqProcessor'
 import { useEQProfileStore } from '@/lib/stores'
 
 // --- Constants for SlopedPinkNoiseGenerator ---
-const NUM_BANDS = 12; // Number of frequency bands for shaping
-const SLOPE_REF_FREQUENCY = 600; // Hz, reference frequency for slope calculations
+const NUM_BANDS = 20; // Number of frequency bands for shaping
+const SLOPE_REF_FREQUENCY = 800; // Hz, reference frequency for slope calculations
 const MIN_AUDIBLE_FREQ = 20; // Hz
 const MAX_AUDIBLE_FREQ = 20000; // Hz
 const BAND_Q_VALUE = 1.5; // Q value for the bandpass filters
 const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
 
-// Target overall slopes for glyphs
+// Target overall slopes for glyphs (aligned with dotGridAudio)
 const LOW_SLOPE_DB_PER_OCT = -9.0; // For low y positions (darker sound)
 const CENTER_SLOPE_DB_PER_OCT = -3.0; // For middle y positions
 const HIGH_SLOPE_DB_PER_OCT = 3.0; // For high y positions (brighter sound)
 const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of SlopedPinkNoiseGenerator
+
+// New constants from dotGridAudio.ts for gain calculation
+const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 3.8; // dB reduction per dB/octave deviation
+const MAX_ADDITIONAL_BOOST_DB = 9.0; // Max boost for y-extremity
+
 // --- End Constants for SlopedPinkNoiseGenerator ---
 
 // Default values
 const DEFAULT_FREQ_MULTIPLIER = 1.0
 const DEFAULT_SWEEP_DURATION = 8.0 // 8 seconds per cycle
-const MASTER_GAIN = 1.5
+const MASTER_GAIN = 6.0; // Aligned with dotGridAudio
 const DEFAULT_SPEED = 1.0 // Default movement speed
 
 // Add constants for hit detection
@@ -142,6 +147,7 @@ class GlyphGridAudioPlayer {
   // Add these properties to the class
   private isManualControl: boolean = false
   private manualPosition: number = 0
+  private currentBaseDbLevel: number = 0; // Added for gain calculation alignment
   
   // Add preEQAnalyser property
   private preEQAnalyser: AnalyserNode | null = null
@@ -351,7 +357,7 @@ class GlyphGridAudioPlayer {
   
   // New method to update audio parameters from a position
   private updateAudioParametersFromPosition(position: number): void {
-    if (!this.currentGlyph) return
+    if (!this.currentGlyph || !this.audioNodes.slopedNoiseGenerator || !this.audioNodes.gain || !this.audioNodes.panner) return;
     
     // Get the glyph's position and size
     const { position: glyphPos, size: glyphSize } = this.currentGlyph
@@ -370,25 +376,37 @@ class GlyphGridAudioPlayer {
     const normalizedY = Math.max(0, Math.min(1, (y + 1) / 2))
     
     // Map x to pan position (-1 to 1)
-    const panPosition = x
+    const panPosition = x;
     
-    // Now update the audio nodes with these values
-    if (this.audioNodes.slopedNoiseGenerator) {
-      let targetOverallSlopeDbPerOctave;
-      // Interpolate slope based on normalizedY (0=bottom, 1=top)
-      if (normalizedY < 0.5) {
-        const t = normalizedY * 2;
-        targetOverallSlopeDbPerOctave = LOW_SLOPE_DB_PER_OCT + t * (CENTER_SLOPE_DB_PER_OCT - LOW_SLOPE_DB_PER_OCT);
-      } else {
-        const t = (normalizedY - 0.5) * 2;
-        targetOverallSlopeDbPerOctave = CENTER_SLOPE_DB_PER_OCT + t * (HIGH_SLOPE_DB_PER_OCT - CENTER_SLOPE_DB_PER_OCT);
-      }
-      this.audioNodes.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
+    // Calculate target slope
+    let targetOverallSlopeDbPerOctave;
+    if (normalizedY < 0.5) {
+      const t = normalizedY * 2;
+      targetOverallSlopeDbPerOctave = LOW_SLOPE_DB_PER_OCT + t * (CENTER_SLOPE_DB_PER_OCT - LOW_SLOPE_DB_PER_OCT);
+    } else {
+      const t = (normalizedY - 0.5) * 2;
+      targetOverallSlopeDbPerOctave = CENTER_SLOPE_DB_PER_OCT + t * (HIGH_SLOPE_DB_PER_OCT - CENTER_SLOPE_DB_PER_OCT);
     }
+    this.audioNodes.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
     
-    if (this.audioNodes.panner) {
-      this.audioNodes.panner.pan.value = panPosition
-    }
+    // Calculate main gain based on dotGridAudio.ts logic
+    const slopeDeviationForAttenuation = Math.abs(targetOverallSlopeDbPerOctave - CENTER_SLOPE_DB_PER_OCT);
+    const existingAttenuationDb = -slopeDeviationForAttenuation * ATTENUATION_PER_DB_OCT_DEVIATION_DB;
+
+    const extremityFactor = Math.abs(normalizedY - 0.5) * 2;
+    const curvedExtremityFactor = Math.sqrt(extremityFactor);
+    const additionalSlopeBoostDb = curvedExtremityFactor * MAX_ADDITIONAL_BOOST_DB;
+
+    const finalVolumeDb = this.currentBaseDbLevel + existingAttenuationDb + additionalSlopeBoostDb;
+    
+    const gainRatio = Math.pow(10, finalVolumeDb / 20);
+    const effectiveMasterGain = MASTER_GAIN * this.distortionGain * gainRatio;
+    
+    const ctx = getAudioContext(); // Ensure context is available for currentTime
+    this.audioNodes.gain.gain.setValueAtTime(effectiveMasterGain, ctx.currentTime);
+    
+    // Update panner
+    this.audioNodes.panner.pan.value = panPosition
   }
   
   public setPlaying(playing: boolean): void {
@@ -418,7 +436,8 @@ class GlyphGridAudioPlayer {
     
     // Create gain node for volume - apply distortion gain
     const gain = ctx.createGain()
-    gain.gain.value = MASTER_GAIN * this.distortionGain;
+    // Initial gain setting - updateAudioParametersFromPosition will provide more detailed adjustments
+    gain.gain.value = MASTER_GAIN * this.distortionGain; 
     
     // Create panner node
     const panner = ctx.createStereoPanner()
@@ -733,12 +752,19 @@ class GlyphGridAudioPlayer {
     // Clamp gain between 0 and 1
     this.distortionGain = Math.max(0, Math.min(1, gain));
     
-    // If playing, apply to active gain node
-    if (this.isPlaying && this.audioNodes.gain) {
-      // Apply directly to the gain node
-      this.audioNodes.gain.gain.value = MASTER_GAIN * this.distortionGain;
-      console.log(`🔊 Glyph Grid distortion gain set to ${this.distortionGain.toFixed(2)}`);
-    }
+    // If playing, the animation loop calling updateAudioParametersFromPosition
+    // will pick up the new distortionGain. No direct gain update needed here
+    // to avoid partial/incomplete gain settings.
+    // if (this.isPlaying && this.audioNodes.gain) {
+    //   this.audioNodes.gain.gain.value = MASTER_GAIN * this.distortionGain;
+    // }
+    console.log(`🔊 Glyph Grid distortion gain set to ${this.distortionGain.toFixed(2)}`);
+  }
+
+  // Add a setter for base volume, similar to DotGridAudioPlayer
+  public setVolumeDb(dbLevel: number): void {
+    this.currentBaseDbLevel = dbLevel;
+    // If playing, the change will be picked up by updateAudioParametersFromPosition in the animation loop
   }
 }
 
