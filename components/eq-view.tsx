@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { HelpCircle, Play, Power, Volume2, Sliders } from "lucide-react"
+import { HelpCircle, Play, Power, Volume2, Sliders, Minus, Triangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { FrequencyGraph } from "@/components/frequency-graph"
 import { EQProfiles } from "@/components/eq-profiles"
@@ -93,6 +93,9 @@ export function EQView({ setEqEnabled }: EQViewProps) {
 
   // New state for Dot Grid sub-hit playback mode
   const [isSubHitPlaybackEnabled, setIsSubHitPlaybackEnabled] = useState(true);
+
+  // New state for current glyph shape in Line Tool (GlyphGrid)
+  const [currentGlyphShape, setCurrentGlyphShape] = useState<'line' | 'triangle'>('triangle');
 
   // Detect mobile devices
   useEffect(() => {
@@ -466,6 +469,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 <GlyphGrid
                   isPlaying={glyphGridPlaying}
                   disabled={false}
+                  glyphType={currentGlyphShape}
                 />
               ) : activeGrid === "dot" ? (
                 <DotCalibration
@@ -512,6 +516,31 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                       {isSubHitPlaybackEnabled ? "Sub-Hits Enabled" : "Continuous Play"}
                     </Label>
                   </div>
+              )}
+
+              {/* UI for selecting glyph shape when Line Tool is active */} 
+              {activeGrid === "line" && (
+                <div className="mt-4 space-y-2">
+                  <p className="text-xs text-muted-foreground text-center">Shape Type:</p>
+                  <div className="flex justify-center gap-2">
+                    <Button 
+                      variant={currentGlyphShape === 'line' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setCurrentGlyphShape('line')}
+                      className={currentGlyphShape === 'line' ? "bg-sky-500 hover:bg-sky-600 text-white" : ""}
+                    >
+                      <Minus className="mr-1 h-4 w-4" /> Line
+                    </Button>
+                    <Button 
+                      variant={currentGlyphShape === 'triangle' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setCurrentGlyphShape('triangle')}
+                      className={currentGlyphShape === 'triangle' ? "bg-sky-500 hover:bg-sky-600 text-white" : ""}
+                    >
+                      <Triangle className="mr-1 h-4 w-4" /> Triangle
+                    </Button>
+                  </div>
+                </div>
               )}
             </div>
             

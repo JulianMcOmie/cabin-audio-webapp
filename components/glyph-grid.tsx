@@ -8,7 +8,7 @@ import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
 // Glyph interface for representing a shape that defines a path
 interface Glyph {
   id: string;
-  type: 'line'; // For now, only diagonal line is supported
+  type: 'line' | 'triangle'; // Added 'triangle'
   position: { x: number, y: number }; // Center position
   size: { width: number, height: number }; // Size of the glyph
   angle?: number; // Optional rotation angle (not implemented in initial version)
@@ -17,16 +17,17 @@ interface Glyph {
 interface GlyphGridProps {
   isPlaying: boolean;
   disabled?: boolean;
+  glyphType?: 'line' | 'triangle'; // New prop for selecting shape type
 }
 
-export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
+export function GlyphGrid({ isPlaying, disabled = false, glyphType = 'triangle' }: GlyphGridProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [isResizing, setIsResizing] = useState(false)
-  const [dragTarget, setDragTarget] = useState<'none' | 'vertex1' | 'vertex2' | 'line'>('none')
+  const [dragTarget, setDragTarget] = useState<'none' | 'vertex1' | 'vertex2' | 'shape_body'>('none') // Changed 'line' to 'shape_body'
   const [glyph, setGlyph] = useState<Glyph>({
-    id: 'diagonal-line',
-    type: 'line',
+    id: `initial-${glyphType}`,
+    type: glyphType, // Use prop for initial type
     position: { x: 0, y: 0 }, // Center position (0,0) is center of canvas)
     size: { width: 1, height: 1 }, // Full size (1 = full extent of normalized space)
   })
@@ -47,7 +48,7 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
   const [speed, setSpeed] = useState(1.0)
 
   // Add hover state tracking for interactive elements
-  const [hoverState, setHoverState] = useState<'none' | 'vertex1' | 'vertex2' | 'line'>('none')
+  const [hoverState, setHoverState] = useState<'none' | 'vertex1' | 'vertex2' | 'shape_body'>('none') // Changed 'line' to 'shape_body'
 
   // Add a reference to store the animation frame ID
   const animationFrameRef = useRef<number | null>(null);
@@ -74,19 +75,27 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     }
   }, [])
   
-  // Initialize the audio player
+  // Initialize the audio player and set initial glyph based on prop
   useEffect(() => {
     const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
     
-    // Set the initial glyph
-    audioPlayer.setGlyph({
-      id: glyph.id,
-      type: glyph.type,
+    // Set the initial glyph based on the prop or default
+    const initialGlyphData = {
+      id: glyph.id, // Use current glyph id from state
+      type: glyphType, // Use the glyphType prop
       position: glyph.position,
       size: glyph.size,
       angle: glyph.angle
-    })
+    };
+    audioPlayer.setGlyph(initialGlyphData as glyphGridAudio.GlyphData) // Cast to satisfy audio player type
     
+    // Update internal glyph state if prop changes
+    setGlyph(prev => ({
+      ...prev,
+      id: `prop-driven-${glyphType}`,
+      type: glyphType
+    }));
+
     // Enable envelope modulation by default
     // audioPlayer.setModulating(true)
     
@@ -97,19 +106,19 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
       // Clean up audio on unmount
       glyphGridAudio.cleanupGlyphGridAudioPlayer()
     }
-  }, [])
+  }, [glyphType]) // Rerun this effect if glyphType prop changes
   
-  // This causes unnecessary stuttering by constantly stopping and restarting audio
+  // Update audio player when internal glyph state changes (e.g. due to drag/resize)
   useEffect(() => {
     const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
     
     audioPlayer.setGlyph({
       id: glyph.id,
-      type: glyph.type,
+      type: glyph.type, // Use the type from the internal glyph state
       position: glyph.position,
       size: glyph.size,
       angle: glyph.angle
-    })
+    } as glyphGridAudio.GlyphData) // Cast to satisfy audio player type
   }, [glyph])
   
   // Update audio player when playing state changes
@@ -178,31 +187,30 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
       ctx.stroke()
     }
     
-    // Draw the diagonal line glyph
+    // --- Define Bounding Box (used by all shapes) ---
+    // In the audio system, (-1,-1) is bottom-left and (1,1) is top-right
+    // In the canvas, (0,0) is top-left and (width,height) is bottom-right
+    const bb_startX_norm = glyph.position.x - glyph.size.width / 2
+    const bb_startY_norm = glyph.position.y - glyph.size.height / 2
+    const bb_endX_norm = glyph.position.x + glyph.size.width / 2
+    const bb_endY_norm = glyph.position.y + glyph.size.height / 2
+
+    // Convert normalized bounding box coordinates to canvas pixels
+    const bb_startX_canvas = (bb_startX_norm + 1) / 2 * rect.width
+    const bb_startY_canvas = (1 - bb_startY_norm) / 2 * rect.height // Y is inverted
+    const bb_endX_canvas = (bb_endX_norm + 1) / 2 * rect.width
+    const bb_endY_canvas = (1 - bb_endY_norm) / 2 * rect.height // Y is inverted
+    // --- End Bounding Box --- 
+
     if (glyph.type === 'line') {
-      // In the audio system, (-1,-1) is bottom-left and (1,1) is top-right
-      // In the canvas, (0,0) is top-left and (width,height) is bottom-right
-      
-      // Calculate glyph corners in normalized space
-      const startX_norm = glyph.position.x - glyph.size.width / 2
-      const startY_norm = glyph.position.y - glyph.size.height / 2
-      const endX_norm = glyph.position.x + glyph.size.width / 2
-      const endY_norm = glyph.position.y + glyph.size.height / 2
-      
-      // Convert normalized coordinates to canvas pixels
-      const startX = (startX_norm + 1) / 2 * rect.width
-      const startY = (1 - startY_norm) / 2 * rect.height // Y is inverted
-      const endX = (endX_norm + 1) / 2 * rect.width
-      const endY = (1 - endY_norm) / 2 * rect.height // Y is inverted
-      
       // Draw the path line with hover effect if needed
-      if (hoverState === 'line' && !isDragging && !isResizing) {
+      if (hoverState === 'shape_body' && !isDragging && !isResizing) {
         // Draw a highlight underneath for hover state
         ctx.strokeStyle = isDarkMode ? 'rgba(56, 189, 248, 0.3)' : 'rgba(2, 132, 199, 0.3)'
         ctx.lineWidth = 8
         ctx.beginPath()
-        ctx.moveTo(startX, startY)
-        ctx.lineTo(endX, endY)
+        ctx.moveTo(bb_startX_canvas, bb_startY_canvas)
+        ctx.lineTo(bb_endX_canvas, bb_endY_canvas)
         ctx.stroke()
       }
       
@@ -210,56 +218,121 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
       ctx.strokeStyle = isDarkMode ? '#38bdf8' : '#0284c7'
       ctx.lineWidth = 3
       ctx.beginPath()
-      ctx.moveTo(startX, startY)
-      ctx.lineTo(endX, endY)
+      ctx.moveTo(bb_startX_canvas, bb_startY_canvas)
+      ctx.lineTo(bb_endX_canvas, bb_endY_canvas)
       ctx.stroke()
-      
-      // If playing, draw a moving dot along the path
-      if (isPlaying && !disabled) {
-        const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
-        const pathPosition = audioPlayer.getPathPosition()
-        
-        const dotX = startX + (endX - startX) * pathPosition
-        const dotY = startY + (endY - startY) * pathPosition
-        
-        // Draw the dot
-        ctx.fillStyle = isDarkMode ? 'rgb(56, 189, 248)' : 'rgb(2, 132, 199)'
+    } else if (glyph.type === 'triangle') {
+      // Define triangle vertices based on the bounding box
+      // Apex at the midpoint of the top edge of the bounding box
+      // Base is the bottom edge of the bounding box
+      const v1_canvas = { x: (bb_startX_canvas + bb_endX_canvas) / 2, y: bb_endY_canvas } // Apex
+      const v2_canvas = { x: bb_startX_canvas, y: bb_startY_canvas } // Base-left
+      const v3_canvas = { x: bb_endX_canvas, y: bb_startY_canvas } // Base-right
+
+      // Draw the triangle with hover effect if needed
+      if (hoverState === 'shape_body' && !isDragging && !isResizing) {
+        ctx.fillStyle = isDarkMode ? 'rgba(56, 189, 248, 0.3)' : 'rgba(2, 132, 199, 0.3)'
         ctx.beginPath()
-        ctx.arc(dotX, dotY, 8, 0, Math.PI * 2)
+        ctx.moveTo(v1_canvas.x, v1_canvas.y)
+        ctx.lineTo(v2_canvas.x, v2_canvas.y)
+        ctx.lineTo(v3_canvas.x, v3_canvas.y)
+        ctx.closePath()
         ctx.fill()
-        
-        // Request animation frame to continue the animation
-        requestAnimationFrame(() => {
-          setGlyph(prev => ({ ...prev }))
-        })
+      }
+
+      ctx.strokeStyle = isDarkMode ? '#38bdf8' : '#0284c7'
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.moveTo(v1_canvas.x, v1_canvas.y)
+      ctx.lineTo(v2_canvas.x, v2_canvas.y)
+      ctx.lineTo(v3_canvas.x, v3_canvas.y)
+      ctx.closePath()
+      ctx.stroke()
+    }
+      
+    // If playing, draw a moving dot along the path (diagonal of bounding box for all shapes)
+    if (isPlaying && !disabled) {
+      const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
+      const pathPosition = audioPlayer.getPathPosition()
+      
+      let dotX: number;
+      let dotY: number;
+
+      if (glyph.type === 'triangle') {
+        // Triangle vertices in canvas coordinates (already calculated for drawing the triangle)
+        const v1_canvas = { x: (bb_startX_canvas + bb_endX_canvas) / 2, y: bb_endY_canvas }; // Apex
+        const v2_canvas = { x: bb_startX_canvas, y: bb_startY_canvas };               // Base-left
+        const v3_canvas = { x: bb_endX_canvas, y: bb_startY_canvas };               // Base-right
+
+        const dist = (p1: {x:number,y:number}, p2: {x:number,y:number}) => Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+
+        const len12 = dist(v1_canvas, v2_canvas);
+        const len23 = dist(v2_canvas, v3_canvas);
+        const len31 = dist(v3_canvas, v1_canvas);
+        const totalPerimeter = len12 + len23 + len31;
+
+        if (totalPerimeter === 0) {
+          dotX = v1_canvas.x;
+          dotY = v1_canvas.y;
+        } else {
+          let currentPerimeterPos = pathPosition * totalPerimeter;
+
+          if (currentPerimeterPos <= len12) {
+            const segmentPos = currentPerimeterPos / len12;
+            dotX = v1_canvas.x + segmentPos * (v2_canvas.x - v1_canvas.x);
+            dotY = v1_canvas.y + segmentPos * (v2_canvas.y - v1_canvas.y);
+          } else if (currentPerimeterPos <= len12 + len23) {
+            const segmentPos = (currentPerimeterPos - len12) / len23;
+            dotX = v2_canvas.x + segmentPos * (v3_canvas.x - v2_canvas.x);
+            dotY = v2_canvas.y + segmentPos * (v3_canvas.y - v2_canvas.y);
+          } else {
+            const segmentPos = (currentPerimeterPos - len12 - len23) / len31;
+            dotX = v3_canvas.x + segmentPos * (v1_canvas.x - v3_canvas.x);
+            dotY = v3_canvas.y + segmentPos * (v1_canvas.y - v3_canvas.y);
+          }
+        }
+      } else { // Default to line (diagonal of bounding box)
+         dotX = bb_startX_canvas + (bb_endX_canvas - bb_startX_canvas) * pathPosition
+         dotY = bb_startY_canvas + (bb_endY_canvas - bb_startY_canvas) * pathPosition
       }
       
-      // Draw resize handles at corners if not disabled
-      if (!disabled) {
-        const handleRadius = 6
-        // Only show bottom-left and top-right corners
-        const handles = [
-          { x: startX, y: startY, state: 'vertex1' }, // Bottom-left
-          { x: endX, y: endY, state: 'vertex2' },     // Top-right
-        ]
-        
-        handles.forEach((handle) => {
-          // Add hover effect
-          if (hoverState === handle.state && !isDragging && !isResizing) {
-            // Draw highlight circle first
-            ctx.fillStyle = isDarkMode ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.2)'
-            ctx.beginPath()
-            ctx.arc(handle.x, handle.y, handleRadius + 4, 0, Math.PI * 2)
-            ctx.fill()
-          }
-          
-          // Draw handle
-          ctx.fillStyle = isDarkMode ? 'white' : 'black'
+      // Draw the dot
+      ctx.fillStyle = isDarkMode ? 'rgb(56, 189, 248)' : 'rgb(2, 132, 199)'
+      ctx.beginPath()
+      ctx.arc(dotX, dotY, 8, 0, Math.PI * 2)
+      ctx.fill()
+      
+      // Request animation frame to continue the animation
+      requestAnimationFrame(() => {
+        setGlyph(prev => ({ ...prev }))
+      })
+    }
+    
+    // Draw resize handles at corners if not disabled
+    if (!disabled) {
+      const handleRadius = 6
+      // Only show bottom-left and top-right corners of the bounding box
+      const handles = [
+        { x: bb_startX_canvas, y: bb_startY_canvas, state: 'vertex1' as const }, // Bottom-left of bounding box
+        { x: bb_endX_canvas, y: bb_endY_canvas, state: 'vertex2' as const },     // Top-right of bounding box
+      ]
+      
+      handles.forEach((handle) => {
+        // Add hover effect
+        if (hoverState === handle.state && !isDragging && !isResizing) {
+          // Draw highlight circle first
+          ctx.fillStyle = isDarkMode ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.2)'
           ctx.beginPath()
-          ctx.arc(handle.x, handle.y, handleRadius, 0, Math.PI * 2)
+          ctx.arc(handle.x, handle.y, handleRadius + 4, 0, Math.PI * 2)
           ctx.fill()
-        })
-      }
+        }
+        
+        // Draw handle
+        ctx.fillStyle = isDarkMode ? 'white' : 'black'
+        ctx.beginPath()
+        ctx.arc(handle.x, handle.y, handleRadius, 0, Math.PI * 2)
+        ctx.fill()
+      })
     }
   }, [glyph, isPlaying, disabled, isDarkMode, hoverState, isDragging, isResizing])
   
@@ -270,61 +343,83 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     
     const rect = canvas.getBoundingClientRect()
     
-    // Calculate glyph corners in normalized space
-    const startX_norm = glyph.position.x - glyph.size.width / 2
-    const startY_norm = glyph.position.y - glyph.size.height / 2
-    const endX_norm = glyph.position.x + glyph.size.width / 2
-    const endY_norm = glyph.position.y + glyph.size.height / 2
+    // Calculate bounding box corners in normalized space
+    const bb_startX_norm = glyph.position.x - glyph.size.width / 2
+    const bb_startY_norm = glyph.position.y - glyph.size.height / 2
+    const bb_endX_norm = glyph.position.x + glyph.size.width / 2
+    const bb_endY_norm = glyph.position.y + glyph.size.height / 2
     
     // Convert to canvas coordinates
-    const startX = (startX_norm + 1) / 2 * rect.width
-    const startY = (1 - startY_norm) / 2 * rect.height
-    const endX = (endX_norm + 1) / 2 * rect.width
-    const endY = (1 - endY_norm) / 2 * rect.height
+    const bb_startX_canvas = (bb_startX_norm + 1) / 2 * rect.width
+    const bb_startY_canvas = (1 - bb_startY_norm) / 2 * rect.height
+    const bb_endX_canvas = (bb_endX_norm + 1) / 2 * rect.width
+    const bb_endY_canvas = (1 - bb_endY_norm) / 2 * rect.height
     
     // Check vertices first (they have priority)
     const handleRadius = 12 // Slightly larger than visual radius for better UX
     
-    // Check first vertex (bottom-left)
+    // Check first vertex (bottom-left of bounding box)
     const distToVertex1 = Math.sqrt(
-      Math.pow(mouseX - startX, 2) + Math.pow(mouseY - startY, 2)
+      Math.pow(mouseX - bb_startX_canvas, 2) + Math.pow(mouseY - bb_startY_canvas, 2)
     )
     if (distToVertex1 <= handleRadius) {
       return 'vertex1'
     }
     
-    // Check second vertex (top-right)
+    // Check second vertex (top-right of bounding box)
     const distToVertex2 = Math.sqrt(
-      Math.pow(mouseX - endX, 2) + Math.pow(mouseY - endY, 2)
+      Math.pow(mouseX - bb_endX_canvas, 2) + Math.pow(mouseY - bb_endY_canvas, 2)
     )
     if (distToVertex2 <= handleRadius) {
       return 'vertex2'
     }
     
-    // Check if near the line
-    // Calculate distance from point to line segment
-    const lineDistThreshold = 10 // px
-    
-    // Calculate line segment length squared
-    const lineLengthSq = Math.pow(endX - startX, 2) + Math.pow(endY - startY, 2)
-    
-    if (lineLengthSq === 0) return 'none' // Line has no length
-    
-    // Calculate projection of point onto line
-    const t = ((mouseX - startX) * (endX - startX) + (mouseY - startY) * (endY - startY)) / lineLengthSq
-    
-    // If projection is outside line segment, use distance to nearest endpoint
-    if (t < 0 || t > 1) return 'none'
-    
-    // Calculate projected point on line
-    const projX = startX + t * (endX - startX)
-    const projY = startY + t * (endY - startY)
-    
-    // Calculate distance to projected point
-    const distToLine = Math.sqrt(Math.pow(mouseX - projX, 2) + Math.pow(mouseY - projY, 2))
-    
-    if (distToLine <= lineDistThreshold) {
-      return 'line'
+    // Check if near the shape body
+    const bodyDistThreshold = 10 // px
+
+    if (glyph.type === 'line') {
+      // Calculate line segment length squared
+      const lineLengthSq = Math.pow(bb_endX_canvas - bb_startX_canvas, 2) + Math.pow(bb_endY_canvas - bb_startY_canvas, 2)
+      
+      if (lineLengthSq === 0) return 'none' // Line has no length
+      
+      // Calculate projection of point onto line
+      const t = ((mouseX - bb_startX_canvas) * (bb_endX_canvas - bb_startX_canvas) + (mouseY - bb_startY_canvas) * (bb_endY_canvas - bb_startY_canvas)) / lineLengthSq
+      
+      // If projection is outside line segment, use distance to nearest endpoint
+      if (t < 0 || t > 1) return 'none'
+      
+      // Calculate projected point on line
+      const projX = bb_startX_canvas + t * (bb_endX_canvas - bb_startX_canvas)
+      const projY = bb_startY_canvas + t * (bb_endY_canvas - bb_startY_canvas)
+      
+      // Calculate distance to projected point
+      const distToLine = Math.sqrt(Math.pow(mouseX - projX, 2) + Math.pow(mouseY - projY, 2))
+      
+      if (distToLine <= bodyDistThreshold) {
+        return 'shape_body'
+      }
+    } else if (glyph.type === 'triangle') {
+      // Point-in-triangle test
+      const v1 = { x: (bb_startX_canvas + bb_endX_canvas) / 2, y: bb_endY_canvas } // Apex
+      const v2 = { x: bb_startX_canvas, y: bb_startY_canvas } // Base-left
+      const v3 = { x: bb_endX_canvas, y: bb_startY_canvas } // Base-right
+
+      const sign = (p1: {x:number, y:number}, p2: {x:number, y:number}, p3: {x:number, y:number}) => {
+        return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
+      }
+
+      const pt = { x: mouseX, y: mouseY };
+      const d1 = sign(pt, v1, v2);
+      const d2 = sign(pt, v2, v3);
+      const d3 = sign(pt, v3, v1);
+
+      const has_neg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+      const has_pos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+
+      if (!(has_neg && has_pos)) { // If all signs are the same (or zero), point is inside or on edge
+        return 'shape_body';
+      }
     }
     
     return 'none'
@@ -343,45 +438,19 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
     
     setLastMousePos({ x: mouseX, y: mouseY })
     
-    // Calculate glyph corners in canvas pixel coordinates
-    const startX_norm = glyph.position.x - glyph.size.width / 2
-    const startY_norm = glyph.position.y - glyph.size.height / 2
-    const endX_norm = glyph.position.x + glyph.size.width / 2
-    const endY_norm = glyph.position.y + glyph.size.height / 2
+    // Calculate glyph bounding box corners in canvas pixel coordinates for handle checking
+    // Re-calculate here or rely on checkHoverTarget, for consistency let's use checkHoverTarget's output
+    const currentHoverTarget = checkHoverTarget(mouseX, mouseY) // Determine target first
     
-    // Convert to canvas coordinates for checking handles
-    const startX = (startX_norm + 1) / 2 * rect.width
-    const startY = (1 - startY_norm) / 2 * rect.height
-    const endX = (endX_norm + 1) / 2 * rect.width
-    const endY = (1 - endY_norm) / 2 * rect.height
-    
-    // Check if we're near a resize handle
-    const handleRadius = 10
-    // Only check bottom-left and top-right corners
-    const handles = [
-      { x: startX, y: startY, target: 'vertex1' as const }, // Bottom-left
-      { x: endX, y: endY, target: 'vertex2' as const },     // Top-right
-    ]
-    
-    for (let i = 0; i < handles.length; i++) {
-      const handle = handles[i]
-      const distance = Math.sqrt(
-        Math.pow(mouseX - handle.x, 2) + 
-        Math.pow(mouseY - handle.y, 2)
-      )
-      
-      if (distance <= handleRadius) {
-        setIsResizing(true)
-        setDragTarget(handle.target) // Set the specific vertex being dragged
-        return
-      }
+    if (currentHoverTarget === 'vertex1' || currentHoverTarget === 'vertex2') {
+      setIsResizing(true)
+      setDragTarget(currentHoverTarget) 
+      return
     }
     
-    // If we're not resizing a vertex, check if we're over the line
-    const hoverTarget = checkHoverTarget(mouseX, mouseY)
-    if (hoverTarget === 'line') {
+    if (currentHoverTarget === 'shape_body') {
       setIsDragging(true)
-      setDragTarget('line')
+      setDragTarget('shape_body')
     }
   }
   
@@ -404,7 +473,7 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
       const deltaX = mouseX - lastMousePos.x
       const deltaY = mouseY - lastMousePos.y
       
-      if (isDragging) {
+      if (isDragging && dragTarget === 'shape_body') { // Check dragTarget
         // Move the entire glyph - using stored dragTarget instead of checking hover
         // Convert delta from canvas pixels to normalized coordinates
         const normalizedDeltaX = deltaX / rect.width * 2  // Scale to normalized space
@@ -614,7 +683,7 @@ export function GlyphGrid({ isPlaying, disabled = false }: GlyphGridProps) {
       case 'vertex1':
       case 'vertex2':
         return "grab"
-      case 'line':
+      case 'shape_body': // Changed from 'line'
         return "move"
       default:
         return "default"

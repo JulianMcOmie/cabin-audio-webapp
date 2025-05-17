@@ -108,7 +108,7 @@ class SlopedPinkNoiseGenerator {
 // Simple glyph representation
 export interface GlyphData {
   id: string;
-  type: 'line'; // For now, only diagonal line is supported
+  type: 'line' | 'triangle'; // Allow triangle type
   position: { x: number, y: number }; // Center position
   size: { width: number, height: number }; // Size of the glyph
   angle?: number; // Optional rotation angle
@@ -268,65 +268,71 @@ class GlyphGridAudioPlayer {
     
     // Calculate new position based on playback mode
     if (this.playbackMode === PlaybackMode.SWEEP) {
-      // Apply speed factor to the position increment
-      this.pathPosition += 0.005 * this.pathDirection * this.speed
-      
-      // If using subsection, check subsection boundaries
+      const prevPathPosition = this.pathPosition;
+      this.pathPosition += 0.005 * this.pathDirection * this.speed;
+
+      let looped = false;
+
       if (this.useSubsection) {
-        // Handle both normal and reversed subsection ranges
-        const min = Math.min(this.subsectionStart, this.subsectionEnd)
-        const max = Math.max(this.subsectionStart, this.subsectionEnd)
+        const startPoint = this.subsectionStart;
+        const endPoint = this.subsectionEnd;
+
+        if (this.pathDirection === 1) { // Moving from startPoint towards endPoint
+          if (this.pathPosition >= endPoint) {
+            this.pathPosition = startPoint;
+            looped = true;
+          }
+          // Clamp position to be within [startPoint, endPoint]
+          this.pathPosition = Math.max(startPoint, Math.min(this.pathPosition, endPoint));
+        } else { // pathDirection === -1, Moving from startPoint towards endPoint (e.g. 0.8 down to 0.2)
+          if (this.pathPosition <= endPoint) {
+            this.pathPosition = startPoint;
+            looped = true;
+          }
+          // Clamp position to be within [endPoint, startPoint]
+          this.pathPosition = Math.max(endPoint, Math.min(this.pathPosition, startPoint));
+        }
+      } else { // Full range (0 to 1), pathDirection is assumed to be 1
+        if (this.pathPosition >= 1.0) {
+          this.pathPosition = 0.0;
+          looped = true;
+        } else if (this.pathPosition < 0.0) { 
+          // This case should ideally not be hit if speed is positive and direction is 1.
+          this.pathPosition = 0.0; 
+        }
+      }
+
+      if (looped) {
+        this.updateAudioParametersFromPosition(this.pathPosition); // Update audio at the loop point
+      } else if (this.discreteFrequency) {
+        const hitInterval = DEFAULT_HIT_INTERVAL; // e.g., 0.2 for 20% steps
+        let currentIntervalNum: number;
+        let previousIntervalNum: number;
+
+        if (this.useSubsection) {
+            const subLength = Math.abs(this.subsectionEnd - this.subsectionStart);
+            if (subLength === 0) {
+                currentIntervalNum = 0;
+                previousIntervalNum = 0;
+            } else {
+                // Distance travelled from the subsection's logical start, normalized by pathDirection
+                const currentDistFromSubStart = (this.pathPosition - this.subsectionStart) * this.pathDirection;
+                const previousDistFromSubStart = (prevPathPosition - this.subsectionStart) * this.pathDirection;
+                
+                // Number of "hitInterval steps" (scaled by subLength) into the subsection
+                currentIntervalNum = Math.floor(currentDistFromSubStart / (hitInterval * subLength));
+                previousIntervalNum = Math.floor(previousDistFromSubStart / (hitInterval * subLength));
+            }
+        } else { // Full range
+            currentIntervalNum = Math.floor(this.pathPosition / hitInterval);
+            previousIntervalNum = Math.floor(prevPathPosition / hitInterval);
+        }
         
-        if (this.pathPosition >= max) {
-          this.pathPosition = max
-          this.pathDirection = -1
-          // This is a hit point (reached end)
-          this.updateAudioParametersFromPosition(this.pathPosition)
-        } else if (this.pathPosition <= min) {
-          this.pathPosition = min
-          this.pathDirection = 1
-          // This is a hit point (reached start)
-          this.updateAudioParametersFromPosition(this.pathPosition)
-        } else if (this.discreteFrequency) {
-          // Check if we crossed a hit point
-          const hitInterval = DEFAULT_HIT_INTERVAL
-          const currentInterval = Math.floor(this.pathPosition / hitInterval)
-          const previousInterval = Math.floor(previousPosition / hitInterval)
-          
-          if (currentInterval !== previousInterval) {
-            // We crossed a hit point, update audio
-            this.updateAudioParametersFromPosition(this.pathPosition)
-          }
-        } else {
-          // Continuous mode - always update
-          this.updateAudioParametersFromPosition(this.pathPosition)
+        if (currentIntervalNum !== previousIntervalNum) {
+          this.updateAudioParametersFromPosition(this.pathPosition);
         }
-      } else {
-        // Regular full-range behavior
-        if (this.pathPosition >= 1) {
-          this.pathPosition = 1
-          this.pathDirection = -1
-          // This is a hit point (reached end)
-          this.updateAudioParametersFromPosition(this.pathPosition)
-        } else if (this.pathPosition <= 0) {
-          this.pathPosition = 0
-          this.pathDirection = 1
-          // This is a hit point (reached start)
-          this.updateAudioParametersFromPosition(this.pathPosition)
-        } else if (this.discreteFrequency) {
-          // Check if we crossed a hit point
-          const hitInterval = DEFAULT_HIT_INTERVAL
-          const currentInterval = Math.floor(this.pathPosition / hitInterval)
-          const previousInterval = Math.floor(previousPosition / hitInterval)
-          
-          if (currentInterval !== previousInterval) {
-            // We crossed a hit point, update audio
-            this.updateAudioParametersFromPosition(this.pathPosition)
-          }
-        } else {
-          // Continuous mode - always update
-          this.updateAudioParametersFromPosition(this.pathPosition)
-        }
+      } else { // Continuous mode - always update unless looped (already updated)
+        this.updateAudioParametersFromPosition(this.pathPosition);
       }
     } else if (this.playbackMode === PlaybackMode.ALTERNATE) {
       // Alternate mode: jump between start and end points
@@ -360,17 +366,53 @@ class GlyphGridAudioPlayer {
     if (!this.currentGlyph || !this.audioNodes.slopedNoiseGenerator || !this.audioNodes.gain || !this.audioNodes.panner) return;
     
     // Get the glyph's position and size
-    const { position: glyphPos, size: glyphSize } = this.currentGlyph
+    const { type: glyphType, position: glyphPos, size: glyphSize } = this.currentGlyph
     
-    // Calculate the actual x and y in normalized space (-1 to 1)
-    const startX = glyphPos.x - glyphSize.width / 2
-    const startY = glyphPos.y - glyphSize.height / 2
-    const endX = glyphPos.x + glyphSize.width / 2
-    const endY = glyphPos.y + glyphSize.height / 2
+    // Calculate the actual x and y in normalized space (-1 to 1) for the BOUNDING BOX
+    const startX_bb = glyphPos.x - glyphSize.width / 2
+    const startY_bb = glyphPos.y - glyphSize.height / 2
+    const endX_bb = glyphPos.x + glyphSize.width / 2
+    const endY_bb = glyphPos.y + glyphSize.height / 2
     
-    // Interpolate between start and end points
-    const x = startX + position * (endX - startX)
-    const y = startY + position * (endY - startY)
+    let x: number;
+    let y: number;
+
+    if (glyphType === 'triangle') {
+      const v1 = { x: (startX_bb + endX_bb) / 2, y: endY_bb }; // Apex
+      const v2 = { x: startX_bb, y: startY_bb };               // Base-left
+      const v3 = { x: endX_bb, y: startY_bb };               // Base-right
+
+      const dist = (p1: {x:number,y:number}, p2: {x:number,y:number}) => Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+
+      const len12 = dist(v1, v2);
+      const len23 = dist(v2, v3);
+      const len31 = dist(v3, v1);
+      const totalPerimeter = len12 + len23 + len31;
+
+      if (totalPerimeter === 0) { // Avoid division by zero for degenerate triangles
+        x = v1.x;
+        y = v1.y;
+      } else {
+        let currentPerimeterPos = position * totalPerimeter;
+
+        if (currentPerimeterPos <= len12) {
+          const segmentPos = currentPerimeterPos / len12;
+          x = v1.x + segmentPos * (v2.x - v1.x);
+          y = v1.y + segmentPos * (v2.y - v1.y);
+        } else if (currentPerimeterPos <= len12 + len23) {
+          const segmentPos = (currentPerimeterPos - len12) / len23;
+          x = v2.x + segmentPos * (v3.x - v2.x);
+          y = v2.y + segmentPos * (v3.y - v2.y);
+        } else {
+          const segmentPos = (currentPerimeterPos - len12 - len23) / len31;
+          x = v3.x + segmentPos * (v1.x - v3.x);
+          y = v3.y + segmentPos * (v1.y - v3.y);
+        }
+      }
+    } else { // Default to line (diagonal of bounding box)
+      x = startX_bb + position * (endX_bb - startX_bb);
+      y = startY_bb + position * (endY_bb - startY_bb);
+    }
     
     // Properly normalize y from glyph space to full 0-1 range
     const normalizedY = Math.max(0, Math.min(1, (y + 1) / 2))
@@ -714,6 +756,9 @@ class GlyphGridAudioPlayer {
   // Disable subsection (return to full range)
   public disableSubsection(): void {
     this.useSubsection = false;
+    // Reset path position and direction for full range playback
+    this.pathPosition = 0;
+    this.pathDirection = 1;
   }
   
   // Add getter and setter for speed
