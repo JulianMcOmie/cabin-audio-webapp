@@ -3,7 +3,7 @@ import * as eqProcessor from '@/lib/audio/eqProcessor';
 import { useEQProfileStore } from '@/lib/stores';
 
 // --- Constants for SlopedPinkNoiseGenerator (adapted from dotGridAudio.ts and glyphGridAudio.ts) ---
-const NUM_DOTS = 10; // Number of dots in the SineTool visualization
+const NUM_DOTS = 2; // Number of dots in the SineTool visualization
 const NUM_BANDS = 20; // Number of frequency bands for shaping
 const SLOPE_REF_FREQUENCY = 800; // Hz, reference frequency for slope calculations
 const MIN_AUDIBLE_FREQ = 20; // Hz
@@ -100,7 +100,7 @@ interface AudioDotNodes {
   envelopeGain: GainNode; // For on/off or ADSR control
   panner: StereoPannerNode;
   slopedNoiseGenerator: SlopedPinkNoiseGenerator;
-  // PinkNoiseBuffer will be shared, so not stored per dot here.
+  pinkNoiseBuffer: AudioBuffer; // Added for individual buffers
   currentYNormal: number; // Cache for recalculations
   currentXNormal: number; // Cache for recalculations
 }
@@ -109,7 +109,6 @@ class SineToolAudioPlayer {
   private static instance: SineToolAudioPlayer;
   private ctx: AudioContext;
   private audioDots: (AudioDotNodes | null)[] = new Array(NUM_DOTS).fill(null);
-  private sharedPinkNoiseBuffer: AudioBuffer | null = null;
   private isPlaying: boolean = false;
   private outputGain: GainNode; // Master output for this player
 
@@ -124,21 +123,8 @@ class SineToolAudioPlayer {
     this.outputGain = this.ctx.createGain();
     this.outputGain.gain.value = 1.0; // Start with full volume for this stage
 
-    this._generateSharedPinkNoiseBuffer().then(buffer => {
-      this.sharedPinkNoiseBuffer = buffer;
-      // If play was called before buffer was ready, initialize and start dots
-      if (this.isPlaying) {
-        this.audioDots.forEach((_, index) => {
-            // Assuming initial positions are needed or will be updated quickly.
-            // For now, let's ensure nodes are created if playing.
-            // A more robust approach might queue play/update calls.
-            if (!this.audioDots[index]) {
-                this.ensureDotAudioNodes(index, (index + 0.5) / NUM_DOTS, 0.5);
-            }
-        });
-        this.applyPlayingState();
-      }
-    });
+    // No need to pre-generate shared buffer here anymore
+    // Buffers will be generated on demand by ensureDotAudioNodes
 
     // Subscribe to distortion gain changes from the store
     const initialDistortionGain = useEQProfileStore.getState().distortionGain;
@@ -159,7 +145,7 @@ class SineToolAudioPlayer {
     return SineToolAudioPlayer.instance;
   }
 
-  private async _generateSharedPinkNoiseBuffer(): Promise<AudioBuffer> {
+  private _generateSinglePinkNoiseBuffer(): AudioBuffer { // Added method to generate one buffer
     const bufferSize = 2 * this.ctx.sampleRate; // 2 seconds of noise
     const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
     const channelData = noiseBuffer.getChannelData(0);
@@ -172,26 +158,26 @@ class SineToolAudioPlayer {
       b2 = 0.96900 * b2 + white * 0.1538520;
       b3 = 0.86650 * b3 + white * 0.3104856;
       b4 = 0.55000 * b4 + white * 0.5329522;
-      b5 = -0.7616 * b5 - white * 0.0168980; // Corrected from '+ white * -0.0168980'
-      b6 = white * 0.11000; // Adjusted from 'white * 0.5362', used in some pink noise algos
+      b5 = -0.7616 * b5 - white * 0.0168980; 
+      b6 = white * 0.11000; 
       channelData[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11;
-      if (Math.abs(channelData[i]) > 1.0) channelData[i] = Math.sign(channelData[i]); // Basic clipping
+      if (Math.abs(channelData[i]) > 1.0) channelData[i] = Math.sign(channelData[i]);
     }
-    console.log('🌊 Generated shared pink noise buffer for SineToolAudioPlayer');
+    // console.log('🌊 Generated a pink noise buffer'); // Log per buffer if needed
     return noiseBuffer;
   }
 
   private ensureDotAudioNodes(index: number, initialXNormal: number, initialYNormal: number): AudioDotNodes | null {
-    if (!this.sharedPinkNoiseBuffer) {
-        // This case should be handled by the async buffer generation.
-        // If called before buffer is ready, nodes can't be fully set up.
-        console.warn("Attempted to ensure dot audio nodes before shared buffer was ready.");
-        return null; // Explicitly return null
-    }
+    // if (!this.sharedPinkNoiseBuffer) { // Removed check for shared buffer
+    //     console.warn("Attempted to ensure dot audio nodes before shared buffer was ready.");
+    //     return null; 
+    // }
 
     if (!this.audioDots[index]) {
+      const individualPinkNoiseBuffer = this._generateSinglePinkNoiseBuffer(); // Generate buffer here
+
       const source = this.ctx.createBufferSource();
-      source.buffer = this.sharedPinkNoiseBuffer;
+      source.buffer = individualPinkNoiseBuffer; // Use individual buffer
       source.loop = true;
 
       const slopedNoiseGenerator = new SlopedPinkNoiseGenerator(this.ctx);
@@ -224,6 +210,7 @@ class SineToolAudioPlayer {
         envelopeGain,
         panner,
         slopedNoiseGenerator,
+        pinkNoiseBuffer: individualPinkNoiseBuffer, // Store individual buffer
         currentXNormal: initialXNormal,
         currentYNormal: initialYNormal,
       };
@@ -234,7 +221,7 @@ class SineToolAudioPlayer {
   }
   
   private applyPlayingState(): void {
-    if (!this.sharedPinkNoiseBuffer) return; // Don't do anything if buffer isn't ready
+    // if (!this.sharedPinkNoiseBuffer) return; // Removed check for shared buffer
 
     this.audioDots.forEach((dotNodes, index) => {
       if (dotNodes) {
@@ -247,16 +234,16 @@ class SineToolAudioPlayer {
   }
 
   public setPlaying(playing: boolean): void {
-    if (this.isPlaying === playing && this.sharedPinkNoiseBuffer) return; // No change or buffer not ready
+    // if (this.isPlaying === playing && this.sharedPinkNoiseBuffer) return; // Removed shared buffer check
+    if (this.isPlaying === playing) return; // Simpler check
     this.isPlaying = playing;
 
-    if (!this.sharedPinkNoiseBuffer) {
-      console.log("🌊 SineToolAudioPlayer: setPlaying called, but buffer not ready. Will apply when ready.");
-      return; // Buffer will trigger applyPlayingState once loaded
-    }
+    // if (!this.sharedPinkNoiseBuffer) { // Removed block for shared buffer not ready
+    //   console.log("🌊 SineToolAudioPlayer: setPlaying called, but buffer not ready. Will apply when ready.");
+    //   return; 
+    // }
     
     // Ensure all dot nodes are created before trying to play/stop them
-    // This is crucial if setPlaying(true) is the first call.
     this.audioDots.forEach((_, index) => {
         if(!this.audioDots[index]) {
             const xNormal = (index + 0.5) / NUM_DOTS;
@@ -285,12 +272,13 @@ class SineToolAudioPlayer {
     dotNodes.panner.pan.value = (xNormal * 2) - 1;
 
     // 2. Update Slope
+    const effectiveYNormalForSlope = 1 - yNormal; // Invert yNormal for intuitive slope mapping (top = brighter)
     let targetOverallSlopeDbPerOctave;
-    if (yNormal < 0.5) {
-      const t = yNormal * 2; // 0 to 1 for the lower half
+    if (effectiveYNormalForSlope < 0.5) {
+      const t = effectiveYNormalForSlope * 2; // 0 to 1 for the lower half (now visually upper half)
       targetOverallSlopeDbPerOctave = LOW_SLOPE_DB_PER_OCT + t * (CENTER_SLOPE_DB_PER_OCT - LOW_SLOPE_DB_PER_OCT);
     } else {
-      const t = (yNormal - 0.5) * 2; // 0 to 1 for the upper half
+      const t = (effectiveYNormalForSlope - 0.5) * 2; // 0 to 1 for the upper half (now visually lower half)
       targetOverallSlopeDbPerOctave = CENTER_SLOPE_DB_PER_OCT + t * (HIGH_SLOPE_DB_PER_OCT - CENTER_SLOPE_DB_PER_OCT);
     }
     dotNodes.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);

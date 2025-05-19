@@ -8,72 +8,75 @@ interface SineToolProps {
   disabled?: boolean;
 }
 
-const NUM_DOTS = 10;
-const AMPLITUDE = 0.4; // Max 0.5 to stay within bounds if center is 0.5
-const FREQUENCY = 0.5; // Controls speed of oscillation
+const NUM_DOTS = 2; // Changed to 2 dots
+const OSCILLATION_SPEED = 0.5; // Speed of up/down movement
 const DOT_SIZE = 8; // px
+const AMPLITUDE_Y = 0.4; // Max Y movement from center (0.5 +/- 0.4 => 0.1 to 0.9)
+const FIXED_X_LEFT = 0.25; // X position for the left dot
+const FIXED_X_RIGHT = 0.75; // X position for the right dot
+const CENTER_Y = 0.5; // Vertical center for oscillation
 
 export function SineTool({ isPlaying, disabled = false }: SineToolProps) {
-  const [dotPositions, setDotPositions] = useState<Array<{ x: number; y: number }>>(
-    Array(NUM_DOTS).fill(null).map((_, i) => ({
-      x: (i + 0.5) / NUM_DOTS, // Spread dots evenly across width
-      y: 0.5, // Start in the middle
-    }))
-  );
+  const [dotPositions, setDotPositions] = useState<Array<{ x: number; y: number }>>(() => [
+    { x: FIXED_X_LEFT, y: CENTER_Y },  // Left dot, starting at center Y
+    { x: FIXED_X_RIGHT, y: CENTER_Y } // Right dot, starting at center Y
+  ]);
   const animationFrameId = useRef<number | null>(null);
-  const phaseRef = useRef(0); // To control the sine wave's oscillation over time
-  const audioPlayerRef = useRef(getSineToolAudioPlayer()); // Get instance of audio player
+  const phaseRef = useRef(0); // Renamed from angleRef, controls Y oscillation
+  const audioPlayerRef = useRef(getSineToolAudioPlayer());
 
   useEffect(() => {
     const player = audioPlayerRef.current;
-    player.setPlaying(isPlaying); // Set audio playing state
 
     if (isPlaying && !disabled) {
-      const animate = () => {
-        phaseRef.current += 0.02 * FREQUENCY; // Increment phase for oscillation
+      player.setPlaying(true);
+      // phaseRef.current = 0; // Optional: Reset phase each time play starts
 
-        setDotPositions(prevDots => {
-          const newDotPositions = prevDots.map((dot, index) => {
-            const yOffset = AMPLITUDE * Math.sin(phaseRef.current + dot.x * Math.PI * 2);
-            const newY = 0.5 + yOffset;
-            // Update audio for this dot immediately after calculating its new position
-            player.updateAudioForDot(index, newY, dot.x);
-            return {
-              x: dot.x,
-              y: newY,
-            };
+      const animate = () => {
+        phaseRef.current += 0.02 * OSCILLATION_SPEED;
+
+        setDotPositions(() => { 
+          const currentPhase = phaseRef.current;
+          const yOffset1 = AMPLITUDE_Y * Math.sin(currentPhase);
+          const yOffset2 = AMPLITUDE_Y * Math.sin(currentPhase + Math.PI); // 180 degrees out of phase
+
+          const newDotPositions = [
+            {
+              x: FIXED_X_LEFT,
+              y: CENTER_Y + yOffset1,
+            },
+            {
+              x: FIXED_X_RIGHT,
+              y: CENTER_Y + yOffset2,
+            },
+          ];
+
+          newDotPositions.forEach((dot, index) => {
+            player.updateAudioForDot(index, dot.y, dot.x);
           });
+          
           return newDotPositions;
         });
         animationFrameId.current = requestAnimationFrame(animate);
       };
-      // Initialize dot audio positions before starting animation loop if playing for the first time
-      dotPositions.forEach((pos, index) => {
-        player.updateAudioForDot(index, pos.y, pos.x, true);
-      });
-      animationFrameId.current = requestAnimationFrame(animate);
+
+      animate(); 
+
+      return () => {
+        if (animationFrameId.current) {
+          cancelAnimationFrame(animationFrameId.current);
+          animationFrameId.current = null;
+        }
+        player.setPlaying(false); 
+      };
     } else {
+      player.setPlaying(false);
       if (animationFrameId.current) {
         cancelAnimationFrame(animationFrameId.current);
         animationFrameId.current = null;
       }
-      // When not playing, ensure all dots have their audio parameters set to a silent/default state if needed
-      // player.setPlaying(false) handles overall silence.
-      // If specific parameters needed resetting for each dot on stop, do it here.
-      // For now, setPlaying(false) should suffice as it mutes envelope gains.
     }
-
-    return () => {
-      if (animationFrameId.current) {
-        cancelAnimationFrame(animationFrameId.current);
-      }
-      // It's important that setPlaying(false) is called when the component unmounts
-      // or isPlaying becomes false. This is handled by player.setPlaying(isPlaying) at effect start.
-      // If this SineTool component instance is permanently destroyed,
-      // the cleanup of the SineToolAudioPlayer itself (player.dispose()) 
-      // should happen at a higher level (e.g., when EQView determines this tool is no longer needed).
-    };
-  }, [isPlaying, disabled, dotPositions]); // Added dotPositions to deps for initial audio setup
+  }, [isPlaying, disabled]);
 
   return (
     <div className="w-full h-48 bg-gray-200 dark:bg-gray-700 rounded-md relative overflow-hidden">
@@ -86,7 +89,7 @@ export function SineTool({ isPlaying, disabled = false }: SineToolProps) {
             height: `${DOT_SIZE}px`,
             left: `calc(${pos.x * 100}% - ${DOT_SIZE / 2}px)`,
             top: `calc(${pos.y * 100}% - ${DOT_SIZE / 2}px)`,
-            transition: 'top 0.05s linear', // Smooth out y-movement slightly
+            transition: 'top 0.02s linear', // Only Y position changes smoothly
           }}
         />
       ))}

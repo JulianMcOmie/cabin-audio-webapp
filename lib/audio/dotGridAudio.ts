@@ -16,13 +16,13 @@ const NUM_BANDS = 20; // Number of frequency bands for shaping
 const SLOPE_REF_FREQUENCY = 800; // Hz, reference frequency for slope calculations
 const MIN_AUDIBLE_FREQ = 20; // Hz
 const MAX_AUDIBLE_FREQ = 20000; // Hz
-const BAND_Q_VALUE = 1.5; // Q value for the bandpass filters (reduced from 6.0)
+// const BAND_Q_VALUE = 1.5; // Q value for the bandpass filters (reduced from 6.0) - No longer used for HP/LP pairs
 const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
 
 // Target overall slopes
-const LOW_SLOPE_DB_PER_OCT = -9.0; // For low y positions (darker sound)
-const CENTER_SLOPE_DB_PER_OCT = -3.0; // For middle y positions
-const HIGH_SLOPE_DB_PER_OCT = 3.0; // For high y positions (brighter sound)
+const LOW_SLOPE_DB_PER_OCT = -24.5; // For low y positions (darker sound)
+const CENTER_SLOPE_DB_PER_OCT = -4.5; // For middle y positions
+const HIGH_SLOPE_DB_PER_OCT = 15.5; // For high y positions (brighter sound)
 const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of SlopedPinkNoiseGenerator (approx -12dB)
 
 // New constant for attenuation based on slope deviation from pink noise
@@ -764,7 +764,7 @@ class SlopedPinkNoiseGenerator {
   private ctx: AudioContext;
   private inputGainNode: GainNode;
   private outputGainNode: GainNode;
-  private bandFilters: BiquadFilterNode[] = [];
+  private bandFilters: BiquadFilterNode[] = []; // Will store all HP and LP filters
   private bandGains: GainNode[] = [];
   private centerFrequencies: number[] = [];
 
@@ -777,24 +777,37 @@ class SlopedPinkNoiseGenerator {
     const logMinFreq = Math.log2(MIN_AUDIBLE_FREQ);
     const logMaxFreq = Math.log2(MAX_AUDIBLE_FREQ);
     const step = (logMaxFreq - logMinFreq) / (NUM_BANDS + 1);
+    const filterQ = 1.0 / Math.sqrt(2); // Q for Butterworth-like response for HP/LP filters
 
     for (let i = 0; i < NUM_BANDS; i++) {
+      // Center frequency for gain calculation (same as before)
       const centerFreq = Math.pow(2, logMinFreq + (i + 1) * step);
       this.centerFrequencies.push(centerFreq);
 
-      const filter = this.ctx.createBiquadFilter();
-      filter.type = 'bandpass';
-      filter.frequency.value = centerFreq;
-      filter.Q.value = BAND_Q_VALUE;
-      this.bandFilters.push(filter);
+      // Calculate cutoff frequencies for the HP/LP pair
+      const lowerCutoff = Math.pow(2, logMinFreq + (i + 0.5) * step);
+      const upperCutoff = Math.pow(2, logMinFreq + (i + 1 + 0.5) * step);
 
-      const gain = this.ctx.createGain();
-      this.bandGains.push(gain);
+      const hpFilter = this.ctx.createBiquadFilter();
+      hpFilter.type = 'highpass';
+      hpFilter.frequency.value = lowerCutoff;
+      hpFilter.Q.value = filterQ;
+      this.bandFilters.push(hpFilter);
 
-      // Connect input to filter, filter to bandGain, bandGain to output
-      this.inputGainNode.connect(filter);
-      filter.connect(gain);
-      gain.connect(this.outputGainNode);
+      const lpFilter = this.ctx.createBiquadFilter();
+      lpFilter.type = 'lowpass';
+      lpFilter.frequency.value = upperCutoff;
+      lpFilter.Q.value = filterQ;
+      this.bandFilters.push(lpFilter);
+
+      const gainNode = this.ctx.createGain(); // Renamed from gain to gainNode to avoid conflict
+      this.bandGains.push(gainNode);
+
+      // Connect input -> hpFilter -> lpFilter -> gainNode -> output
+      this.inputGainNode.connect(hpFilter);
+      hpFilter.connect(lpFilter);
+      lpFilter.connect(gainNode);
+      gainNode.connect(this.outputGainNode);
     }
   }
 

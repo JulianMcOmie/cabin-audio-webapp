@@ -16,6 +16,11 @@ const CENTER_SLOPE_DB_PER_OCT = -3.0; // For middle y positions
 const HIGH_SLOPE_DB_PER_OCT = 3.0; // For high y positions (brighter sound)
 const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of SlopedPinkNoiseGenerator
 
+// New constants for Flicker Effect
+const FLICKER_RATE_HZ = 8; // Flickers per second
+const FLICKER_MIN_GAIN_SCALAR = 0.2; // Gain drops to 20% of currentCalculatedGain
+const FLICKER_MAX_GAIN_SCALAR = 1.0; // Gain up to 100% of currentCalculatedGain
+
 // New constants from dotGridAudio.ts for gain calculation
 const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 3.8; // dB reduction per dB/octave deviation
 const MAX_ADDITIONAL_BOOST_DB = 9.0; // Max boost for y-extremity
@@ -134,6 +139,7 @@ class GlyphGridAudioPlayer {
   private pathPosition: number = 0 // Position along the path (0 to 1)
   private pathDirection: number = 1 // Direction of movement (1 = forward, -1 = backward)
   private animationFrameId: number | null = null
+  private audioContextRef: AudioContext | null = null; // Added for flicker time reference
   
   // Frequency and sweep settings
   private freqMultiplier: number = DEFAULT_FREQ_MULTIPLIER
@@ -148,6 +154,7 @@ class GlyphGridAudioPlayer {
   private isManualControl: boolean = false
   private manualPosition: number = 0
   private currentBaseDbLevel: number = 0; // Added for gain calculation alignment
+  private currentCalculatedGain: number = MASTER_GAIN; // Added for base gain storage
   
   // Add preEQAnalyser property
   private preEQAnalyser: AnalyserNode | null = null
@@ -173,6 +180,9 @@ class GlyphGridAudioPlayer {
   
   // Add distortion gain property
   private distortionGain: number = 1.0;
+  
+  // Add flicker enabled property
+  private isFlickerEnabled: boolean = false;
   
   private constructor() {
     this.generatePinkNoiseBuffer()
@@ -525,8 +535,11 @@ class GlyphGridAudioPlayer {
     const gainRatio = Math.pow(10, finalVolumeDb / 20);
     const effectiveMasterGain = MASTER_GAIN * this.distortionGain * gainRatio;
     
-    const ctx = getAudioContext(); // Ensure context is available for currentTime
-    this.audioNodes.gain.gain.setValueAtTime(effectiveMasterGain, ctx.currentTime);
+    // Store the calculated gain; the animation loop will apply it (with flicker if enabled)
+    this.currentCalculatedGain = effectiveMasterGain;
+
+    // const ctx = getAudioContext(); // Ensure context is available for currentTime -- No longer directly setting gain here
+    // this.audioNodes.gain.gain.setValueAtTime(effectiveMasterGain, ctx.currentTime); 
     
     // Update panner
       this.audioNodes.panner.pan.value = panPosition
@@ -591,6 +604,9 @@ class GlyphGridAudioPlayer {
       panner,
       slopedNoiseGenerator,
     }
+
+    this.audioContextRef = ctx; // Store audio context reference
+    this.currentCalculatedGain = gain.gain.value; // Initialize currentCalculatedGain
     
     // Start the source
     source.start()
@@ -601,7 +617,23 @@ class GlyphGridAudioPlayer {
   
   private startAnimationLoop(): void {
     const animate = () => {
-      this.updateAudioNodesFromGlyph()
+      this.updateAudioNodesFromGlyph() // This might update this.currentCalculatedGain via updateAudioParametersFromPosition
+
+      if (this.isPlaying && this.audioNodes.gain && this.audioContextRef) {
+        let finalGain = this.currentCalculatedGain;
+        if (this.isFlickerEnabled) {
+          const flickerTime = this.audioContextRef.currentTime;
+          // Sine wave from -1 to 1, then (value + 1) / 2 to map to 0 to 1 range
+          const flickerModulation = (Math.sin(flickerTime * FLICKER_RATE_HZ * 2 * Math.PI) + 1) / 2;
+          const flickerScalar = FLICKER_MIN_GAIN_SCALAR + flickerModulation * (FLICKER_MAX_GAIN_SCALAR - FLICKER_MIN_GAIN_SCALAR);
+          finalGain *= flickerScalar;
+        }
+        
+        finalGain = Math.max(0, finalGain); // Ensure gain is not negative
+
+        this.audioNodes.gain.gain.setValueAtTime(finalGain, this.audioContextRef.currentTime);
+      }
+
       this.animationFrameId = requestAnimationFrame(animate)
     }
     
@@ -891,6 +923,17 @@ class GlyphGridAudioPlayer {
   public setVolumeDb(dbLevel: number): void {
     this.currentBaseDbLevel = dbLevel;
     // If playing, the change will be picked up by updateAudioParametersFromPosition in the animation loop
+  }
+
+  // Add methods to control flicker
+  public setFlickerEnabled(enabled: boolean): void {
+    this.isFlickerEnabled = enabled;
+    // If playing and flicker is turned off, we might want to immediately set gain to currentCalculatedGain
+    // The animation loop will handle this on its next frame, which should be fine.
+  }
+
+  public getFlickerEnabled(): boolean { // Renamed from isFlickerEnabled to avoid conflict with property
+    return this.isFlickerEnabled;
   }
 }
 

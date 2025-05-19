@@ -119,6 +119,9 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   // New state for current glyph shape in Line Tool (GlyphGrid)
   const [currentGlyphShape, setCurrentGlyphShape] = useState<'line' | 'triangle' | 'zigzag'>('triangle');
 
+  // New state for Glyph Grid flicker effect
+  const [isGlyphFlickerEnabled, setIsGlyphFlickerEnabled] = useState(false);
+
   // Detect mobile devices
   useEffect(() => {
     const checkMobile = () => {
@@ -602,6 +605,20 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                     >
                       <Zap className="mr-1 h-4 w-4" /> ZigZag
                     </Button>
+                  </div>
+                  {/* Toggle for Glyph Grid Flicker Effect */}
+                  <div className="flex items-center space-x-2 mt-3 justify-center">
+                    <Switch 
+                      id="glyph-flicker-toggle"
+                      checked={isGlyphFlickerEnabled}
+                      onCheckedChange={(checked) => {
+                        setIsGlyphFlickerEnabled(checked);
+                        glyphGridAudio.getGlyphGridAudioPlayer().setFlickerEnabled(checked);
+                      }}
+                    />
+                    <Label htmlFor="glyph-flicker-toggle" className="text-sm text-muted-foreground">
+                      Flicker Effect
+                    </Label>
                   </div>
                 </div>
               )}
