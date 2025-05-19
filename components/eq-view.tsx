@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { HelpCircle, Play, Power, Volume2, Sliders, Minus, Triangle } from "lucide-react"
+import { HelpCircle, Play, Power, Volume2, Sliders, Minus, Triangle, Zap } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { FrequencyGraph } from "@/components/frequency-graph"
 import { EQProfiles } from "@/components/eq-profiles"
@@ -23,6 +23,7 @@ import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
+import { SineTool } from "@/components/sine-tool"
 
 interface EQViewProps {
 //   isPlaying: boolean
@@ -79,7 +80,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const [glyphGridPlaying, setGlyphGridPlaying] = useState(false)
   
   // Add state for toggling between Glyph Grid and Dot Grid
-  const [activeGrid, setActiveGrid] = useState<"line" | "dot" | "shape">("dot")
+  const [activeGrid, setActiveGrid] = useState<"line" | "dot" | "shape" | "sine">("dot")
 
   // New state to track selected dots for dot grid
   const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set());
@@ -91,11 +92,14 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const [shapeToolPlaying, setShapeToolPlaying] = useState(false);
   const [numShapeDots, setNumShapeDots] = useState(12); // Default number of dots for the shape tool
 
+  // New state for Sine Tool
+  const [sineToolPlaying, setSineToolPlaying] = useState(false);
+
   // New state for Dot Grid sub-hit playback mode
   const [isSubHitPlaybackEnabled, setIsSubHitPlaybackEnabled] = useState(true);
 
   // New state for current glyph shape in Line Tool (GlyphGrid)
-  const [currentGlyphShape, setCurrentGlyphShape] = useState<'line' | 'triangle'>('triangle');
+  const [currentGlyphShape, setCurrentGlyphShape] = useState<'line' | 'triangle' | 'zigzag'>('triangle');
 
   // Detect mobile devices
   useEffect(() => {
@@ -210,6 +214,23 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     }
   }, [shapeToolPlaying, calibrationPlaying, glyphGridPlaying, dotGridPlaying]);
 
+  // Add a new effect to handle the analyzer for sine tool
+  useEffect(() => {
+    if (sineToolPlaying) {
+      // Placeholder for connecting sine tool audio to analyzer
+      // const sineAudio = getSineToolAudioPlayer(); // This will be created later
+      // const analyser = sineAudio.createPreEQAnalyser();
+      // setPreEQAnalyser(analyser);
+      console.log("🌊 Sine Tool playing - Analyzer connection placeholder");
+      // For now, let's not set an analyzer until audio is implemented
+      // setPreEQAnalyser(null); 
+    } else if (calibrationPlaying || glyphGridPlaying || dotGridPlaying || shapeToolPlaying) {
+      // Do nothing
+    } else {
+      setPreEQAnalyser(null);
+    }
+  }, [sineToolPlaying, calibrationPlaying, glyphGridPlaying, dotGridPlaying, shapeToolPlaying]);
+
   // Initialize selected profile from the active profile and keep it synced
   useEffect(() => {
     const activeProfile = getActiveProfile();
@@ -253,8 +274,11 @@ export function EQView({ setEqEnabled }: EQViewProps) {
       if (shapeToolPlaying) {
         setShapeToolPlaying(false);
       }
+      if (sineToolPlaying) {
+        setSineToolPlaying(false);
+      }
     }
-  }, [isMusicPlaying, dotGridPlaying, glyphGridPlaying, shapeToolPlaying]);
+  }, [isMusicPlaying, dotGridPlaying, glyphGridPlaying, shapeToolPlaying, sineToolPlaying]);
 
   const handleProfileClick = () => {
     setNewProfileName("");
@@ -324,6 +348,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     // Stop the glyph grid if it's playing
     if (glyphGridPlaying) setGlyphGridPlaying(false);
     if (shapeToolPlaying) setShapeToolPlaying(false); // Stop shape tool if dot grid starts
+    if (sineToolPlaying) setSineToolPlaying(false); // Stop sine tool if dot grid starts
   };
 
   // If on mobile, show a message instead of the EQ interface
@@ -378,7 +403,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
           {/* EQ Section - Now takes more of the width */}
           <div className="w-3/4 relative" ref={eqContainerRef}>
             {/* FFT Visualizer should always be visible during audio playback */}
-            {(calibrationPlaying || glyphGridPlaying || dotGridPlaying || shapeToolPlaying) && preEQAnalyser && (
+            {(calibrationPlaying || glyphGridPlaying || dotGridPlaying || shapeToolPlaying || sineToolPlaying) && preEQAnalyser && (
               <div className="absolute inset-0 z-0">
                 <div className="w-full aspect-[2/1] frequency-graph rounded-lg border dark:border-gray-700 overflow-hidden opacity-80 relative pointer-events-none">
                   {/* The actual EQ visualization area has 40px margins on all sides */}
@@ -460,6 +485,16 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 >
                   Shape Tool
                 </button>
+                <button
+                  className={`px-4 py-2 text-sm font-medium ${
+                    activeGrid === "sine"
+                      ? "bg-teal-500 text-white"
+                      : "bg-background hover:bg-muted"
+                  }`}
+                  onClick={() => setActiveGrid("sine")}
+                >
+                  Sine Tool
+                </button>
               </div>
             </div>
             
@@ -480,7 +515,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   selectedDots={selectedDots}
                   setSelectedDots={setSelectedDots}
                 />
-              ) : (
+              ) : activeGrid === "shape" ? (
                 <div>
                   {/* Placeholder for ShapeTool component */}
                   <p className="text-center text-muted-foreground p-4">
@@ -499,6 +534,11 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                     />
                   </div>
                 </div>
+              ) : (
+                <SineTool 
+                  isPlaying={sineToolPlaying}
+                  disabled={false}
+                />
               )}
 
               {/* Add Toggle for Dot Grid Sub-Hit Playback Mode */} 
@@ -539,6 +579,14 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                     >
                       <Triangle className="mr-1 h-4 w-4" /> Triangle
                     </Button>
+                    <Button 
+                      variant={currentGlyphShape === 'zigzag' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setCurrentGlyphShape('zigzag')}
+                      className={currentGlyphShape === 'zigzag' ? "bg-sky-500 hover:bg-sky-600 text-white" : ""}
+                    >
+                      <Zap className="mr-1 h-4 w-4" /> ZigZag
+                    </Button>
                   </div>
                 </div>
               )}
@@ -550,24 +598,34 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 size="lg"
                 variant={activeGrid === "line" ? (glyphGridPlaying ? "default" : "outline") 
                           : activeGrid === "dot" ? (dotGridPlaying ? "default" : "outline") 
-                          : (shapeToolPlaying ? "default" : "outline")}
+                          : activeGrid === "shape" ? (shapeToolPlaying ? "default" : "outline")
+                          : (sineToolPlaying ? "default" : "outline")}
                 className={activeGrid === "line" ? (glyphGridPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "") 
                             : activeGrid === "dot" ? (dotGridPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "") 
-                            : (shapeToolPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")}
+                            : activeGrid === "shape" ? (shapeToolPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")
+                            : (sineToolPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")}
                 onClick={() => {
                   if (activeGrid === "line") {
                     setGlyphGridPlaying(!glyphGridPlaying);
                     if (dotGridPlaying) setDotGridPlaying(false);
                     if (shapeToolPlaying) setShapeToolPlaying(false);
+                    if (sineToolPlaying) setSineToolPlaying(false);
                     if (!glyphGridPlaying && isMusicPlaying) setMusicPlaying(false);
                   } else if (activeGrid === "dot") {
                     handleDotGridPlayToggle();
-                    if (shapeToolPlaying) setShapeToolPlaying(false);
-                  } else {
+                    if (sineToolPlaying) setSineToolPlaying(false);
+                  } else if (activeGrid === "shape") {
                     setShapeToolPlaying(!shapeToolPlaying);
                     if (dotGridPlaying) setDotGridPlaying(false);
                     if (glyphGridPlaying) setGlyphGridPlaying(false);
+                    if (sineToolPlaying) setSineToolPlaying(false);
                     if (!shapeToolPlaying && isMusicPlaying) setMusicPlaying(false);
+                  } else {
+                    setSineToolPlaying(!sineToolPlaying);
+                    if (dotGridPlaying) setDotGridPlaying(false);
+                    if (glyphGridPlaying) setGlyphGridPlaying(false);
+                    if (shapeToolPlaying) setShapeToolPlaying(false);
+                    if (!sineToolPlaying && isMusicPlaying) setMusicPlaying(false);
                   }
                 }}
               >
@@ -576,7 +634,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   ? (glyphGridPlaying ? "Stop Calibration" : "Play Calibration") 
                   : activeGrid === "dot" 
                     ? (dotGridPlaying ? "Stop Calibration" : "Play Calibration")
-                    : (shapeToolPlaying ? "Stop Calibration" : "Play Calibration")}
+                    : activeGrid === "shape" ? (shapeToolPlaying ? "Stop Calibration" : "Play Calibration")
+                    : (sineToolPlaying ? "Stop Calibration" : "Play Calibration")}
               </Button>
             </div>
             

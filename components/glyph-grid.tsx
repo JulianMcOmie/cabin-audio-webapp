@@ -8,7 +8,7 @@ import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
 // Glyph interface for representing a shape that defines a path
 interface Glyph {
   id: string;
-  type: 'line' | 'triangle'; // Added 'triangle'
+  type: 'line' | 'triangle' | 'zigzag'; // Added 'zigzag'
   position: { x: number, y: number }; // Center position
   size: { width: number, height: number }; // Size of the glyph
   angle?: number; // Optional rotation angle (not implemented in initial version)
@@ -17,7 +17,7 @@ interface Glyph {
 interface GlyphGridProps {
   isPlaying: boolean;
   disabled?: boolean;
-  glyphType?: 'line' | 'triangle'; // New prop for selecting shape type
+  glyphType?: 'line' | 'triangle' | 'zigzag'; // New prop for selecting shape type
 }
 
 export function GlyphGrid({ isPlaying, disabled = false, glyphType = 'triangle' }: GlyphGridProps) {
@@ -95,9 +95,9 @@ export function GlyphGrid({ isPlaying, disabled = false, glyphType = 'triangle' 
       ...prev,
       id: `prop-driven-${glyphType}`,
       type: glyphType,
-      angle: glyphType === 'triangle' ? (prev.angle || Math.PI / 4) : 0, // Preserve angle or set default for triangle
+      angle: glyphType === 'triangle' ? (prev.angle || Math.PI / 4) : (glyphType === 'zigzag' ? (prev.angle || 0) : 0), // Preserve angle or set default
     }));
-
+    
     // Enable envelope modulation by default
     // audioPlayer.setModulating(true)
     
@@ -190,13 +190,13 @@ export function GlyphGrid({ isPlaying, disabled = false, glyphType = 'triangle' 
     }
     
     // --- Define Bounding Box (used by all shapes) ---
-    // In the audio system, (-1,-1) is bottom-left and (1,1) is top-right
-    // In the canvas, (0,0) is top-left and (width,height) is bottom-right
+      // In the audio system, (-1,-1) is bottom-left and (1,1) is top-right
+      // In the canvas, (0,0) is top-left and (width,height) is bottom-right
     const bb_startX_norm = glyph.position.x - glyph.size.width / 2
     const bb_startY_norm = glyph.position.y - glyph.size.height / 2
     const bb_endX_norm = glyph.position.x + glyph.size.width / 2
     const bb_endY_norm = glyph.position.y + glyph.size.height / 2
-
+      
     // Convert normalized bounding box coordinates to canvas pixels
     const bb_startX_canvas = (bb_startX_norm + 1) / 2 * rect.width
     const bb_startY_canvas = (1 - bb_startY_norm) / 2 * rect.height // Y is inverted
@@ -261,15 +261,62 @@ export function GlyphGrid({ isPlaying, disabled = false, glyphType = 'triangle' 
       ctx.stroke()
 
       ctx.restore(); // Restore context to remove rotation for other elements
+    } else if (glyph.type === 'zigzag') {
+      const width_bb = bb_endX_canvas - bb_startX_canvas;
+      const height_bb = bb_endY_canvas - bb_startY_canvas;
+
+      // Define 5 points for the zig-zag (unrotated, in canvas coordinates)
+      // P1: Bottom-left
+      // P5: Top-right
+      // P2, P3, P4 create the zig-zag pattern along the main diagonal
+      const p1_unrotated_canvas = { x: bb_startX_canvas, y: bb_startY_canvas };
+      const p2_unrotated_canvas = { x: bb_startX_canvas + width_bb * 0.25, y: bb_startY_canvas + height_bb * 0.4 }; // Adjusted y for more zig
+      const p3_unrotated_canvas = { x: bb_startX_canvas + width_bb * 0.5, y: bb_startY_canvas + height_bb * 0.1 };  // Adjusted y
+      const p4_unrotated_canvas = { x: bb_startX_canvas + width_bb * 0.75, y: bb_startY_canvas + height_bb * 0.6 }; // Adjusted y
+      const p5_unrotated_canvas = { x: bb_endX_canvas, y: bb_endY_canvas };
+      
+      const points_unrotated_canvas = [p1_unrotated_canvas, p2_unrotated_canvas, p3_unrotated_canvas, p4_unrotated_canvas, p5_unrotated_canvas];
+
+      const centerX_canvas = (bb_startX_canvas + bb_endX_canvas) / 2;
+      const centerY_canvas = (bb_startY_canvas + bb_endY_canvas) / 2;
+      const currentAngle = glyph.angle || 0;
+
+      ctx.save();
+      ctx.translate(centerX_canvas, centerY_canvas);
+      ctx.rotate(currentAngle);
+      ctx.translate(-centerX_canvas, -centerY_canvas);
+
+      // Draw hover effect
+      if (hoverState === 'shape_body' && !isDragging && !isResizing) {
+        ctx.strokeStyle = isDarkMode ? 'rgba(56, 189, 248, 0.3)' : 'rgba(2, 132, 199, 0.3)';
+        ctx.lineWidth = 8; // Wider for hover
+        ctx.beginPath();
+        ctx.moveTo(p1_unrotated_canvas.x, p1_unrotated_canvas.y);
+        for (let i = 1; i < points_unrotated_canvas.length; i++) {
+          ctx.lineTo(points_unrotated_canvas[i].x, points_unrotated_canvas[i].y);
+        }
+        ctx.stroke();
+      }
+
+      // Draw the zig-zag line
+      ctx.strokeStyle = isDarkMode ? '#38bdf8' : '#0284c7';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(p1_unrotated_canvas.x, p1_unrotated_canvas.y);
+      for (let i = 1; i < points_unrotated_canvas.length; i++) {
+        ctx.lineTo(points_unrotated_canvas[i].x, points_unrotated_canvas[i].y);
+      }
+      ctx.stroke();
+      ctx.restore();
     }
       
-    // If playing, draw a moving dot along the path (diagonal of bounding box for all shapes)
-    if (isPlaying && !disabled) {
-      const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
-      const pathPosition = audioPlayer.getPathPosition()
-      
-      let dotX: number;
-      let dotY: number;
+      // If playing, draw a moving dot along the path
+      if (isPlaying && !disabled) {
+        const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
+        const pathPosition = audioPlayer.getPathPosition()
+        
+      let dotX: number = bb_startX_canvas; // Initialize to prevent linter error
+      let dotY: number = bb_startY_canvas; // Initialize to prevent linter error
 
       if (glyph.type === 'triangle') {
         // Triangle vertices in canvas coordinates (unrotated, relative to canvas origin)
@@ -323,48 +370,101 @@ export function GlyphGrid({ isPlaying, disabled = false, glyphType = 'triangle' 
             dotY = v3_rotated_canvas.y + segmentPos * (v1_rotated_canvas.y - v3_rotated_canvas.y);
           }
         }
+      } else if (glyph.type === 'zigzag') {
+        const width_bb = bb_endX_canvas - bb_startX_canvas;
+        const height_bb = bb_endY_canvas - bb_startY_canvas;
+
+        const p1_unrotated_canvas = { x: bb_startX_canvas, y: bb_startY_canvas };
+        const p2_unrotated_canvas = { x: bb_startX_canvas + width_bb * 0.25, y: bb_startY_canvas + height_bb * 0.4 };
+        const p3_unrotated_canvas = { x: bb_startX_canvas + width_bb * 0.5, y: bb_startY_canvas + height_bb * 0.1 };
+        const p4_unrotated_canvas = { x: bb_startX_canvas + width_bb * 0.75, y: bb_startY_canvas + height_bb * 0.6 };
+        const p5_unrotated_canvas = { x: bb_endX_canvas, y: bb_endY_canvas };
+        
+        const points_unrotated_canvas_for_dot = [p1_unrotated_canvas, p2_unrotated_canvas, p3_unrotated_canvas, p4_unrotated_canvas, p5_unrotated_canvas];
+
+        const rotCenterX_canvas = (bb_startX_canvas + bb_endX_canvas) / 2;
+        const rotCenterY_canvas = (bb_startY_canvas + bb_endY_canvas) / 2;
+        const currentAngle = glyph.angle || 0;
+        const cosA = Math.cos(currentAngle);
+        const sinA = Math.sin(currentAngle);
+
+        const rotateCanvasPoint = (p: {x:number, y:number}) => {
+            const translatedX = p.x - rotCenterX_canvas;
+            const translatedY = p.y - rotCenterY_canvas;
+            return {
+                x: rotCenterX_canvas + translatedX * cosA - translatedY * sinA,
+                y: rotCenterY_canvas + translatedX * sinA + translatedY * cosA,
+            };
+        };
+        
+        const points_rotated_canvas = points_unrotated_canvas_for_dot.map(rotateCanvasPoint);
+
+        const dist = (p1: {x:number,y:number}, p2: {x:number,y:number}) => Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+        
+        const segmentLengths = [];
+        for (let i = 0; i < points_rotated_canvas.length - 1; i++) {
+          segmentLengths.push(dist(points_rotated_canvas[i], points_rotated_canvas[i+1]));
+        }
+        const totalPathLength = segmentLengths.reduce((sum, len) => sum + len, 0);
+
+        if (totalPathLength === 0) {
+          dotX = points_rotated_canvas[0].x;
+          dotY = points_rotated_canvas[0].y;
+        } else {
+          let currentPathPos = pathPosition * totalPathLength;
+          let accumulatedLength = 0;
+          for (let i = 0; i < segmentLengths.length; i++) {
+            if (currentPathPos <= accumulatedLength + segmentLengths[i] || i === segmentLengths.length - 1) {
+              const segmentPos = (currentPathPos - accumulatedLength) / segmentLengths[i];
+              dotX = points_rotated_canvas[i].x + segmentPos * (points_rotated_canvas[i+1].x - points_rotated_canvas[i].x);
+              dotY = points_rotated_canvas[i].y + segmentPos * (points_rotated_canvas[i+1].y - points_rotated_canvas[i].y);
+              break;
+            }
+            accumulatedLength += segmentLengths[i];
+          }
+        }
       } else { // Default to line (diagonal of bounding box)
          dotX = bb_startX_canvas + (bb_endX_canvas - bb_startX_canvas) * pathPosition
          dotY = bb_startY_canvas + (bb_endY_canvas - bb_startY_canvas) * pathPosition
       }
+        
+        // Draw the dot
+        ctx.fillStyle = isDarkMode ? 'rgb(56, 189, 248)' : 'rgb(2, 132, 199)'
+        ctx.beginPath()
+        ctx.arc(dotX, dotY, 8, 0, Math.PI * 2)
+        ctx.fill()
+        
+        // Request animation frame to continue the animation
+        requestAnimationFrame(() => {
+          setGlyph(prev => ({ ...prev }))
+        })
+      }
       
-      // Draw the dot
-      ctx.fillStyle = isDarkMode ? 'rgb(56, 189, 248)' : 'rgb(2, 132, 199)'
-      ctx.beginPath()
-      ctx.arc(dotX, dotY, 8, 0, Math.PI * 2)
-      ctx.fill()
-      
-      // Request animation frame to continue the animation
-      requestAnimationFrame(() => {
-        setGlyph(prev => ({ ...prev }))
-      })
-    }
-    
-    // Draw resize handles at corners if not disabled
-    if (!disabled) {
-      const handleRadius = 6
+      // Draw resize handles at corners if not disabled
+      if (!disabled) {
+        const handleRadius = 6
       // Only show bottom-left and top-right corners of the bounding box
-      const handles = [
+        const handles = [
         { x: bb_startX_canvas, y: bb_startY_canvas, state: 'vertex1' as const }, // Bottom-left of bounding box
         { x: bb_endX_canvas, y: bb_endY_canvas, state: 'vertex2' as const },     // Top-right of bounding box
-      ]
-      
-      handles.forEach((handle) => {
-        // Add hover effect
-        if (hoverState === handle.state && !isDragging && !isResizing) {
-          // Draw highlight circle first
-          ctx.fillStyle = isDarkMode ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.2)'
-          ctx.beginPath()
-          ctx.arc(handle.x, handle.y, handleRadius + 4, 0, Math.PI * 2)
-          ctx.fill()
-        }
+        ]
         
-        // Draw handle
-        ctx.fillStyle = isDarkMode ? 'white' : 'black'
-        ctx.beginPath()
-        ctx.arc(handle.x, handle.y, handleRadius, 0, Math.PI * 2)
-        ctx.fill()
-      })
+        handles.forEach((handle) => {
+          // Add hover effect
+          if (hoverState === handle.state && !isDragging && !isResizing) {
+            // Draw highlight circle first
+            ctx.fillStyle = isDarkMode ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.2)'
+            ctx.beginPath()
+            ctx.arc(handle.x, handle.y, handleRadius + 4, 0, Math.PI * 2)
+            ctx.fill()
+          }
+          
+          // Draw handle
+          ctx.fillStyle = isDarkMode ? 'white' : 'black'
+          ctx.beginPath()
+          ctx.arc(handle.x, handle.y, handleRadius, 0, Math.PI * 2)
+          ctx.fill()
+        })
     }
   }, [glyph, isPlaying, disabled, isDarkMode, hoverState, isDragging, isResizing])
   
@@ -408,26 +508,26 @@ export function GlyphGrid({ isPlaying, disabled = false, glyphType = 'triangle' 
     
     // Check if near the shape body
     const bodyDistThreshold = 10 // px
-
+    
     if (glyph.type === 'line') {
-      // Calculate line segment length squared
+    // Calculate line segment length squared
       const lineLengthSq = Math.pow(bb_endX_canvas - bb_startX_canvas, 2) + Math.pow(bb_endY_canvas - bb_startY_canvas, 2)
-      
-      if (lineLengthSq === 0) return 'none' // Line has no length
-      
-      // Calculate projection of point onto line
+    
+    if (lineLengthSq === 0) return 'none' // Line has no length
+    
+    // Calculate projection of point onto line
       const t = ((mouseX - bb_startX_canvas) * (bb_endX_canvas - bb_startX_canvas) + (mouseY - bb_startY_canvas) * (bb_endY_canvas - bb_startY_canvas)) / lineLengthSq
-      
-      // If projection is outside line segment, use distance to nearest endpoint
-      if (t < 0 || t > 1) return 'none'
-      
-      // Calculate projected point on line
+    
+    // If projection is outside line segment, use distance to nearest endpoint
+    if (t < 0 || t > 1) return 'none'
+    
+    // Calculate projected point on line
       const projX = bb_startX_canvas + t * (bb_endX_canvas - bb_startX_canvas)
       const projY = bb_startY_canvas + t * (bb_endY_canvas - bb_startY_canvas)
-      
-      // Calculate distance to projected point
-      const distToLine = Math.sqrt(Math.pow(mouseX - projX, 2) + Math.pow(mouseY - projY, 2))
-      
+    
+    // Calculate distance to projected point
+    const distToLine = Math.sqrt(Math.pow(mouseX - projX, 2) + Math.pow(mouseY - projY, 2))
+    
       if (distToLine <= bodyDistThreshold) {
         return 'shape_body'
       }
@@ -468,6 +568,47 @@ export function GlyphGrid({ isPlaying, disabled = false, glyphType = 'triangle' 
       if (!(has_neg && has_pos)) { // If all signs are the same (or zero), point is inside or on edge
         return 'shape_body';
       }
+    } else if (glyph.type === 'zigzag') {
+      const currentAngle = glyph.angle || 0;
+      const cosMinusA = Math.cos(-currentAngle);
+      const sinMinusA = Math.sin(-currentAngle);
+
+      const centerX_canvas = (bb_startX_canvas + bb_endX_canvas) / 2;
+      const centerY_canvas = (bb_startY_canvas + bb_endY_canvas) / 2;
+
+      const translatedMouseX = mouseX - centerX_canvas;
+      const translatedMouseY = mouseY - centerY_canvas;
+      const unrotatedMouseX = centerX_canvas + translatedMouseX * cosMinusA - translatedMouseY * sinMinusA;
+      const unrotatedMouseY = centerY_canvas + translatedMouseX * sinMinusA + translatedMouseY * cosMinusA;
+      
+      const pt = { x: unrotatedMouseX, y: unrotatedMouseY };
+
+      const width_bb = bb_endX_canvas - bb_startX_canvas;
+      const height_bb = bb_endY_canvas - bb_startY_canvas;
+      const p1_unrotated_canvas = { x: bb_startX_canvas, y: bb_startY_canvas };
+      const p2_unrotated_canvas = { x: bb_startX_canvas + width_bb * 0.25, y: bb_startY_canvas + height_bb * 0.4 };
+      const p3_unrotated_canvas = { x: bb_startX_canvas + width_bb * 0.5, y: bb_startY_canvas + height_bb * 0.1 };
+      const p4_unrotated_canvas = { x: bb_startX_canvas + width_bb * 0.75, y: bb_startY_canvas + height_bb * 0.6 };
+      const p5_unrotated_canvas = { x: bb_endX_canvas, y: bb_endY_canvas };
+      const points_unrotated_canvas_for_hover = [p1_unrotated_canvas, p2_unrotated_canvas, p3_unrotated_canvas, p4_unrotated_canvas, p5_unrotated_canvas];
+
+      for (let i = 0; i < points_unrotated_canvas_for_hover.length - 1; i++) {
+        const segStart = points_unrotated_canvas_for_hover[i];
+        const segEnd = points_unrotated_canvas_for_hover[i+1];
+        
+        // Distance from point to line segment check
+        const lenSq = Math.pow(segEnd.x - segStart.x, 2) + Math.pow(segEnd.y - segStart.y, 2);
+        if (lenSq === 0) continue; 
+        let t = ((pt.x - segStart.x) * (segEnd.x - segStart.x) + (pt.y - segStart.y) * (segEnd.y - segStart.y)) / lenSq;
+        t = Math.max(0, Math.min(1, t)); // Clamp t to the segment
+        const projX = segStart.x + t * (segEnd.x - segStart.x);
+        const projY = segStart.y + t * (segEnd.y - segStart.y);
+        const distToSegment = Math.sqrt(Math.pow(pt.x - projX, 2) + Math.pow(pt.y - projY, 2));
+
+        if (distToSegment <= bodyDistThreshold) {
+          return 'shape_body';
+        }
+      }
     }
     
     return 'none'
@@ -491,9 +632,9 @@ export function GlyphGrid({ isPlaying, disabled = false, glyphType = 'triangle' 
     const currentHoverTarget = checkHoverTarget(mouseX, mouseY) // Determine target first
     
     if (currentHoverTarget === 'vertex1' || currentHoverTarget === 'vertex2') {
-      setIsResizing(true)
+        setIsResizing(true)
       setDragTarget(currentHoverTarget) 
-      return
+        return
     }
     
     if (currentHoverTarget === 'shape_body') {

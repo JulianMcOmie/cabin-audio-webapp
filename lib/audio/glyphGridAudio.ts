@@ -108,7 +108,7 @@ class SlopedPinkNoiseGenerator {
 // Simple glyph representation
 export interface GlyphData {
   id: string;
-  type: 'line' | 'triangle'; // Allow triangle type
+  type: 'line' | 'triangle' | 'zigzag'; // Allow zigzag type
   position: { x: number, y: number }; // Center position
   size: { width: number, height: number }; // Size of the glyph
   angle?: number; // Optional rotation angle
@@ -270,7 +270,7 @@ class GlyphGridAudioPlayer {
     if (this.playbackMode === PlaybackMode.SWEEP) {
       const prevPathPosition = this.pathPosition;
       this.pathPosition += 0.005 * this.pathDirection * this.speed;
-
+      
       let looped = false;
 
       if (this.useSubsection) {
@@ -304,7 +304,7 @@ class GlyphGridAudioPlayer {
 
       if (looped) {
         this.updateAudioParametersFromPosition(this.pathPosition); // Update audio at the loop point
-      } else if (this.discreteFrequency) {
+        } else if (this.discreteFrequency) {
         const hitInterval = DEFAULT_HIT_INTERVAL; // e.g., 0.2 for 20% steps
         let currentIntervalNum: number;
         let previousIntervalNum: number;
@@ -314,7 +314,7 @@ class GlyphGridAudioPlayer {
             if (subLength === 0) {
                 currentIntervalNum = 0;
                 previousIntervalNum = 0;
-            } else {
+        } else {
                 // Distance travelled from the subsection's logical start, normalized by pathDirection
                 const currentDistFromSubStart = (this.pathPosition - this.subsectionStart) * this.pathDirection;
                 const previousDistFromSubStart = (prevPathPosition - this.subsectionStart) * this.pathDirection;
@@ -416,12 +416,11 @@ class GlyphGridAudioPlayer {
       const len31 = dist(v3, v1);
       const totalPerimeter = len12 + len23 + len31;
 
-      if (totalPerimeter === 0) { // Avoid division by zero for degenerate triangles
+      if (totalPerimeter === 0) { 
         x = v1.x;
         y = v1.y;
       } else {
         let currentPerimeterPos = position * totalPerimeter;
-
         if (currentPerimeterPos <= len12) {
           const segmentPos = currentPerimeterPos / len12;
           x = v1.x + segmentPos * (v2.x - v1.x);
@@ -436,7 +435,62 @@ class GlyphGridAudioPlayer {
           y = v3.y + segmentPos * (v1.y - v3.y);
         }
       }
-    } else { // Default to line (diagonal of bounding box)
+    } else if (glyphType === 'zigzag') {
+      const width_bb = endX_bb - startX_bb;
+      const height_bb = endY_bb - startY_bb;
+
+      // Define 5 points for the zig-zag (unrotated, in normalized coordinates)
+      const p1_unrotated_norm = { x: startX_bb, y: startY_bb };
+      const p2_unrotated_norm = { x: startX_bb + width_bb * 0.25, y: startY_bb + height_bb * 0.4 };
+      const p3_unrotated_norm = { x: startX_bb + width_bb * 0.5, y: startY_bb + height_bb * 0.1 };
+      const p4_unrotated_norm = { x: startX_bb + width_bb * 0.75, y: startY_bb + height_bb * 0.6 };
+      const p5_unrotated_norm = { x: endX_bb, y: endY_bb };
+      const points_unrotated_norm = [p1_unrotated_norm, p2_unrotated_norm, p3_unrotated_norm, p4_unrotated_norm, p5_unrotated_norm];
+
+      let points_for_path = points_unrotated_norm;
+      const angle = this.currentGlyph.angle;
+
+      if (angle && angle !== 0) {
+        const centerX = glyphPos.x;
+        const centerY = glyphPos.y;
+        const cosTheta = Math.cos(angle);
+        const sinTheta = Math.sin(angle);
+        const rotatePoint = (point: {x: number, y: number}) => {
+          const tempX = point.x - centerX;
+          const tempY = point.y - centerY;
+          const rotatedX = tempX * cosTheta - tempY * sinTheta;
+          const rotatedY = tempX * sinTheta + tempY * cosTheta;
+          return { x: rotatedX + centerX, y: rotatedY + centerY };
+        };
+        points_for_path = points_unrotated_norm.map(rotatePoint);
+      }
+
+      const dist = (p1: {x:number,y:number}, p2: {x:number,y:number}) => Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+      const segmentLengths = [];
+      for (let i = 0; i < points_for_path.length - 1; i++) {
+        segmentLengths.push(dist(points_for_path[i], points_for_path[i+1]));
+      }
+      const totalPathLength = segmentLengths.reduce((sum, len) => sum + len, 0);
+
+      if (totalPathLength === 0) {
+        x = points_for_path[0].x;
+        y = points_for_path[0].y;
+      } else {
+        let currentPathPos = position * totalPathLength;
+        let accumulatedLength = 0;
+        x = points_for_path[0].x; // Default x assignment
+        y = points_for_path[0].y; // Default y assignment
+        for (let i = 0; i < segmentLengths.length; i++) {
+          if (currentPathPos <= accumulatedLength + segmentLengths[i] || i === segmentLengths.length - 1) {
+            const segmentPos = segmentLengths[i] === 0 ? 0 : (currentPathPos - accumulatedLength) / segmentLengths[i];
+            x = points_for_path[i].x + segmentPos * (points_for_path[i+1].x - points_for_path[i].x);
+            y = points_for_path[i].y + segmentPos * (points_for_path[i+1].y - points_for_path[i].y);
+            break;
+          }
+          accumulatedLength += segmentLengths[i];
+        }
+      }
+    } else { // Default to line (diagonal of bounding box) or any other unrecognized types
       x = startX_bb + position * (endX_bb - startX_bb);
       y = startY_bb + position * (endY_bb - startY_bb);
     }
@@ -475,7 +529,7 @@ class GlyphGridAudioPlayer {
     this.audioNodes.gain.gain.setValueAtTime(effectiveMasterGain, ctx.currentTime);
     
     // Update panner
-    this.audioNodes.panner.pan.value = panPosition
+      this.audioNodes.panner.pan.value = panPosition
   }
   
   public setPlaying(playing: boolean): void {
@@ -506,7 +560,7 @@ class GlyphGridAudioPlayer {
     // Create gain node for volume - apply distortion gain
     const gain = ctx.createGain()
     // Initial gain setting - updateAudioParametersFromPosition will provide more detailed adjustments
-    gain.gain.value = MASTER_GAIN * this.distortionGain; 
+    gain.gain.value = MASTER_GAIN * this.distortionGain;
     
     // Create panner node
     const panner = ctx.createStereoPanner()
@@ -830,8 +884,8 @@ class GlyphGridAudioPlayer {
     // if (this.isPlaying && this.audioNodes.gain) {
     //   this.audioNodes.gain.gain.value = MASTER_GAIN * this.distortionGain;
     // }
-    console.log(`🔊 Glyph Grid distortion gain set to ${this.distortionGain.toFixed(2)}`);
-  }
+      console.log(`🔊 Glyph Grid distortion gain set to ${this.distortionGain.toFixed(2)}`);
+    }
 
   // Add a setter for base volume, similar to DotGridAudioPlayer
   public setVolumeDb(dbLevel: number): void {
