@@ -24,6 +24,7 @@ import * as dotGridAudio from '@/lib/audio/dotGridAudio'
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { SineTool } from "@/components/sine-tool"
+import { getSineToolAudioPlayer, cleanupSineToolAudioPlayer } from "@/lib/audio/sineToolAudio"
 
 interface EQViewProps {
 //   isPlaying: boolean
@@ -33,7 +34,24 @@ interface EQViewProps {
 //   onSignupClick: () => void
 }
 
+// Helper effect for global cleanup of audio players on EQView unmount
+function useCleanupAudioPlayers() {
+  useEffect(() => {
+    return () => {
+      console.log("EQView unmounting - cleaning up audio players");
+      dotGridAudio.cleanupDotGridAudioPlayer();
+      glyphGridAudio.cleanupGlyphGridAudioPlayer();
+      // Add cleanup for referenceCalibrationAudio if it has a similar pattern
+      // getReferenceCalibrationAudio().dispose(); // Assuming it has a dispose
+      cleanupSineToolAudioPlayer(); // Cleanup SineToolAudioPlayer
+      // cleanupShapeToolAudioPlayer(); // Placeholder if/when ShapeTool audio exists
+    };
+  }, []);
+}
+
 export function EQView({ setEqEnabled }: EQViewProps) {
+  useCleanupAudioPlayers(); // Call the cleanup hook
+
   const [selectedDot] = useState<[number, number] | null>(null)
   const [instruction, setInstruction] = useState("Click + drag on the center line to add a band")
   const { 
@@ -203,7 +221,6 @@ export function EQView({ setEqEnabled }: EQViewProps) {
       // Placeholder for connecting shape tool audio to analyzer
       // const shapeAudio = getShapeToolAudioPlayer(); // This will be created later
       // const analyser = shapeAudio.createPreEQAnalyser();
-      // setPreEQAnalyser(analyser);
       console.log("💠 Shape Tool playing - Analyzer connection placeholder");
       // For now, let's not set an analyzer until audio is implemented
       // setPreEQAnalyser(null); 
@@ -218,12 +235,10 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   useEffect(() => {
     if (sineToolPlaying) {
       // Placeholder for connecting sine tool audio to analyzer
-      // const sineAudio = getSineToolAudioPlayer(); // This will be created later
-      // const analyser = sineAudio.createPreEQAnalyser();
-      // setPreEQAnalyser(analyser);
-      console.log("🌊 Sine Tool playing - Analyzer connection placeholder");
-      // For now, let's not set an analyzer until audio is implemented
-      // setPreEQAnalyser(null); 
+      const sineAudio = getSineToolAudioPlayer(); 
+      const analyser = sineAudio.createPreEQAnalyser();
+      setPreEQAnalyser(analyser);
+      console.log("🌊 Sine Tool playing - Analyzer connection established");
     } else if (calibrationPlaying || glyphGridPlaying || dotGridPlaying || shapeToolPlaying) {
       // Do nothing
     } else {
