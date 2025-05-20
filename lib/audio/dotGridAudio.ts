@@ -13,9 +13,9 @@ const MASTER_GAIN = 6.0; // Much louder master gain for calibration
 
 // New constants for Sloped Pink Noise
 const NUM_BANDS = 20; // Number of frequency bands for shaping
-const SLOPE_REF_FREQUENCY = 800; // Hz, reference frequency for slope calculations
 const MIN_AUDIBLE_FREQ = 20; // Hz
 const MAX_AUDIBLE_FREQ = 20000; // Hz
+// const CENTRAL_SLOPE_REFERENCE_HZ = 440; // Hz, reference frequency for slope calculations - REMOVED
 // const BAND_Q_VALUE = 1.5; // Q value for the bandpass filters (reduced from 6.0) - No longer used for HP/LP pairs
 const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
 
@@ -23,10 +23,10 @@ const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
 const LOW_SLOPE_DB_PER_OCT = -24.5; // For low y positions (darker sound)
 const CENTER_SLOPE_DB_PER_OCT = -4.5; // For middle y positions
 const HIGH_SLOPE_DB_PER_OCT = 15.5; // For high y positions (brighter sound)
-const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of SlopedPinkNoiseGenerator (approx -12dB)
+const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.01; // Scalar to reduce output of SlopedPinkNoiseGenerator (approx -32dB)
 
-// New constant for attenuation based on slope deviation from pink noise
-const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 3.8; // dB reduction per dB/octave deviation from -3dB/oct
+// New constant for extremity-based boost
+const MAX_EXTREMITY_BOOST_DB = 30.0; // Max boost in dB for extreme Y positions
 
 // Constants for sequential playback with click prevention
 // const DOT_DURATION_S = 1.0; // Each dot plays for this duration - REMOVING, duration now controlled by GLOBAL_STAGGER_RELEASE_S
@@ -37,8 +37,8 @@ const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 3.8; // dB reduction per dB/octave d
 // const SUB_HIT_INTERVAL_S = DOT_DURATION_S / NUM_SUB_HITS; // Approx 0.125s if DOT_DURATION_S is 0.5s
 
 // New constants for Global Staggered Mode (when subHitPlaybackEnabled is true)
-const GLOBAL_STAGGER_ATTACK_S = 0.05; // Longer attack
-const GLOBAL_STAGGER_RELEASE_S = 0.4; // Longer release
+const GLOBAL_STAGGER_ATTACK_S = 0.25; // Longer attack (was 0.05)
+const GLOBAL_STAGGER_RELEASE_S = 1.0; // Longer release (was 0.4)
 const ALL_DOTS_STAGGER_INTERVAL_S = 0.1; // Stagger between each dot in the global sequence
 const NUM_HITS_PER_DOT_SEQUENCE = 4; // New: Number of hits per dot in its sequence turn
 
@@ -51,12 +51,12 @@ const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
 
 // Interface for nodes managed by PositionedAudioService
 interface PointAudioNodes {
-    source: AudioBufferSourceNode;
+    // source: AudioBufferSourceNode; // Removed
   mainGain: GainNode;
     envelopeGain: GainNode;
     panner: StereoPannerNode;
   slopedNoiseGenerator: SlopedPinkNoiseGenerator;
-  pinkNoiseBuffer: AudioBuffer;
+  // pinkNoiseBuffer: AudioBuffer; // Removed
   normalizedYPos: number; // To recalculate slope without re-passing y, totalRows
   // New properties for sub-hit sequencing
   subHitCount: number;
@@ -80,35 +80,35 @@ class PositionedAudioService {
   }
 
   // Moved from DotGridAudioPlayer
-  private _generateSinglePinkNoiseBuffer(): AudioBuffer {
-    const bufferSize = this.ctx.sampleRate * 2; // 2 seconds of noise
-    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-    const data = buffer.getChannelData(0);
+  // private _generateSinglePinkNoiseBuffer(): AudioBuffer { // Removed
+  //   const bufferSize = this.ctx.sampleRate * 2; // 2 seconds of noise
+  //   const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+  //   const data = buffer.getChannelData(0);
 
-    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
-    for (let i = 0; i < bufferSize; i++) {
-      const white = Math.random() * 2 - 1;
-      b0 = 0.99886 * b0 + white * 0.0555179;
-      b1 = 0.99332 * b1 + white * 0.0750759;
-      b2 = 0.96900 * b2 + white * 0.1538520;
-      b3 = 0.86650 * b3 + white * 0.3104856;
-      b4 = 0.55000 * b4 + white * 0.5329522;
-      b5 = -0.7616 * b5 - white * 0.0168980;
-      b6 = white * 0.5362;
-      data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.11) * 0.11; // Adjusted last term slightly
-    }
+  //   let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+  //   for (let i = 0; i < bufferSize; i++) {
+  //     const white = Math.random() * 2 - 1;
+  //     b0 = 0.99886 * b0 + white * 0.0555179;
+  //     b1 = 0.99332 * b1 + white * 0.0750759;
+  //     b2 = 0.96900 * b2 + white * 0.1538520;
+  //     b3 = 0.86650 * b3 + white * 0.3104856;
+  //     b4 = 0.55000 * b4 + white * 0.5329522;
+  //     b5 = -0.7616 * b5 - white * 0.0168980;
+  //     b6 = white * 0.5362;
+  //     data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.11) * 0.11; // Adjusted last term slightly
+  //   }
 
-    let peak = 0;
-    for (let i = 0; i < bufferSize; i++) {
-      const abs = Math.abs(data[i]);
-      if (abs > peak) peak = abs;
-    }
-    const normalizationFactor = peak > 0.8 ? 0.8 / peak : 1.0;
-    for (let i = 0; i < bufferSize; i++) {
-      data[i] *= normalizationFactor;
-    }
-    return buffer;
-  }
+  //   let peak = 0;
+  //   for (let i = 0; i < bufferSize; i++) {
+  //     const abs = Math.abs(data[i]);
+  //     if (abs > peak) peak = abs;
+  //   }
+  //   const normalizationFactor = peak > 0.8 ? 0.8 / peak : 1.0;
+  //   for (let i = 0; i < bufferSize; i++) {
+  //     data[i] *= normalizationFactor;
+  //   }
+  //   return buffer;
+  // }
 
   public getOutputNode(): GainNode {
     return this.outputGain;
@@ -174,10 +174,10 @@ class PositionedAudioService {
     const normalizedY = totalRows <= 1 ? 0.5 : 1 - (y / (totalRows - 1));
     const panPosition = totalCols <= 1 ? 0 : (2 * (x / (totalCols - 1)) - 1);
 
-    const pinkNoiseBuffer = this._generateSinglePinkNoiseBuffer();
-    const source = this.ctx.createBufferSource();
-    source.buffer = pinkNoiseBuffer;
-    source.loop = true;
+    // const pinkNoiseBuffer = this._generateSinglePinkNoiseBuffer(); // Removed
+    // const source = this.ctx.createBufferSource(); // Removed
+    // source.buffer = pinkNoiseBuffer; // Removed
+    // source.loop = true; // Removed
 
     const slopedNoiseGenerator = new SlopedPinkNoiseGenerator(this.ctx);
     const mainGain = this.ctx.createGain();
@@ -186,27 +186,27 @@ class PositionedAudioService {
     const panner = this.ctx.createStereoPanner();
     panner.pan.value = panPosition;
 
-    // Connect chain: source -> slopedGen -> mainGain -> envelopeGain -> panner -> serviceOutput
-    source.connect(slopedNoiseGenerator.getInputNode());
+    // Connect chain: slopedGen.output -> mainGain -> envelopeGain -> panner -> serviceOutput
+    // source.connect(slopedNoiseGenerator.getInputNode()); // Removed old connection
     slopedNoiseGenerator.getOutputNode().connect(mainGain);
     mainGain.connect(envelopeGain);
     envelopeGain.connect(panner);
     panner.connect(this.outputGain);
 
     this.audioPoints.set(id, {
-      source,
+      // source, // Removed
       mainGain,
       envelopeGain,
       panner,
       slopedNoiseGenerator,
-      pinkNoiseBuffer,
+      // pinkNoiseBuffer, // Removed
       normalizedYPos: normalizedY,
       // Initialize new properties
       subHitCount: 0,
       subHitTimerId: null,
     });
 
-    source.start(); // Start source immediately, loop, control with envelopeGain
+    // source.start(); // Removed - Oscillators in SlopedPinkNoiseGenerator start internally
   }
 
   public removePoint(id: string): void {
@@ -220,17 +220,17 @@ class PositionedAudioService {
     }
 
     point.envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, this.ctx.currentTime);
-    try {
-      point.source.stop();
-    } catch (e) { 
-      console.log(`Error stopping source for point ${id}:`, e);
-    }
-    point.source.disconnect();
+    // try { // Removed source related logic
+    //   point.source.stop();
+    // } catch (e) { 
+    //   console.log(`Error stopping source for point ${id}:`, e);
+    // }
+    // point.source.disconnect(); // Removed
     point.slopedNoiseGenerator.dispose();
     point.mainGain.disconnect();
     point.envelopeGain.disconnect();
     point.panner.disconnect();
-    // point.pinkNoiseBuffer = null; // Buffer is managed by JS GC once source is gone
+    // point.pinkNoiseBuffer = null; // Buffer is managed by JS GC once source is gone // Removed
 
     this.audioPoints.delete(id);
   }
@@ -311,20 +311,25 @@ class PositionedAudioService {
     }
     point.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
 
-    // Existing attenuation based on deviation from CENTER_SLOPE_DB_PER_OCT
-    const slopeDeviationForAttenuation = Math.abs(targetOverallSlopeDbPerOctave - CENTER_SLOPE_DB_PER_OCT);
-    const existingAttenuationDb = -slopeDeviationForAttenuation * ATTENUATION_PER_DB_OCT_DEVIATION_DB;
-
-    // New additional boost calculation based on normalizedYPos extremity
-    const MAX_ADDITIONAL_BOOST_DB = 9.0;
     // extremityFactor goes from 0 (at center y=0.5) to 1 (at extremes y=0 or y=1)
     const extremityFactor = Math.abs(point.normalizedYPos - 0.5) * 2;
-    // Apply a curve (sqrt) to make the boost logarithmic-like (more boost earlier)
-    const curvedExtremityFactor = Math.sqrt(extremityFactor);
-    const additionalSlopeBoostDb = curvedExtremityFactor * MAX_ADDITIONAL_BOOST_DB;
+    // Linear boost based on extremity
+    const peakBoostDb = extremityFactor * MAX_EXTREMITY_BOOST_DB;
 
-    // Combine base level, existing attenuation, and new boost
-    const finalVolumeDb = this.currentBaseDbLevel + existingAttenuationDb + additionalSlopeBoostDb;
+    let referenceLevelAdjustmentDb = 0;
+    const octaveSpan = Math.log2(MAX_AUDIBLE_FREQ / MIN_AUDIBLE_FREQ);
+
+    if (targetOverallSlopeDbPerOctave > 0) {
+      // How CENTER_SLOPE_DB_PER_OCT (anchored at MIN_AUDIBLE_FREQ) treats MAX_AUDIBLE_FREQ:
+      referenceLevelAdjustmentDb = CENTER_SLOPE_DB_PER_OCT * octaveSpan;
+    } else if (targetOverallSlopeDbPerOctave < 0) {
+      // How CENTER_SLOPE_DB_PER_OCT (anchored at MIN_AUDIBLE_FREQ) treats MIN_AUDIBLE_FREQ:
+      referenceLevelAdjustmentDb = CENTER_SLOPE_DB_PER_OCT * Math.log2(MIN_AUDIBLE_FREQ / MIN_AUDIBLE_FREQ); // This is 0
+    }
+    // If targetOverallSlopeDbPerOctave is 0, referenceLevelAdjustmentDb remains 0.
+
+    // Combine base level, peak boost, and the reference level adjustment
+    const finalVolumeDb = this.currentBaseDbLevel + peakBoostDb + referenceLevelAdjustmentDb;
     
     const gainRatio = Math.pow(10, finalVolumeDb / 20);
     const effectiveMasterGain = MASTER_GAIN * this.currentDistortionGain * gainRatio;
@@ -762,84 +767,103 @@ class DotGridAudioPlayer {
 
 class SlopedPinkNoiseGenerator {
   private ctx: AudioContext;
-  private inputGainNode: GainNode;
+  // private inputGainNode: GainNode; // Will be removed
   private outputGainNode: GainNode;
-  private bandFilters: BiquadFilterNode[] = []; // Will store all HP and LP filters
-  private bandGains: GainNode[] = [];
+  // private bandFilters: BiquadFilterNode[] = []; // Will be removed
+  // private bandGains: GainNode[] = []; // Will be renamed and repurposed
+  private oscillators: OscillatorNode[] = [];
+  private oscillatorGains: GainNode[] = [];
   private centerFrequencies: number[] = [];
 
   constructor(audioCtx: AudioContext) {
     this.ctx = audioCtx;
-    this.inputGainNode = this.ctx.createGain();
+    // this.inputGainNode = this.ctx.createGain(); // Removed
     this.outputGainNode = this.ctx.createGain();
     this.outputGainNode.gain.value = SLOPED_NOISE_OUTPUT_GAIN_SCALAR; // Apply output gain reduction
 
     const logMinFreq = Math.log2(MIN_AUDIBLE_FREQ);
     const logMaxFreq = Math.log2(MAX_AUDIBLE_FREQ);
-    const step = (logMaxFreq - logMinFreq) / (NUM_BANDS + 1);
-    const filterQ = 1.0 / Math.sqrt(2); // Q for Butterworth-like response for HP/LP filters
+    // const step = (logMaxFreq - logMinFreq) / (NUM_BANDS + 1); // Original step for band edges
+    // For NUM_BANDS oscillators, we want them spaced across the range.
+    // If we want NUM_BANDS points, we need NUM_BANDS-1 intervals if they span min to max.
+    // Or, if they are "centers" of bands, the original logic for centerFreq is fine.
+    // Let's use NUM_BANDS "divisions" for frequencies similar to how band centers were picked.
+    const step = (logMaxFreq - logMinFreq) / NUM_BANDS; // Adjusted step for NUM_BANDS oscillators
 
     for (let i = 0; i < NUM_BANDS; i++) {
-      // Center frequency for gain calculation (same as before)
-      const centerFreq = Math.pow(2, logMinFreq + (i + 1) * step);
+      // Calculate frequency for the sine wave oscillator
+      // To distribute NUM_BANDS oscillators from MIN_AUDIBLE_FREQ to MAX_AUDIBLE_FREQ:
+      // const freq = Math.pow(2, logMinFreq + i * step); // This would put first at MIN_AUDIBLE_FREQ
+      // Let's use a similar distribution to existing band centers for consistency.
+      // Original: logMinFreq + (i + 1) * step_for_bands where step_for_bands = (logMaxFreq - logMinFreq) / (NUM_BANDS + 1)
+      // New: We want NUM_BANDS oscillators. Let's make them cover the spectrum.
+      // Smallest freq: Math.pow(2, logMinFreq + 0.5 * step)
+      // Largest freq: Math.pow(2, logMinFreq + (NUM_BANDS - 0.5) * step)
+      // Center frequency for this oscillator
+      const centerFreq = Math.pow(2, logMinFreq + (i + 0.5) * step); // Distributes more evenly, avoids hitting exact MIN/MAX with too few bands
       this.centerFrequencies.push(centerFreq);
 
-      // Calculate cutoff frequencies for the HP/LP pair
-      const lowerCutoff = Math.pow(2, logMinFreq + (i + 0.5) * step);
-      const upperCutoff = Math.pow(2, logMinFreq + (i + 1 + 0.5) * step);
+      const oscillator = this.ctx.createOscillator();
+      oscillator.type = 'sine';
+      oscillator.frequency.value = centerFreq;
 
-      const hpFilter = this.ctx.createBiquadFilter();
-      hpFilter.type = 'highpass';
-      hpFilter.frequency.value = lowerCutoff;
-      hpFilter.Q.value = filterQ;
-      this.bandFilters.push(hpFilter);
+      const gainNode = this.ctx.createGain();
+      this.oscillatorGains.push(gainNode);
 
-      const lpFilter = this.ctx.createBiquadFilter();
-      lpFilter.type = 'lowpass';
-      lpFilter.frequency.value = upperCutoff;
-      lpFilter.Q.value = filterQ;
-      this.bandFilters.push(lpFilter);
-
-      const gainNode = this.ctx.createGain(); // Renamed from gain to gainNode to avoid conflict
-      this.bandGains.push(gainNode);
-
-      // Connect input -> hpFilter -> lpFilter -> gainNode -> output
-      this.inputGainNode.connect(hpFilter);
-      hpFilter.connect(lpFilter);
-      lpFilter.connect(gainNode);
+      oscillator.connect(gainNode);
       gainNode.connect(this.outputGainNode);
+      
+      this.oscillators.push(oscillator);
+      oscillator.start();
     }
+    // Removed band filter creation logic
   }
 
-  public getInputNode(): GainNode {
-    return this.inputGainNode;
-  }
+  // public getInputNode(): GainNode { // This method is no longer needed
+  //   return this.inputGainNode;
+  // }
 
   public getOutputNode(): GainNode {
     return this.outputGainNode;
   }
 
   public setSlope(targetOverallSlopeDbPerOctave: number): void {
-    // Calculate shaping slope relative to the INHERENT PINK NOISE SLOPE.
-    // This ensures the generator actively shapes the input pink noise (-3dB/oct)
-    // to achieve the absolute targetOverallSlopeDbPerOctave.
-    const shapingSlope = targetOverallSlopeDbPerOctave - PINK_NOISE_SLOPE_DB_PER_OCT;
+    let referenceFrequencyForSlopeCalc: number;
+
+    if (targetOverallSlopeDbPerOctave > 0) {
+      referenceFrequencyForSlopeCalc = MAX_AUDIBLE_FREQ;
+    } else if (targetOverallSlopeDbPerOctave < 0) {
+      referenceFrequencyForSlopeCalc = MIN_AUDIBLE_FREQ;
+    } else {
+      // For a flat slope (0 dB/octave), all bands should have a gain of 1.0 (0 dB)
+      for (let i = 0; i < NUM_BANDS; i++) {
+        this.oscillatorGains[i].gain.value = 1.0;
+      }
+      return; // Exit early
+    }
 
     for (let i = 0; i < NUM_BANDS; i++) {
       const fc = this.centerFrequencies[i];
-      const gainDb = shapingSlope * Math.log2(fc / SLOPE_REF_FREQUENCY);
+      // Calculate gain relative to the determined reference frequency
+      const gainDb = targetOverallSlopeDbPerOctave * Math.log2(fc / referenceFrequencyForSlopeCalc);
       const linearGain = Math.pow(10, gainDb / 20);
-      this.bandGains[i].gain.value = linearGain;
+      this.oscillatorGains[i].gain.value = linearGain;
     }
   }
 
   public dispose(): void {
-    this.inputGainNode.disconnect();
+    // this.inputGainNode.disconnect(); // Removed
     this.outputGainNode.disconnect();
-    this.bandFilters.forEach(filter => filter.disconnect());
-    this.bandGains.forEach(gain => gain.disconnect());
-    // Nullify references if needed, though JS garbage collection should handle it
-    // once these nodes are no longer referenced elsewhere.
+    this.oscillators.forEach(osc => {
+      osc.stop();
+      osc.disconnect();
+    });
+    this.oscillatorGains.forEach(gain => gain.disconnect());
+    // Nullify references if needed
+    this.oscillators = [];
+    this.oscillatorGains = [];
+    this.centerFrequencies = [];
+    // Removed bandFilter disconnection
   }
 }
 
