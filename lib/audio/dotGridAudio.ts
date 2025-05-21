@@ -20,9 +20,9 @@ const MAX_AUDIBLE_FREQ = 20000; // Hz
 const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
 
 // Target overall slopes
-const LOW_SLOPE_DB_PER_OCT = -24.5; // For low y positions (darker sound)
+const LOW_SLOPE_DB_PER_OCT = -12.5; // For low y positions (darker sound)
 const CENTER_SLOPE_DB_PER_OCT = -4.5; // For middle y positions
-const HIGH_SLOPE_DB_PER_OCT = 15.5; // For high y positions (brighter sound)
+const HIGH_SLOPE_DB_PER_OCT = 3.5; // For high y positions (brighter sound)
 const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of SlopedPinkNoiseGenerator (approx -12dB)
 
 // New constant for attenuation based on slope deviation from pink noise
@@ -301,6 +301,8 @@ class PositionedAudioService {
 
   // Helper method to set main gain and slope (used in activatePoint)
   private setMainGainAndSlope(point: PointAudioNodes): void {
+    // The targetOverallSlopeDbPerOctave calculation is kept as per user's file structure,
+    // but it will not be used to calculate existingAttenuationDb for finalVolumeDb.
     let targetOverallSlopeDbPerOctave;
     if (point.normalizedYPos < 0.5) {
       const t = point.normalizedYPos * 2;
@@ -309,22 +311,12 @@ class PositionedAudioService {
       const t = (point.normalizedYPos - 0.5) * 2;
       targetOverallSlopeDbPerOctave = CENTER_SLOPE_DB_PER_OCT + t * (HIGH_SLOPE_DB_PER_OCT - CENTER_SLOPE_DB_PER_OCT);
     }
-    point.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
 
-    // Existing attenuation based on deviation from CENTER_SLOPE_DB_PER_OCT
-    const slopeDeviationForAttenuation = Math.abs(targetOverallSlopeDbPerOctave - CENTER_SLOPE_DB_PER_OCT);
-    const existingAttenuationDb = -slopeDeviationForAttenuation * ATTENUATION_PER_DB_OCT_DEVIATION_DB;
+    // Call to setBandGainsBasedOnY, which now handles all Y-dependent timbre shaping.
+    point.slopedNoiseGenerator.setBandGainsBasedOnY(point.normalizedYPos, CENTER_SLOPE_DB_PER_OCT, SLOPE_REF_FREQUENCY, PINK_NOISE_SLOPE_DB_PER_OCT);
 
-    // New additional boost calculation based on normalizedYPos extremity
-    const MAX_ADDITIONAL_BOOST_DB = 9.0;
-    // extremityFactor goes from 0 (at center y=0.5) to 1 (at extremes y=0 or y=1)
-    const extremityFactor = Math.abs(point.normalizedYPos - 0.5) * 2;
-    // Apply a curve (sqrt) to make the boost logarithmic-like (more boost earlier)
-    const curvedExtremityFactor = Math.sqrt(extremityFactor);
-    const additionalSlopeBoostDb = curvedExtremityFactor * MAX_ADDITIONAL_BOOST_DB;
-
-    // Combine base level, existing attenuation, and new boost
-    const finalVolumeDb = this.currentBaseDbLevel + existingAttenuationDb + additionalSlopeBoostDb;
+    // Final volume is now only the base level. All Y-dependent changes come from setBandGainsBasedOnY.
+    const finalVolumeDb = this.currentBaseDbLevel;
     
     const gainRatio = Math.pow(10, finalVolumeDb / 20);
     const effectiveMasterGain = MASTER_GAIN * this.currentDistortionGain * gainRatio;
@@ -819,17 +811,91 @@ class SlopedPinkNoiseGenerator {
     return this.outputGainNode;
   }
 
-  public setSlope(targetOverallSlopeDbPerOctave: number): void {
-    // Calculate shaping slope relative to the INHERENT PINK NOISE SLOPE.
-    // This ensures the generator actively shapes the input pink noise (-3dB/oct)
-    // to achieve the absolute targetOverallSlopeDbPerOctave.
-    const shapingSlope = targetOverallSlopeDbPerOctave - PINK_NOISE_SLOPE_DB_PER_OCT;
-
+  public setBandGainsBasedOnY(normalizedYPos: number, centerSlopeDbOct: number, slopeRefFreq: number, inherentPinkNoiseSlopeDbOct: number): void {
+    const baselineLinearGains = new Array(NUM_BANDS);
+    const shapingSlopeForBaseline = centerSlopeDbOct - inherentPinkNoiseSlopeDbOct;
     for (let i = 0; i < NUM_BANDS; i++) {
       const fc = this.centerFrequencies[i];
-      const gainDb = shapingSlope * Math.log2(fc / SLOPE_REF_FREQUENCY);
-      const linearGain = Math.pow(10, gainDb / 20);
-      this.bandGains[i].gain.value = linearGain;
+      const gainDb = shapingSlopeForBaseline * Math.log2(fc / slopeRefFreq);
+      baselineLinearGains[i] = Math.pow(10, gainDb / 20);
+    }
+
+    const BOTTOM_IDX = 0;
+    const MID_IDX = Math.floor(NUM_BANDS / 2);
+    const TOP_IDX = NUM_BANDS - 1;
+
+    // Helper to create a scale profile with linear interpolation
+    const createProfile = (points: {idx: number, scale: number}[]) => {
+      const profile = new Array(NUM_BANDS).fill(0.0);
+      points.sort((a, b) => a.idx - b.idx);
+      for(let i = 0; i < points.length; ++i) {
+          profile[points[i].idx] = points[i].scale;
+      }
+      for (let i = 0; i < points.length - 1; ++i) {
+        const p1 = points[i];
+        const p2 = points[i+1];
+        if (p2.idx > p1.idx + 1) { // If there's a gap to interpolate
+          for (let j = p1.idx + 1; j < p2.idx; ++j) {
+            const t = (j - p1.idx) / (p2.idx - p1.idx);
+            profile[j] = (1 - t) * p1.scale + t * p2.scale;
+          }
+        }
+      }
+      return profile;
+    };
+
+    const scales_Y_0_0 = createProfile([{idx: BOTTOM_IDX, scale: 1.0}, {idx: TOP_IDX, scale: 0.0}]);
+    if(NUM_BANDS > 1) scales_Y_0_0[TOP_IDX]=0.0; // Ensure top is 0 if not bottom
+    for(let i=BOTTOM_IDX+1; i<NUM_BANDS; ++i) if(i !== TOP_IDX) scales_Y_0_0[i]=0.0; // Explicitly zero others
+    scales_Y_0_0[BOTTOM_IDX] = 1.0; // Re-assert bottom is 1.0
+
+    const scales_Y_0_25 = createProfile([
+      {idx: BOTTOM_IDX, scale: 1.0},
+      {idx: MID_IDX, scale: 0.5},
+      {idx: TOP_IDX, scale: 0.0}
+    ]);
+
+    const scales_Y_0_50 = createProfile([{idx: BOTTOM_IDX, scale: 1.0}, {idx: TOP_IDX, scale: 1.0}]);
+    for(let i=0; i<NUM_BANDS; ++i) scales_Y_0_50[i]=1.0; // All 1.0 for middle
+
+    const scales_Y_0_75 = createProfile([
+      {idx: BOTTOM_IDX, scale: 0.0},
+      {idx: MID_IDX, scale: 0.5},
+      {idx: TOP_IDX, scale: 1.0}
+    ]);
+
+    const scales_Y_1_0 = createProfile([{idx: TOP_IDX, scale: 1.0}, {idx: BOTTOM_IDX, scale: 0.0}]);
+    if(NUM_BANDS > 1) scales_Y_1_0[BOTTOM_IDX]=0.0; // Ensure bottom is 0 if not top
+    for(let i=0; i<TOP_IDX; ++i) if(i !== BOTTOM_IDX) scales_Y_1_0[i]=0.0; // Explicitly zero others
+    scales_Y_1_0[TOP_IDX] = 1.0; // Re-assert top is 1.0
+    
+    let t = 0;
+    let profile1_scales: number[];
+    let profile2_scales: number[];
+
+    if (normalizedYPos <= 0.25) {
+      profile1_scales = scales_Y_0_0;
+      profile2_scales = scales_Y_0_25;
+      t = normalizedYPos / 0.25;
+    } else if (normalizedYPos <= 0.50) {
+      profile1_scales = scales_Y_0_25;
+      profile2_scales = scales_Y_0_50;
+      t = (normalizedYPos - 0.25) / 0.25;
+    } else if (normalizedYPos <= 0.75) {
+      profile1_scales = scales_Y_0_50;
+      profile2_scales = scales_Y_0_75;
+      t = (normalizedYPos - 0.50) / 0.25;
+    } else { // normalizedYPos <= 1.00
+      profile1_scales = scales_Y_0_75;
+      profile2_scales = scales_Y_1_0;
+      t = (normalizedYPos - 0.75) / 0.25;
+    }
+
+    const finalLinearGains = new Array(NUM_BANDS);
+    for (let i = 0; i < NUM_BANDS; i++) {
+      const currentScale = (1 - t) * profile1_scales[i] + t * profile2_scales[i];
+      finalLinearGains[i] = currentScale * baselineLinearGains[i];
+      this.bandGains[i].gain.value = finalLinearGains[i];
     }
   }
 
