@@ -2,19 +2,18 @@ import { getAudioContext } from '@/lib/audio/audioContext'
 import * as eqProcessor from '@/lib/audio/eqProcessor'
 import { useEQProfileStore } from '@/lib/stores'
 
-// --- Constants for SlopedPinkNoiseGenerator ---
-const NUM_BANDS = 20; // Number of frequency bands for shaping
-const SLOPE_REF_FREQUENCY = 800; // Hz, reference frequency for slope calculations
-const MIN_AUDIBLE_FREQ = 20; // Hz
-const MAX_AUDIBLE_FREQ = 20000; // Hz
-const BAND_Q_VALUE = 1.5; // Q value for the bandpass filters
-const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
+// --- Constants for PeakFilteredPinkNoiseGenerator ---
+// Constants from dotGridAudio.ts for Peak Filter approach
+const MIN_AUDIBLE_FREQ = 30; // Hz
+const MAX_AUDIBLE_FREQ = 10000; // Hz
+const PEAK_FILTER_GAIN_DB = 24.0;
+const PEAK_FILTER_Q = 1.0;
+const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output (approx -12dB)
 
 // Target overall slopes for glyphs (aligned with dotGridAudio)
 const LOW_SLOPE_DB_PER_OCT = -9.0; // For low y positions (darker sound)
 const CENTER_SLOPE_DB_PER_OCT = -3.0; // For middle y positions
 const HIGH_SLOPE_DB_PER_OCT = 3.0; // For high y positions (brighter sound)
-const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of SlopedPinkNoiseGenerator
 
 // New constants for Flicker Effect
 const FLICKER_RATE_HZ = 8; // Flickers per second
@@ -25,13 +24,15 @@ const FLICKER_MAX_GAIN_SCALAR = 1.0; // Gain up to 100% of currentCalculatedGain
 const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 3.8; // dB reduction per dB/octave deviation
 const MAX_ADDITIONAL_BOOST_DB = 9.0; // Max boost for y-extremity
 
-// --- End Constants for SlopedPinkNoiseGenerator ---
+// --- End Constants for PeakFilteredPinkNoiseGenerator ---
 
 // Default values
 const DEFAULT_FREQ_MULTIPLIER = 1.0
-const DEFAULT_SWEEP_DURATION = 8.0 // 8 seconds per cycle
+const DEFAULT_SWEEP_DURATION = 8.0 // 8 seconds per cycle for frequency multiplier sweep
 const MASTER_GAIN = 6.0; // Aligned with dotGridAudio
 const DEFAULT_SPEED = 1.0 // Default movement speed
+const DEFAULT_PATH_TRAVERSE_DURATION_S = 5.0; // Seconds for a full path traversal at speed 1.0
+const ALTERNATE_MODE_BASE_STAY_S = 0.5; // Seconds to stay at each point in ALTERNATE mode at speed 1.0
 
 // Add constants for hit detection
 const DEFAULT_HIT_INTERVAL = 0.2 // Default interval between hits (20% of path)
@@ -43,15 +44,13 @@ export enum PlaybackMode {
   ALTERNATE = 'alternate'  // Alternate between start and end points
 }
 
-// --- SlopedPinkNoiseGenerator Class Definition ---
-// (Copied from dotGridAudio.ts - ensure imports like MIN_AUDIBLE_FREQ etc. are available in this scope)
-class SlopedPinkNoiseGenerator {
+// --- PeakFilteredPinkNoiseGenerator Class Definition ---
+// (Adapted from dotGridAudio.ts's SlopedPinkNoiseGenerator which is actually a peak filter)
+class PeakFilteredPinkNoiseGenerator {
   private ctx: AudioContext;
   private inputGainNode: GainNode;
   private outputGainNode: GainNode;
-  private bandFilters: BiquadFilterNode[] = [];
-  private bandGains: GainNode[] = [];
-  private centerFrequencies: number[] = [];
+  private peakFilter: BiquadFilterNode;
 
   constructor(audioCtx: AudioContext) {
     this.ctx = audioCtx;
@@ -59,27 +58,16 @@ class SlopedPinkNoiseGenerator {
     this.outputGainNode = this.ctx.createGain();
     this.outputGainNode.gain.value = SLOPED_NOISE_OUTPUT_GAIN_SCALAR;
 
-    const logMinFreq = Math.log2(MIN_AUDIBLE_FREQ);
-    const logMaxFreq = Math.log2(MAX_AUDIBLE_FREQ);
-    const step = (logMaxFreq - logMinFreq) / (NUM_BANDS + 1);
+    this.peakFilter = this.ctx.createBiquadFilter();
+    this.peakFilter.type = 'peaking';
+    this.peakFilter.gain.value = PEAK_FILTER_GAIN_DB;
+    this.peakFilter.Q.value = PEAK_FILTER_Q;
+    // Set a default frequency, will be updated by setPeakFrequency
+    this.peakFilter.frequency.value = MIN_AUDIBLE_FREQ;
 
-    for (let i = 0; i < NUM_BANDS; i++) {
-      const centerFreq = Math.pow(2, logMinFreq + (i + 1) * step);
-      this.centerFrequencies.push(centerFreq);
-
-      const filter = this.ctx.createBiquadFilter();
-      filter.type = 'bandpass';
-      filter.frequency.value = centerFreq;
-      filter.Q.value = BAND_Q_VALUE;
-      this.bandFilters.push(filter);
-
-      const gainNode = this.ctx.createGain(); // Renamed from gain to gainNode to avoid conflict
-      this.bandGains.push(gainNode);
-
-      this.inputGainNode.connect(filter);
-      filter.connect(gainNode);
-      gainNode.connect(this.outputGainNode);
-    }
+    // Connect input -> peakFilter -> output
+    this.inputGainNode.connect(this.peakFilter);
+    this.peakFilter.connect(this.outputGainNode);
   }
 
   public getInputNode(): GainNode {
@@ -90,25 +78,23 @@ class SlopedPinkNoiseGenerator {
     return this.outputGainNode;
   }
 
-  public setSlope(targetOverallSlopeDbPerOctave: number): void {
-    const shapingSlope = targetOverallSlopeDbPerOctave - PINK_NOISE_SLOPE_DB_PER_OCT;
-
-    for (let i = 0; i < NUM_BANDS; i++) {
-      const fc = this.centerFrequencies[i];
-      const gainDb = shapingSlope * Math.log2(fc / SLOPE_REF_FREQUENCY);
-      const linearGain = Math.pow(10, gainDb / 20);
-      this.bandGains[i].gain.value = linearGain;
-    }
+  public setPeakFrequency(normalizedYPos: number): void {
+    const logMinFreq = Math.log2(MIN_AUDIBLE_FREQ);
+    const logMaxFreq = Math.log2(MAX_AUDIBLE_FREQ);
+    // Ensure normalizedYPos is clamped between 0 and 1 to avoid issues with log interpolation
+    const clampedYPos = Math.max(0, Math.min(1, normalizedYPos));
+    const targetLogFreq = logMinFreq + clampedYPos * (logMaxFreq - logMinFreq);
+    const targetFreq = Math.pow(2, targetLogFreq);
+    this.peakFilter.frequency.value = targetFreq;
   }
 
   public dispose(): void {
     this.inputGainNode.disconnect();
+    this.peakFilter.disconnect();
     this.outputGainNode.disconnect();
-    this.bandFilters.forEach(filter => filter.disconnect());
-    this.bandGains.forEach(gain => gain.disconnect());
   }
 }
-// --- End SlopedPinkNoiseGenerator Class Definition ---
+// --- End PeakFilteredPinkNoiseGenerator Class Definition ---
 
 // Simple glyph representation
 export interface GlyphData {
@@ -127,12 +113,12 @@ class GlyphGridAudioPlayer {
     source: AudioBufferSourceNode | null;
     gain: GainNode | null;
     panner: StereoPannerNode | null;
-    slopedNoiseGenerator: SlopedPinkNoiseGenerator | null;
+    peakFilteredNoiseGenerator: PeakFilteredPinkNoiseGenerator | null; // Renamed
   } = {
     source: null,
     gain: null,
     panner: null,
-    slopedNoiseGenerator: null,
+    peakFilteredNoiseGenerator: null, // Renamed
   }
   
   // Path related properties
@@ -172,6 +158,7 @@ class GlyphGridAudioPlayer {
   
   // Add a counter for alternating mode
   private _alternateCounter: number = 0;
+  private _alternateTimeAccumulator: number = 0;
   
   // Add new properties to the class
   private hitPoints: number[] = [] // Points along the path where "hits" occur
@@ -183,6 +170,7 @@ class GlyphGridAudioPlayer {
   
   // Add flicker enabled property
   private isFlickerEnabled: boolean = false;
+  private lastFrameTime: number = 0;
   
   private constructor() {
     this.generatePinkNoiseBuffer()
@@ -255,14 +243,14 @@ class GlyphGridAudioPlayer {
     // }
   }
   
-  private updateAudioNodesFromGlyph(): void {
+  private updateAudioNodesFromGlyph(deltaTime: number): void {
     if (!this.currentGlyph) return
     
     // Calculate the current path position based on the glyph
-    this.updatePathPosition()
+    this.updatePathPosition(deltaTime)
   }
   
-  private updatePathPosition(): void {
+  private updatePathPosition(deltaTime: number): void {
     if (!this.currentGlyph) return
     
     // If in manual control mode, use the manually set position
@@ -279,7 +267,10 @@ class GlyphGridAudioPlayer {
     // Calculate new position based on playback mode
     if (this.playbackMode === PlaybackMode.SWEEP) {
       const prevPathPosition = this.pathPosition;
-      this.pathPosition += 0.005 * this.pathDirection * this.speed;
+      // Calculate increment based on deltaTime for frame-rate independent speed
+      const pathUnitsPerSecond = (1.0 / DEFAULT_PATH_TRAVERSE_DURATION_S);
+      const increment = pathUnitsPerSecond * deltaTime * this.pathDirection * this.speed;
+      this.pathPosition += increment;
       
       let looped = false;
 
@@ -346,14 +337,14 @@ class GlyphGridAudioPlayer {
       }
     } else if (this.playbackMode === PlaybackMode.ALTERNATE) {
       // Alternate mode: jump between start and end points
-      const stayDuration = 30 / this.speed // Number of frames to stay at each point
-      
-      // Increment a counter to track when to alternate
-      this._alternateCounter = (this._alternateCounter || 0) + 1
-      
-      if (this._alternateCounter >= stayDuration) {
-        this._alternateCounter = 0
-        
+      const baseStayDuration = ALTERNATE_MODE_BASE_STAY_S;
+      const currentStayDuration = baseStayDuration / this.speed; // Higher speed = shorter stay
+
+      this._alternateTimeAccumulator += deltaTime;
+
+      if (this._alternateTimeAccumulator >= currentStayDuration) {
+        this._alternateTimeAccumulator = 0; // Reset accumulator
+
         // Switch between start and end
         if (this.pathDirection === 1) {
           // We're at start point, move to end
@@ -373,7 +364,7 @@ class GlyphGridAudioPlayer {
   
   // New method to update audio parameters from a position
   private updateAudioParametersFromPosition(position: number): void {
-    if (!this.currentGlyph || !this.audioNodes.slopedNoiseGenerator || !this.audioNodes.gain || !this.audioNodes.panner) return;
+    if (!this.currentGlyph || !this.audioNodes.peakFilteredNoiseGenerator || !this.audioNodes.gain || !this.audioNodes.panner) return;
     
     // Get the glyph's position and size
     const { type: glyphType, position: glyphPos, size: glyphSize } = this.currentGlyph
@@ -511,26 +502,21 @@ class GlyphGridAudioPlayer {
     // Map x to pan position (-1 to 1)
     const panPosition = x;
     
-    // Calculate target slope
-    let targetOverallSlopeDbPerOctave;
-    if (normalizedY < 0.5) {
-      const t = normalizedY * 2;
-      targetOverallSlopeDbPerOctave = LOW_SLOPE_DB_PER_OCT + t * (CENTER_SLOPE_DB_PER_OCT - LOW_SLOPE_DB_PER_OCT);
-    } else {
-      const t = (normalizedY - 0.5) * 2;
-      targetOverallSlopeDbPerOctave = CENTER_SLOPE_DB_PER_OCT + t * (HIGH_SLOPE_DB_PER_OCT - CENTER_SLOPE_DB_PER_OCT);
-    }
-    this.audioNodes.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
+    // Set peak filter frequency based on normalized Y position
+    this.audioNodes.peakFilteredNoiseGenerator.setPeakFrequency(normalizedY);
     
     // Calculate main gain based on dotGridAudio.ts logic
-    const slopeDeviationForAttenuation = Math.abs(targetOverallSlopeDbPerOctave - CENTER_SLOPE_DB_PER_OCT);
-    const existingAttenuationDb = -slopeDeviationForAttenuation * ATTENUATION_PER_DB_OCT_DEVIATION_DB;
+    // The Y-dependent timbre is now handled by the peak filter, so direct slope-based attenuation is removed.
+    // We still use currentBaseDbLevel and extremity boost.
 
     const extremityFactor = Math.abs(normalizedY - 0.5) * 2;
     const curvedExtremityFactor = Math.sqrt(extremityFactor);
+    // The additional boost can remain to give more dynamic range at extremes if desired,
+    // or could be removed if the peak filter itself provides enough perceived loudness change.
+    // For now, keeping it as it was, but its effect will be different with peak filter vs slope.
     const additionalSlopeBoostDb = curvedExtremityFactor * MAX_ADDITIONAL_BOOST_DB;
 
-    const finalVolumeDb = this.currentBaseDbLevel + existingAttenuationDb + additionalSlopeBoostDb;
+    const finalVolumeDb = this.currentBaseDbLevel + additionalSlopeBoostDb; // Removed existingAttenuationDb
     
     const gainRatio = Math.pow(10, finalVolumeDb / 20);
     const effectiveMasterGain = MASTER_GAIN * this.distortionGain * gainRatio;
@@ -579,12 +565,12 @@ class GlyphGridAudioPlayer {
     const panner = ctx.createStereoPanner()
     panner.pan.value = 0 // Start centered
     
-    // Create SlopedNoiseGenerator
-    const slopedNoiseGenerator = new SlopedPinkNoiseGenerator(ctx);
+    // Create PeakFilteredNoiseGenerator
+    const peakFilteredNoiseGenerator = new PeakFilteredPinkNoiseGenerator(ctx); // Renamed
     
     // Connect the audio chain
-    source.connect(slopedNoiseGenerator.getInputNode());
-    slopedNoiseGenerator.getOutputNode().connect(gain);
+    source.connect(peakFilteredNoiseGenerator.getInputNode()); // Renamed
+    peakFilteredNoiseGenerator.getOutputNode().connect(gain); // Renamed
     gain.connect(panner);
     
     // If we have an analyzer, connect through it
@@ -602,7 +588,7 @@ class GlyphGridAudioPlayer {
       source,
       gain,
       panner,
-      slopedNoiseGenerator,
+      peakFilteredNoiseGenerator, // Renamed
     }
 
     this.audioContextRef = ctx; // Store audio context reference
@@ -616,10 +602,21 @@ class GlyphGridAudioPlayer {
   }
   
   private startAnimationLoop(): void {
-    const animate = () => {
-      this.updateAudioNodesFromGlyph() // This might update this.currentCalculatedGain via updateAudioParametersFromPosition
+    this.lastFrameTime = 0; // Reset last frame time when starting loop
+    const animate = (currentTime: number) => {
+      if (!this.isPlaying) return; // Stop animation if no longer playing
 
-      if (this.isPlaying && this.audioNodes.gain && this.audioContextRef) {
+      if (this.lastFrameTime === 0) {
+        this.lastFrameTime = currentTime;
+        this.animationFrameId = requestAnimationFrame(animate);
+        return;
+      }
+      const deltaTime = (currentTime - this.lastFrameTime) / 1000.0; // deltaTime in seconds
+      this.lastFrameTime = currentTime;
+
+      this.updateAudioNodesFromGlyph(deltaTime) // This might update this.currentCalculatedGain via updateAudioParametersFromPosition
+
+      if (this.audioNodes.gain && this.audioContextRef) { // No need for this.isPlaying check, already done above
         let finalGain = this.currentCalculatedGain;
         if (this.isFlickerEnabled) {
           const flickerTime = this.audioContextRef.currentTime;
@@ -637,7 +634,7 @@ class GlyphGridAudioPlayer {
       this.animationFrameId = requestAnimationFrame(animate)
     }
     
-    animate()
+    animate(0)
   }
   
   private stopSound(): void {
@@ -645,6 +642,7 @@ class GlyphGridAudioPlayer {
       cancelAnimationFrame(this.animationFrameId)
       this.animationFrameId = null
     }
+    this.lastFrameTime = 0; // Reset last frame time
     
     // Clean up the analyzer nodes
     if (this.preEQAnalyser) {
@@ -664,8 +662,8 @@ class GlyphGridAudioPlayer {
       this.audioNodes.gain.disconnect()
     }
     
-    if (this.audioNodes.slopedNoiseGenerator) {
-      this.audioNodes.slopedNoiseGenerator.dispose();
+    if (this.audioNodes.peakFilteredNoiseGenerator) { // Renamed
+      this.audioNodes.peakFilteredNoiseGenerator.dispose(); // Renamed
     }
     
     if (this.audioNodes.panner) {
@@ -677,7 +675,7 @@ class GlyphGridAudioPlayer {
       source: null,
       gain: null,
       panner: null,
-      slopedNoiseGenerator: null,
+      peakFilteredNoiseGenerator: null, // Renamed
     }
   }
   
@@ -887,7 +885,8 @@ class GlyphGridAudioPlayer {
   // Add method to set playback mode
   public setPlaybackMode(mode: PlaybackMode): void {
     this.playbackMode = mode;
-    this._alternateCounter = 0; // Reset counter when changing modes
+    this._alternateCounter = 0; // Reset counter when changing modes -保持这个与旧逻辑的兼容性，尽管我们正在转向_alternateTimeAccumulator
+    this._alternateTimeAccumulator = 0; // Reset time accumulator for ALTERNATE mode
   }
   
   // Add method to get current playback mode

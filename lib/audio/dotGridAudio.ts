@@ -12,21 +12,30 @@ const ENVELOPE_MAX_GAIN = 1.0; // Maximum gain during envelope cycle
 const MASTER_GAIN = 6.0; // Much louder master gain for calibration
 
 // New constants for Sloped Pink Noise
-const NUM_BANDS = 20; // Number of frequency bands for shaping
-const SLOPE_REF_FREQUENCY = 800; // Hz, reference frequency for slope calculations
-const MIN_AUDIBLE_FREQ = 20; // Hz
-const MAX_AUDIBLE_FREQ = 20000; // Hz
-// const BAND_Q_VALUE = 1.5; // Q value for the bandpass filters (reduced from 6.0) - No longer used for HP/LP pairs
-const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
+// const MIN_AUDIBLE_FREQ = 30; // Hz // For old peak filter - Will be repurposed for the new peak filter stage
+// const MAX_AUDIBLE_FREQ = 10000; // Hz // For old peak filter - Will be repurposed for the new peak filter stage
+
+// New constants for Peak Filter approach (Commented out as we are replacing it) -- Will re-introduce for the new peak filter stage
+// const PEAK_FILTER_GAIN_DB = 24.0;
+// const PEAK_FILTER_Q = 0.2;
+
+// Constants for the new DotGrid Sloped Noise Generator
+const DG_SLOPE_NUM_BANDS = 20; // Number of frequency bands for shaping
+const DG_SLOPE_REF_FREQUENCY = 800; // Hz, reference frequency for slope calculations
+const DG_SLOPE_MIN_FREQ = 20; // Hz
+const DG_SLOPE_MAX_FREQ = 20000; // Hz
+const DG_SLOPE_BAND_Q_VALUE = 1.5; // Q value for the bandpass filters
+const DG_PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
+const DG_TARGET_OVERALL_SLOPE = -4.5; // Target slope for dotGridAudio
+
+// Constants for the new Peak Filter stage (applied AFTER sloped noise)
+const DG_PEAK_FILTER_MIN_FREQ = 30; // Hz
+const DG_PEAK_FILTER_MAX_FREQ = 10000; // Hz
+const DG_PEAK_FILTER_GAIN_DB = 0;
+const DG_PEAK_FILTER_Q = 1.5;
 
 // Target overall slopes
-const LOW_SLOPE_DB_PER_OCT = -12.5; // For low y positions (darker sound)
-const CENTER_SLOPE_DB_PER_OCT = -4.5; // For middle y positions
-const HIGH_SLOPE_DB_PER_OCT = 3.5; // For high y positions (brighter sound)
 const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of SlopedPinkNoiseGenerator (approx -12dB)
-
-// New constant for attenuation based on slope deviation from pink noise
-const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 3.8; // dB reduction per dB/octave deviation from -3dB/oct
 
 // Constants for sequential playback with click prevention
 // const DOT_DURATION_S = 1.0; // Each dot plays for this duration - REMOVING, duration now controlled by GLOBAL_STAGGER_RELEASE_S
@@ -58,6 +67,7 @@ interface PointAudioNodes {
   slopedNoiseGenerator: SlopedPinkNoiseGenerator;
   pinkNoiseBuffer: AudioBuffer;
   normalizedYPos: number; // To recalculate slope without re-passing y, totalRows
+  peakShapingFilter: BiquadFilterNode; // Added for the new peak filter stage
   // New properties for sub-hit sequencing
   subHitCount: number;
   subHitTimerId: number | null;
@@ -186,9 +196,17 @@ class PositionedAudioService {
     const panner = this.ctx.createStereoPanner();
     panner.pan.value = panPosition;
 
-    // Connect chain: source -> slopedGen -> mainGain -> envelopeGain -> panner -> serviceOutput
+    // Create the new peak shaping filter
+    const peakShapingFilter = this.ctx.createBiquadFilter();
+    peakShapingFilter.type = 'peaking';
+    peakShapingFilter.gain.value = DG_PEAK_FILTER_GAIN_DB;
+    peakShapingFilter.Q.value = DG_PEAK_FILTER_Q;
+    // Frequency will be set in setMainGainAndSlope
+
+    // Connect chain: source -> slopedGen -> peakShapingFilter -> mainGain -> envelopeGain -> panner -> serviceOutput
     source.connect(slopedNoiseGenerator.getInputNode());
-    slopedNoiseGenerator.getOutputNode().connect(mainGain);
+    slopedNoiseGenerator.getOutputNode().connect(peakShapingFilter);
+    peakShapingFilter.connect(mainGain);
     mainGain.connect(envelopeGain);
     envelopeGain.connect(panner);
     panner.connect(this.outputGain);
@@ -201,6 +219,7 @@ class PositionedAudioService {
       slopedNoiseGenerator,
       pinkNoiseBuffer,
       normalizedYPos: normalizedY,
+      peakShapingFilter, // Store the new filter
       // Initialize new properties
       subHitCount: 0,
       subHitTimerId: null,
@@ -230,6 +249,7 @@ class PositionedAudioService {
     point.mainGain.disconnect();
     point.envelopeGain.disconnect();
     point.panner.disconnect();
+    point.peakShapingFilter.disconnect(); // Disconnect the new filter
     // point.pinkNoiseBuffer = null; // Buffer is managed by JS GC once source is gone
 
     this.audioPoints.delete(id);
@@ -301,21 +321,29 @@ class PositionedAudioService {
 
   // Helper method to set main gain and slope (used in activatePoint)
   private setMainGainAndSlope(point: PointAudioNodes): void {
-    // The targetOverallSlopeDbPerOctave calculation is kept as per user's file structure,
-    // but it will not be used to calculate existingAttenuationDb for finalVolumeDb.
-    let targetOverallSlopeDbPerOctave;
-    if (point.normalizedYPos < 0.5) {
-      const t = point.normalizedYPos * 2;
-      targetOverallSlopeDbPerOctave = LOW_SLOPE_DB_PER_OCT + t * (CENTER_SLOPE_DB_PER_OCT - LOW_SLOPE_DB_PER_OCT);
-    } else {
-      const t = (point.normalizedYPos - 0.5) * 2;
-      targetOverallSlopeDbPerOctave = CENTER_SLOPE_DB_PER_OCT + t * (HIGH_SLOPE_DB_PER_OCT - CENTER_SLOPE_DB_PER_OCT);
-    }
+    // The targetOverallSlopeDbPerOctave calculation is no longer needed as Y-position timbre
+    // is solely determined by the peak filter's frequency. // This comment is now outdated.
+    // let targetOverallSlopeDbPerOctave;
+    // if (point.normalizedYPos < 0.5) {
+    //   const t = point.normalizedYPos * 2;
+    //   targetOverallSlopeDbPerOctave = LOW_SLOPE_DB_PER_OCT + t * (CENTER_SLOPE_DB_PER_OCT - LOW_SLOPE_DB_PER_OCT);
+    // } else {
+    //   const t = (point.normalizedYPos - 0.5) * 2;
+    //   targetOverallSlopeDbPerOctave = CENTER_SLOPE_DB_PER_OCT + t * (HIGH_SLOPE_DB_PER_OCT - CENTER_SLOPE_DB_PER_OCT);
+    // }
 
-    // Call to setBandGainsBasedOnY, which now handles all Y-dependent timbre shaping.
-    point.slopedNoiseGenerator.setBandGainsBasedOnY(point.normalizedYPos, CENTER_SLOPE_DB_PER_OCT, SLOPE_REF_FREQUENCY, PINK_NOISE_SLOPE_DB_PER_OCT);
+    // Set the fixed slope for the noise generator. Y-position no longer affects timbre here.
+    point.slopedNoiseGenerator.setSlope(DG_TARGET_OVERALL_SLOPE);
 
-    // Final volume is now only the base level. All Y-dependent changes come from setBandGainsBasedOnY.
+    // Set the peak filter frequency based on normalized Y position.
+    const logMinPeakFreq = Math.log2(DG_PEAK_FILTER_MIN_FREQ);
+    const logMaxPeakFreq = Math.log2(DG_PEAK_FILTER_MAX_FREQ);
+    const clampedYPosPeak = Math.max(0, Math.min(1, point.normalizedYPos));
+    const targetLogPeakFreq = logMinPeakFreq + clampedYPosPeak * (logMaxPeakFreq - logMinPeakFreq);
+    const targetPeakFreq = Math.pow(2, targetLogPeakFreq);
+    point.peakShapingFilter.frequency.setValueAtTime(targetPeakFreq, this.ctx.currentTime);
+
+    // Final volume is now only the base level. All Y-dependent changes come from the peak filter's frequency. // This comment is also outdated.
     const finalVolumeDb = this.currentBaseDbLevel;
     
     const gainRatio = Math.pow(10, finalVolumeDb / 20);
@@ -756,51 +784,52 @@ class SlopedPinkNoiseGenerator {
   private ctx: AudioContext;
   private inputGainNode: GainNode;
   private outputGainNode: GainNode;
-  private bandFilters: BiquadFilterNode[] = []; // Will store all HP and LP filters
+  // private peakFilter: BiquadFilterNode; // Old implementation for peak filter
+  private bandFilters: BiquadFilterNode[] = [];
   private bandGains: GainNode[] = [];
   private centerFrequencies: number[] = [];
+
 
   constructor(audioCtx: AudioContext) {
     this.ctx = audioCtx;
     this.inputGainNode = this.ctx.createGain();
     this.outputGainNode = this.ctx.createGain();
-    this.outputGainNode.gain.value = SLOPED_NOISE_OUTPUT_GAIN_SCALAR; // Apply output gain reduction
+    this.outputGainNode.gain.value = SLOPED_NOISE_OUTPUT_GAIN_SCALAR;
 
-    const logMinFreq = Math.log2(MIN_AUDIBLE_FREQ);
-    const logMaxFreq = Math.log2(MAX_AUDIBLE_FREQ);
-    const step = (logMaxFreq - logMinFreq) / (NUM_BANDS + 1);
-    const filterQ = 1.0 / Math.sqrt(2); // Q for Butterworth-like response for HP/LP filters
+    // New implementation for multi-band sloped noise
+    const logMinFreq = Math.log2(DG_SLOPE_MIN_FREQ);
+    const logMaxFreq = Math.log2(DG_SLOPE_MAX_FREQ);
+    const step = (logMaxFreq - logMinFreq) / (DG_SLOPE_NUM_BANDS + 1);
 
-    for (let i = 0; i < NUM_BANDS; i++) {
-      // Center frequency for gain calculation (same as before)
+    for (let i = 0; i < DG_SLOPE_NUM_BANDS; i++) {
       const centerFreq = Math.pow(2, logMinFreq + (i + 1) * step);
       this.centerFrequencies.push(centerFreq);
 
-      // Calculate cutoff frequencies for the HP/LP pair
-      const lowerCutoff = Math.pow(2, logMinFreq + (i + 0.5) * step);
-      const upperCutoff = Math.pow(2, logMinFreq + (i + 1 + 0.5) * step);
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = centerFreq;
+      filter.Q.value = DG_SLOPE_BAND_Q_VALUE;
+      this.bandFilters.push(filter);
 
-      const hpFilter = this.ctx.createBiquadFilter();
-      hpFilter.type = 'highpass';
-      hpFilter.frequency.value = lowerCutoff;
-      hpFilter.Q.value = filterQ;
-      this.bandFilters.push(hpFilter);
-
-      const lpFilter = this.ctx.createBiquadFilter();
-      lpFilter.type = 'lowpass';
-      lpFilter.frequency.value = upperCutoff;
-      lpFilter.Q.value = filterQ;
-      this.bandFilters.push(lpFilter);
-
-      const gainNode = this.ctx.createGain(); // Renamed from gain to gainNode to avoid conflict
+      const gainNode = this.ctx.createGain();
       this.bandGains.push(gainNode);
 
-      // Connect input -> hpFilter -> lpFilter -> gainNode -> output
-      this.inputGainNode.connect(hpFilter);
-      hpFilter.connect(lpFilter);
-      lpFilter.connect(gainNode);
+      this.inputGainNode.connect(filter);
+      filter.connect(gainNode);
       gainNode.connect(this.outputGainNode);
     }
+
+    // Old peak filter implementation:
+    // this.peakFilter = this.ctx.createBiquadFilter();
+    // this.peakFilter.type = 'peaking';
+    // this.peakFilter.gain.value = PEAK_FILTER_GAIN_DB; // PEAK_FILTER_GAIN_DB is now commented out
+    // this.peakFilter.Q.value = PEAK_FILTER_Q; // PEAK_FILTER_Q is now commented out
+    // // Set a default frequency, will be updated by setPeakFrequency
+    // this.peakFilter.frequency.value = MIN_AUDIBLE_FREQ; // MIN_AUDIBLE_FREQ (30Hz) is now commented out
+
+    // // Connect input -> peakFilter -> output
+    // this.inputGainNode.connect(this.peakFilter);
+    // this.peakFilter.connect(this.outputGainNode);
   }
 
   public getInputNode(): GainNode {
@@ -811,101 +840,37 @@ class SlopedPinkNoiseGenerator {
     return this.outputGainNode;
   }
 
-  public setBandGainsBasedOnY(normalizedYPos: number, centerSlopeDbOct: number, slopeRefFreq: number, inherentPinkNoiseSlopeDbOct: number): void {
-    const baselineLinearGains = new Array(NUM_BANDS);
-    const shapingSlopeForBaseline = centerSlopeDbOct - inherentPinkNoiseSlopeDbOct;
-    for (let i = 0; i < NUM_BANDS; i++) {
+  // New setSlope method
+  public setSlope(targetOverallSlopeDbPerOctave: number): void {
+    const shapingSlope = targetOverallSlopeDbPerOctave - DG_PINK_NOISE_SLOPE_DB_PER_OCT;
+
+    for (let i = 0; i < DG_SLOPE_NUM_BANDS; i++) {
       const fc = this.centerFrequencies[i];
-      const gainDb = shapingSlopeForBaseline * Math.log2(fc / slopeRefFreq);
-      baselineLinearGains[i] = Math.pow(10, gainDb / 20);
-    }
-
-    const BOTTOM_IDX = 0;
-    const MID_IDX = Math.floor(NUM_BANDS / 2);
-    const TOP_IDX = NUM_BANDS - 1;
-
-    // Helper to create a scale profile with linear interpolation
-    const createProfile = (points: {idx: number, scale: number}[]) => {
-      const profile = new Array(NUM_BANDS).fill(0.0);
-      points.sort((a, b) => a.idx - b.idx);
-      for(let i = 0; i < points.length; ++i) {
-          profile[points[i].idx] = points[i].scale;
-      }
-      for (let i = 0; i < points.length - 1; ++i) {
-        const p1 = points[i];
-        const p2 = points[i+1];
-        if (p2.idx > p1.idx + 1) { // If there's a gap to interpolate
-          for (let j = p1.idx + 1; j < p2.idx; ++j) {
-            const t = (j - p1.idx) / (p2.idx - p1.idx);
-            profile[j] = (1 - t) * p1.scale + t * p2.scale;
-          }
-        }
-      }
-      return profile;
-    };
-
-    const scales_Y_0_0 = createProfile([{idx: BOTTOM_IDX, scale: 1.0}, {idx: TOP_IDX, scale: 0.0}]);
-    if(NUM_BANDS > 1) scales_Y_0_0[TOP_IDX]=0.0; // Ensure top is 0 if not bottom
-    for(let i=BOTTOM_IDX+1; i<NUM_BANDS; ++i) if(i !== TOP_IDX) scales_Y_0_0[i]=0.0; // Explicitly zero others
-    scales_Y_0_0[BOTTOM_IDX] = 1.0; // Re-assert bottom is 1.0
-
-    const scales_Y_0_25 = createProfile([
-      {idx: BOTTOM_IDX, scale: 1.0},
-      {idx: MID_IDX, scale: 0.5},
-      {idx: TOP_IDX, scale: 0.0}
-    ]);
-
-    const scales_Y_0_50 = createProfile([{idx: BOTTOM_IDX, scale: 1.0}, {idx: TOP_IDX, scale: 1.0}]);
-    for(let i=0; i<NUM_BANDS; ++i) scales_Y_0_50[i]=1.0; // All 1.0 for middle
-
-    const scales_Y_0_75 = createProfile([
-      {idx: BOTTOM_IDX, scale: 0.0},
-      {idx: MID_IDX, scale: 0.5},
-      {idx: TOP_IDX, scale: 1.0}
-    ]);
-
-    const scales_Y_1_0 = createProfile([{idx: TOP_IDX, scale: 1.0}, {idx: BOTTOM_IDX, scale: 0.0}]);
-    if(NUM_BANDS > 1) scales_Y_1_0[BOTTOM_IDX]=0.0; // Ensure bottom is 0 if not top
-    for(let i=0; i<TOP_IDX; ++i) if(i !== BOTTOM_IDX) scales_Y_1_0[i]=0.0; // Explicitly zero others
-    scales_Y_1_0[TOP_IDX] = 1.0; // Re-assert top is 1.0
-    
-    let t = 0;
-    let profile1_scales: number[];
-    let profile2_scales: number[];
-
-    if (normalizedYPos <= 0.25) {
-      profile1_scales = scales_Y_0_0;
-      profile2_scales = scales_Y_0_25;
-      t = normalizedYPos / 0.25;
-    } else if (normalizedYPos <= 0.50) {
-      profile1_scales = scales_Y_0_25;
-      profile2_scales = scales_Y_0_50;
-      t = (normalizedYPos - 0.25) / 0.25;
-    } else if (normalizedYPos <= 0.75) {
-      profile1_scales = scales_Y_0_50;
-      profile2_scales = scales_Y_0_75;
-      t = (normalizedYPos - 0.50) / 0.25;
-    } else { // normalizedYPos <= 1.00
-      profile1_scales = scales_Y_0_75;
-      profile2_scales = scales_Y_1_0;
-      t = (normalizedYPos - 0.75) / 0.25;
-    }
-
-    const finalLinearGains = new Array(NUM_BANDS);
-    for (let i = 0; i < NUM_BANDS; i++) {
-      const currentScale = (1 - t) * profile1_scales[i] + t * profile2_scales[i];
-      finalLinearGains[i] = currentScale * baselineLinearGains[i];
-      this.bandGains[i].gain.value = finalLinearGains[i];
+      const gainDb = shapingSlope * Math.log2(fc / DG_SLOPE_REF_FREQUENCY);
+      const linearGain = Math.pow(10, gainDb / 20);
+      this.bandGains[i].gain.value = linearGain;
     }
   }
+
+  // Old setPeakFrequency method - remove this
+  // public setPeakFrequency(normalizedYPos: number): void {
+  //   const logMinFreq = Math.log2(MIN_AUDIBLE_FREQ); // MIN_AUDIBLE_FREQ is now commented out
+  //   const logMaxFreq = Math.log2(MAX_AUDIBLE_FREQ); // MAX_AUDIBLE_FREQ is now commented out
+  //   // Ensure normalizedYPos is clamped between 0 and 1 to avoid issues with log interpolation
+  //   const clampedYPos = Math.max(0, Math.min(1, normalizedYPos));
+  //   const targetLogFreq = logMinFreq + clampedYPos * (logMaxFreq - logMinFreq);
+  //   const targetFreq = Math.pow(2, targetLogFreq);
+  //   this.peakFilter.frequency.value = targetFreq;
+  // }
 
   public dispose(): void {
     this.inputGainNode.disconnect();
     this.outputGainNode.disconnect();
+    // Disconnect new bandpass filters and gains
     this.bandFilters.forEach(filter => filter.disconnect());
     this.bandGains.forEach(gain => gain.disconnect());
-    // Nullify references if needed, though JS garbage collection should handle it
-    // once these nodes are no longer referenced elsewhere.
+    // Old peak filter disconnection:
+    // this.peakFilter.disconnect();
   }
 }
 
