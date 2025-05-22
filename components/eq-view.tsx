@@ -23,8 +23,8 @@ import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
-import { SineTool } from "@/components/sine-tool"
-import { getSineToolAudioPlayer, cleanupSineToolAudioPlayer } from "@/lib/audio/sineToolAudio"
+import { TimbreTool } from "@/components/timbre-tool"
+import { getTimbreToolAudioPlayer, cleanupTimbreToolAudioPlayer } from "@/lib/audio/timbreToolAudio"
 
 interface EQViewProps {
 //   isPlaying: boolean
@@ -41,9 +41,10 @@ function useCleanupAudioPlayers() {
       console.log("EQView unmounting - cleaning up audio players");
       dotGridAudio.cleanupDotGridAudioPlayer();
       glyphGridAudio.cleanupGlyphGridAudioPlayer();
+      cleanupTimbreToolAudioPlayer();
       // Add cleanup for referenceCalibrationAudio if it has a similar pattern
       // getReferenceCalibrationAudio().dispose(); // Assuming it has a dispose
-      cleanupSineToolAudioPlayer(); // Cleanup SineToolAudioPlayer
+      // cleanupSineToolAudioPlayer(); // Cleanup SineToolAudioPlayer
       // cleanupShapeToolAudioPlayer(); // Placeholder if/when ShapeTool audio exists
     };
   }, []);
@@ -98,7 +99,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const [glyphGridPlaying, setGlyphGridPlaying] = useState(false)
   
   // Add state for toggling between Glyph Grid and Dot Grid
-  const [activeGrid, setActiveGrid] = useState<"line" | "dot" | "shape" | "sine">("dot")
+  const [activeGrid, setActiveGrid] = useState<"line" | "dot" | "timbre">("dot")
 
   // New state to track selected dots for dot grid
   const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set());
@@ -107,11 +108,11 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const [isMobile, setIsMobile] = useState(false)
 
   // New states for the Shape Tool
-  const [shapeToolPlaying, setShapeToolPlaying] = useState(false);
-  const [numShapeDots, setNumShapeDots] = useState(12); // Default number of dots for the shape tool
+  // const [shapeToolPlaying, setShapeToolPlaying] = useState(false);
+  // const [numShapeDots, setNumShapeDots] = useState(12); // Default number of dots for the shape tool
 
   // New state for Sine Tool
-  const [sineToolPlaying, setSineToolPlaying] = useState(false);
+  // const [sineToolPlaying, setSineToolPlaying] = useState(false);
 
   // New state for Dot Grid sub-hit playback mode
   const [isSubHitPlaybackEnabled, setIsSubHitPlaybackEnabled] = useState(true);
@@ -121,6 +122,9 @@ export function EQView({ setEqEnabled }: EQViewProps) {
 
   // New state for Glyph Grid flicker effect
   const [isGlyphFlickerEnabled, setIsGlyphFlickerEnabled] = useState(false);
+
+  // New state for Timbre Tool
+  const [timbreToolPlaying, setTimbreToolPlaying] = useState(false);
 
   // Detect mobile devices
   useEffect(() => {
@@ -219,35 +223,49 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   }, [dotGridPlaying, calibrationPlaying, glyphGridPlaying]);
 
   // Add a new effect to handle the analyzer for shape tool
+  // useEffect(() => {
+  //   if (shapeToolPlaying) {
+  //     // Placeholder for connecting shape tool audio to analyzer
+  //     // const shapeAudio = getShapeToolAudioPlayer(); // This will be created later
+  //     // const analyser = shapeAudio.createPreEQAnalyser();
+  //     console.log("💠 Shape Tool playing - Analyzer connection placeholder");
+  //     // For now, let's not set an analyzer until audio is implemented
+  //     // setPreEQAnalyser(null); 
+  //   } else if (calibrationPlaying || glyphGridPlaying || dotGridPlaying) {
+  //     // Do nothing
+  //   } else {
+  //     setPreEQAnalyser(null);
+  //   }
+  // }, [shapeToolPlaying, calibrationPlaying, glyphGridPlaying, dotGridPlaying]);
+
+  // Add a new effect to handle the analyzer for sine tool
+  // useEffect(() => {
+  //   if (sineToolPlaying) {
+  //     // Placeholder for connecting sine tool audio to analyzer
+  //     const sineAudio = getSineToolAudioPlayer(); 
+  //     const analyser = sineAudio.createPreEQAnalyser();
+  //     setPreEQAnalyser(analyser);
+  //     console.log("🌊 Sine Tool playing - Analyzer connection established");
+  //   } else if (calibrationPlaying || glyphGridPlaying || dotGridPlaying || shapeToolPlaying) {
+  //     // Do nothing
+  //   } else {
+  //     setPreEQAnalyser(null);
+  //   }
+  // }, [sineToolPlaying, calibrationPlaying, glyphGridPlaying, dotGridPlaying, shapeToolPlaying]);
+
+  // Add a new effect to handle the analyzer for timbre tool
   useEffect(() => {
-    if (shapeToolPlaying) {
-      // Placeholder for connecting shape tool audio to analyzer
-      // const shapeAudio = getShapeToolAudioPlayer(); // This will be created later
-      // const analyser = shapeAudio.createPreEQAnalyser();
-      console.log("💠 Shape Tool playing - Analyzer connection placeholder");
-      // For now, let's not set an analyzer until audio is implemented
-      // setPreEQAnalyser(null); 
+    if (timbreToolPlaying) {
+      const timbreAudio = getTimbreToolAudioPlayer(); 
+      const analyser = timbreAudio.createPreEQAnalyser();
+      setPreEQAnalyser(analyser);
+      console.log("🎹 Timbre Tool playing - Analyzer connection established");
     } else if (calibrationPlaying || glyphGridPlaying || dotGridPlaying) {
       // Do nothing
     } else {
       setPreEQAnalyser(null);
     }
-  }, [shapeToolPlaying, calibrationPlaying, glyphGridPlaying, dotGridPlaying]);
-
-  // Add a new effect to handle the analyzer for sine tool
-  useEffect(() => {
-    if (sineToolPlaying) {
-      // Placeholder for connecting sine tool audio to analyzer
-      const sineAudio = getSineToolAudioPlayer(); 
-      const analyser = sineAudio.createPreEQAnalyser();
-      setPreEQAnalyser(analyser);
-      console.log("🌊 Sine Tool playing - Analyzer connection established");
-    } else if (calibrationPlaying || glyphGridPlaying || dotGridPlaying || shapeToolPlaying) {
-      // Do nothing
-    } else {
-      setPreEQAnalyser(null);
-    }
-  }, [sineToolPlaying, calibrationPlaying, glyphGridPlaying, dotGridPlaying, shapeToolPlaying]);
+  }, [timbreToolPlaying, calibrationPlaying, glyphGridPlaying, dotGridPlaying]);
 
   // Initialize selected profile from the active profile and keep it synced
   useEffect(() => {
@@ -289,14 +307,17 @@ export function EQView({ setEqEnabled }: EQViewProps) {
       if (glyphGridPlaying) {
         setGlyphGridPlaying(false);
       }
-      if (shapeToolPlaying) {
-        setShapeToolPlaying(false);
+      if (timbreToolPlaying) {
+        setTimbreToolPlaying(false);
       }
-      if (sineToolPlaying) {
-        setSineToolPlaying(false);
-      }
+      // if (shapeToolPlaying) {
+      //   setShapeToolPlaying(false);
+      // }
+      // if (sineToolPlaying) {
+      //   setSineToolPlaying(false);
+      // }
     }
-  }, [isMusicPlaying, dotGridPlaying, glyphGridPlaying, shapeToolPlaying, sineToolPlaying]);
+  }, [isMusicPlaying, dotGridPlaying, glyphGridPlaying, timbreToolPlaying]);
 
   const handleProfileClick = () => {
     setNewProfileName("");
@@ -365,8 +386,9 @@ export function EQView({ setEqEnabled }: EQViewProps) {
     
     // Stop the glyph grid if it's playing
     if (glyphGridPlaying) setGlyphGridPlaying(false);
-    if (shapeToolPlaying) setShapeToolPlaying(false); // Stop shape tool if dot grid starts
-    if (sineToolPlaying) setSineToolPlaying(false); // Stop sine tool if dot grid starts
+    if (timbreToolPlaying) setTimbreToolPlaying(false);
+    // if (shapeToolPlaying) setShapeToolPlaying(false); // Stop shape tool if dot grid starts
+    // if (sineToolPlaying) setSineToolPlaying(false); // Stop sine tool if dot grid starts
   };
 
   // If on mobile, show a message instead of the EQ interface
@@ -421,7 +443,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
           {/* EQ Section - Now takes more of the width */}
           <div className="w-3/4 relative" ref={eqContainerRef}>
             {/* FFT Visualizer should always be visible during audio playback */}
-            {(calibrationPlaying || glyphGridPlaying || dotGridPlaying || shapeToolPlaying || sineToolPlaying) && preEQAnalyser && (
+            {(calibrationPlaying || glyphGridPlaying || dotGridPlaying || timbreToolPlaying) && preEQAnalyser && (
               <div className="absolute inset-0 z-0">
                 <div className="w-full aspect-[2/1] frequency-graph rounded-lg border dark:border-gray-700 overflow-hidden opacity-80 relative pointer-events-none">
                   {/* The actual EQ visualization area has 40px margins on all sides */}
@@ -495,6 +517,16 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 </button>
                 <button
                   className={`px-4 py-2 text-sm font-medium ${
+                    activeGrid === "timbre" 
+                      ? "bg-teal-500 text-white" 
+                      : "bg-background hover:bg-muted"
+                  }`}
+                  onClick={() => setActiveGrid("timbre")}
+                >
+                  Timbre Tool
+                </button>
+                {/* <button
+                  className={`px-4 py-2 text-sm font-medium ${
                     activeGrid === "shape" 
                       ? "bg-teal-500 text-white" 
                       : "bg-background hover:bg-muted"
@@ -502,8 +534,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   onClick={() => setActiveGrid("shape")}
                 >
                   Shape Tool
-                </button>
-                <button
+                </button> */}
+                {/* <button
                   className={`px-4 py-2 text-sm font-medium ${
                     activeGrid === "sine"
                       ? "bg-teal-500 text-white"
@@ -512,7 +544,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   onClick={() => setActiveGrid("sine")}
                 >
                   Sine Tool
-                </button>
+                </button> */}
               </div>
             </div>
             
@@ -533,31 +565,12 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   selectedDots={selectedDots}
                   setSelectedDots={setSelectedDots}
                 />
-              ) : activeGrid === "shape" ? (
-                <div>
-                  {/* Placeholder for ShapeTool component */}
-                  <p className="text-center text-muted-foreground p-4">
-                    Shape Tool UI (Work In Progress)
-                  </p>
-                  <div className="flex flex-col items-center gap-2 mt-2">
-                    <label htmlFor="num-shape-dots" className="text-sm">Number of Dots: {numShapeDots}</label>
-                    <Slider 
-                      id="num-shape-dots"
-                      min={4} 
-                      max={32} 
-                      step={1} 
-                      value={[numShapeDots]} 
-                      onValueChange={(value) => setNumShapeDots(value[0])} 
-                      className="w-3/4"
-                    />
-                  </div>
-                </div>
-              ) : (
-                <SineTool 
-                  isPlaying={sineToolPlaying}
+              ) : activeGrid === "timbre" ? (
+                <TimbreTool 
+                  isPlaying={timbreToolPlaying}
                   disabled={false}
                 />
-              )}
+              ) : null}
 
               {/* Add Toggle for Dot Grid Sub-Hit Playback Mode */} 
               {activeGrid === "dot" && (
@@ -630,34 +643,26 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 size="lg"
                 variant={activeGrid === "line" ? (glyphGridPlaying ? "default" : "outline") 
                           : activeGrid === "dot" ? (dotGridPlaying ? "default" : "outline") 
-                          : activeGrid === "shape" ? (shapeToolPlaying ? "default" : "outline")
-                          : (sineToolPlaying ? "default" : "outline")}
+                          : activeGrid === "timbre" ? (timbreToolPlaying ? "default" : "outline")
+                          : "outline"}
                 className={activeGrid === "line" ? (glyphGridPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "") 
                             : activeGrid === "dot" ? (dotGridPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "") 
-                            : activeGrid === "shape" ? (shapeToolPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")
-                            : (sineToolPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")}
+                            : activeGrid === "timbre" ? (timbreToolPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")
+                            : ""}
                 onClick={() => {
                   if (activeGrid === "line") {
                     setGlyphGridPlaying(!glyphGridPlaying);
                     if (dotGridPlaying) setDotGridPlaying(false);
-                    if (shapeToolPlaying) setShapeToolPlaying(false);
-                    if (sineToolPlaying) setSineToolPlaying(false);
+                    if (timbreToolPlaying) setTimbreToolPlaying(false);
                     if (!glyphGridPlaying && isMusicPlaying) setMusicPlaying(false);
                   } else if (activeGrid === "dot") {
                     handleDotGridPlayToggle();
-                    if (sineToolPlaying) setSineToolPlaying(false);
-                  } else if (activeGrid === "shape") {
-                    setShapeToolPlaying(!shapeToolPlaying);
+                    if (timbreToolPlaying) setTimbreToolPlaying(false);
+                  } else if (activeGrid === "timbre") {
+                    setTimbreToolPlaying(!timbreToolPlaying);
                     if (dotGridPlaying) setDotGridPlaying(false);
                     if (glyphGridPlaying) setGlyphGridPlaying(false);
-                    if (sineToolPlaying) setSineToolPlaying(false);
-                    if (!shapeToolPlaying && isMusicPlaying) setMusicPlaying(false);
-                  } else {
-                    setSineToolPlaying(!sineToolPlaying);
-                    if (dotGridPlaying) setDotGridPlaying(false);
-                    if (glyphGridPlaying) setGlyphGridPlaying(false);
-                    if (shapeToolPlaying) setShapeToolPlaying(false);
-                    if (!sineToolPlaying && isMusicPlaying) setMusicPlaying(false);
+                    if (!timbreToolPlaying && isMusicPlaying) setMusicPlaying(false);
                   }
                 }}
               >
@@ -666,8 +671,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   ? (glyphGridPlaying ? "Stop Calibration" : "Play Calibration") 
                   : activeGrid === "dot" 
                     ? (dotGridPlaying ? "Stop Calibration" : "Play Calibration")
-                    : activeGrid === "shape" ? (shapeToolPlaying ? "Stop Calibration" : "Play Calibration")
-                    : (sineToolPlaying ? "Stop Calibration" : "Play Calibration")}
+                    : activeGrid === "timbre" ? (timbreToolPlaying ? "Stop Calibration" : "Play Calibration")
+                    : "Play Calibration"}
               </Button>
             </div>
             

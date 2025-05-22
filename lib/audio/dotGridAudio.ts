@@ -37,10 +37,10 @@ const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 3.8; // dB reduction per dB/octave d
 // const SUB_HIT_INTERVAL_S = DOT_DURATION_S / NUM_SUB_HITS; // Approx 0.125s if DOT_DURATION_S is 0.5s
 
 // New constants for Global Staggered Mode (when subHitPlaybackEnabled is true)
-const GLOBAL_STAGGER_ATTACK_S = 0.05; // Longer attack
-const GLOBAL_STAGGER_RELEASE_S = 0.4; // Longer release
-const ALL_DOTS_STAGGER_INTERVAL_S = 0.1; // Stagger between each dot in the global sequence
-const NUM_HITS_PER_DOT_SEQUENCE = 4; // New: Number of hits per dot in its sequence turn
+const GLOBAL_STAGGER_ATTACK_S = 0.05;
+const GLOBAL_STAGGER_RELEASE_S = 0.4; // Note: This constant is not directly used by the new hi-hat envelope.
+const ALL_DOTS_STAGGER_INTERVAL_S = 0.1;
+const NUM_HITS_PER_DOT_SEQUENCE = 4;
 
 // Analyzer settings
 const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
@@ -140,26 +140,34 @@ class PositionedAudioService {
     gainParam.cancelScheduledValues(scheduledTime);
 
     if (this.subHitAdsrEnabled) {
-      // Use ADSR for the global staggered hit
-      gainParam.setValueAtTime(ENVELOPE_MIN_GAIN, scheduledTime);
-      // Attack
-      gainParam.linearRampToValueAtTime(
-        ENVELOPE_MAX_GAIN, 
-        scheduledTime + GLOBAL_STAGGER_ATTACK_S
-      );
-      // Release
+      // New hi-hat inspired envelope based on http://joesul.li/van/synthesizing-hi-hats/
+      const HIHAT_ENV_INITIAL_GAIN = 0.00001;
+      const HIHAT_ENV_ATTACK_TIME_OFFSET = 0.02;    // Attack completes 0.02s after scheduledTime
+      const HIHAT_ENV_DECAY1_TARGET_GAIN = 1/3;
+      const HIHAT_ENV_DECAY1_TIME_OFFSET = 0.03;   // First decay completes 0.03s after scheduledTime
+      const HIHAT_ENV_RELEASE_TIME_OFFSET = 0.3;    // Final release completes 0.3s after scheduledTime
+
+      gainParam.setValueAtTime(HIHAT_ENV_INITIAL_GAIN, scheduledTime);
       gainParam.exponentialRampToValueAtTime(
-        0.001, // Target for exponential ramp (close to zero)
-        scheduledTime + GLOBAL_STAGGER_ATTACK_S + GLOBAL_STAGGER_RELEASE_S
+        ENVELOPE_MAX_GAIN, // Typically 1.0
+        scheduledTime + HIHAT_ENV_ATTACK_TIME_OFFSET
       );
-      // Ensure silence after release
-      gainParam.setValueAtTime(ENVELOPE_MIN_GAIN, scheduledTime + GLOBAL_STAGGER_ATTACK_S + GLOBAL_STAGGER_RELEASE_S + 0.001);
+      gainParam.exponentialRampToValueAtTime(
+        HIHAT_ENV_DECAY1_TARGET_GAIN,
+        scheduledTime + HIHAT_ENV_DECAY1_TIME_OFFSET
+      );
+      gainParam.exponentialRampToValueAtTime(
+        HIHAT_ENV_INITIAL_GAIN, // Ramp down to near silence
+        scheduledTime + HIHAT_ENV_RELEASE_TIME_OFFSET
+      );
+      // Optional: ensure absolute silence slightly after the final ramp.
+      // gainParam.setValueAtTime(ENVELOPE_MIN_GAIN, scheduledTime + HIHAT_ENV_RELEASE_TIME_OFFSET + 0.001);
     } else {
       // Use Attack-Sustain for the global staggered hit
       gainParam.setValueAtTime(ENVELOPE_MIN_GAIN, scheduledTime); // Ensure it starts from silence or current value if retriggered
       gainParam.linearRampToValueAtTime(
-        ENVELOPE_MAX_GAIN, 
-        scheduledTime + GLOBAL_STAGGER_ATTACK_S
+        ENVELOPE_MAX_GAIN,
+        scheduledTime + GLOBAL_STAGGER_ATTACK_S // Uses existing GLOBAL_STAGGER_ATTACK_S
       );
       // Gain remains at ENVELOPE_MAX_GAIN until deactivatePoint is called
     }
