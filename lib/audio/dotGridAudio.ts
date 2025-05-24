@@ -40,7 +40,7 @@ const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 3.8; // dB reduction per dB/octave d
 const GLOBAL_STAGGER_ATTACK_S = 0.05; // Longer attack
 const GLOBAL_STAGGER_RELEASE_S = 0.4; // Longer release
 const ALL_DOTS_STAGGER_INTERVAL_S = 0.1; // Stagger between each dot in the global sequence
-const NUM_HITS_PER_DOT_SEQUENCE = 4; // New: Number of hits per dot in its sequence turn
+// const NUM_HITS_PER_DOT_SEQUENCE = 4; // No longer used for dot iteration in startAllRhythms
 
 // Analyzer settings
 const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
@@ -631,20 +631,20 @@ class DotGridAudioPlayer {
     const currentTime = audioContext.getAudioContext().currentTime;
 
     // const SUB_HIT_INTERVAL_S = ALL_DOTS_STAGGER_INTERVAL_S; // Interval between hits for the same dot
-    const DOT_BURST_GROUP_INTERVAL_S = NUM_HITS_PER_DOT_SEQUENCE * ALL_DOTS_STAGGER_INTERVAL_S; // Interval between start of one dot's burst and next dot's burst
+    // const DOT_BURST_GROUP_INTERVAL_S = NUM_HITS_PER_DOT_SEQUENCE * ALL_DOTS_STAGGER_INTERVAL_S; // No longer used here
 
-    sortedDotKeys.forEach((dotKey, dotGroupIndex) => {
-      const baseActivationTimeForDotBurst = currentTime + dotGroupIndex * DOT_BURST_GROUP_INTERVAL_S;
-      for (let hitIndex = 0; hitIndex < NUM_HITS_PER_DOT_SEQUENCE; hitIndex++) {
-        const activationTimeForSubHit = baseActivationTimeForDotBurst + hitIndex * ALL_DOTS_STAGGER_INTERVAL_S; // Sub-hits are staggered by ALL_DOTS_STAGGER_INTERVAL_S
-        this.audioService.activatePoint(dotKey, activationTimeForSubHit);
-      }
+    sortedDotKeys.forEach((dotKey, dotIndex) => {
+      // Each dot plays once in the sequence, staggered by ALL_DOTS_STAGGER_INTERVAL_S
+      const activationTime = currentTime + dotIndex * ALL_DOTS_STAGGER_INTERVAL_S;
+      this.audioService.activatePoint(dotKey, activationTime);
     });
     
     // Schedule the next iteration of the loop if there are dots
     if (sortedDotKeys.length > 0) {
-      const loopDurationS = sortedDotKeys.length * DOT_BURST_GROUP_INTERVAL_S;
+      // Loop duration is the total time for one pass through all selected dots
+      const loopDurationS = sortedDotKeys.length * ALL_DOTS_STAGGER_INTERVAL_S;
       const loopDelayMs = loopDurationS * 1000;
+
       if (loopDelayMs > 0) { // Ensure positive delay
         this.loopTimeoutId = window.setTimeout(() => {
           // Check playback state again before re-triggering
