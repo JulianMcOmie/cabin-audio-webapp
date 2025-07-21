@@ -19,10 +19,10 @@ const MAX_AUDIBLE_FREQ = 20000; // Hz
 const BAND_Q_VALUE = 1.5; // Q value for the bandpass filters (reduced from 6.0)
 const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
 
-// Target overall slopes
-const LOW_SLOPE_DB_PER_OCT = -9.0; // For low y positions (darker sound)
-const CENTER_SLOPE_DB_PER_OCT = -3.0; // For middle y positions
-const HIGH_SLOPE_DB_PER_OCT = 3.0; // For high y positions (brighter sound)
+// Target overall slopes (mutable for tilt range control)
+let LOW_SLOPE_DB_PER_OCT = -10.5; // For low y positions (darker sound)
+let CENTER_SLOPE_DB_PER_OCT = -4.5; // For middle y positions
+let HIGH_SLOPE_DB_PER_OCT = 1.5; // For high y positions (brighter sound)
 const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of SlopedPinkNoiseGenerator (approx -12dB)
 
 // New constant for attenuation based on slope deviation from pink noise
@@ -39,7 +39,7 @@ const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 3.8; // dB reduction per dB/octave d
 // New constants for Global Staggered Mode (when subHitPlaybackEnabled is true)
 const GLOBAL_STAGGER_ATTACK_S = 0.05; // Longer attack
 const GLOBAL_STAGGER_RELEASE_S = 0.4; // Longer release
-const ALL_DOTS_STAGGER_INTERVAL_S = 0.1; // Stagger between each dot in the global sequence
+let ALL_DOTS_STAGGER_INTERVAL_S = 0.5; // Stagger between each dot in the global sequence (mutable for speed control)
 
 // Analyzer settings
 const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
@@ -334,6 +334,13 @@ class PositionedAudioService {
     this.subHitAdsrEnabled = enabled;
   }
 
+  public updateAllSlopesForTiltRange(): void {
+    // Update all existing audio points with new slope values
+    this.audioPoints.forEach((point) => {
+      this.setMainGainAndSlope(point);
+    });
+  }
+
   // Add method to handle distortion gain -- Now delegates to service
   private setDistortionGain(gain: number): void {
     this.currentDistortionGain = Math.max(0, Math.min(1, gain));
@@ -606,7 +613,7 @@ class DotGridAudioPlayer {
   }
 
   /**
-   * Start all rhythm timers - using requestAnimationFrame
+   * Start all rhythm timers - using rhythmic pattern
    */
   private startAllRhythms(): void {
     if (this.isContinuousSimultaneousMode()) {
@@ -636,31 +643,64 @@ class DotGridAudioPlayer {
     });
 
     const currentTime = audioContext.getAudioContext().currentTime;
-
-    sortedDotKeys.forEach((dotKey, index) => {
-      const activationTime = currentTime + index * ALL_DOTS_STAGGER_INTERVAL_S;
-      // Schedule activation directly. PositionedAudioService.activatePoint now handles
-      // the _schedulePointActivationSound which uses GLOBAL_STAGGER_ATTACK_S and GLOBAL_STAGGER_RELEASE_S.
-      // We store the timeout ID only if we need to clear it, but Web Audio events don't need explicit clearing like this.
-      // However, if activatePoint itself uses setTimeout internally for something NOT related to Web Audio scheduling, that might need clearing.
-      // For now, activatePoint for this mode directly schedules Web Audio events.
-      this.audioService.activatePoint(dotKey, activationTime);
-    });
+    const beatInterval = ALL_DOTS_STAGGER_INTERVAL_S; // Use the stagger interval as our beat duration
     
-    // Schedule the next iteration of the loop if there are dots
-    if (sortedDotKeys.length > 0) {
-      const loopDelayMs = sortedDotKeys.length * ALL_DOTS_STAGGER_INTERVAL_S * 1000;
-      if (loopDelayMs > 0) { // Ensure positive delay
-        this.loopTimeoutId = window.setTimeout(() => {
-          // Check playback state again before re-triggering
-          if (this.isPlaying && !this.isContinuousSimultaneousMode()) {
-            this.startAllRhythms(); // This will handle deactivating/cleanup and rescheduling
+    // Define the rhythmic pattern: 4-beat cycle
+    // Beat 1: 1st dot + 3rd dot (if exists)
+    // Beat 2: 3rd dot only (if exists)
+    // Beat 3: 2nd dot + 3rd dot (if exists)
+    // Beat 4: 3rd dot only (if exists)
+    const cycleLength = 4;
+    
+    const scheduleRhythmicPattern = (startTime: number) => {
+      for (let beat = 0; beat < cycleLength; beat++) {
+        const beatTime = startTime + beat * beatInterval;
+        
+        if (beat === 0) {
+          // Beat 1: Play 1st dot
+          if (sortedDotKeys.length >= 1) {
+            this.audioService.activatePoint(sortedDotKeys[0], beatTime);
           }
-        }, loopDelayMs);
+          // Also play 3rd dot if it exists
+          if (sortedDotKeys.length >= 3) {
+            this.audioService.activatePoint(sortedDotKeys[2], beatTime);
+          }
+        } else if (beat === 1) {
+          // Beat 2: Play 3rd dot only
+          if (sortedDotKeys.length >= 3) {
+            this.audioService.activatePoint(sortedDotKeys[2], beatTime);
+          }
+        } else if (beat === 2) {
+          // Beat 3: Play 2nd dot
+          if (sortedDotKeys.length >= 2) {
+            this.audioService.activatePoint(sortedDotKeys[1], beatTime);
+          }
+          // Also play 3rd dot if it exists
+          if (sortedDotKeys.length >= 3) {
+            this.audioService.activatePoint(sortedDotKeys[2], beatTime);
+          }
+        } else if (beat === 3) {
+          // Beat 4: Play 3rd dot only
+          if (sortedDotKeys.length >= 3) {
+            this.audioService.activatePoint(sortedDotKeys[2], beatTime);
+          }
+        }
       }
+    };
+
+    // Schedule the initial pattern
+    scheduleRhythmicPattern(currentTime);
+    
+    // Schedule the loop to continue the pattern
+    const cycleDelayMs = cycleLength * beatInterval * 1000;
+    if (cycleDelayMs > 0) {
+      this.loopTimeoutId = window.setTimeout(() => {
+        // Check playback state again before re-triggering
+        if (this.isPlaying && !this.isContinuousSimultaneousMode()) {
+          this.startAllRhythms(); // This will handle deactivating/cleanup and rescheduling
+        }
+      }, cycleDelayMs);
     }
-    // No rAF loop needed. The sounds are scheduled with the Web Audio API.
-    // The main loop is handled by setTimeout scheduling startAllRhythms again.
   }
   
   private stopAllRhythmsInternalCleanup(): void {
@@ -745,6 +785,44 @@ class DotGridAudioPlayer {
         this.startAllRhythms(); 
       }
     }
+  }
+
+  /**
+   * Set the speed multiplier for dot playback
+   * @param speedMultiplier Speed multiplier (0.1 = 10x slower, 1.0 = normal speed, 2.0 = 2x faster)
+   */
+  public setSpeedMultiplier(speedMultiplier: number): void {
+    // Clamp speed multiplier to reasonable range
+    const clampedSpeed = Math.max(0.1, Math.min(5.0, speedMultiplier));
+    ALL_DOTS_STAGGER_INTERVAL_S = 0.5 / clampedSpeed; // Inverse relationship: higher speed = lower interval
+    
+    // If currently playing in staggered mode, restart to apply new timing
+    if (this.isPlaying && !this.isContinuousSimultaneousMode()) {
+      this.stopAllRhythms();
+      this.startAllRhythms();
+    }
+  }
+
+  /**
+   * Set the tilt range for the frequency slope control
+   * @param tiltRangeMultiplier Multiplier for tilt range (0.1 = very subtle, 1.0 = default, 2.0 = more extreme)
+   */
+  public setTiltRangeMultiplier(tiltRangeMultiplier: number): void {
+    // Clamp tilt range multiplier to reasonable range
+    const clampedTilt = Math.max(0.1, Math.min(3.0, tiltRangeMultiplier));
+    
+    // Default values
+    const DEFAULT_LOW_SLOPE = -10.5;
+    const DEFAULT_CENTER_SLOPE = -4.5;
+    const DEFAULT_HIGH_SLOPE = 1.5;
+    
+    // Scale the slopes based on the multiplier
+    LOW_SLOPE_DB_PER_OCT = DEFAULT_LOW_SLOPE * clampedTilt;
+    CENTER_SLOPE_DB_PER_OCT = DEFAULT_CENTER_SLOPE * clampedTilt;
+    HIGH_SLOPE_DB_PER_OCT = DEFAULT_HIGH_SLOPE * clampedTilt;
+    
+    // Update all existing audio points to use the new slopes
+    this.audioService.updateAllSlopesForTiltRange();
   }
 
   // Add method to handle distortion gain -- Now delegates to service

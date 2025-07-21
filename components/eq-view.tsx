@@ -94,6 +94,10 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   // New state for Dot Grid sub-hit playback mode
   const [isSubHitPlaybackEnabled, setIsSubHitPlaybackEnabled] = useState(true);
 
+  // New states for Dot Grid speed and tilt range controls
+  const [dotGridSpeedMultiplier, setDotGridSpeedMultiplier] = useState(1.0);
+  const [dotGridTiltRangeMultiplier, setDotGridTiltRangeMultiplier] = useState(1.0);
+
   // New state for current glyph shape in Line Tool (GlyphGrid)
   const [currentGlyphShape, setCurrentGlyphShape] = useState<'line' | 'triangle'>('triangle');
 
@@ -503,7 +507,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
 
               {/* Add Toggle for Dot Grid Sub-Hit Playback Mode */} 
               {activeGrid === "dot" && (
-                  <div className="flex items-center space-x-2 mt-4 justify-center">
+                <div className="space-y-4 mt-4">
+                  <div className="flex items-center space-x-2 justify-center">
                     <Switch 
                       id="subhit-playback-toggle"
                       checked={isSubHitPlaybackEnabled}
@@ -516,6 +521,57 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                       {isSubHitPlaybackEnabled ? "Sub-Hits Enabled" : "Continuous Play"}
                     </Label>
                   </div>
+
+                  {/* Speed Control Slider */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <Label htmlFor="dot-speed-slider" className="text-xs text-muted-foreground">Speed</Label>
+                      <span className="text-xs text-muted-foreground">{dotGridSpeedMultiplier.toFixed(1)}x</span>
+                    </div>
+                    <Slider 
+                      id="dot-speed-slider"
+                      min={0.1} 
+                      max={3.0} 
+                      step={0.1} 
+                      value={[dotGridSpeedMultiplier]} 
+                      onValueChange={(value) => {
+                        const newSpeed = value[0];
+                        setDotGridSpeedMultiplier(newSpeed);
+                        dotGridAudio.getDotGridAudioPlayer().setSpeedMultiplier(newSpeed);
+                      }}
+                      className="w-full"
+                    />
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>Slower</span>
+                      <span>Faster</span>
+                    </div>
+                  </div>
+
+                  {/* Tilt Range Control Slider */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <Label htmlFor="dot-tilt-slider" className="text-xs text-muted-foreground">Tilt Range</Label>
+                      <span className="text-xs text-muted-foreground">{dotGridTiltRangeMultiplier.toFixed(1)}x</span>
+                    </div>
+                    <Slider 
+                      id="dot-tilt-slider"
+                      min={0.1} 
+                      max={2.5} 
+                      step={0.1} 
+                      value={[dotGridTiltRangeMultiplier]} 
+                      onValueChange={(value) => {
+                        const newTilt = value[0];
+                        setDotGridTiltRangeMultiplier(newTilt);
+                        dotGridAudio.getDotGridAudioPlayer().setTiltRangeMultiplier(newTilt);
+                      }}
+                      className="w-full"
+                    />
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>Subtle</span>
+                      <span>Extreme</span>
+                    </div>
+                  </div>
+                </div>
               )}
 
               {/* UI for selecting glyph shape when Line Tool is active */} 
