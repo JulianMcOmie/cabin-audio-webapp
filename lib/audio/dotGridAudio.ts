@@ -41,6 +41,10 @@ const GLOBAL_STAGGER_ATTACK_S = 0.05; // Longer attack
 const GLOBAL_STAGGER_RELEASE_S = 0.4; // Longer release
 const ALL_DOTS_STAGGER_INTERVAL_S = 0.1; // Stagger between each dot in the global sequence
 
+// New constants for dot repetition
+const DOT_REPETITIONS = 4; // Number of times each dot repeats before moving to next
+const DOT_REPETITION_INTERVAL_S = 0.3; // Time between repetitions of the same dot
+
 // Analyzer settings
 const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
 const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
@@ -637,19 +641,23 @@ class DotGridAudioPlayer {
 
     const currentTime = audioContext.getAudioContext().currentTime;
 
-    sortedDotKeys.forEach((dotKey, index) => {
-      const activationTime = currentTime + index * ALL_DOTS_STAGGER_INTERVAL_S;
-      // Schedule activation directly. PositionedAudioService.activatePoint now handles
-      // the _schedulePointActivationSound which uses GLOBAL_STAGGER_ATTACK_S and GLOBAL_STAGGER_RELEASE_S.
-      // We store the timeout ID only if we need to clear it, but Web Audio events don't need explicit clearing like this.
-      // However, if activatePoint itself uses setTimeout internally for something NOT related to Web Audio scheduling, that might need clearing.
-      // For now, activatePoint for this mode directly schedules Web Audio events.
-      this.audioService.activatePoint(dotKey, activationTime);
+    // Schedule each dot to repeat DOT_REPETITIONS times before moving to next dot
+    sortedDotKeys.forEach((dotKey, dotIndex) => {
+      // Calculate when this dot should start (after previous dots have finished all their repetitions)
+      const dotStartTime = currentTime + dotIndex * (DOT_REPETITIONS * DOT_REPETITION_INTERVAL_S);
+      
+      // Schedule all repetitions for this dot
+      for (let repetition = 0; repetition < DOT_REPETITIONS; repetition++) {
+        const activationTime = dotStartTime + repetition * DOT_REPETITION_INTERVAL_S;
+        this.audioService.activatePoint(dotKey, activationTime);
+      }
     });
     
     // Schedule the next iteration of the loop if there are dots
     if (sortedDotKeys.length > 0) {
-      const loopDelayMs = sortedDotKeys.length * ALL_DOTS_STAGGER_INTERVAL_S * 1000;
+      // Total time for all dots to complete = number of dots * (repetitions per dot * interval between repetitions)
+      const totalSequenceTime = sortedDotKeys.length * DOT_REPETITIONS * DOT_REPETITION_INTERVAL_S;
+      const loopDelayMs = totalSequenceTime * 1000;
       if (loopDelayMs > 0) { // Ensure positive delay
         this.loopTimeoutId = window.setTimeout(() => {
           // Check playback state again before re-triggering
