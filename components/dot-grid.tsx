@@ -4,6 +4,7 @@ import type React from "react"
 import { useRef, useEffect, useState, useMemo } from "react"
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
 import { usePlayerStore } from "@/lib/stores"
+import { Switch } from "@/components/ui/switch"
 
 interface DotGridProps {
   selectedDot: [number, number] | null
@@ -438,6 +439,9 @@ export function DotCalibration({
   // Use either external or internal state for selected dots
   const [internalSelectedDots, setInternalSelectedDots] = useState<Set<string>>(new Set()); // Start with no dots selected
   
+  // Sound mode state
+  const [soundMode, setSoundMode] = useState<'sloped' | 'bandpassed' | 'sine'>('sloped'); // Start with sloped noise mode
+  
   // Use either external or internal state
   const selectedDots = externalSelectedDots !== undefined ? externalSelectedDots : internalSelectedDots;
   const setSelectedDots = externalSetSelectedDots !== undefined ? externalSetSelectedDots : setInternalSelectedDots;
@@ -661,6 +665,37 @@ export function DotCalibration({
     }
   };
   
+  // Handle sound mode cycling
+  const cycleSoundMode = () => {
+    const modes: Array<'sloped' | 'bandpassed' | 'sine'> = ['sloped', 'bandpassed', 'sine'];
+    const currentIndex = modes.indexOf(soundMode);
+    const nextMode = modes[(currentIndex + 1) % modes.length];
+    setSoundMode(nextMode);
+    
+    // Map to audio engine calls using the new API
+    const { SoundMode } = dotGridAudio;
+    if (nextMode === 'sloped') {
+      dotGridAudio.setSoundMode(SoundMode.SlopedNoise);
+    } else if (nextMode === 'bandpassed') {
+      dotGridAudio.setSoundMode(SoundMode.BandpassedNoise);
+    } else if (nextMode === 'sine') {
+      dotGridAudio.setSoundMode(SoundMode.SineTone);
+    }
+  };
+  
+  // Sync initial sound mode with audio player
+  useEffect(() => {
+    const { SoundMode } = dotGridAudio;
+    const currentMode = dotGridAudio.getSoundMode();
+    if (currentMode === SoundMode.SlopedNoise) {
+      setSoundMode('sloped');
+    } else if (currentMode === SoundMode.BandpassedNoise) {
+      setSoundMode('bandpassed');
+    } else if (currentMode === SoundMode.SineTone) {
+      setSoundMode('sine');
+    }
+  }, []);
+  
   return (
     <div className="space-y-3">
       {/* Canvas */}
@@ -746,6 +781,23 @@ export function DotCalibration({
               </button>
             </div>
           </div>
+        </div>
+        
+        {/* Sound Mode Selector */}
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium">Sound Mode</span>
+          <button
+            className={`px-3 py-1 rounded text-xs border ${
+              disabled
+                ? 'opacity-50 cursor-not-allowed'
+                : 'hover:bg-muted'
+            }`}
+            onClick={cycleSoundMode}
+            disabled={disabled}
+          >
+            {soundMode === 'sloped' ? 'Sloped' : 
+             soundMode === 'bandpassed' ? 'Bandpassed' : 'Sine Tone'}
+          </button>
         </div>
         
         {/* Clear button */}

@@ -37,13 +37,22 @@ const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 3.8; // dB reduction per dB/octave d
 // const SUB_HIT_INTERVAL_S = DOT_DURATION_S / NUM_SUB_HITS; // Approx 0.125s if DOT_DURATION_S is 0.5s
 
 // New constants for Global Staggered Mode (when subHitPlaybackEnabled is true)
-const GLOBAL_STAGGER_ATTACK_S = 0.05; // Longer attack
-const GLOBAL_STAGGER_RELEASE_S = 0.4; // Longer release
+const GLOBAL_STAGGER_ATTACK_S = 0.04; // Gentler, longer attack
+const GLOBAL_STAGGER_RELEASE_S = 0.05; // Shorter release to prevent overlap
 const ALL_DOTS_STAGGER_INTERVAL_S = 0.1; // Stagger between each dot in the global sequence
 
 // New constants for dot repetition
 const DOT_REPETITIONS = 4; // Number of times each dot repeats before moving to next
-const DOT_REPETITION_INTERVAL_S = 0.3; // Time between repetitions of the same dot
+const DOT_REPETITION_INTERVAL_S = 0.15; // Increased to accommodate envelope duration (0.15 + 0.25 = 0.4s)
+
+// Constants for bandpassed noise generator
+const BANDPASS_NOISE_SLOPE_DB_PER_OCT = -4.5; // Fixed slope for bandpassed noise
+const BANDPASS_CENTER_FREQ = 1000; // Hz, center frequency for bandpass filter
+const BANDPASS_Q_VALUE = 2.0; // Q value for the bandpass filter
+const BANDPASS_NOISE_OUTPUT_GAIN_SCALAR = 0.25; // Much louder output for bandpassed noise
+
+// Constants for sine tone generator
+const SINE_TONE_OUTPUT_GAIN_SCALAR = 0.15; // Output gain for sine tones
 
 // Analyzer settings
 const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
@@ -52,13 +61,22 @@ const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
 // Volume pattern settings -- REMOVING
 // const VOLUME_PATTERN = [0, -12, -6, -12]; // The fixed pattern in dB: 0dB, -12dB, -6dB, -12dB
 
+// Enum for sound generation modes
+enum SoundMode {
+  SlopedNoise = 'sloped',
+  BandpassedNoise = 'bandpassed',
+  SineTone = 'sine'
+}
+
 // Interface for nodes managed by PositionedAudioService
 interface PointAudioNodes {
     source: AudioBufferSourceNode;
   mainGain: GainNode;
     envelopeGain: GainNode;
     panner: StereoPannerNode;
-  slopedNoiseGenerator: SlopedPinkNoiseGenerator;
+  slopedNoiseGenerator: SlopedPinkNoiseGenerator | null;
+  bandpassedNoiseGenerator: BandpassedNoiseGenerator | null;
+  sineToneGenerator: SineToneGenerator | null;
   pinkNoiseBuffer: AudioBuffer;
   normalizedYPos: number; // To recalculate slope without re-passing y, totalRows
   // New properties for sub-hit sequencing
@@ -75,6 +93,7 @@ class PositionedAudioService {
   private currentBaseDbLevel: number = 0;
   private subHitAdsrEnabled: boolean = true; // Renamed from envelopeEnabled
   private subHitPlaybackEnabled: boolean = true; // New: Toggle for sub-hit mechanism
+  private currentSoundMode: SoundMode = SoundMode.SlopedNoise; // Current sound generation mode
 
   constructor(audioContextInstance: AudioContext) {
     this.ctx = audioContextInstance;
@@ -138,16 +157,33 @@ class PositionedAudioService {
     return this.subHitPlaybackEnabled;
   }
 
+  public setSoundMode(mode: SoundMode): void {
+    this.currentSoundMode = mode;
+  }
+
+  public getSoundMode(): SoundMode {
+    return this.currentSoundMode;
+  }
+
+  // Legacy methods for backwards compatibility
+  public setBandpassedNoiseMode(enabled: boolean): void {
+    this.currentSoundMode = enabled ? SoundMode.BandpassedNoise : SoundMode.SlopedNoise;
+  }
+
+  public isBandpassedNoiseMode(): boolean {
+    return this.currentSoundMode === SoundMode.BandpassedNoise;
+  }
+
   private _schedulePointActivationSound(pointNode: PointAudioNodes, scheduledTime: number): void {
     const gainParam = pointNode.envelopeGain.gain;
     gainParam.cancelScheduledValues(scheduledTime);
 
     if (this.subHitAdsrEnabled) {
       // Use ADSR for the global staggered hit
-      gainParam.setValueAtTime(ENVELOPE_MIN_GAIN, scheduledTime);
-      // Attack
-      gainParam.linearRampToValueAtTime(
-        ENVELOPE_MAX_GAIN, 
+      gainParam.setValueAtTime(0.001, scheduledTime); // Start just above zero for exponential curves
+      // Attack - use exponential curve for more natural feel
+      gainParam.exponentialRampToValueAtTime(
+        ENVELOPE_MAX_GAIN * 0.8, // Slightly reduce max gain to prevent too loud onset
         scheduledTime + GLOBAL_STAGGER_ATTACK_S
       );
       // Release
@@ -159,12 +195,12 @@ class PositionedAudioService {
       gainParam.setValueAtTime(ENVELOPE_MIN_GAIN, scheduledTime + GLOBAL_STAGGER_ATTACK_S + GLOBAL_STAGGER_RELEASE_S + 0.001);
     } else {
       // Use Attack-Sustain for the global staggered hit
-      gainParam.setValueAtTime(ENVELOPE_MIN_GAIN, scheduledTime); // Ensure it starts from silence or current value if retriggered
-      gainParam.linearRampToValueAtTime(
-        ENVELOPE_MAX_GAIN, 
+      gainParam.setValueAtTime(0.001, scheduledTime); // Start just above zero for exponential curves
+      gainParam.exponentialRampToValueAtTime(
+        ENVELOPE_MAX_GAIN * 0.8, // Slightly reduce max gain
         scheduledTime + GLOBAL_STAGGER_ATTACK_S
       );
-      // Gain remains at ENVELOPE_MAX_GAIN until deactivatePoint is called
+      // Gain remains at reduced ENVELOPE_MAX_GAIN until deactivatePoint is called
     }
   }
 
@@ -177,21 +213,53 @@ class PositionedAudioService {
     const normalizedY = totalRows <= 1 ? 0.5 : 1 - (y / (totalRows - 1));
     const panPosition = totalCols <= 1 ? 0 : (2 * (x / (totalCols - 1)) - 1);
 
-    const pinkNoiseBuffer = this._generateSinglePinkNoiseBuffer();
-    const source = this.ctx.createBufferSource();
-    source.buffer = pinkNoiseBuffer;
-    source.loop = true;
-
-    const slopedNoiseGenerator = new SlopedPinkNoiseGenerator(this.ctx);
     const mainGain = this.ctx.createGain();
     const envelopeGain = this.ctx.createGain();
-    envelopeGain.gain.value = ENVELOPE_MIN_GAIN; // Start silent
+    envelopeGain.gain.value = 0.001; // Start just above zero for exponential curves
     const panner = this.ctx.createStereoPanner();
     panner.pan.value = panPosition;
 
-    // Connect chain: source -> slopedGen -> mainGain -> envelopeGain -> panner -> serviceOutput
-    source.connect(slopedNoiseGenerator.getInputNode());
-    slopedNoiseGenerator.getOutputNode().connect(mainGain);
+    let slopedNoiseGenerator: SlopedPinkNoiseGenerator | null = null;
+    let bandpassedNoiseGenerator: BandpassedNoiseGenerator | null = null;
+    let sineToneGenerator: SineToneGenerator | null = null;
+    let source: AudioBufferSourceNode;
+    let pinkNoiseBuffer: AudioBuffer;
+
+    // Always create a source and buffer for consistency (some modes might not use it)
+    pinkNoiseBuffer = this._generateSinglePinkNoiseBuffer();
+    source = this.ctx.createBufferSource();
+    source.buffer = pinkNoiseBuffer;
+
+    if (this.currentSoundMode === SoundMode.BandpassedNoise) {
+      // Use bandpassed noise generator
+      source.loop = true;
+      bandpassedNoiseGenerator = new BandpassedNoiseGenerator(this.ctx);
+      
+      // Connect chain: source -> bandpassedGen -> mainGain -> envelopeGain -> panner -> serviceOutput
+      source.connect(bandpassedNoiseGenerator.getInputNode());
+      bandpassedNoiseGenerator.getOutputNode().connect(mainGain);
+      
+      source.start(); // Start source immediately, loop, control with envelopeGain
+    } else if (this.currentSoundMode === SoundMode.SineTone) {
+      // Use sine tone generator
+      sineToneGenerator = new SineToneGenerator(this.ctx);
+      
+      // Connect chain: sineGen -> mainGain -> envelopeGain -> panner -> serviceOutput
+      sineToneGenerator.getOutputNode().connect(mainGain);
+      
+      // Don't start the buffer source for sine tone mode
+    } else {
+      // Use sloped pink noise generator (default)
+      source.loop = true;
+      slopedNoiseGenerator = new SlopedPinkNoiseGenerator(this.ctx);
+      
+      // Connect chain: source -> slopedGen -> mainGain -> envelopeGain -> panner -> serviceOutput
+      source.connect(slopedNoiseGenerator.getInputNode());
+      slopedNoiseGenerator.getOutputNode().connect(mainGain);
+      
+      source.start(); // Start source immediately, loop, control with envelopeGain
+    }
+
     mainGain.connect(envelopeGain);
     envelopeGain.connect(panner);
     panner.connect(this.outputGain);
@@ -202,14 +270,14 @@ class PositionedAudioService {
       envelopeGain,
       panner,
       slopedNoiseGenerator,
+      bandpassedNoiseGenerator,
+      sineToneGenerator,
       pinkNoiseBuffer,
       normalizedYPos: normalizedY,
       // Initialize new properties
       subHitCount: 0,
       subHitTimerId: null,
     });
-
-    source.start(); // Start source immediately, loop, control with envelopeGain
   }
 
   public removePoint(id: string): void {
@@ -229,7 +297,18 @@ class PositionedAudioService {
       console.log(`Error stopping source for point ${id}:`, e);
     }
     point.source.disconnect();
-    point.slopedNoiseGenerator.dispose();
+    
+    // Dispose of the appropriate generator
+    if (point.slopedNoiseGenerator) {
+      point.slopedNoiseGenerator.dispose();
+    }
+    if (point.bandpassedNoiseGenerator) {
+      point.bandpassedNoiseGenerator.dispose();
+    }
+    if (point.sineToneGenerator) {
+      point.sineToneGenerator.dispose();
+    }
+    
     point.mainGain.disconnect();
     point.envelopeGain.disconnect();
     point.panner.disconnect();
@@ -248,7 +327,7 @@ class PositionedAudioService {
       // CONTINUOUS SIMULTANEOUS MODE (subHitPlaybackEnabled is false)
       const now = this.ctx.currentTime; // For immediate activation
       point.envelopeGain.gain.cancelScheduledValues(now);
-      point.envelopeGain.gain.setValueAtTime(ENVELOPE_MAX_GAIN, now);
+      point.envelopeGain.gain.setValueAtTime(ENVELOPE_MAX_GAIN * 0.8, now); // Use reduced gain
       
       if (point.subHitTimerId !== null) { // Clear any old timers if mode switched
           clearTimeout(point.subHitTimerId);
@@ -282,8 +361,9 @@ class PositionedAudioService {
     // Deactivate by ramping envelopeGain down quickly, regardless of previous state
     const now = this.ctx.currentTime;
     point.envelopeGain.gain.cancelScheduledValues(now);
-    point.envelopeGain.gain.setValueAtTime(point.envelopeGain.gain.value, now); // Hold current value
-    point.envelopeGain.gain.linearRampToValueAtTime(ENVELOPE_MIN_GAIN, now + 0.005); // Quick ramp down (5ms)
+    const currentGain = Math.max(0.001, point.envelopeGain.gain.value); // Ensure we're above zero for exponential
+    point.envelopeGain.gain.setValueAtTime(currentGain, now); // Hold current value
+    point.envelopeGain.gain.exponentialRampToValueAtTime(0.001, now + 0.01); // Quick exponential ramp down (10ms)
   }
   
   public deactivateAllPoints(): void {
@@ -312,7 +392,31 @@ class PositionedAudioService {
       const t = (point.normalizedYPos - 0.5) * 2;
       targetOverallSlopeDbPerOctave = CENTER_SLOPE_DB_PER_OCT + t * (HIGH_SLOPE_DB_PER_OCT - CENTER_SLOPE_DB_PER_OCT);
     }
-    point.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
+    
+    // Set slope on the appropriate generator (only for sloped noise, not bandpassed or sine)
+    if (point.slopedNoiseGenerator) {
+      point.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
+    }
+    // Bandpassed noise uses fixed slope, but we can adjust the bandpass frequency based on Y position
+    if (point.bandpassedNoiseGenerator) {
+      // Map Y position to bandpass frequency (higher Y = higher frequency)
+      const minFreq = 50; // Hz
+      const maxFreq = 14000; // Hz
+      const logMinFreq = Math.log2(minFreq);
+      const logMaxFreq = Math.log2(maxFreq);
+      const targetFreq = Math.pow(2, logMinFreq + point.normalizedYPos * (logMaxFreq - logMinFreq));
+      point.bandpassedNoiseGenerator.setBandpassFrequency(targetFreq);
+    }
+    // Sine tone uses the same frequency mapping as bandpassed noise
+    if (point.sineToneGenerator) {
+      // Map Y position to sine frequency (higher Y = higher frequency)
+      const minFreq = 50; // Hz
+      const maxFreq = 14000; // Hz
+      const logMinFreq = Math.log2(minFreq);
+      const logMaxFreq = Math.log2(maxFreq);
+      const targetFreq = Math.pow(2, logMinFreq + point.normalizedYPos * (logMaxFreq - logMinFreq));
+      point.sineToneGenerator.setFrequency(targetFreq);
+    }
 
     // Existing attenuation based on deviation from CENTER_SLOPE_DB_PER_OCT
     const slopeDeviationForAttenuation = Math.abs(targetOverallSlopeDbPerOctave - CENTER_SLOPE_DB_PER_OCT);
@@ -755,6 +859,35 @@ class DotGridAudioPlayer {
     }
   }
 
+  public setSoundMode(mode: SoundMode): void {
+    this.audioService.setSoundMode(mode);
+    
+    // If playing, need to recreate all audio points with new generator type
+    if (this.isPlaying && this.activeDotKeys.size > 0) {
+      const currentDots = new Set(this.activeDotKeys);
+      this.updateDots(currentDots, this.gridSize, this.columnCount);
+    }
+  }
+
+  public getSoundMode(): SoundMode {
+    return this.audioService.getSoundMode();
+  }
+
+  // Legacy methods for backwards compatibility
+  public setBandpassedNoiseMode(enabled: boolean): void {
+    this.audioService.setBandpassedNoiseMode(enabled);
+    
+    // If playing, need to recreate all audio points with new generator type
+    if (this.isPlaying && this.activeDotKeys.size > 0) {
+      const currentDots = new Set(this.activeDotKeys);
+      this.updateDots(currentDots, this.gridSize, this.columnCount);
+    }
+  }
+
+  public isBandpassedNoiseMode(): boolean {
+    return this.audioService.isBandpassedNoiseMode();
+  }
+
   // Add method to handle distortion gain -- Now delegates to service
   private setDistortionGain(gain: number): void {
     this.audioService.setDistortion(gain); 
@@ -762,6 +895,98 @@ class DotGridAudioPlayer {
 
   private isContinuousSimultaneousMode(): boolean {
     return !this.audioService.isSubHitPlaybackEnabled();
+  }
+}
+
+class SineToneGenerator {
+  private ctx: AudioContext;
+  private outputGainNode: GainNode;
+  private oscillator: OscillatorNode;
+
+  constructor(audioCtx: AudioContext) {
+    this.ctx = audioCtx;
+    this.outputGainNode = this.ctx.createGain();
+    this.outputGainNode.gain.value = SINE_TONE_OUTPUT_GAIN_SCALAR;
+
+    // Create oscillator
+    this.oscillator = this.ctx.createOscillator();
+    this.oscillator.type = 'sine';
+    this.oscillator.frequency.value = 440; // Default frequency
+
+    // Connect oscillator to output
+    this.oscillator.connect(this.outputGainNode);
+    this.oscillator.start(); // Start the oscillator immediately
+  }
+
+  public getOutputNode(): GainNode {
+    return this.outputGainNode;
+  }
+
+  public setFrequency(frequency: number): void {
+    this.oscillator.frequency.value = Math.max(20, Math.min(20000, frequency));
+  }
+
+  public dispose(): void {
+    try {
+      this.oscillator.stop();
+    } catch (e) {
+      // Oscillator might already be stopped
+    }
+    this.oscillator.disconnect();
+    this.outputGainNode.disconnect();
+  }
+}
+
+class BandpassedNoiseGenerator {
+  private ctx: AudioContext;
+  private inputGainNode: GainNode;
+  private outputGainNode: GainNode;
+  private bandpassFilter: BiquadFilterNode;
+  private slopingFilter: SlopedPinkNoiseGenerator;
+
+  constructor(audioCtx: AudioContext) {
+    this.ctx = audioCtx;
+    this.inputGainNode = this.ctx.createGain();
+    this.outputGainNode = this.ctx.createGain();
+    this.outputGainNode.gain.value = BANDPASS_NOISE_OUTPUT_GAIN_SCALAR;
+
+    // Create sloping filter with fixed -4.5dB/oct slope
+    this.slopingFilter = new SlopedPinkNoiseGenerator(this.ctx);
+    this.slopingFilter.setSlope(BANDPASS_NOISE_SLOPE_DB_PER_OCT);
+
+    // Create bandpass filter
+    this.bandpassFilter = this.ctx.createBiquadFilter();
+    this.bandpassFilter.type = 'bandpass';
+    this.bandpassFilter.frequency.value = BANDPASS_CENTER_FREQ;
+    this.bandpassFilter.Q.value = BANDPASS_Q_VALUE;
+
+    // Connect chain: input -> slopingFilter -> bandpassFilter -> output
+    this.inputGainNode.connect(this.slopingFilter.getInputNode());
+    this.slopingFilter.getOutputNode().connect(this.bandpassFilter);
+    this.bandpassFilter.connect(this.outputGainNode);
+  }
+
+  public getInputNode(): GainNode {
+    return this.inputGainNode;
+  }
+
+  public getOutputNode(): GainNode {
+    return this.outputGainNode;
+  }
+
+  public setBandpassFrequency(frequency: number): void {
+    this.bandpassFilter.frequency.value = Math.max(20, Math.min(20000, frequency));
+  }
+
+  public setBandpassQ(q: number): void {
+    this.bandpassFilter.Q.value = Math.max(0.1, Math.min(30, q));
+  }
+
+  public dispose(): void {
+    this.slopingFilter.dispose();
+    this.inputGainNode.disconnect();
+    this.bandpassFilter.disconnect();
+    this.outputGainNode.disconnect();
   }
 }
 
@@ -848,4 +1073,41 @@ export function getDotGridAudioPlayer(): DotGridAudioPlayer {
 export function cleanupDotGridAudioPlayer(): void {
   const player = DotGridAudioPlayer.getInstance();
   player.dispose();
-} 
+}
+
+/**
+ * Set sound mode (sloped, bandpassed, or sine)
+ */
+export function setSoundMode(mode: SoundMode): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setSoundMode(mode);
+}
+
+/**
+ * Get current sound mode
+ */
+export function getSoundMode(): SoundMode {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getSoundMode();
+}
+
+/**
+ * Set bandpassed noise mode (true for bandpassed noise, false for sloped noise)
+ * @deprecated Use setSoundMode instead
+ */
+export function setBandpassedNoiseMode(enabled: boolean): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setBandpassedNoiseMode(enabled);
+}
+
+/**
+ * Check if bandpassed noise mode is enabled
+ * @deprecated Use getSoundMode instead
+ */
+export function isBandpassedNoiseMode(): boolean {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.isBandpassedNoiseMode();
+}
+
+// Export the SoundMode enum for use in UI
+export { SoundMode }; 
