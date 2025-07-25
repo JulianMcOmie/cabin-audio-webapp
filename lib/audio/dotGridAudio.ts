@@ -37,13 +37,13 @@ const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 3.8; // dB reduction per dB/octave d
 // const SUB_HIT_INTERVAL_S = DOT_DURATION_S / NUM_SUB_HITS; // Approx 0.125s if DOT_DURATION_S is 0.5s
 
 // New constants for Global Staggered Mode (when subHitPlaybackEnabled is true)
-const GLOBAL_STAGGER_ATTACK_S = 0.04; // Gentler, longer attack
-const GLOBAL_STAGGER_RELEASE_S = 0.05; // Shorter release to prevent overlap
-const ALL_DOTS_STAGGER_INTERVAL_S = 0.1; // Stagger between each dot in the global sequence
+const GLOBAL_STAGGER_ATTACK_S = 0.15; // Slower, gentler attack
+const GLOBAL_STAGGER_RELEASE_S = 0.5; // Slower release for smoother fade
+const ALL_DOTS_STAGGER_INTERVAL_S = 0.5; // Stagger between each dot in the global sequence
 
 // New constants for dot repetition
 const DOT_REPETITIONS = 4; // Number of times each dot repeats before moving to next
-const DOT_REPETITION_INTERVAL_S = 0.15; // Increased to accommodate envelope duration (0.15 + 0.25 = 0.4s)
+const DOT_REPETITION_INTERVAL_S = 0.2; // Increased to accommodate envelope duration (0.15 + 0.25 = 0.4s)
 
 // Constants for bandpassed noise generator
 const BANDPASS_NOISE_SLOPE_DB_PER_OCT = -4.5; // Fixed slope for bandpassed noise
@@ -714,7 +714,7 @@ class DotGridAudioPlayer {
   }
 
   /**
-   * Start all rhythm timers - using requestAnimationFrame
+   * Start all rhythm timers - now plays dots simultaneously with staggered timing
    */
   private startAllRhythms(): void {
     if (this.isContinuousSimultaneousMode()) {
@@ -745,22 +745,24 @@ class DotGridAudioPlayer {
 
     const currentTime = audioContext.getAudioContext().currentTime;
 
-    // Schedule each dot to repeat DOT_REPETITIONS times before moving to next dot
+    // Schedule all dots to play simultaneously with staggered start times
     sortedDotKeys.forEach((dotKey, dotIndex) => {
-      // Calculate when this dot should start (after previous dots have finished all their repetitions)
-      const dotStartTime = currentTime + dotIndex * (DOT_REPETITIONS * DOT_REPETITION_INTERVAL_S);
+      // Each dot starts with a small stagger offset but all repeat simultaneously
+      const staggerOffset = dotIndex * ALL_DOTS_STAGGER_INTERVAL_S;
       
-      // Schedule all repetitions for this dot
+      // Schedule all repetitions for this dot, all starting from the staggered time
       for (let repetition = 0; repetition < DOT_REPETITIONS; repetition++) {
-        const activationTime = dotStartTime + repetition * DOT_REPETITION_INTERVAL_S;
+        const activationTime = currentTime + staggerOffset + repetition * DOT_REPETITION_INTERVAL_S;
         this.audioService.activatePoint(dotKey, activationTime);
       }
     });
     
     // Schedule the next iteration of the loop if there are dots
     if (sortedDotKeys.length > 0) {
-      // Total time for all dots to complete = number of dots * (repetitions per dot * interval between repetitions)
-      const totalSequenceTime = sortedDotKeys.length * DOT_REPETITIONS * DOT_REPETITION_INTERVAL_S;
+      // Total time for one complete cycle = stagger time for all dots + time for all repetitions
+      const maxStaggerTime = (sortedDotKeys.length - 1) * ALL_DOTS_STAGGER_INTERVAL_S;
+      const repetitionTime = DOT_REPETITIONS * DOT_REPETITION_INTERVAL_S;
+      const totalSequenceTime = maxStaggerTime + repetitionTime;
       const loopDelayMs = totalSequenceTime * 1000;
       if (loopDelayMs > 0) { // Ensure positive delay
         this.loopTimeoutId = window.setTimeout(() => {
