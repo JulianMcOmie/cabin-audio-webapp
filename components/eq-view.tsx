@@ -97,6 +97,9 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   // New state for current glyph shape in Line Tool (GlyphGrid)
   const [currentGlyphShape, setCurrentGlyphShape] = useState<'line' | 'triangle'>('triangle');
 
+  // New state for bandpass bandwidth control
+  const [bandpassBandwidth, setBandpassBandwidth] = useState(2.0); // Default Q value
+
   // Detect mobile devices
   useEffect(() => {
     const checkMobile = () => {
@@ -516,6 +519,31 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                       {isSubHitPlaybackEnabled ? "Sub-Hits Enabled" : "Continuous Play"}
                     </Label>
                   </div>
+              )}
+
+              {/* Add Bandwidth Control for Bandpassed Noise Mode */}
+              {activeGrid === "dot" && dotGridAudio.getSoundMode() === 'bandpassed' && (
+                <div className="mt-4 space-y-2">
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-muted-foreground">Bandwidth</span>
+                    <span className="text-muted-foreground">Q: {bandpassBandwidth.toFixed(1)}</span>
+                  </div>
+                  <Slider
+                    value={[bandpassBandwidth]}
+                    min={0.5}
+                    max={10.0}
+                    step={0.1}
+                    onValueChange={(value) => {
+                      setBandpassBandwidth(value[0]);
+                      dotGridAudio.setBandpassBandwidth(value[0]);
+                    }}
+                    className="w-full"
+                  />
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>Wide</span>
+                    <span>Narrow</span>
+                  </div>
+                </div>
               )}
 
               {/* UI for selecting glyph shape when Line Tool is active */} 

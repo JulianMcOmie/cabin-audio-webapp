@@ -308,7 +308,7 @@ export function GlyphGrid({ isPlaying, disabled = false, glyphType = 'triangle' 
           dotX = v1_rotated_canvas.x;
           dotY = v1_rotated_canvas.y;
         } else {
-          let currentPerimeterPos = pathPosition * totalPerimeter;
+          const currentPerimeterPos = pathPosition * totalPerimeter;
           if (currentPerimeterPos <= len12) {
             const segmentPos = currentPerimeterPos / len12;
             dotX = v1_rotated_canvas.x + segmentPos * (v2_rotated_canvas.x - v1_rotated_canvas.x);

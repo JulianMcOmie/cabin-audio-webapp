@@ -263,8 +263,6 @@ class GlyphGridAudioPlayer {
       return
     }
     
-    // Store previous position to detect hit crossing
-    const previousPosition = this.pathPosition
     
     // Calculate new position based on playback mode
     if (this.playbackMode === PlaybackMode.SWEEP) {
@@ -420,7 +418,7 @@ class GlyphGridAudioPlayer {
         x = v1.x;
         y = v1.y;
       } else {
-        let currentPerimeterPos = position * totalPerimeter;
+        const currentPerimeterPos = position * totalPerimeter;
 
         if (currentPerimeterPos <= len12) {
           const segmentPos = currentPerimeterPos / len12;

@@ -222,12 +222,10 @@ class PositionedAudioService {
     let slopedNoiseGenerator: SlopedPinkNoiseGenerator | null = null;
     let bandpassedNoiseGenerator: BandpassedNoiseGenerator | null = null;
     let sineToneGenerator: SineToneGenerator | null = null;
-    let source: AudioBufferSourceNode;
-    let pinkNoiseBuffer: AudioBuffer;
+    const pinkNoiseBuffer: AudioBuffer = this._generateSinglePinkNoiseBuffer();
 
     // Always create a source and buffer for consistency (some modes might not use it)
-    pinkNoiseBuffer = this._generateSinglePinkNoiseBuffer();
-    source = this.ctx.createBufferSource();
+    const source = this.ctx.createBufferSource();
     source.buffer = pinkNoiseBuffer;
 
     if (this.currentSoundMode === SoundMode.BandpassedNoise) {
@@ -293,8 +291,8 @@ class PositionedAudioService {
     point.envelopeGain.gain.setValueAtTime(ENVELOPE_MIN_GAIN, this.ctx.currentTime);
     try {
       point.source.stop();
-    } catch (e) { 
-      console.log(`Error stopping source for point ${id}:`, e);
+    } catch {
+      // Ignore stop errors
     }
     point.source.disconnect();
     
@@ -440,6 +438,15 @@ class PositionedAudioService {
 
   public setSubHitAdsrEnabled(enabled: boolean): void { // Renamed from setEnvelopeEnabled
     this.subHitAdsrEnabled = enabled;
+  }
+
+  public setBandpassBandwidth(qValue: number): void {
+    // Update bandwidth for all active bandpassed noise generators
+    this.audioPoints.forEach((point) => {
+      if (point.bandpassedNoiseGenerator) {
+        point.bandpassedNoiseGenerator.setBandpassQ(qValue);
+      }
+    });
   }
 
   // Add method to handle distortion gain -- Now delegates to service
@@ -898,6 +905,10 @@ class DotGridAudioPlayer {
   private isContinuousSimultaneousMode(): boolean {
     return !this.audioService.isSubHitPlaybackEnabled();
   }
+
+  public setBandpassBandwidth(qValue: number): void {
+    this.audioService.setBandpassBandwidth(qValue);
+  }
 }
 
 class SineToneGenerator {
@@ -931,7 +942,7 @@ class SineToneGenerator {
   public dispose(): void {
     try {
       this.oscillator.stop();
-    } catch (e) {
+    } catch {
       // Oscillator might already be stopped
     }
     this.oscillator.disconnect();
@@ -1109,6 +1120,14 @@ export function setBandpassedNoiseMode(enabled: boolean): void {
 export function isBandpassedNoiseMode(): boolean {
   const player = DotGridAudioPlayer.getInstance();
   return player.isBandpassedNoiseMode();
+}
+
+/**
+ * Set the bandwidth (Q value) for bandpassed noise
+ */
+export function setBandpassBandwidth(qValue: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setBandpassBandwidth(qValue);
 }
 
 // Export the SoundMode enum for use in UI
