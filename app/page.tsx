@@ -12,6 +12,7 @@ import { PricingModal } from "@/components/pricing-modal"
 import { MobileView } from "@/components/mobile-view"
 import { ProfilePage } from "@/components/profile-page"
 import { SignupModal } from "@/components/signup-modal"
+import { ABTestingComponent } from "@/components/experiments/ABTestingComponent"
 // import { usePlayerStore } from "@/lib/stores"
 
 type TabType = "eq" | "library" | "export" | "desktop" | "mobile" | "profile" | "experiments";
@@ -105,9 +106,14 @@ export default function Home() {
               ) : activeTab === "profile" ? (
                 <ProfilePage />
               ) : activeTab === "experiments" ? (
-                <div className="p-4">
-                  <h2 className="text-2xl font-bold mb-4">Experiments</h2>
-                  <p className="text-muted-foreground">Experimental features will be available here.</p>
+                <div className="space-y-6">
+                  <div>
+                    <h2 className="text-3xl font-bold tracking-tight">Experiments</h2>
+                    <p className="text-muted-foreground">
+                      Experimental audio testing features for research and development.
+                    </p>
+                  </div>
+                  <ABTestingComponent />
                 </div>
               ) : (
                 <MobileView />

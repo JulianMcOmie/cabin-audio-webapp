@@ -1,0 +1,224 @@
+"use client"
+
+import { useState, useEffect, useRef } from "react"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Play, Square, RotateCcw } from "lucide-react"
+import * as abTestingAudio from "@/lib/audio/abTestingAudio"
+
+interface ABTestingComponentProps {
+  disabled?: boolean
+}
+
+export function ABTestingComponent({ disabled = false }: ABTestingComponentProps) {
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [currentlyPlaying, setCurrentlyPlaying] = useState<'A' | 'B' | 'none'>('none')
+  const [selectedAnswer, setSelectedAnswer] = useState<'A' | 'B' | null>(null)
+  const [hasAnswered, setHasAnswered] = useState(false)
+  const audioPlayerRef = useRef<ReturnType<typeof abTestingAudio.getABTestingAudioPlayer> | null>(null)
+  const animationFrameRef = useRef<number | null>(null)
+
+  // Initialize audio player
+  useEffect(() => {
+    audioPlayerRef.current = abTestingAudio.getABTestingAudioPlayer()
+    audioPlayerRef.current.initialize()
+
+    return () => {
+      if (audioPlayerRef.current) {
+        abTestingAudio.cleanupABTestingAudioPlayer()
+      }
+    }
+  }, [])
+
+  // Update currently playing status
+  useEffect(() => {
+    if (!isPlaying) {
+      setCurrentlyPlaying('none')
+      return
+    }
+
+    const updatePlayingStatus = () => {
+      if (audioPlayerRef.current) {
+        const playing = audioPlayerRef.current.getCurrentlyPlaying()
+        setCurrentlyPlaying(playing)
+      }
+      
+      if (isPlaying) {
+        animationFrameRef.current = requestAnimationFrame(updatePlayingStatus)
+      }
+    }
+
+    updatePlayingStatus()
+
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current)
+      }
+    }
+  }, [isPlaying])
+
+  const handlePlayPause = () => {
+    if (disabled) return
+    
+    const newPlayingState = !isPlaying
+    setIsPlaying(newPlayingState)
+    
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.setPlaying(newPlayingState)
+    }
+  }
+
+  const handleAnswer = (answer: 'A' | 'B') => {
+    if (hasAnswered) return
+    
+    setSelectedAnswer(answer)
+    setHasAnswered(true)
+    
+    // Stop playback when answered
+    if (isPlaying) {
+      setIsPlaying(false)
+      if (audioPlayerRef.current) {
+        audioPlayerRef.current.setPlaying(false)
+      }
+    }
+  }
+
+  const handleReset = () => {
+    setSelectedAnswer(null)
+    setHasAnswered(false)
+    setIsPlaying(false)
+    setCurrentlyPlaying('none')
+    
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.setPlaying(false)
+      // Reinitialize to reset audio state
+      audioPlayerRef.current.initialize()
+    }
+  }
+
+  const getSoundBoxClass = (soundId: 'A' | 'B') => {
+    const baseClass = "h-32 flex items-center justify-center text-2xl font-bold border-2 rounded-lg transition-all duration-200 cursor-pointer"
+    
+    if (hasAnswered) {
+      if (selectedAnswer === soundId) {
+        return `${baseClass} bg-green-100 border-green-500 text-green-700`
+      } else {
+        return `${baseClass} bg-gray-50 border-gray-200 text-gray-400`
+      }
+    }
+    
+    if (currentlyPlaying === soundId) {
+      return `${baseClass} bg-blue-100 border-blue-500 text-blue-700 animate-pulse`
+    }
+    
+    return `${baseClass} bg-gray-50 border-gray-300 text-gray-600 hover:bg-gray-100 hover:border-gray-400`
+  }
+
+  return (
+    <Card className="w-full max-w-2xl mx-auto">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+          A/B Audio Comparison
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Listen to both sounds and select which one sounds higher in pitch.
+        </p>
+      </CardHeader>
+      
+      <CardContent className="space-y-6">
+        {/* Control Panel */}
+        <div className="flex items-center justify-center gap-4">
+          <Button
+            onClick={handlePlayPause}
+            disabled={disabled || hasAnswered}
+            variant={isPlaying ? "secondary" : "default"}
+            size="lg"
+            className="min-w-[120px]"
+          >
+            {isPlaying ? (
+              <>
+                <Square className="w-4 h-4 mr-2" />
+                Stop
+              </>
+            ) : (
+              <>
+                <Play className="w-4 h-4 mr-2" />
+                Start Test
+              </>
+            )}
+          </Button>
+          
+          <Button
+            onClick={handleReset}
+            variant="outline"
+            size="lg"
+            disabled={disabled}
+          >
+            <RotateCcw className="w-4 h-4 mr-2" />
+            Reset
+          </Button>
+        </div>
+
+        {/* Sound Boxes */}
+        <div className="grid grid-cols-2 gap-6">
+          <div 
+            className={getSoundBoxClass('A')}
+            onClick={() => !hasAnswered && handleAnswer('A')}
+          >
+            Sound A
+            {currentlyPlaying === 'A' && (
+              <div className="ml-2 w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+            )}
+          </div>
+          
+          <div 
+            className={getSoundBoxClass('B')}
+            onClick={() => !hasAnswered && handleAnswer('B')}
+          >
+            Sound B
+            {currentlyPlaying === 'B' && (
+              <div className="ml-2 w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+            )}
+          </div>
+        </div>
+
+        {/* Instructions */}
+        <div className="text-center space-y-2">
+          {!isPlaying && !hasAnswered && (
+            <p className="text-sm text-muted-foreground">
+              Click &ldquo;Start Test&rdquo; to begin listening to the alternating sounds
+            </p>
+          )}
+          
+          {isPlaying && !hasAnswered && (
+            <p className="text-sm text-blue-600 font-medium">
+              Currently playing: Sound {currentlyPlaying}
+              <br />
+              <span className="text-muted-foreground">
+                Click on the sound box that sounds higher when you&rsquo;re ready to answer
+              </span>
+            </p>
+          )}
+          
+          {hasAnswered && (
+            <div className="space-y-2">
+              <p className="text-sm text-green-600 font-medium">
+                You selected: Sound {selectedAnswer} sounds higher
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Click &ldquo;Reset&rdquo; to try again
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Status Information */}
+        <div className="text-xs text-muted-foreground text-center space-y-1">
+          <p>Each sound plays 4 times before switching to the other</p>
+          <p>Both sounds are currently identical pink noise (EQ filtering coming soon)</p>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
