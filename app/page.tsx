@@ -14,7 +14,7 @@ import { ProfilePage } from "@/components/profile-page"
 import { SignupModal } from "@/components/signup-modal"
 // import { usePlayerStore } from "@/lib/stores"
 
-type TabType = "eq" | "library" | "export" | "desktop" | "mobile" | "profile";
+type TabType = "eq" | "library" | "export" | "desktop" | "mobile" | "profile" | "experiments";
 type TabHistory = Array<TabType>;
 
 export default function Home() {
@@ -104,6 +104,11 @@ export default function Home() {
                 <InstallView />
               ) : activeTab === "profile" ? (
                 <ProfilePage />
+              ) : activeTab === "experiments" ? (
+                <div className="p-4">
+                  <h2 className="text-2xl font-bold mb-4">Experiments</h2>
+                  <p className="text-muted-foreground">Experimental features will be available here.</p>
+                </div>
               ) : (
                 <MobileView />
               )}

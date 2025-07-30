@@ -39,6 +39,8 @@
     --purple-light: 175 80% 90%;
     --red: 175 80% 40%;
     --red-light: 175 80% 90%;
+    --green: 142 76% 36%;
+    --green-light: 142 76% 85%;
 
     --radius: 0.5rem;
   }
@@ -79,6 +81,8 @@
     --purple-light: 175 70% 20%;
     --red: 175 70% 50%;
     --red-light: 175 70% 20%;
+    --green: 142 76% 50%;
+    --green-light: 142 76% 20%;
   }
 }
 
@@ -115,6 +119,10 @@
   color: hsl(var(--red));
 }
 
+.text-green {
+  color: hsl(var(--green));
+}
+
 .bg-electric-blue {
   background-color: hsl(var(--electric-blue));
 }
@@ -139,6 +147,14 @@
   background-color: hsl(var(--red-light));
 }
 
+.bg-green {
+  background-color: hsl(var(--green));
+}
+
+.bg-green-light {
+  background-color: hsl(var(--green-light));
+}
+
 .hover-electric-blue:hover {
   color: hsl(var(--electric-blue));
 }
@@ -151,6 +167,10 @@
   color: hsl(var(--red));
 }
 
+.hover-green:hover {
+  color: hsl(var(--green));
+}
+
 .ring-electric-blue {
   --tw-ring-color: hsl(var(--electric-blue));
 }
@@ -161,6 +181,10 @@
 
 .ring-red {
   --tw-ring-color: hsl(var(--red));
+}
+
+.ring-green {
+  --tw-ring-color: hsl(var(--green));
 }
 
 /* Custom slider styles */
