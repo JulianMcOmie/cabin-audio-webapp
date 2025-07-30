@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Play, Square, RotateCcw } from "lucide-react"
 import * as abTestingAudio from "@/lib/audio/abTestingAudio"
+import { FFTVisualizer } from "@/components/audio/FFTVisualizer"
 
 interface ABTestingComponentProps {
   disabled?: boolean
@@ -15,6 +16,7 @@ export function ABTestingComponent({ disabled = false }: ABTestingComponentProps
   const [currentlyPlaying, setCurrentlyPlaying] = useState<'A' | 'B' | 'none'>('none')
   const [selectedAnswer, setSelectedAnswer] = useState<'A' | 'B' | null>(null)
   const [hasAnswered, setHasAnswered] = useState(false)
+  const [analyzerNode, setAnalyzerNode] = useState<AnalyserNode | null>(null)
   const audioPlayerRef = useRef<ReturnType<typeof abTestingAudio.getABTestingAudioPlayer> | null>(null)
   const animationFrameRef = useRef<number | null>(null)
 
@@ -22,6 +24,10 @@ export function ABTestingComponent({ disabled = false }: ABTestingComponentProps
   useEffect(() => {
     audioPlayerRef.current = abTestingAudio.getABTestingAudioPlayer()
     audioPlayerRef.current.initialize()
+    
+    // Get analyzer node for FFT visualization
+    const analyzer = audioPlayerRef.current.getAnalyzerNode()
+    setAnalyzerNode(analyzer)
 
     return () => {
       if (audioPlayerRef.current) {
@@ -57,14 +63,14 @@ export function ABTestingComponent({ disabled = false }: ABTestingComponentProps
     }
   }, [isPlaying])
 
-  const handlePlayPause = () => {
+  const handlePlayPause = async () => {
     if (disabled) return
     
     const newPlayingState = !isPlaying
     setIsPlaying(newPlayingState)
     
     if (audioPlayerRef.current) {
-      audioPlayerRef.current.setPlaying(newPlayingState)
+      await audioPlayerRef.current.setPlaying(newPlayingState)
     }
   }
 
@@ -115,18 +121,19 @@ export function ABTestingComponent({ disabled = false }: ABTestingComponentProps
   }
 
   return (
-    <Card className="w-full max-w-2xl mx-auto">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
-          A/B Audio Comparison
-        </CardTitle>
-        <p className="text-sm text-muted-foreground">
-          Listen to both sounds and select which one sounds higher in pitch.
-        </p>
-      </CardHeader>
-      
-      <CardContent className="space-y-6">
+    <div className="space-y-6">
+      <Card className="w-full max-w-2xl mx-auto">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+            A/B Audio Comparison
+          </CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Listen to both sounds and select which one sounds higher in pitch.
+          </p>
+        </CardHeader>
+        
+        <CardContent className="space-y-6">
         {/* Control Panel */}
         <div className="flex items-center justify-center gap-4">
           <Button
@@ -218,7 +225,32 @@ export function ABTestingComponent({ disabled = false }: ABTestingComponentProps
           <p>Each sound plays 4 times before switching to the other</p>
           <p>Both sounds are currently identical pink noise (EQ filtering coming soon)</p>
         </div>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+
+      {/* FFT Visualization */}
+      <Card className="w-full max-w-2xl mx-auto">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+            Audio Spectrum Analysis
+          </CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Real-time frequency spectrum of the audio passing through the experiments.
+          </p>
+        </CardHeader>
+        
+        <CardContent>
+          <div className="bg-gray-50 rounded-lg p-4">
+            <FFTVisualizer 
+              analyser={analyzerNode} 
+              width={600} 
+              height={200}
+              className="w-full"
+            />
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   )
 }

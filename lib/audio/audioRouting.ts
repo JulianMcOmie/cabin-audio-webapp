@@ -13,20 +13,27 @@ class AudioRouting {
   
   // Initialize audio routing
   private initialize(): void {
+    console.log('🎵 [Audio Routing] Initializing audio routing...');
     // Get the audio context destination (speakers)
     this.destinationNode = audioContext.getAudioContext().destination;
+    console.log('🎵 [Audio Routing] Got audio context destination');
     
     // Create an analyser node for visualizations
     this.analyserNode = audioContext.createAnalyser();
     this.analyserNode.fftSize = 2048;
+    console.log(`🎵 [Audio Routing] Created analyser node with FFT size: ${this.analyserNode.fftSize}`);
     
     // Connect EQ processor output to analyser
-    eqProcessor.getEQProcessor().getOutputNode().connect(this.analyserNode);
+    const eqOutput = eqProcessor.getEQProcessor().getOutputNode();
+    eqOutput.connect(this.analyserNode);
+    console.log('🎵 [Audio Routing] Connected EQ processor output to analyser');
     
     // Connect analyser to destination
     this.analyserNode.connect(this.destinationNode);
+    console.log('🎵 [Audio Routing] Connected analyser to destination');
     
     this.isConnected = true;
+    console.log('🎵 [Audio Routing] Full audio routing chain: EQ Output -> Analyser -> Speakers');
   }
   
   // Get the analyser node for visualizations

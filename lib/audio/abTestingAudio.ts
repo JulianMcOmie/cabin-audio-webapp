@@ -1,5 +1,6 @@
 import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
+import * as audioRouting from './audioRouting';
 import { useEQProfileStore } from '../stores';
 
 // Constants based on dotGridAudio values but separate for A/B testing
@@ -39,20 +40,27 @@ class ABTestingAudioPlayer {
   private isInitialized: boolean = false;
 
   private constructor() {
+    console.log('🎵 [AB Test] Creating AB Testing Audio Player...');
     this.ctx = audioContext.getAudioContext();
     this.outputGain = this.ctx.createGain();
     this.outputGain.gain.value = 1.0;
+    console.log('🎵 [AB Test] Created output gain node with gain: 1.0');
     
-    // Connect to EQ processor
+    // Connect to EQ processor for full processing chain and analyzer access
     const eq = eqProcessor.getEQProcessor();
-    this.outputGain.connect(eq.getInputNode());
+    const eqInput = eq.getInputNode();
+    this.outputGain.connect(eqInput);
+    console.log('🎵 [AB Test] Connected output gain to EQ processor input');
+    console.log('🎵 [AB Test] Full chain: AB Test Output -> EQ Input -> EQ Output -> Analyser -> Speakers');
     
     // Subscribe to distortion changes
     const initialDistortionGain = useEQProfileStore.getState().distortionGain;
     this.currentDistortionGain = initialDistortionGain;
+    console.log(`🎵 [AB Test] Initial distortion gain: ${initialDistortionGain}`);
     
     useEQProfileStore.subscribe((state) => {
       this.currentDistortionGain = state.distortionGain;
+      console.log(`🎵 [AB Test] Distortion gain updated: ${state.distortionGain}`);
     });
   }
 
@@ -64,6 +72,7 @@ class ABTestingAudioPlayer {
   }
 
   private generatePinkNoiseBuffer(): AudioBuffer {
+    console.log('🎵 [AB Test] Generating pink noise buffer...');
     const bufferSize = this.ctx.sampleRate * 2; // 2 seconds of noise
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
     const data = buffer.getChannelData(0);
@@ -93,13 +102,15 @@ class ABTestingAudioPlayer {
       data[i] *= normalizationFactor;
     }
     
+    console.log(`🎵 [AB Test] Pink noise buffer generated: ${bufferSize} samples, peak: ${peak.toFixed(4)}, normalization: ${normalizationFactor.toFixed(4)}`);
     return buffer;
   }
 
   private createSoundNodes(): ABSoundNodes {
+    console.log('🎵 [AB Test] Creating sound nodes...');
     const mainGain = this.ctx.createGain();
     const envelopeGain = this.ctx.createGain();
-    envelopeGain.gain.value = AB_ENVELOPE_MIN_GAIN;
+    envelopeGain.gain.value = AB_ENVELOPE_MAX_GAIN;
     
     const pinkNoiseBuffer = this.generatePinkNoiseBuffer();
     const source = this.ctx.createBufferSource();
@@ -115,7 +126,18 @@ class ABTestingAudioPlayer {
     const effectiveGain = AB_MASTER_GAIN * this.currentDistortionGain;
     mainGain.gain.setValueAtTime(effectiveGain, this.ctx.currentTime);
     
+    console.log(`🎵 [AB Test] Sound nodes created - Main gain: ${effectiveGain.toFixed(3)}, Envelope gain: ${AB_ENVELOPE_MAX_GAIN}`);
+    console.log('🎵 [AB Test] Connection chain: source -> mainGain -> envelopeGain -> outputGain -> EQ');
+    
     source.start();
+    console.log('🎵 [AB Test] Source started');
+    
+    // DEBUGGING: Test direct connection to speakers to verify audio works
+    const testGain = this.ctx.createGain();
+    testGain.gain.value = 0.1; // Low volume for safety
+    source.connect(testGain);
+    testGain.connect(this.ctx.destination);
+    console.log('🎵 [AB Test] DEBUGGING: Also connected source directly to speakers at low volume');
     
     return {
       source,
@@ -126,48 +148,39 @@ class ABTestingAudioPlayer {
   }
 
   public initialize(): void {
+    console.log('🎵 [AB Test] Initializing AB Testing Audio Player...');
     if (this.isInitialized) {
+      console.log('🎵 [AB Test] Already initialized, cleaning up first');
       this.cleanup();
     }
     
+    console.log('🎵 [AB Test] Creating sound A nodes...');
     this.soundA = this.createSoundNodes();
+    console.log('🎵 [AB Test] Creating sound B nodes...');
     this.soundB = this.createSoundNodes();
     this.isInitialized = true;
+    console.log('🎵 [AB Test] Initialization complete');
   }
 
   private scheduleEnvelope(nodes: ABSoundNodes, scheduledTime: number): void {
     const gainParam = nodes.envelopeGain.gain;
     gainParam.cancelScheduledValues(scheduledTime);
     
-    // Start just above zero for exponential curves
-    gainParam.setValueAtTime(0.001, scheduledTime);
-    
-    // Attack
-    gainParam.exponentialRampToValueAtTime(
-      AB_ENVELOPE_MAX_GAIN * 0.8,
-      scheduledTime + AB_ATTACK_S
-    );
-    
-    // Release
-    gainParam.exponentialRampToValueAtTime(
-      0.001,
-      scheduledTime + AB_ATTACK_S + AB_RELEASE_S
-    );
-    
-    // Ensure silence after release
-    gainParam.setValueAtTime(
-      AB_ENVELOPE_MIN_GAIN, 
-      scheduledTime + AB_ATTACK_S + AB_RELEASE_S + 0.001
-    );
+    // NO ENVELOPE - Just set to constant gain
+    gainParam.setValueAtTime(AB_ENVELOPE_MAX_GAIN, scheduledTime);
+    console.log(`🎵 [AB Test] Envelope disabled - constant gain: ${AB_ENVELOPE_MAX_GAIN}`);
   }
 
   private scheduleNextPlayback(): void {
     if (!this.isPlaying || !this.soundA || !this.soundB) {
+      console.log('🎵 [AB Test] Cannot schedule playback - not playing or nodes missing');
       return;
     }
 
     const currentTime = this.ctx.currentTime;
     const currentNodes = this.currentCycle === 'A' ? this.soundA : this.soundB;
+    
+    console.log(`🎵 [AB Test] Scheduling ${this.currentCycle} repetition ${this.currentRepetition + 1}/${AB_REPETITIONS}`);
     
     // Schedule this repetition
     this.scheduleEnvelope(currentNodes, currentTime);
@@ -178,6 +191,8 @@ class ABTestingAudioPlayer {
       // Switch to other sound after brief overlap
       this.currentCycle = this.currentCycle === 'A' ? 'B' : 'A';
       this.currentRepetition = 0;
+      
+      console.log(`🎵 [AB Test] Switching to sound ${this.currentCycle} after ${AB_REPETITIONS} repetitions`);
       
       // Schedule next cycle with overlap
       const nextCycleDelay = (AB_REPETITION_INTERVAL_S - AB_OVERLAP_S) * 1000;
@@ -193,20 +208,38 @@ class ABTestingAudioPlayer {
     }
   }
 
-  public setPlaying(playing: boolean): void {
+  public async setPlaying(playing: boolean): Promise<void> {
+    console.log(`🎵 [AB Test] setPlaying(${playing}) - current state: ${this.isPlaying}`);
+    console.log(`🎵 [AB Test] AudioContext state: ${this.ctx.state}`);
+    
     if (playing === this.isPlaying) return;
     
+    // CRITICAL: Resume audio context if suspended (browser policy)
+    if (this.ctx.state === 'suspended') {
+      console.log('🎵 [AB Test] AudioContext is suspended, resuming...');
+      try {
+        await this.ctx.resume();
+        console.log(`🎵 [AB Test] AudioContext resumed, new state: ${this.ctx.state}`);
+      } catch (error) {
+        console.error('🎵 [AB Test] Failed to resume AudioContext:', error);
+        return;
+      }
+    }
+    
     if (!this.isInitialized) {
+      console.log('🎵 [AB Test] Not initialized, calling initialize()');
       this.initialize();
     }
     
     this.isPlaying = playing;
     
     if (playing) {
+      console.log('🎵 [AB Test] Starting playback - resetting to sound A');
       this.currentCycle = 'A';
       this.currentRepetition = 0;
       this.scheduleNextPlayback();
     } else {
+      console.log('🎵 [AB Test] Stopping playback');
       if (this.cycleTimeoutId !== null) {
         clearTimeout(this.cycleTimeoutId);
         this.cycleTimeoutId = null;
@@ -220,6 +253,7 @@ class ABTestingAudioPlayer {
         const currentGain = Math.max(0.001, gainParam.value);
         gainParam.setValueAtTime(currentGain, currentTime);
         gainParam.exponentialRampToValueAtTime(0.001, currentTime + 0.01);
+        console.log('🎵 [AB Test] Fading out sound A');
       }
       
       if (this.soundB) {
@@ -229,6 +263,7 @@ class ABTestingAudioPlayer {
         const currentGain = Math.max(0.001, gainParam.value);
         gainParam.setValueAtTime(currentGain, currentTime);
         gainParam.exponentialRampToValueAtTime(0.001, currentTime + 0.01);
+        console.log('🎵 [AB Test] Fading out sound B');
       }
     }
   }
@@ -236,6 +271,11 @@ class ABTestingAudioPlayer {
   public getCurrentlyPlaying(): 'A' | 'B' | 'none' {
     if (!this.isPlaying) return 'none';
     return this.currentCycle;
+  }
+
+  public getAnalyzerNode(): AnalyserNode | null {
+    const routing = audioRouting.getAudioRouting();
+    return routing.getAnalyserNode();
   }
 
   private cleanup(): void {
