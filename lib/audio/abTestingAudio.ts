@@ -2,6 +2,7 @@ import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
 import * as audioRouting from './audioRouting';
 import { useEQProfileStore } from '../stores';
+import { EQBand } from '../models/EQBand';
 
 // Constants based on dotGridAudio values but separate for A/B testing
 const AB_ATTACK_S = 0.15; // Based on GLOBAL_STAGGER_ATTACK_S
@@ -14,6 +15,13 @@ const AB_OVERLAP_S = 0.1; // Brief overlap between A and B transitions
 const AB_MASTER_GAIN = 3.0; // Master gain for A/B testing
 const AB_ENVELOPE_MIN_GAIN = 0.0;
 const AB_ENVELOPE_MAX_GAIN = 1.0;
+
+// A/B EQ settings
+const AB_EQ_FREQUENCY = 6000; // 6kHz
+const AB_EQ_Q = 10; // Sharp Q for noticeable difference
+const AB_EQ_GAIN_A = 8; // +8dB boost for Sound A
+const AB_EQ_GAIN_B = -8; // -8dB cut for Sound B
+const AB_EQ_BAND_ID = 'ab-test-6khz';
 
 interface ABSoundNodes {
   source: AudioBufferSourceNode;
@@ -213,6 +221,9 @@ class ABTestingAudioPlayer {
     
     console.log(`🎵 [AB Test] Scheduling ${this.currentCycle} repetition ${this.currentRepetition + 1}/${AB_REPETITIONS}`);
     
+    // Update EQ for current sound
+    this.updateEQForCurrentSound();
+    
     // Schedule this repetition
     this.scheduleEnvelope(currentNodes, currentTime);
     
@@ -276,6 +287,9 @@ class ABTestingAudioPlayer {
         this.cycleTimeoutId = null;
       }
       
+      // Remove A/B EQ band when stopping
+      this.removeABEQBand();
+      
       // Fade out current sounds
       if (this.soundA) {
         const gainParam = this.soundA.envelopeGain.gain;
@@ -307,6 +321,30 @@ class ABTestingAudioPlayer {
   public getAnalyzerNode(): AnalyserNode | null {
     const routing = audioRouting.getAudioRouting();
     return routing.getAnalyserNode();
+  }
+
+  private updateEQForCurrentSound(): void {
+    const eq = eqProcessor.getEQProcessor();
+    const gain = this.currentCycle === 'A' ? AB_EQ_GAIN_A : AB_EQ_GAIN_B;
+    
+    const eqBand: EQBand = {
+      id: AB_EQ_BAND_ID,
+      frequency: AB_EQ_FREQUENCY,
+      gain: gain,
+      q: AB_EQ_Q,
+      type: 'peaking'
+    };
+    
+    console.log(`🎛️ [AB Test] Setting EQ for Sound ${this.currentCycle}: ${gain > 0 ? '+' : ''}${gain}dB at ${AB_EQ_FREQUENCY}Hz, Q=${AB_EQ_Q}`);
+    
+    // Update the EQ band using the existing API
+    eq.updateBand(eqBand);
+  }
+
+  private removeABEQBand(): void {
+    const eq = eqProcessor.getEQProcessor();
+    console.log(`🎛️ [AB Test] Removing A/B EQ band at ${AB_EQ_FREQUENCY}Hz`);
+    eq.removeBandByFrequency(AB_EQ_FREQUENCY);
   }
 
   private cleanup(): void {
