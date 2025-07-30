@@ -17,11 +17,9 @@ const AB_ENVELOPE_MIN_GAIN = 0.0;
 const AB_ENVELOPE_MAX_GAIN = 1.0;
 
 // A/B EQ settings
-const AB_EQ_FREQUENCY = 6000; // 6kHz
-const AB_EQ_Q = 10; // Sharp Q for noticeable difference
-const AB_EQ_GAIN_A = 8; // +8dB boost for Sound A
-const AB_EQ_GAIN_B = -8; // -8dB cut for Sound B
-const AB_EQ_BAND_ID = 'ab-test-6khz';
+const AB_EQ_Q = 20; // Thin Q for precise cuts
+const AB_EQ_GAIN_CUT = -18; // -18dB cuts for frequency removal
+const AB_EQ_BAND_ID_PREFIX = 'ab-test-band-';
 
 interface ABSoundNodes {
   source: AudioBufferSourceNode;
@@ -36,6 +34,10 @@ class ABTestingAudioPlayer {
   private outputGain: GainNode;
   private isPlaying: boolean = false;
   private currentDistortionGain: number = 1.0;
+  
+  // EQ frequency settings for A/B testing
+  private soundAFrequencies: number[] = [200, 800, 1600];
+  private soundBFrequencies: number[] = [3200, 6400, 12800];
   
   // Audio nodes for sounds A and B
   private soundA: ABSoundNodes | null = null;
@@ -287,8 +289,8 @@ class ABTestingAudioPlayer {
         this.cycleTimeoutId = null;
       }
       
-      // Remove A/B EQ band when stopping
-      this.removeABEQBand();
+      // Remove A/B EQ bands when stopping
+      this.removeAllABEQBands();
       
       // Fade out current sounds
       if (this.soundA) {
@@ -323,28 +325,49 @@ class ABTestingAudioPlayer {
     return routing.getAnalyserNode();
   }
 
-  private updateEQForCurrentSound(): void {
-    const eq = eqProcessor.getEQProcessor();
-    const gain = this.currentCycle === 'A' ? AB_EQ_GAIN_A : AB_EQ_GAIN_B;
-    
-    const eqBand: EQBand = {
-      id: AB_EQ_BAND_ID,
-      frequency: AB_EQ_FREQUENCY,
-      gain: gain,
-      q: AB_EQ_Q,
-      type: 'peaking'
-    };
-    
-    console.log(`🎛️ [AB Test] Setting EQ for Sound ${this.currentCycle}: ${gain > 0 ? '+' : ''}${gain}dB at ${AB_EQ_FREQUENCY}Hz, Q=${AB_EQ_Q}`);
-    
-    // Update the EQ band using the existing API
-    eq.updateBand(eqBand);
+  public setEQFrequencies(soundAFreqs: number[], soundBFreqs: number[]): void {
+    this.soundAFrequencies = [...soundAFreqs];
+    this.soundBFrequencies = [...soundBFreqs];
+    console.log(`🎛️ [AB Test] Updated EQ frequencies - A: [${soundAFreqs.join(', ')}]Hz, B: [${soundBFreqs.join(', ')}]Hz`);
   }
 
-  private removeABEQBand(): void {
+  private updateEQForCurrentSound(): void {
     const eq = eqProcessor.getEQProcessor();
-    console.log(`🎛️ [AB Test] Removing A/B EQ band at ${AB_EQ_FREQUENCY}Hz`);
-    eq.removeBandByFrequency(AB_EQ_FREQUENCY);
+    
+    // Remove all existing A/B test bands first
+    this.removeAllABEQBands();
+    
+    // Get frequencies to cut for current sound
+    const frequenciesToCut = this.currentCycle === 'A' ? this.soundAFrequencies : this.soundBFrequencies;
+    
+    console.log(`🎛️ [AB Test] Setting EQ for Sound ${this.currentCycle}: cutting [${frequenciesToCut.join(', ')}]Hz at -18dB, Q=${AB_EQ_Q}`);
+    
+    // Add EQ bands for each frequency to cut
+    frequenciesToCut.forEach((frequency, index) => {
+      const eqBand: EQBand = {
+        id: `${AB_EQ_BAND_ID_PREFIX}${this.currentCycle}-${index}`,
+        frequency: frequency,
+        gain: AB_EQ_GAIN_CUT,
+        q: AB_EQ_Q,
+        type: 'peaking'
+      };
+      
+      eq.updateBand(eqBand);
+    });
+  }
+
+  private removeAllABEQBands(): void {
+    const eq = eqProcessor.getEQProcessor();
+    
+    // Remove all A bands
+    this.soundAFrequencies.forEach((frequency) => {
+      eq.removeBandByFrequency(frequency);
+    });
+    
+    // Remove all B bands  
+    this.soundBFrequencies.forEach((frequency) => {
+      eq.removeBandByFrequency(frequency);
+    });
   }
 
   private cleanup(): void {

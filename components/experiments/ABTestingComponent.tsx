@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Play, Square, RotateCcw } from "lucide-react"
 import * as abTestingAudio from "@/lib/audio/abTestingAudio"
 import { FFTVisualizer } from "@/components/audio/FFTVisualizer"
+import { ABEQControlComponent } from "./ABEQControlComponent"
 
 interface ABTestingComponentProps {
   disabled?: boolean
@@ -17,6 +18,8 @@ export function ABTestingComponent({ disabled = false }: ABTestingComponentProps
   const [selectedAnswer, setSelectedAnswer] = useState<'A' | 'B' | null>(null)
   const [hasAnswered, setHasAnswered] = useState(false)
   const [analyzerNode, setAnalyzerNode] = useState<AnalyserNode | null>(null)
+  const [soundAFreqs, setSoundAFreqs] = useState<number[]>([200, 800, 1600])
+  const [soundBFreqs, setSoundBFreqs] = useState<number[]>([3200, 6400, 12800])
   const audioPlayerRef = useRef<ReturnType<typeof abTestingAudio.getABTestingAudioPlayer> | null>(null)
   const animationFrameRef = useRef<number | null>(null)
 
@@ -24,6 +27,9 @@ export function ABTestingComponent({ disabled = false }: ABTestingComponentProps
   useEffect(() => {
     audioPlayerRef.current = abTestingAudio.getABTestingAudioPlayer()
     audioPlayerRef.current.initialize()
+    
+    // Set initial EQ frequencies
+    audioPlayerRef.current.setEQFrequencies(soundAFreqs, soundBFreqs)
     
     // Get analyzer node for FFT visualization
     const analyzer = audioPlayerRef.current.getAnalyzerNode()
@@ -34,7 +40,7 @@ export function ABTestingComponent({ disabled = false }: ABTestingComponentProps
         abTestingAudio.cleanupABTestingAudioPlayer()
       }
     }
-  }, [])
+  }, [soundAFreqs, soundBFreqs])
 
   // Update currently playing status
   useEffect(() => {
@@ -99,6 +105,16 @@ export function ABTestingComponent({ disabled = false }: ABTestingComponentProps
       audioPlayerRef.current.setPlaying(false)
       // Reinitialize to reset audio state
       audioPlayerRef.current.initialize()
+    }
+  }
+
+  const handleFrequenciesChange = (newSoundAFreqs: number[], newSoundBFreqs: number[]) => {
+    setSoundAFreqs(newSoundAFreqs)
+    setSoundBFreqs(newSoundBFreqs)
+    
+    // Update audio player with new frequencies if it exists
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.setEQFrequencies(newSoundAFreqs, newSoundBFreqs)
     }
   }
 
@@ -251,6 +267,12 @@ export function ABTestingComponent({ disabled = false }: ABTestingComponentProps
           </div>
         </CardContent>
       </Card>
+
+      {/* EQ Control Component */}
+      <ABEQControlComponent 
+        disabled={disabled || isPlaying}
+        onFrequenciesChange={handleFrequenciesChange}
+      />
     </div>
   )
 }
