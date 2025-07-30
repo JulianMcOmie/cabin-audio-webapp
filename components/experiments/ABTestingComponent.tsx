@@ -121,7 +121,7 @@ export function ABTestingComponent({ disabled = false }: ABTestingComponentProps
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-32">
       <Card className="w-full max-w-2xl mx-auto">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">

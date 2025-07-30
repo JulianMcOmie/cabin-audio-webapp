@@ -5,11 +5,11 @@ import { useEQProfileStore } from '../stores';
 import { EQBand } from '../models/EQBand';
 
 // Constants based on dotGridAudio values but separate for A/B testing
-const AB_ATTACK_S = 0.15; // Based on GLOBAL_STAGGER_ATTACK_S
+const AB_ATTACK_S = 0.3; // Twice as slow as original 0.15s
 const AB_RELEASE_S = 0.5; // Based on GLOBAL_STAGGER_RELEASE_S  
-const AB_REPETITION_INTERVAL_S = 0.2; // Based on DOT_REPETITION_INTERVAL_S
+const AB_REPETITION_INTERVAL_S = 1.0; // Longer than envelope duration (0.3 + 0.5 = 0.8s)
 const AB_REPETITIONS = 4; // Number of times each sound repeats
-const AB_OVERLAP_S = 0.1; // Brief overlap between A and B transitions
+const AB_OVERLAP_S = 0.0; // No overlap between A and B transitions
 
 // Volume and gain settings
 const AB_MASTER_GAIN = 3.0; // Master gain for A/B testing
