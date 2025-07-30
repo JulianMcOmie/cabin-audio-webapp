@@ -132,19 +132,19 @@ class ABTestingAudioPlayer {
     source.start();
     console.log('🎵 [AB Test] Source started');
     
-    // DEBUGGING: Test direct connection to speakers to verify audio works
+    // DEBUGGING: Test connection through envelope gain to analyser
     const testGain = this.ctx.createGain();
     testGain.gain.value = 0.1; // Low volume for safety
     const analyser = audioRouting.getAudioRouting().getAnalyserNode();
     if (analyser) {
-      source.connect(testGain);
+      envelopeGain.connect(testGain);
       testGain.connect(analyser);
       // Analyser is already connected to destination via audioRouting
-      console.log('🎵 [AB Test] DEBUGGING: Connected source through analyser to speakers at low volume');
+      console.log('🎵 [AB Test] DEBUGGING: Connected envelope gain through analyser to speakers at low volume');
     } else {
-      source.connect(testGain);
+      envelopeGain.connect(testGain);
       testGain.connect(this.ctx.destination);
-      console.log('🎵 [AB Test] DEBUGGING: Connected source directly to speakers at low volume (no analyser)');
+      console.log('🎵 [AB Test] DEBUGGING: Connected envelope gain directly to speakers at low volume (no analyser)');
     }
     
     return {
