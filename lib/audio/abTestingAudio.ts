@@ -132,19 +132,22 @@ class ABTestingAudioPlayer {
     source.start();
     console.log('🎵 [AB Test] Source started');
     
-    // DEBUGGING: Test connection through envelope gain to analyser
+    // DEBUGGING: Test connection through full EQ chain
     const testGain = this.ctx.createGain();
     testGain.gain.value = 0.1; // Low volume for safety
+    const eq = eqProcessor.getEQProcessor();
     const analyser = audioRouting.getAudioRouting().getAnalyserNode();
     if (analyser) {
-      envelopeGain.connect(testGain);
+      this.outputGain.connect(eq.getInputNode());
+      eq.getOutputNode().connect(testGain);
       testGain.connect(analyser);
       // Analyser is already connected to destination via audioRouting
-      console.log('🎵 [AB Test] DEBUGGING: Connected envelope gain through analyser to speakers at low volume');
+      console.log('🎵 [AB Test] DEBUGGING: Connected through full EQ chain to analyser to speakers at low volume');
     } else {
-      envelopeGain.connect(testGain);
+      this.outputGain.connect(eq.getInputNode());
+      eq.getOutputNode().connect(testGain);
       testGain.connect(this.ctx.destination);
-      console.log('🎵 [AB Test] DEBUGGING: Connected envelope gain directly to speakers at low volume (no analyser)');
+      console.log('🎵 [AB Test] DEBUGGING: Connected through full EQ chain directly to speakers at low volume (no analyser)');
     }
     
     return {
