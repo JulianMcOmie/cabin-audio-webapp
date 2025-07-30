@@ -103,10 +103,10 @@ export function Sidebar({ activeTab, setActiveTab, onUpgradeClick, pushToHistory
               </Button>
               <Button
                 variant="ghost"
-                className={`w-full justify-start ${activeTab === "experiments" ? "bg-green-light text-green hover:bg-green-light hover:text-green" : ""}`}
+                className={`w-full justify-start ${activeTab === "experiments" ? "bg-electric-blue-light text-electric-blue hover:bg-electric-blue-light hover:text-electric-blue" : ""}`}
                 onClick={() => handleTabChange("experiments")}
               >
-                <FlaskConical className={`mr-2 h-4 w-4 ${activeTab === "experiments" ? "text-green" : ""}`} />
+                <FlaskConical className={`mr-2 h-4 w-4 ${activeTab === "experiments" ? "text-electric-blue" : ""}`} />
                 Experiments
               </Button>
             </div>
