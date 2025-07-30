@@ -48,7 +48,6 @@ const DOT_REPETITION_INTERVAL_S = 0.2; // Increased to accommodate envelope dura
 // Constants for bandpassed noise generator
 const BANDPASS_NOISE_SLOPE_DB_PER_OCT = -4.5; // Fixed slope for bandpassed noise
 const BANDPASS_CENTER_FREQ = 1000; // Hz, center frequency for bandpass filter
-const BANDPASS_Q_VALUE = 2.0; // Q value for the bandpass filter
 const BANDPASS_NOISE_OUTPUT_GAIN_SCALAR = 0.25; // Much louder output for bandpassed noise
 
 // Constants for sine tone generator
@@ -954,7 +953,8 @@ class BandpassedNoiseGenerator {
   private ctx: AudioContext;
   private inputGainNode: GainNode;
   private outputGainNode: GainNode;
-  private bandpassFilter: BiquadFilterNode;
+  private highpassFilter: BiquadFilterNode;
+  private lowpassFilter: BiquadFilterNode;
   private slopingFilter: SlopedPinkNoiseGenerator;
 
   constructor(audioCtx: AudioContext) {
@@ -967,16 +967,24 @@ class BandpassedNoiseGenerator {
     this.slopingFilter = new SlopedPinkNoiseGenerator(this.ctx);
     this.slopingFilter.setSlope(BANDPASS_NOISE_SLOPE_DB_PER_OCT);
 
-    // Create bandpass filter
-    this.bandpassFilter = this.ctx.createBiquadFilter();
-    this.bandpassFilter.type = 'bandpass';
-    this.bandpassFilter.frequency.value = BANDPASS_CENTER_FREQ;
-    this.bandpassFilter.Q.value = BANDPASS_Q_VALUE;
+    // Create sharp highpass filter
+    this.highpassFilter = this.ctx.createBiquadFilter();
+    this.highpassFilter.type = 'highpass';
+    this.highpassFilter.Q.value = 10; // Sharp filter
+    
+    // Create sharp lowpass filter
+    this.lowpassFilter = this.ctx.createBiquadFilter();
+    this.lowpassFilter.type = 'lowpass';
+    this.lowpassFilter.Q.value = 10; // Sharp filter
 
-    // Connect chain: input -> slopingFilter -> bandpassFilter -> output
+    // Set initial frequencies to create bandpass around center frequency
+    this.setBandpassFrequency(BANDPASS_CENTER_FREQ);
+
+    // Connect chain: input -> slopingFilter -> highpassFilter -> lowpassFilter -> output
     this.inputGainNode.connect(this.slopingFilter.getInputNode());
-    this.slopingFilter.getOutputNode().connect(this.bandpassFilter);
-    this.bandpassFilter.connect(this.outputGainNode);
+    this.slopingFilter.getOutputNode().connect(this.highpassFilter);
+    this.highpassFilter.connect(this.lowpassFilter);
+    this.lowpassFilter.connect(this.outputGainNode);
   }
 
   public getInputNode(): GainNode {
@@ -988,17 +996,30 @@ class BandpassedNoiseGenerator {
   }
 
   public setBandpassFrequency(frequency: number): void {
-    this.bandpassFilter.frequency.value = Math.max(20, Math.min(20000, frequency));
+    const centerFreq = Math.max(20, Math.min(20000, frequency));
+    // Calculate bandwidth based on current Q value (inverse relationship)
+    const bandwidth = centerFreq / this.highpassFilter.Q.value;
+    
+    // Set highpass and lowpass frequencies to create bandpass effect
+    this.highpassFilter.frequency.value = Math.max(20, centerFreq - bandwidth / 2);
+    this.lowpassFilter.frequency.value = Math.min(20000, centerFreq + bandwidth / 2);
   }
 
   public setBandpassQ(q: number): void {
-    this.bandpassFilter.Q.value = Math.max(0.1, Math.min(30, q));
+    const qValue = Math.max(0.1, Math.min(30, q));
+    this.highpassFilter.Q.value = qValue;
+    this.lowpassFilter.Q.value = qValue;
+    
+    // Recalculate frequencies with new Q value
+    const currentCenter = (this.highpassFilter.frequency.value + this.lowpassFilter.frequency.value) / 2;
+    this.setBandpassFrequency(currentCenter);
   }
 
   public dispose(): void {
     this.slopingFilter.dispose();
     this.inputGainNode.disconnect();
-    this.bandpassFilter.disconnect();
+    this.highpassFilter.disconnect();
+    this.lowpassFilter.disconnect();
     this.outputGainNode.disconnect();
   }
 }
