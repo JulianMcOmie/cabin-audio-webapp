@@ -110,7 +110,7 @@ class ABTestingAudioPlayer {
     console.log('🎵 [AB Test] Creating sound nodes...');
     const mainGain = this.ctx.createGain();
     const envelopeGain = this.ctx.createGain();
-    envelopeGain.gain.value = AB_ENVELOPE_MAX_GAIN;
+    envelopeGain.gain.value = AB_ENVELOPE_MIN_GAIN;
     
     const pinkNoiseBuffer = this.generatePinkNoiseBuffer();
     const source = this.ctx.createBufferSource();
@@ -126,7 +126,7 @@ class ABTestingAudioPlayer {
     const effectiveGain = AB_MASTER_GAIN * this.currentDistortionGain;
     mainGain.gain.setValueAtTime(effectiveGain, this.ctx.currentTime);
     
-    console.log(`🎵 [AB Test] Sound nodes created - Main gain: ${effectiveGain.toFixed(3)}, Envelope gain: ${AB_ENVELOPE_MAX_GAIN}`);
+    console.log(`🎵 [AB Test] Sound nodes created - Main gain: ${effectiveGain.toFixed(3)}, Envelope gain: ${AB_ENVELOPE_MIN_GAIN}`);
     console.log('🎵 [AB Test] Connection chain: source -> mainGain -> envelopeGain -> outputGain -> EQ');
     
     source.start();
@@ -177,9 +177,29 @@ class ABTestingAudioPlayer {
     const gainParam = nodes.envelopeGain.gain;
     gainParam.cancelScheduledValues(scheduledTime);
     
-    // NO ENVELOPE - Just set to constant gain
-    gainParam.setValueAtTime(AB_ENVELOPE_MAX_GAIN, scheduledTime);
-    console.log(`🎵 [AB Test] Envelope disabled - constant gain: ${AB_ENVELOPE_MAX_GAIN}`);
+    // Start just above zero for exponential curves
+    gainParam.setValueAtTime(0.001, scheduledTime);
+    
+    // Attack
+    const peakGain = AB_ENVELOPE_MAX_GAIN * 0.8;
+    gainParam.exponentialRampToValueAtTime(
+      peakGain,
+      scheduledTime + AB_ATTACK_S
+    );
+    
+    // Release
+    gainParam.exponentialRampToValueAtTime(
+      0.001,
+      scheduledTime + AB_ATTACK_S + AB_RELEASE_S
+    );
+    
+    // Ensure silence after release
+    gainParam.setValueAtTime(
+      AB_ENVELOPE_MIN_GAIN, 
+      scheduledTime + AB_ATTACK_S + AB_RELEASE_S + 0.001
+    );
+    
+    console.log(`🎵 [AB Test] Envelope scheduled: time=${scheduledTime.toFixed(3)}, peak=${peakGain.toFixed(3)}, attack=${AB_ATTACK_S}s, release=${AB_RELEASE_S}s`);
   }
 
   private scheduleNextPlayback(): void {
