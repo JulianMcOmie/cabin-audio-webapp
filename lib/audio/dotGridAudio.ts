@@ -1,6 +1,5 @@
 import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
-// import { getAudioPlayer } from './audioPlayer';
 import { useEQProfileStore } from '../stores';
 
 // Constants
@@ -20,30 +19,23 @@ const BAND_Q_VALUE = 1.5; // Q value for the bandpass filters (reduced from 6.0)
 const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
 
 // Target overall slopes
-const LOW_SLOPE_DB_PER_OCT = -9.0; // For low y positions (darker sound)
-const CENTER_SLOPE_DB_PER_OCT = -3.0; // For middle y positions
-const HIGH_SLOPE_DB_PER_OCT = 3.0; // For high y positions (brighter sound)
+const LOW_SLOPE_DB_PER_OCT = -10.5; // For low y positions (darker sound)
+const CENTER_SLOPE_DB_PER_OCT = -4.5; // For middle y positions
+const HIGH_SLOPE_DB_PER_OCT = 1.5; // For high y positions (brighter sound)
 const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of SlopedPinkNoiseGenerator (approx -12dB)
 
 // New constant for attenuation based on slope deviation from pink noise
 const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 3.8; // dB reduction per dB/octave deviation from -3dB/oct
 
-// Constants for sequential playback with click prevention
-// const DOT_DURATION_S = 1.0; // Each dot plays for this duration - REMOVING, duration now controlled by GLOBAL_STAGGER_RELEASE_S
-// const CLICK_PREVENTION_ENVELOPE_TIME = 0.005; // REMOVING - Replaced by ADSR for sub-hits
-
-// Constants for sub-hit ADSR playback - REMOVING, replaced by global stagger
-// const NUM_SUB_HITS = 4;
-// const SUB_HIT_INTERVAL_S = DOT_DURATION_S / NUM_SUB_HITS; // Approx 0.125s if DOT_DURATION_S is 0.5s
 
 // New constants for Global Staggered Mode (when subHitPlaybackEnabled is true)
 const GLOBAL_STAGGER_ATTACK_S = 0.15; // Slower, gentler attack
 const GLOBAL_STAGGER_RELEASE_S = 0.5; // Slower release for smoother fade
-const ALL_DOTS_STAGGER_INTERVAL_S = 0.5; // Stagger between each dot in the global sequence
+const ALL_DOTS_STAGGER_INTERVAL_S = 2.0; // Stagger between each dot in the global sequence
 
 // New constants for dot repetition
 const DOT_REPETITIONS = 4; // Number of times each dot repeats before moving to next
-const DOT_REPETITION_INTERVAL_S = 0.2; // Increased to accommodate envelope duration (0.15 + 0.25 = 0.4s)
+const DOT_REPETITION_INTERVAL_S = 0.8; // Increased to accommodate envelope duration (0.15 + 0.25 = 0.4s)
 
 // Constants for bandpassed noise generator
 const BANDPASS_NOISE_SLOPE_DB_PER_OCT = -4.5; // Fixed slope for bandpassed noise
@@ -53,12 +45,11 @@ const BANDPASS_NOISE_OUTPUT_GAIN_SCALAR = 0.25; // Much louder output for bandpa
 // Constants for sine tone generator
 const SINE_TONE_OUTPUT_GAIN_SCALAR = 0.15; // Output gain for sine tones
 
+
 // Analyzer settings
 const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
 const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
 
-// Volume pattern settings -- REMOVING
-// const VOLUME_PATTERN = [0, -12, -6, -12]; // The fixed pattern in dB: 0dB, -12dB, -6dB, -12dB
 
 // Enum for sound generation modes
 enum SoundMode {
@@ -81,7 +72,6 @@ interface PointAudioNodes {
   // New properties for sub-hit sequencing
   subHitCount: number;
   subHitTimerId: number | null;
-  // isPlaying: boolean; // Source starts on creation and loops, envelopeGain controls sound
 }
 
 class PositionedAudioService {
@@ -90,9 +80,9 @@ class PositionedAudioService {
   private outputGain: GainNode;
   private currentDistortionGain: number = 1.0;
   private currentBaseDbLevel: number = 0;
-  private subHitAdsrEnabled: boolean = true; // Renamed from envelopeEnabled
-  private subHitPlaybackEnabled: boolean = true; // New: Toggle for sub-hit mechanism
-  private currentSoundMode: SoundMode = SoundMode.SlopedNoise; // Current sound generation mode
+  private subHitAdsrEnabled: boolean = true;
+  private subHitPlaybackEnabled: boolean = true;
+  private currentSoundMode: SoundMode = SoundMode.SlopedNoise;
 
   constructor(audioContextInstance: AudioContext) {
     this.ctx = audioContextInstance;
@@ -136,23 +126,24 @@ class PositionedAudioService {
   }
 
   // More methods (addPoint, removePoint, activatePoint, etc.) will be added here later
-  public setDistortion(gain: number): void {
-    this.currentDistortionGain = Math.max(0, Math.min(1, gain));
-  }
 
   public setBaseVolumeDb(db: number): void {
     this.currentBaseDbLevel = db;
   }
 
-  public setSubHitAdsrMode(enabled: boolean): void { // Renamed from setEnvelopeMode
+  public setSubHitAdsrMode(enabled: boolean): void {
     this.subHitAdsrEnabled = enabled;
   }
 
-  public setSubHitPlaybackMode(enabled: boolean): void { // New method
+  public setSubHitPlaybackMode(enabled: boolean): void {
     this.subHitPlaybackEnabled = enabled;
   }
+  
+  public setDistortion(gain: number): void {
+    this.currentDistortionGain = Math.max(0, Math.min(1, gain));
+  }
 
-  public isSubHitPlaybackEnabled(): boolean { // New getter
+  public isSubHitPlaybackEnabled(): boolean {
     return this.subHitPlaybackEnabled;
   }
 
@@ -164,14 +155,6 @@ class PositionedAudioService {
     return this.currentSoundMode;
   }
 
-  // Legacy methods for backwards compatibility
-  public setBandpassedNoiseMode(enabled: boolean): void {
-    this.currentSoundMode = enabled ? SoundMode.BandpassedNoise : SoundMode.SlopedNoise;
-  }
-
-  public isBandpassedNoiseMode(): boolean {
-    return this.currentSoundMode === SoundMode.BandpassedNoise;
-  }
 
   private _schedulePointActivationSound(pointNode: PointAudioNodes, scheduledTime: number): void {
     const gainParam = pointNode.envelopeGain.gain;
@@ -309,7 +292,6 @@ class PositionedAudioService {
     point.mainGain.disconnect();
     point.envelopeGain.disconnect();
     point.panner.disconnect();
-    // point.pinkNoiseBuffer = null; // Buffer is managed by JS GC once source is gone
 
     this.audioPoints.delete(id);
   }
@@ -339,7 +321,6 @@ class PositionedAudioService {
         clearTimeout(point.subHitTimerId);
         point.subHitTimerId = null;
       }
-      // point.subHitCount = 0; // No longer relevant for this mode
 
       this._schedulePointActivationSound(point, activationTime);
     }
@@ -368,14 +349,12 @@ class PositionedAudioService {
   }
 
   public dispose(): void {
-    this.audioPoints.forEach((point, id) => { // Iterate over point object too
+    this.audioPoints.forEach((point, id) => {
         if (point.subHitTimerId !== null) {
             clearTimeout(point.subHitTimerId);
-            // point.subHitTimerId = null; // removePoint will handle the map deletion
         }
         this.removePoint(id);
     });
-    // this.audioPoints.forEach((_, id) => this.removePoint(id)); // Original line
     this.outputGain.disconnect();
   }
 
@@ -389,7 +368,7 @@ class PositionedAudioService {
       const t = (point.normalizedYPos - 0.5) * 2;
       targetOverallSlopeDbPerOctave = CENTER_SLOPE_DB_PER_OCT + t * (HIGH_SLOPE_DB_PER_OCT - CENTER_SLOPE_DB_PER_OCT);
     }
-    
+
     // Set slope on the appropriate generator (only for sloped noise, not bandpassed or sine)
     if (point.slopedNoiseGenerator) {
       point.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
@@ -435,9 +414,6 @@ class PositionedAudioService {
     point.mainGain.gain.setValueAtTime(effectiveMasterGain, this.ctx.currentTime);
   }
 
-  public setSubHitAdsrEnabled(enabled: boolean): void { // Renamed from setEnvelopeEnabled
-    this.subHitAdsrEnabled = enabled;
-  }
 
   public setBandpassBandwidth(qValue: number): void {
     // Update bandwidth for all active bandpassed noise generators
@@ -448,10 +424,6 @@ class PositionedAudioService {
     });
   }
 
-  // Add method to handle distortion gain -- Now delegates to service
-  private setDistortionGain(gain: number): void {
-    this.currentDistortionGain = Math.max(0, Math.min(1, gain));
-  }
 }
 
 class DotGridAudioPlayer {
@@ -460,18 +432,12 @@ class DotGridAudioPlayer {
   private activeDotKeys: Set<string> = new Set();
   private audioService: PositionedAudioService;
 
-  // Properties for sequential playback (now row-by-row) - REMOVING
-  // private orderedRowsToPlay: Array<{ rowIndex: number, dotKeys: string[] }> = [];
-  // private currentRowIndex: number = 0;
-  // private lastSwitchTime: number = 0;
-  // private currentRowStaggerTimeouts: number[] = [];
-  private loopTimeoutId: number | null = null; // New: For the main sequence loop
+  private loopTimeoutId: number | null = null;
 
   private gridSize: number = 3;
   private columnCount: number = COLUMNS;
   private preEQAnalyser: AnalyserNode | null = null;
   private preEQGain: GainNode | null = null;
-  // private animationFrameId: number | null = null; // REMOVING, rAF not used for global stagger
   
   private constructor() {
     this.audioService = new PositionedAudioService(audioContext.getAudioContext());
@@ -501,7 +467,6 @@ class DotGridAudioPlayer {
 
     if (columns !== undefined) {
       this.columnCount = columns;
-      // this.updateAllDotPanning(); // updateAllDotPanning relies on dot re-addition
     }
     
     // Update playback if playing
@@ -511,30 +476,6 @@ class DotGridAudioPlayer {
     }
   }
 
-  /**
-   * Update panning for all dots based on current column count
-   */
-  private updateAllDotPanning(): void {
-    // This method is tricky with the new service model.
-    // Panning is set when a point is added to PositionedAudioService.
-    // If columnCount changes, existing points in the service won't automatically update their pan.
-    // The current setGridSize -> updateDots flow (which removes/re-adds points) handles this.
-    // Thus, this specific method might be redundant or needs to trigger a re-add of all points.
-    // For now, let's rely on the setGridSize -> updateDots flow.
-    // If direct pan updates are needed without re-adding, PositionedAudioService would need a method like:
-    // updatePointPanning(id: string, newPanPosition: number)
-    // and DotGridAudioPlayer would iterate its activeDotKeys and call it.
-
-    // Old logic that accessed service internals (incorrect):
-    // this.audioService.audioPoints.forEach((nodes, dotKey) => {
-    //   const x = dotKey.split(',').map(Number)[0];
-    //   const panPosition = this.columnCount <= 1 ? 0 : (2 * (x / (this.columnCount - 1)) - 1);
-    //   if (nodes.panner) {
-    //      nodes.panner.pan.value = panPosition;
-    //   }
-    // });
-    console.warn("updateAllDotPanning called; panning updates now primarily occur when dots are re-added via updateDots after grid size change.")
-  }
 
   /**
    * Create and return a pre-EQ analyzer node
@@ -627,8 +568,6 @@ class DotGridAudioPlayer {
    * Reconnect all sources to include the analyzer in the signal chain
    */
   private reconnectAllSources(): void {
-    // Skip if no audio nodes -- This logic needs to adapt or be removed if preEQGain connects to service output
-    // if (this.audioNodes.size === 0) return;
     if (!this.preEQGain) return; // If no preEQGain, nothing to reconnect to it
 
     // Disconnect preEQGain from its current source(s)
@@ -663,13 +602,11 @@ class DotGridAudioPlayer {
     this.activeDotKeys = new Set(dots);
     
     const addedKeys: string[] = [];
-    // const removedKeys: string[] = []; // Not strictly needed for this logic path if removePoint deactivates
     
     // Remove dots that are no longer selected
     oldDotKeys.forEach(dotKey => {
       if (!this.activeDotKeys.has(dotKey)) {
         this.audioService.removePoint(dotKey); // removePoint also handles deactivation
-        // removedKeys.push(dotKey);
       }
     });
     
@@ -779,8 +716,6 @@ class DotGridAudioPlayer {
         }, loopDelayMs);
       }
     }
-    // No rAF loop needed. The sounds are scheduled with the Web Audio API.
-    // The main loop is handled by setTimeout scheduling startAllRhythms again.
   }
   
   private stopAllRhythmsInternalCleanup(): void {
@@ -790,19 +725,6 @@ class DotGridAudioPlayer {
       this.loopTimeoutId = null;
     }
 
-    // if (this.animationFrameId !== null) { // REMOVING rAF
-    //   cancelAnimationFrame(this.animationFrameId);
-    //   this.animationFrameId = null;
-    // }
-    // this.clearCurrentRowStaggerTimeouts(); // REMOVING row-based staggers
-    
-    // For the new global stagger, if activatePoint uses setTimeout for non-WebAudio things that need clearing,
-    // we would manage those timeouts (e.g., in this.globalStaggerTimeouts) and clear them here.
-    // However, _schedulePointActivationSound uses Web Audio's native scheduling which is managed via GainNode.cancelScheduledValues().
-    // DeactivateAllPoints should implicitly cancel these when it ramps gains down.
-    // If we were using setTimeout to trigger activatePoint itself, we'd clear them:
-    // this.globalStaggerTimeouts.forEach(clearTimeout); // REMOVING this array
-    // this.globalStaggerTimeouts = []; // REMOVING this array
   }
   
   /**
@@ -828,11 +750,6 @@ class DotGridAudioPlayer {
     this.setPlaying(false);
     this.stopAllRhythms();
     
-    // Ensure animation frames are cancelled - REMOVING rAF
-    // if (this.animationFrameId !== null) {
-    //   cancelAnimationFrame(this.animationFrameId);
-    //   this.animationFrameId = null;
-    // }
     
     // Clean up analyzer nodes
     if (this.preEQGain) {
@@ -881,25 +798,6 @@ class DotGridAudioPlayer {
     return this.audioService.getSoundMode();
   }
 
-  // Legacy methods for backwards compatibility
-  public setBandpassedNoiseMode(enabled: boolean): void {
-    this.audioService.setBandpassedNoiseMode(enabled);
-    
-    // If playing, need to recreate all audio points with new generator type
-    if (this.isPlaying && this.activeDotKeys.size > 0) {
-      const currentDots = new Set(this.activeDotKeys);
-      this.updateDots(currentDots, this.gridSize, this.columnCount);
-    }
-  }
-
-  public isBandpassedNoiseMode(): boolean {
-    return this.audioService.isBandpassedNoiseMode();
-  }
-
-  // Add method to handle distortion gain -- Now delegates to service
-  private setDistortionGain(gain: number): void {
-    this.audioService.setDistortion(gain); 
-  }
 
   private isContinuousSimultaneousMode(): boolean {
     return !this.audioService.isSubHitPlaybackEnabled();
@@ -953,8 +851,7 @@ class BandpassedNoiseGenerator {
   private ctx: AudioContext;
   private inputGainNode: GainNode;
   private outputGainNode: GainNode;
-  private highpassFilter: BiquadFilterNode;
-  private lowpassFilter: BiquadFilterNode;
+  private bandpassFilter: BiquadFilterNode;
   private slopingFilter: SlopedPinkNoiseGenerator;
 
   constructor(audioCtx: AudioContext) {
@@ -967,24 +864,16 @@ class BandpassedNoiseGenerator {
     this.slopingFilter = new SlopedPinkNoiseGenerator(this.ctx);
     this.slopingFilter.setSlope(BANDPASS_NOISE_SLOPE_DB_PER_OCT);
 
-    // Create sharp highpass filter
-    this.highpassFilter = this.ctx.createBiquadFilter();
-    this.highpassFilter.type = 'highpass';
-    this.highpassFilter.Q.value = 10; // Sharp filter
-    
-    // Create sharp lowpass filter
-    this.lowpassFilter = this.ctx.createBiquadFilter();
-    this.lowpassFilter.type = 'lowpass';
-    this.lowpassFilter.Q.value = 10; // Sharp filter
+    // Create bandpass filter
+    this.bandpassFilter = this.ctx.createBiquadFilter();
+    this.bandpassFilter.type = 'bandpass';
+    this.bandpassFilter.Q.value = 10; // Sharp filter
+    this.bandpassFilter.frequency.value = BANDPASS_CENTER_FREQ;
 
-    // Set initial frequencies to create bandpass around center frequency
-    this.setBandpassFrequency(BANDPASS_CENTER_FREQ);
-
-    // Connect chain: input -> slopingFilter -> highpassFilter -> lowpassFilter -> output
+    // Connect chain: input -> slopingFilter -> bandpassFilter -> output
     this.inputGainNode.connect(this.slopingFilter.getInputNode());
-    this.slopingFilter.getOutputNode().connect(this.highpassFilter);
-    this.highpassFilter.connect(this.lowpassFilter);
-    this.lowpassFilter.connect(this.outputGainNode);
+    this.slopingFilter.getOutputNode().connect(this.bandpassFilter);
+    this.bandpassFilter.connect(this.outputGainNode);
   }
 
   public getInputNode(): GainNode {
@@ -997,29 +886,18 @@ class BandpassedNoiseGenerator {
 
   public setBandpassFrequency(frequency: number): void {
     const centerFreq = Math.max(20, Math.min(20000, frequency));
-    // Calculate bandwidth based on current Q value (inverse relationship)
-    const bandwidth = centerFreq / this.highpassFilter.Q.value;
-    
-    // Set highpass and lowpass frequencies to create bandpass effect
-    this.highpassFilter.frequency.value = Math.max(20, centerFreq - bandwidth / 2);
-    this.lowpassFilter.frequency.value = Math.min(20000, centerFreq + bandwidth / 2);
+    this.bandpassFilter.frequency.value = centerFreq;
   }
 
   public setBandpassQ(q: number): void {
     const qValue = Math.max(0.1, Math.min(30, q));
-    this.highpassFilter.Q.value = qValue;
-    this.lowpassFilter.Q.value = qValue;
-    
-    // Recalculate frequencies with new Q value
-    const currentCenter = (this.highpassFilter.frequency.value + this.lowpassFilter.frequency.value) / 2;
-    this.setBandpassFrequency(currentCenter);
+    this.bandpassFilter.Q.value = qValue;
   }
 
   public dispose(): void {
     this.slopingFilter.dispose();
     this.inputGainNode.disconnect();
-    this.highpassFilter.disconnect();
-    this.lowpassFilter.disconnect();
+    this.bandpassFilter.disconnect();
     this.outputGainNode.disconnect();
   }
 }
@@ -1089,8 +967,6 @@ class SlopedPinkNoiseGenerator {
     this.outputGainNode.disconnect();
     this.bandFilters.forEach(filter => filter.disconnect());
     this.bandGains.forEach(gain => gain.disconnect());
-    // Nullify references if needed, though JS garbage collection should handle it
-    // once these nodes are no longer referenced elsewhere.
   }
 }
 
@@ -1123,24 +999,6 @@ export function setSoundMode(mode: SoundMode): void {
 export function getSoundMode(): SoundMode {
   const player = DotGridAudioPlayer.getInstance();
   return player.getSoundMode();
-}
-
-/**
- * Set bandpassed noise mode (true for bandpassed noise, false for sloped noise)
- * @deprecated Use setSoundMode instead
- */
-export function setBandpassedNoiseMode(enabled: boolean): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setBandpassedNoiseMode(enabled);
-}
-
-/**
- * Check if bandpassed noise mode is enabled
- * @deprecated Use getSoundMode instead
- */
-export function isBandpassedNoiseMode(): boolean {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.isBandpassedNoiseMode();
 }
 
 /**

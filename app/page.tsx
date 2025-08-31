@@ -13,6 +13,7 @@ import { MobileView } from "@/components/mobile-view"
 import { ProfilePage } from "@/components/profile-page"
 import { SignupModal } from "@/components/signup-modal"
 import { ABTestingComponent } from "@/components/experiments/ABTestingComponent"
+import { PinkNoiseBurstComponent } from "@/components/experiments/PinkNoiseBurstComponent"
 // import { usePlayerStore } from "@/lib/stores"
 
 type TabType = "eq" | "library" | "export" | "desktop" | "mobile" | "profile" | "experiments";
@@ -106,14 +107,19 @@ export default function Home() {
               ) : activeTab === "profile" ? (
                 <ProfilePage />
               ) : activeTab === "experiments" ? (
-                <div className="space-y-6">
+                <div className="space-y-8">
                   <div>
                     <h2 className="text-3xl font-bold tracking-tight">Experiments</h2>
                     <p className="text-muted-foreground">
                       Experimental audio testing features for research and development.
                     </p>
                   </div>
+                  
                   <ABTestingComponent />
+                  
+                  <div className="border-t border-border pt-8">
+                    <PinkNoiseBurstComponent />
+                  </div>
                 </div>
               ) : (
                 <MobileView />
