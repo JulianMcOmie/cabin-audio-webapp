@@ -264,25 +264,43 @@ export function NotchFilterNoiseGrid({
     if (now - lastBeatTimeRef.current >= BEAT_DURATION) {
       lastBeatTimeRef.current = now
 
-      // Play all columns
+      // Play all columns that have dots selected
       for (let col = 0; col < columnCount; col++) {
         const selectedRow = selectedDots.get(col)
 
         if (selectedRow !== undefined) {
           // This column has a selected dot
-          const isActiveColumn = col === activeColumn
-          const notchFreq = isActiveColumn ? null : getFrequencyForRow(selectedRow)
+          const notchFreq = getFrequencyForRow(selectedRow)
 
-          playColumnBurst(col, !isActiveColumn, notchFreq)
+          // For single dot: alternate between notched and full spectrum
+          // For multiple dots: active column plays full, others play notched
+          let applyNotch = true
+
+          if (selectedDots.size === 1) {
+            // Single dot mode: alternate between notched and full spectrum
+            // Use activeColumn as a toggle (0 = notched, 1 = full)
+            applyNotch = activeColumn === 0
+          } else {
+            // Multiple dots: active column plays full spectrum
+            applyNotch = col !== activeColumn
+          }
+
+          playColumnBurst(col, applyNotch, applyNotch ? notchFreq : null)
         }
       }
 
-      // Advance to next active column
-      const columnsWithDots = Array.from(selectedDots.keys()).sort((a, b) => a - b)
-      if (columnsWithDots.length > 0) {
-        const currentIndex = columnsWithDots.indexOf(activeColumn)
-        const nextIndex = (currentIndex + 1) % columnsWithDots.length
-        setActiveColumn(columnsWithDots[nextIndex])
+      // Advance active column / toggle state
+      if (selectedDots.size === 1) {
+        // Toggle between 0 (notched) and 1 (full spectrum)
+        setActiveColumn(activeColumn === 0 ? 1 : 0)
+      } else {
+        // Cycle through columns with dots
+        const columnsWithDots = Array.from(selectedDots.keys()).sort((a, b) => a - b)
+        if (columnsWithDots.length > 0) {
+          const currentIndex = columnsWithDots.indexOf(activeColumn)
+          const nextIndex = (currentIndex + 1) % columnsWithDots.length
+          setActiveColumn(columnsWithDots[nextIndex])
+        }
       }
     }
 
@@ -489,13 +507,28 @@ export function NotchFilterNoiseGrid({
         <div>Grid: {gridSize}x{columnCount} | Selected: {selectedDots.size} dots</div>
         {isPlaying && selectedDots.size > 0 && (
           <>
-            <div className="font-medium">Active Column: {activeColumn + 1} (Full Spectrum)</div>
-            <div>Notched Frequencies: {
-              Array.from(selectedDots.entries())
-                .filter(([col]) => col !== activeColumn)
-                .map(([col, row]) => `${Math.round(getFrequencyForRow(row))}Hz`)
-                .join(', ')
-            }</div>
+            {selectedDots.size === 1 ? (
+              <>
+                <div className="font-medium">
+                  Mode: {activeColumn === 0 ? 'NOTCHED' : 'FULL SPECTRUM'}
+                </div>
+                <div>
+                  {activeColumn === 0
+                    ? `Notch at: ${Math.round(getFrequencyForRow(Array.from(selectedDots.values())[0]))}Hz`
+                    : 'Playing full frequency spectrum'}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="font-medium">Active Column: {activeColumn + 1} (Full Spectrum)</div>
+                <div>Notched Frequencies: {
+                  Array.from(selectedDots.entries())
+                    .filter(([col]) => col !== activeColumn)
+                    .map(([col, row]) => `${Math.round(getFrequencyForRow(row))}Hz`)
+                    .join(', ')
+                }</div>
+              </>
+            )}
           </>
         )}
       </div>
