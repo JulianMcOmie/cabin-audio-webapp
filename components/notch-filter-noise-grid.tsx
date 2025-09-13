@@ -306,6 +306,9 @@ export function NotchFilterNoiseGrid({
     if (now - lastBeatTimeRef.current >= BEAT_DURATION) {
       lastBeatTimeRef.current = now
 
+      // Store current active column for this beat's playback
+      const currentActiveForPlayback = activeColumn
+
       // Play all columns that have dots selected
       for (let col = 0; col < columnCount; col++) {
         const selectedRow = selectedDots.get(col)
@@ -321,29 +324,34 @@ export function NotchFilterNoiseGrid({
           if (selectedDots.size === 1) {
             // Single dot mode: alternate between notched and full spectrum
             // Use activeColumn as a toggle (0 = notched, 1 = full)
-            applyNotch = activeColumn === 0
+            applyNotch = currentActiveForPlayback === 0
           } else {
             // Multiple dots: active column plays full spectrum
-            applyNotch = col !== activeColumn
+            applyNotch = col !== currentActiveForPlayback
           }
 
           playColumnBurst(col, applyNotch, applyNotch ? notchFreq : null)
         }
       }
 
-      // Advance active column / toggle state
-      if (selectedDots.size === 1) {
-        // Toggle between 0 (notched) and 1 (full spectrum)
-        setActiveColumn(activeColumn === 0 ? 1 : 0)
-      } else {
-        // Cycle through columns with dots
-        const columnsWithDots = Array.from(selectedDots.keys()).sort((a, b) => a - b)
-        if (columnsWithDots.length > 0) {
-          const currentIndex = columnsWithDots.indexOf(activeColumn)
-          const nextIndex = (currentIndex + 1) % columnsWithDots.length
-          setActiveColumn(columnsWithDots[nextIndex])
+      // Advance active column / toggle state AFTER playing
+      // This ensures visual matches what's playing
+      setTimeout(() => {
+        if (selectedDots.size === 1) {
+          // Toggle between 0 (notched) and 1 (full spectrum)
+          setActiveColumn(prev => prev === 0 ? 1 : 0)
+        } else {
+          // Cycle through columns with dots
+          const columnsWithDots = Array.from(selectedDots.keys()).sort((a, b) => a - b)
+          if (columnsWithDots.length > 0) {
+            setActiveColumn(prev => {
+              const currentIndex = columnsWithDots.indexOf(prev)
+              const nextIndex = (currentIndex + 1) % columnsWithDots.length
+              return columnsWithDots[nextIndex]
+            })
+          }
         }
-      }
+      }, 0) // Update immediately after current render
     }
 
     if (isPlaying) {
