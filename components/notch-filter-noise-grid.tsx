@@ -334,24 +334,19 @@ export function NotchFilterNoiseGrid({
         }
       }
 
-      // Advance active column / toggle state AFTER playing
-      // This ensures visual matches what's playing
-      setTimeout(() => {
-        if (selectedDots.size === 1) {
-          // Toggle between 0 (notched) and 1 (full spectrum)
-          setActiveColumn(prev => prev === 0 ? 1 : 0)
-        } else {
-          // Cycle through columns with dots
-          const columnsWithDots = Array.from(selectedDots.keys()).sort((a, b) => a - b)
-          if (columnsWithDots.length > 0) {
-            setActiveColumn(prev => {
-              const currentIndex = columnsWithDots.indexOf(prev)
-              const nextIndex = (currentIndex + 1) % columnsWithDots.length
-              return columnsWithDots[nextIndex]
-            })
-          }
+      // Advance active column for NEXT beat
+      if (selectedDots.size === 1) {
+        // Toggle between 0 (notched) and 1 (full spectrum)
+        setActiveColumn(prev => prev === 0 ? 1 : 0)
+      } else {
+        // Cycle through columns with dots
+        const columnsWithDots = Array.from(selectedDots.keys()).sort((a, b) => a - b)
+        if (columnsWithDots.length > 0) {
+          const currentIndex = columnsWithDots.indexOf(currentActiveForPlayback)
+          const nextIndex = (currentIndex + 1) % columnsWithDots.length
+          setActiveColumn(columnsWithDots[nextIndex])
         }
-      }, 0) // Update immediately after current render
+      }
     }
 
     if (isPlaying) {
@@ -477,10 +472,10 @@ export function NotchFilterNoiseGrid({
 
       // Auto-start if we have selections
       if (newSelectedDots.size > 0 && !isPlaying) {
+        // Set first column with a dot as active BEFORE starting
+        const columnsWithDots = Array.from(newSelectedDots.keys()).sort((a, b) => a - b)
+        setActiveColumn(columnsWithDots[0])
         setIsPlaying(true)
-        // Set first column with a dot as active
-        const firstColumn = Math.min(...Array.from(newSelectedDots.keys()))
-        setActiveColumn(firstColumn)
       } else if (newSelectedDots.size === 0) {
         setIsPlaying(false)
       }
@@ -504,8 +499,8 @@ export function NotchFilterNoiseGrid({
 
     setSelectedDots(newSelectedDots)
     if (!isPlaying) {
+      setActiveColumn(0) // Set to first column BEFORE starting
       setIsPlaying(true)
-      setActiveColumn(0)
     }
   }
 
@@ -577,6 +572,7 @@ export function NotchFilterNoiseGrid({
                     .map(([col, row]) => `${Math.round(getFrequencyForRow(row))}Hz`)
                     .join(', ')
                 }</div>
+                <div className="text-xs opacity-50">Debug: activeColumn={activeColumn}</div>
               </>
             )}
           </>
