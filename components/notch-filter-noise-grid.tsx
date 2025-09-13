@@ -188,16 +188,7 @@ export function NotchFilterNoiseGrid({
     const audioContext = audioContextRef.current
     if (!audioContext) return
 
-    // Create noise source
-    const noiseBuffer = createPinkNoiseBuffer(audioContext, 1.0)
-    const noiseSource = audioContext.createBufferSource()
-    noiseSource.buffer = noiseBuffer
-    noiseSource.loop = true // Loop the noise for continuous sound
-
-    // Create the sloped pink noise generator
-    const slopedNoiseGen = new SlopedPinkNoiseGenerator(audioContext)
-
-    // Create gain node for envelope
+    // Create gain node for envelope (shared by both paths)
     const envelopeGain = audioContext.createGain()
     envelopeGain.gain.setValueAtTime(0, audioContext.currentTime)
 
@@ -213,47 +204,86 @@ export function NotchFilterNoiseGrid({
     envelopeGain.gain.setValueAtTime(peakGain, startTime + attackTime + sustainTime)
     envelopeGain.gain.exponentialRampToValueAtTime(0.001, startTime + attackTime + sustainTime + releaseTime)
 
-    // Connect: source -> slopedNoiseGen -> envelope
-    noiseSource.connect(slopedNoiseGen.getInputNode())
-    slopedNoiseGen.getOutputNode().connect(envelopeGain)
+    // Create merger node to sum the two signal paths
+    const merger = audioContext.createGain()
+    merger.connect(envelopeGain)
 
-    // Add notch filter if needed
-    let finalNode: AudioNode = envelopeGain
+    const slopedNoiseGens: SlopedPinkNoiseGenerator[] = []
 
     if (hasNotch && notchFrequency !== null) {
-      // Create a series of notch filters for maximum effect
-      const notchFilter1 = audioContext.createBiquadFilter()
-      notchFilter1.type = 'notch'
-      notchFilter1.frequency.value = notchFrequency
-      notchFilter1.Q.value = 50 // Very high Q for deep, narrow notch
+      // CREATE TWO SEPARATE PATHS: LOWPASS AND HIGHPASS
 
-      const notchFilter2 = audioContext.createBiquadFilter()
-      notchFilter2.type = 'notch'
-      notchFilter2.frequency.value = notchFrequency
-      notchFilter2.Q.value = 25 // Second notch with slightly lower Q
+      // Path 1: Low frequencies (everything below the notch frequency)
+      const noiseBuffer1 = createPinkNoiseBuffer(audioContext, 1.0)
+      const noiseSource1 = audioContext.createBufferSource()
+      noiseSource1.buffer = noiseBuffer1
+      noiseSource1.loop = true
 
-      const notchFilter3 = audioContext.createBiquadFilter()
-      notchFilter3.type = 'notch'
-      notchFilter3.frequency.value = notchFrequency
-      notchFilter3.Q.value = 10 // Third notch with even lower Q
+      const slopedNoiseGen1 = new SlopedPinkNoiseGenerator(audioContext)
+      slopedNoiseGens.push(slopedNoiseGen1)
 
-      // Chain the filters
-      envelopeGain.connect(notchFilter1)
-      notchFilter1.connect(notchFilter2)
-      notchFilter2.connect(notchFilter3)
-      finalNode = notchFilter3
+      // Lowpass filter - roll off frequencies above the notch
+      const lowpass = audioContext.createBiquadFilter()
+      lowpass.type = 'lowpass'
+      lowpass.frequency.value = notchFrequency * 0.5 // Much lower cutoff for wider gap
+      lowpass.Q.value = 2.0 // Sharper rolloff
+
+      // Connect path 1: source -> slopedNoise -> lowpass -> merger
+      noiseSource1.connect(slopedNoiseGen1.getInputNode())
+      slopedNoiseGen1.getOutputNode().connect(lowpass)
+      lowpass.connect(merger)
+
+      // Path 2: High frequencies (everything above the notch frequency)
+      const noiseBuffer2 = createPinkNoiseBuffer(audioContext, 1.0)
+      const noiseSource2 = audioContext.createBufferSource()
+      noiseSource2.buffer = noiseBuffer2
+      noiseSource2.loop = true
+
+      const slopedNoiseGen2 = new SlopedPinkNoiseGenerator(audioContext)
+      slopedNoiseGens.push(slopedNoiseGen2)
+
+      // Highpass filter - roll off frequencies below the notch
+      const highpass = audioContext.createBiquadFilter()
+      highpass.type = 'highpass'
+      highpass.frequency.value = notchFrequency * 2.0 // Much higher cutoff for wider gap
+      highpass.Q.value = 2.0 // Sharper rolloff
+
+      // Connect path 2: source -> slopedNoise -> highpass -> merger
+      noiseSource2.connect(slopedNoiseGen2.getInputNode())
+      slopedNoiseGen2.getOutputNode().connect(highpass)
+      highpass.connect(merger)
+
+      // Start both sources
+      noiseSource1.start(startTime)
+      noiseSource1.stop(startTime + BURST_DURATION / 1000)
+      noiseSource2.start(startTime)
+      noiseSource2.stop(startTime + BURST_DURATION / 1000)
+
+    } else {
+      // FULL SPECTRUM: Single path with no filtering
+      const noiseBuffer = createPinkNoiseBuffer(audioContext, 1.0)
+      const noiseSource = audioContext.createBufferSource()
+      noiseSource.buffer = noiseBuffer
+      noiseSource.loop = true
+
+      const slopedNoiseGen = new SlopedPinkNoiseGenerator(audioContext)
+      slopedNoiseGens.push(slopedNoiseGen)
+
+      // Connect: source -> slopedNoise -> merger
+      noiseSource.connect(slopedNoiseGen.getInputNode())
+      slopedNoiseGen.getOutputNode().connect(merger)
+
+      // Start source
+      noiseSource.start(startTime)
+      noiseSource.stop(startTime + BURST_DURATION / 1000)
     }
 
-    // Connect to destination
-    finalNode.connect(audioContext.destination)
-
-    // Start and stop
-    noiseSource.start(startTime)
-    noiseSource.stop(startTime + BURST_DURATION / 1000)
+    // Connect envelope to destination
+    envelopeGain.connect(audioContext.destination)
 
     // Clean up after playback
     setTimeout(() => {
-      slopedNoiseGen.dispose()
+      slopedNoiseGens.forEach(gen => gen.dispose())
     }, (startTime + BURST_DURATION / 1000 + 1) * 1000)
   }
 
@@ -470,7 +500,7 @@ export function NotchFilterNoiseGrid({
         />
 
         <div className="mt-3 text-xs text-muted-foreground text-center">
-          Click to select one dot per column. Each plays -4.5dB/oct sloped noise with notches.
+          Click to select one dot per column. Creates frequency gaps in -4.5dB/oct sloped noise.
         </div>
       </div>
 
@@ -510,18 +540,18 @@ export function NotchFilterNoiseGrid({
             {selectedDots.size === 1 ? (
               <>
                 <div className="font-medium">
-                  Mode: {activeColumn === 0 ? 'NOTCHED' : 'FULL SPECTRUM'}
+                  Mode: {activeColumn === 0 ? 'FREQUENCY GAP' : 'FULL SPECTRUM'}
                 </div>
                 <div>
                   {activeColumn === 0
-                    ? `Notch at: ${Math.round(getFrequencyForRow(Array.from(selectedDots.values())[0]))}Hz`
+                    ? `Gap around: ${Math.round(getFrequencyForRow(Array.from(selectedDots.values())[0]))}Hz`
                     : 'Playing full frequency spectrum'}
                 </div>
               </>
             ) : (
               <>
                 <div className="font-medium">Active Column: {activeColumn + 1} (Full Spectrum)</div>
-                <div>Notched Frequencies: {
+                <div>Frequency Gaps: {
                   Array.from(selectedDots.entries())
                     .filter(([col]) => col !== activeColumn)
                     .map(([col, row]) => `${Math.round(getFrequencyForRow(row))}Hz`)
