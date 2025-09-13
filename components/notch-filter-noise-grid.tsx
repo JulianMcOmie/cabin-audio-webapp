@@ -3,10 +3,90 @@
 import type React from "react"
 import { useRef, useEffect, useState, useMemo } from "react"
 
+// Constants matching dotGridAudio.ts
+const NUM_BANDS = 20 // Number of frequency bands for shaping
+const SLOPE_REF_FREQUENCY = 800 // Hz, reference frequency for slope calculations
+const MIN_AUDIBLE_FREQ = 20 // Hz
+const MAX_AUDIBLE_FREQ = 20000 // Hz
+const BAND_Q_VALUE = 1.5 // Q value for the bandpass filters
+const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0 // Inherent slope of pink noise
+const TARGET_SLOPE_DB_PER_OCT = -4.5 // Target slope we want
+const OUTPUT_GAIN_SCALAR = 0.3 // Reduced output gain to prevent clipping
+
 interface NotchFilterNoiseGridProps {
   gridSize?: number
   columnCount?: number
   disabled?: boolean
+}
+
+// Class to generate sloped pink noise exactly like dotGridAudio
+class SlopedPinkNoiseGenerator {
+  private ctx: AudioContext
+  private inputGainNode: GainNode
+  private outputGainNode: GainNode
+  private bandFilters: BiquadFilterNode[] = []
+  private bandGains: GainNode[] = []
+  private centerFrequencies: number[] = []
+
+  constructor(audioCtx: AudioContext) {
+    this.ctx = audioCtx
+    this.inputGainNode = this.ctx.createGain()
+    this.outputGainNode = this.ctx.createGain()
+    this.outputGainNode.gain.value = OUTPUT_GAIN_SCALAR
+
+    const logMinFreq = Math.log2(MIN_AUDIBLE_FREQ)
+    const logMaxFreq = Math.log2(MAX_AUDIBLE_FREQ)
+    const step = (logMaxFreq - logMinFreq) / (NUM_BANDS + 1)
+
+    for (let i = 0; i < NUM_BANDS; i++) {
+      const centerFreq = Math.pow(2, logMinFreq + (i + 1) * step)
+      this.centerFrequencies.push(centerFreq)
+
+      const filter = this.ctx.createBiquadFilter()
+      filter.type = 'bandpass'
+      filter.frequency.value = centerFreq
+      filter.Q.value = BAND_Q_VALUE
+      this.bandFilters.push(filter)
+
+      const gain = this.ctx.createGain()
+      this.bandGains.push(gain)
+
+      // Connect: input -> filter -> gain -> output
+      this.inputGainNode.connect(filter)
+      filter.connect(gain)
+      gain.connect(this.outputGainNode)
+    }
+
+    // Set the slope
+    this.setSlope(TARGET_SLOPE_DB_PER_OCT)
+  }
+
+  public getInputNode(): GainNode {
+    return this.inputGainNode
+  }
+
+  public getOutputNode(): GainNode {
+    return this.outputGainNode
+  }
+
+  public setSlope(targetOverallSlopeDbPerOctave: number): void {
+    // Calculate shaping slope relative to the inherent pink noise slope
+    const shapingSlope = targetOverallSlopeDbPerOctave - PINK_NOISE_SLOPE_DB_PER_OCT
+
+    for (let i = 0; i < NUM_BANDS; i++) {
+      const fc = this.centerFrequencies[i]
+      const gainDb = shapingSlope * Math.log2(fc / SLOPE_REF_FREQUENCY)
+      const linearGain = Math.pow(10, gainDb / 20)
+      this.bandGains[i].gain.value = linearGain
+    }
+  }
+
+  public dispose(): void {
+    this.inputGainNode.disconnect()
+    this.outputGainNode.disconnect()
+    this.bandFilters.forEach(filter => filter.disconnect())
+    this.bandGains.forEach(gain => gain.disconnect())
+  }
 }
 
 export function NotchFilterNoiseGrid({
@@ -16,18 +96,15 @@ export function NotchFilterNoiseGrid({
 }: NotchFilterNoiseGridProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
-  const noiseNodesRef = useRef<Map<number, OscillatorNode | AudioBufferSourceNode>>(new Map())
-  const gainNodesRef = useRef<Map<number, GainNode>>(new Map())
-  const filterNodesRef = useRef<Map<number, BiquadFilterNode>>(new Map())
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [selectedDots, setSelectedDots] = useState<Map<number, number>>(new Map()) // column -> row
   const [isPlaying, setIsPlaying] = useState(false)
   const [activeColumn, setActiveColumn] = useState(0)
   const animationFrameRef = useRef<number | null>(null)
   const lastBeatTimeRef = useRef(0)
-  const BEAT_DURATION = 150 // ms per beat
-  const BURST_DURATION = 100 // ms per burst
-  const STAGGER_DELAY = 10 // ms stagger between columns
+  const BEAT_DURATION = 800 // ms per beat - longer for better perception
+  const BURST_DURATION = 600 // ms per burst - longer burst
+  const STAGGER_DELAY = 30 // ms stagger between columns
 
   // Set up observer to detect theme changes
   useEffect(() => {
@@ -62,59 +139,47 @@ export function NotchFilterNoiseGrid({
 
   // Calculate frequency for a given row (exponential spacing)
   const getFrequencyForRow = (row: number) => {
-    const minFreq = 100
-    const maxFreq = 3200
+    const minFreq = 200  // Start at 200Hz for more audible notches
+    const maxFreq = 8000 // Go up to 8kHz for wider range
     const normalizedPosition = row / (gridSize - 1)
     return minFreq * Math.pow(maxFreq / minFreq, normalizedPosition)
   }
 
-  // Create pink noise buffer
+  // Create pink noise buffer using the exact same method as dotGridAudio
   const createPinkNoiseBuffer = (audioContext: AudioContext, duration: number = 2) => {
-    const sampleRate = audioContext.sampleRate
-    const length = sampleRate * duration
-    const buffer = audioContext.createBuffer(1, length, sampleRate)
+    const bufferSize = audioContext.sampleRate * duration
+    const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate)
     const data = buffer.getChannelData(0)
 
-    // Pink noise generation using Paul Kellet's refined method
+    // Paul Kellet's pink noise algorithm - exact same as dotGridAudio
     let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0
-
-    for (let i = 0; i < length; i++) {
+    for (let i = 0; i < bufferSize; i++) {
       const white = Math.random() * 2 - 1
-
       b0 = 0.99886 * b0 + white * 0.0555179
       b1 = 0.99332 * b1 + white * 0.0750759
       b2 = 0.96900 * b2 + white * 0.1538520
       b3 = 0.86650 * b3 + white * 0.3104856
       b4 = 0.55000 * b4 + white * 0.5329522
       b5 = -0.7616 * b5 - white * 0.0168980
-
-      data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11
-      b6 = white * 0.115926
+      b6 = white * 0.5362
+      data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.11) * 0.11
     }
 
-    // Apply -4.5dB/octave slope filter
-    // This is approximated by cascading low-pass filters
-    const tempBuffer = new Float32Array(length)
-    const cutoff = 0.5 // Normalized frequency
-
-    for (let pass = 0; pass < 2; pass++) {
-      let prev = 0
-      for (let i = 0; i < length; i++) {
-        const input = pass === 0 ? data[i] : tempBuffer[i]
-        const output = prev + cutoff * (input - prev)
-        if (pass === 0) {
-          tempBuffer[i] = output
-        } else {
-          data[i] = output
-        }
-        prev = output
-      }
+    // Normalize to prevent clipping
+    let peak = 0
+    for (let i = 0; i < bufferSize; i++) {
+      const abs = Math.abs(data[i])
+      if (abs > peak) peak = abs
+    }
+    const normalizationFactor = peak > 0.8 ? 0.8 / peak : 1.0
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] *= normalizationFactor
     }
 
     return buffer
   }
 
-  // Play a burst for a column
+  // Play a burst for a column with proper sloped noise and notch filtering
   const playColumnBurst = (
     column: number,
     hasNotch: boolean,
@@ -124,41 +189,72 @@ export function NotchFilterNoiseGrid({
     if (!audioContext) return
 
     // Create noise source
-    const noiseBuffer = createPinkNoiseBuffer(audioContext, 0.2)
+    const noiseBuffer = createPinkNoiseBuffer(audioContext, 1.0)
     const noiseSource = audioContext.createBufferSource()
     noiseSource.buffer = noiseBuffer
+    noiseSource.loop = true // Loop the noise for continuous sound
+
+    // Create the sloped pink noise generator
+    const slopedNoiseGen = new SlopedPinkNoiseGenerator(audioContext)
 
     // Create gain node for envelope
-    const gainNode = audioContext.createGain()
-    gainNode.gain.setValueAtTime(0, audioContext.currentTime)
+    const envelopeGain = audioContext.createGain()
+    envelopeGain.gain.setValueAtTime(0, audioContext.currentTime)
 
-    // Attack and release envelope
-    const attackTime = 0.002
-    const releaseTime = 0.05
+    // Much longer attack and release envelope
+    const attackTime = 0.08  // 80ms attack
+    const sustainTime = 0.4  // 400ms sustain
+    const releaseTime = 0.12 // 120ms release
     const startTime = audioContext.currentTime + (column * STAGGER_DELAY) / 1000
+    const peakGain = 0.7 // Good gain level
 
-    gainNode.gain.linearRampToValueAtTime(0.3, startTime + attackTime)
-    gainNode.gain.exponentialRampToValueAtTime(0.001, startTime + BURST_DURATION / 1000)
+    // Create envelope
+    envelopeGain.gain.linearRampToValueAtTime(peakGain, startTime + attackTime)
+    envelopeGain.gain.setValueAtTime(peakGain, startTime + attackTime + sustainTime)
+    envelopeGain.gain.exponentialRampToValueAtTime(0.001, startTime + attackTime + sustainTime + releaseTime)
 
-    // Connect nodes
-    noiseSource.connect(gainNode)
+    // Connect: source -> slopedNoiseGen -> envelope
+    noiseSource.connect(slopedNoiseGen.getInputNode())
+    slopedNoiseGen.getOutputNode().connect(envelopeGain)
 
     // Add notch filter if needed
-    if (hasNotch && notchFrequency !== null) {
-      const notchFilter = audioContext.createBiquadFilter()
-      notchFilter.type = 'notch'
-      notchFilter.frequency.value = notchFrequency
-      notchFilter.Q.value = 5 // Wide notch
+    let finalNode: AudioNode = envelopeGain
 
-      gainNode.connect(notchFilter)
-      notchFilter.connect(audioContext.destination)
-    } else {
-      gainNode.connect(audioContext.destination)
+    if (hasNotch && notchFrequency !== null) {
+      // Create a series of notch filters for maximum effect
+      const notchFilter1 = audioContext.createBiquadFilter()
+      notchFilter1.type = 'notch'
+      notchFilter1.frequency.value = notchFrequency
+      notchFilter1.Q.value = 50 // Very high Q for deep, narrow notch
+
+      const notchFilter2 = audioContext.createBiquadFilter()
+      notchFilter2.type = 'notch'
+      notchFilter2.frequency.value = notchFrequency
+      notchFilter2.Q.value = 25 // Second notch with slightly lower Q
+
+      const notchFilter3 = audioContext.createBiquadFilter()
+      notchFilter3.type = 'notch'
+      notchFilter3.frequency.value = notchFrequency
+      notchFilter3.Q.value = 10 // Third notch with even lower Q
+
+      // Chain the filters
+      envelopeGain.connect(notchFilter1)
+      notchFilter1.connect(notchFilter2)
+      notchFilter2.connect(notchFilter3)
+      finalNode = notchFilter3
     }
+
+    // Connect to destination
+    finalNode.connect(audioContext.destination)
 
     // Start and stop
     noiseSource.start(startTime)
     noiseSource.stop(startTime + BURST_DURATION / 1000)
+
+    // Clean up after playback
+    setTimeout(() => {
+      slopedNoiseGen.dispose()
+    }, (startTime + BURST_DURATION / 1000 + 1) * 1000)
   }
 
   // Animation loop for playback
@@ -356,7 +452,7 @@ export function NotchFilterNoiseGrid({
         />
 
         <div className="mt-3 text-xs text-muted-foreground text-center">
-          Click to select one dot per column. Each column plays noise with notches at non-active frequencies.
+          Click to select one dot per column. Each plays -4.5dB/oct sloped noise with notches.
         </div>
       </div>
 
@@ -389,9 +485,19 @@ export function NotchFilterNoiseGrid({
         </button>
       </div>
 
-      <div className="text-xs text-muted-foreground">
-        Grid: {gridSize}x{columnCount} | Selected: {selectedDots.size} dots |
-        {isPlaying && selectedDots.size > 0 && ` Active Column: ${activeColumn + 1}`}
+      <div className="text-xs text-muted-foreground space-y-1">
+        <div>Grid: {gridSize}x{columnCount} | Selected: {selectedDots.size} dots</div>
+        {isPlaying && selectedDots.size > 0 && (
+          <>
+            <div className="font-medium">Active Column: {activeColumn + 1} (Full Spectrum)</div>
+            <div>Notched Frequencies: {
+              Array.from(selectedDots.entries())
+                .filter(([col]) => col !== activeColumn)
+                .map(([col, row]) => `${Math.round(getFrequencyForRow(row))}Hz`)
+                .join(', ')
+            }</div>
+          </>
+        )}
       </div>
     </div>
   )
