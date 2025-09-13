@@ -137,12 +137,20 @@ export function NotchFilterNoiseGrid({
     }
   }, [])
 
-  // Calculate frequency for a given row (exponential spacing)
+  // Calculate frequency for a given row (exponential spacing) - INVERTED
   const getFrequencyForRow = (row: number) => {
     const minFreq = 200  // Start at 200Hz for more audible notches
     const maxFreq = 8000 // Go up to 8kHz for wider range
-    const normalizedPosition = row / (gridSize - 1)
+    // Invert: top row (0) = high freq, bottom row = low freq
+    const normalizedPosition = 1 - (row / (gridSize - 1))
     return minFreq * Math.pow(maxFreq / minFreq, normalizedPosition)
+  }
+
+  // Calculate panning position for a column (-1 to +1)
+  const getPanningForColumn = (column: number) => {
+    if (columnCount <= 1) return 0
+    // Map column index to panning: leftmost = -1, center = 0, rightmost = +1
+    return (2 * column / (columnCount - 1)) - 1
   }
 
   // Create pink noise buffer using the exact same method as dotGridAudio
@@ -206,6 +214,12 @@ export function NotchFilterNoiseGrid({
     // Create merger node to sum the two signal paths
     const merger = audioContext.createGain()
     merger.connect(envelopeGain)
+
+    // Add panning for this column
+    const panner = audioContext.createStereoPanner()
+    panner.pan.value = getPanningForColumn(column)
+    envelopeGain.connect(panner)
+    panner.connect(audioContext.destination)
 
     const slopedNoiseGens: SlopedPinkNoiseGenerator[] = []
 
@@ -277,8 +291,7 @@ export function NotchFilterNoiseGrid({
       noiseSource.stop(startTime + BURST_DURATION / 1000)
     }
 
-    // Connect envelope to destination
-    envelopeGain.connect(audioContext.destination)
+    // Note: envelope is already connected to panner -> destination above
 
     // Clean up after playback
     setTimeout(() => {
