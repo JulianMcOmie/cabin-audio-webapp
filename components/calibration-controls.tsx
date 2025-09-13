@@ -5,7 +5,6 @@ import { Switch } from "@/components/ui/switch"
 import { Slider } from "@/components/ui/slider"
 import { Label } from "@/components/ui/label"
 import * as dotGridAudio from "@/lib/audio/dotGridAudio"
-import { NotchFilterNoiseGrid } from "./notch-filter-noise-grid"
 
 interface CalibrationControlsProps {
   onModeChange?: (enabled: boolean) => void
@@ -133,10 +132,6 @@ export function CalibrationControls({
           </div>
         </>
       )}
-
-      <div className="pt-4 border-t">
-        <NotchFilterNoiseGrid />
-      </div>
     </div>
   )
 }

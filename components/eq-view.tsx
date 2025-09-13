@@ -17,7 +17,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { SyncStatus } from "@/lib/models/SyncStatus"
 import { FFTVisualizer } from "@/components/audio/FFTVisualizer"
 import { getReferenceCalibrationAudio } from "@/lib/audio/referenceCalibrationAudio"
-import { DotCalibration } from "@/components/dot-grid"
+import { NotchFilterNoiseGrid } from "@/components/notch-filter-noise-grid"
 import { GlyphGrid } from "@/components/glyph-grid"
 import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
@@ -475,13 +475,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   glyphType={currentGlyphShape}
                 />
               ) : activeGrid === "dot" ? (
-                <DotCalibration
-                  isPlaying={dotGridPlaying}
-                  setIsPlaying={setDotGridPlaying}
+                <NotchFilterNoiseGrid
                   disabled={false}
-                  preEQAnalyser={preEQAnalyser}
-                  selectedDots={selectedDots}
-                  setSelectedDots={setSelectedDots}
                 />
               ) : (
                 <div>
@@ -504,47 +499,6 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 </div>
               )}
 
-              {/* Add Toggle for Dot Grid Sub-Hit Playback Mode */} 
-              {activeGrid === "dot" && (
-                  <div className="flex items-center space-x-2 mt-4 justify-center">
-                    <Switch 
-                      id="subhit-playback-toggle"
-                      checked={isSubHitPlaybackEnabled}
-                      onCheckedChange={(checked) => {
-                        setIsSubHitPlaybackEnabled(checked);
-                        dotGridAudio.getDotGridAudioPlayer().setSubHitPlaybackEnabled(checked);
-                      }}
-                    />
-                    <Label htmlFor="subhit-playback-toggle" className="text-sm text-muted-foreground">
-                      {isSubHitPlaybackEnabled ? "Sub-Hits Enabled" : "Continuous Play"}
-                    </Label>
-                  </div>
-              )}
-
-              {/* Add Bandwidth Control for Bandpassed Noise Mode */}
-              {activeGrid === "dot" && dotGridAudio.getSoundMode() === 'bandpassed' && (
-                <div className="mt-4 space-y-2">
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-muted-foreground">Bandwidth</span>
-                    <span className="text-muted-foreground">Q: {bandpassBandwidth.toFixed(1)}</span>
-                  </div>
-                  <Slider
-                    value={[bandpassBandwidth]}
-                    min={0.5}
-                    max={10.0}
-                    step={0.1}
-                    onValueChange={(value) => {
-                      setBandpassBandwidth(value[0]);
-                      dotGridAudio.setBandpassBandwidth(value[0]);
-                    }}
-                    className="w-full"
-                  />
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>Wide</span>
-                    <span>Narrow</span>
-                  </div>
-                </div>
-              )}
 
               {/* UI for selecting glyph shape when Line Tool is active */} 
               {activeGrid === "line" && (
@@ -572,41 +526,34 @@ export function EQView({ setEqEnabled }: EQViewProps) {
               )}
             </div>
             
-            {/* Play button moved to bottom of grid section */}
-            <div className="flex justify-center mt-6">
-              <Button
-                size="lg"
-                variant={activeGrid === "line" ? (glyphGridPlaying ? "default" : "outline") 
-                          : activeGrid === "dot" ? (dotGridPlaying ? "default" : "outline") 
-                          : (shapeToolPlaying ? "default" : "outline")}
-                className={activeGrid === "line" ? (glyphGridPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "") 
-                            : activeGrid === "dot" ? (dotGridPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "") 
-                            : (shapeToolPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")}
-                onClick={() => {
-                  if (activeGrid === "line") {
-                    setGlyphGridPlaying(!glyphGridPlaying);
-                    if (dotGridPlaying) setDotGridPlaying(false);
-                    if (shapeToolPlaying) setShapeToolPlaying(false);
-                    if (!glyphGridPlaying && isMusicPlaying) setMusicPlaying(false);
-                  } else if (activeGrid === "dot") {
-                    handleDotGridPlayToggle();
-                    if (shapeToolPlaying) setShapeToolPlaying(false);
-                  } else {
-                    setShapeToolPlaying(!shapeToolPlaying);
-                    if (dotGridPlaying) setDotGridPlaying(false);
-                    if (glyphGridPlaying) setGlyphGridPlaying(false);
-                    if (!shapeToolPlaying && isMusicPlaying) setMusicPlaying(false);
-                  }
-                }}
-              >
-                <Play className="mr-2 h-5 w-5" />
-                {activeGrid === "line" 
-                  ? (glyphGridPlaying ? "Stop Calibration" : "Play Calibration") 
-                  : activeGrid === "dot" 
-                    ? (dotGridPlaying ? "Stop Calibration" : "Play Calibration")
+            {/* Play button moved to bottom of grid section - NotchFilterNoiseGrid has its own controls */}
+            {activeGrid !== "dot" && (
+              <div className="flex justify-center mt-6">
+                <Button
+                  size="lg"
+                  variant={activeGrid === "line" ? (glyphGridPlaying ? "default" : "outline")
+                            : (shapeToolPlaying ? "default" : "outline")}
+                  className={activeGrid === "line" ? (glyphGridPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")
+                              : (shapeToolPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")}
+                  onClick={() => {
+                    if (activeGrid === "line") {
+                      setGlyphGridPlaying(!glyphGridPlaying);
+                      if (shapeToolPlaying) setShapeToolPlaying(false);
+                      if (!glyphGridPlaying && isMusicPlaying) setMusicPlaying(false);
+                    } else {
+                      setShapeToolPlaying(!shapeToolPlaying);
+                      if (glyphGridPlaying) setGlyphGridPlaying(false);
+                      if (!shapeToolPlaying && isMusicPlaying) setMusicPlaying(false);
+                    }
+                  }}
+                >
+                  <Play className="mr-2 h-5 w-5" />
+                  {activeGrid === "line"
+                    ? (glyphGridPlaying ? "Stop Calibration" : "Play Calibration")
                     : (shapeToolPlaying ? "Stop Calibration" : "Play Calibration")}
-              </Button>
-            </div>
+                </Button>
+              </div>
+            )}
             
             {/* Tutorial button replacing help text link */}
             <div className="flex justify-center mt-3">
