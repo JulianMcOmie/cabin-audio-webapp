@@ -102,8 +102,8 @@ export function NotchFilterNoiseGrid({
   const [activeColumn, setActiveColumn] = useState(0)
   const animationFrameRef = useRef<number | null>(null)
   const lastBeatTimeRef = useRef(0)
-  const BEAT_DURATION = 800 // ms per beat - longer for better perception
-  const BURST_DURATION = 600 // ms per burst - longer burst
+  const BEAT_DURATION = 800 // ms per beat
+  const BURST_DURATION = 650 // ms per burst - matches dotGridAudio total envelope
   const STAGGER_DELAY = 30 // ms stagger between columns
 
   // Set up observer to detect theme changes
@@ -192,17 +192,16 @@ export function NotchFilterNoiseGrid({
     const envelopeGain = audioContext.createGain()
     envelopeGain.gain.setValueAtTime(0, audioContext.currentTime)
 
-    // Much longer attack and release envelope
-    const attackTime = 0.08  // 80ms attack
-    const sustainTime = 0.4  // 400ms sustain
-    const releaseTime = 0.12 // 120ms release
+    // Match dotGridAudio envelope timing
+    const attackTime = 0.15  // 150ms attack - same as GLOBAL_STAGGER_ATTACK_S
+    const releaseTime = 0.5 // 500ms release - same as GLOBAL_STAGGER_RELEASE_S
     const startTime = audioContext.currentTime + (column * STAGGER_DELAY) / 1000
-    const peakGain = 0.7 // Good gain level
+    const peakGain = 0.8 // Same as dotGridAudio (ENVELOPE_MAX_GAIN * 0.8)
 
-    // Create envelope
-    envelopeGain.gain.linearRampToValueAtTime(peakGain, startTime + attackTime)
-    envelopeGain.gain.setValueAtTime(peakGain, startTime + attackTime + sustainTime)
-    envelopeGain.gain.exponentialRampToValueAtTime(0.001, startTime + attackTime + sustainTime + releaseTime)
+    // Create envelope matching dotGridAudio
+    envelopeGain.gain.setValueAtTime(0.001, startTime) // Start just above zero for exponential
+    envelopeGain.gain.exponentialRampToValueAtTime(peakGain, startTime + attackTime)
+    envelopeGain.gain.exponentialRampToValueAtTime(0.001, startTime + attackTime + releaseTime)
 
     // Create merger node to sum the two signal paths
     const merger = audioContext.createGain()
@@ -225,8 +224,8 @@ export function NotchFilterNoiseGrid({
       // Lowpass filter - roll off frequencies above the notch
       const lowpass = audioContext.createBiquadFilter()
       lowpass.type = 'lowpass'
-      lowpass.frequency.value = notchFrequency * 0.5 // Much lower cutoff for wider gap
-      lowpass.Q.value = 2.0 // Sharper rolloff
+      lowpass.frequency.value = notchFrequency * 0.35 // Even lower cutoff for much wider gap
+      lowpass.Q.value = 5.0 // Much sharper rolloff
 
       // Connect path 1: source -> slopedNoise -> lowpass -> merger
       noiseSource1.connect(slopedNoiseGen1.getInputNode())
@@ -245,8 +244,8 @@ export function NotchFilterNoiseGrid({
       // Highpass filter - roll off frequencies below the notch
       const highpass = audioContext.createBiquadFilter()
       highpass.type = 'highpass'
-      highpass.frequency.value = notchFrequency * 2.0 // Much higher cutoff for wider gap
-      highpass.Q.value = 2.0 // Sharper rolloff
+      highpass.frequency.value = notchFrequency * 2.8 // Even higher cutoff for much wider gap
+      highpass.Q.value = 5.0 // Much sharper rolloff
 
       // Connect path 2: source -> slopedNoise -> highpass -> merger
       noiseSource2.connect(slopedNoiseGen2.getInputNode())
