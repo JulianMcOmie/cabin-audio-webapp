@@ -102,6 +102,7 @@ export function NotchFilterNoiseGrid({
   const [activeColumn, setActiveColumn] = useState(0)
   const [gridSize, setGridSize] = useState(initialGridSize)
   const [columnCount, setColumnCount] = useState(initialColumnCount)
+  const [playbackMode, setPlaybackMode] = useState<'sequential' | 'simultaneous'>('sequential')
   const animationFrameRef = useRef<number | null>(null)
   const lastBeatTimeRef = useRef(0)
   const BEAT_DURATION = 800 // ms per beat
@@ -327,16 +328,20 @@ export function NotchFilterNoiseGrid({
           // This column has a selected dot
           const notchFreq = getFrequencyForRow(selectedRow)
 
-          // For single dot: alternate between notched and full spectrum
-          // For multiple dots: active column plays full, others play notched
+          // Determine whether to apply notch based on mode
           let applyNotch = true
 
           if (selectedDots.size === 1) {
             // Single dot mode: alternate between notched and full spectrum
             // Use activeColumn as a toggle (0 = notched, 1 = full)
             applyNotch = currentActiveForPlayback === 0
+          } else if (playbackMode === 'simultaneous') {
+            // Simultaneous mode: all columns alternate together
+            // When activeColumn is 0, all play with gaps
+            // When activeColumn is 1, all play full spectrum
+            applyNotch = currentActiveForPlayback === 0
           } else {
-            // Multiple dots: active column plays full spectrum
+            // Sequential mode: active column plays full spectrum, others notched
             applyNotch = col !== currentActiveForPlayback
           }
 
@@ -345,11 +350,12 @@ export function NotchFilterNoiseGrid({
       }
 
       // Advance active column for NEXT beat
-      if (selectedDots.size === 1) {
+      if (selectedDots.size === 1 || playbackMode === 'simultaneous') {
         // Toggle between 0 (notched) and 1 (full spectrum)
+        // In simultaneous mode, this controls all columns at once
         setActiveColumn(prev => prev === 0 ? 1 : 0)
       } else {
-        // Cycle through columns with dots
+        // Sequential mode: Cycle through columns with dots
         const columnsWithDots = Array.from(selectedDots.keys()).sort((a, b) => a - b)
         if (columnsWithDots.length > 0) {
           const currentIndex = columnsWithDots.indexOf(currentActiveForPlayback)
@@ -411,7 +417,12 @@ export function NotchFilterNoiseGrid({
         const centerY = (y + 0.5) * vSpacing
 
         const isSelected = selectedDots.get(x) === y
-        const isActive = isPlaying && isSelected && x === activeColumn
+        // In simultaneous mode, all selected dots pulse together
+        const isActive = isPlaying && isSelected && (
+          playbackMode === 'simultaneous'
+            ? activeColumn === 1 // All pulse when playing full spectrum
+            : x === activeColumn // Only active column pulses in sequential
+        )
 
         // Draw pulse for active dot
         if (isActive) {
@@ -451,7 +462,7 @@ export function NotchFilterNoiseGrid({
         forceUpdate()
       })
     }
-  }, [selectedDots, gridSize, columnCount, disabled, isDarkMode, isPlaying, activeColumn])
+  }, [selectedDots, gridSize, columnCount, disabled, isDarkMode, isPlaying, activeColumn, playbackMode])
 
   // Handle canvas clicks
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -559,6 +570,17 @@ export function NotchFilterNoiseGrid({
         </button>
       </div>
 
+      {/* Playback mode toggle */}
+      <div className="flex items-center gap-2 text-sm">
+        <span className="text-muted-foreground">Mode:</span>
+        <button
+          onClick={() => setPlaybackMode(playbackMode === 'sequential' ? 'simultaneous' : 'sequential')}
+          className="px-3 py-1 rounded text-sm border hover:bg-muted"
+        >
+          {playbackMode === 'sequential' ? 'Sequential' : 'Simultaneous'}
+        </button>
+      </div>
+
       {/* Grid size controls */}
       <div className="flex gap-4 items-center text-sm">
         <div className="flex items-center gap-2">
@@ -629,14 +651,28 @@ export function NotchFilterNoiseGrid({
               </>
             ) : (
               <>
-                <div className="font-medium">Active Column: {activeColumn + 1} (Full Spectrum)</div>
-                <div>Frequency Gaps: {
-                  Array.from(selectedDots.entries())
-                    .filter(([col]) => col !== activeColumn)
-                    .map(([, row]) => `${Math.round(getFrequencyForRow(row))}Hz`)
-                    .join(', ')
-                }</div>
-                <div className="text-xs opacity-50">Debug: activeColumn={activeColumn}</div>
+                {playbackMode === 'simultaneous' ? (
+                  <>
+                    <div className="font-medium">
+                      Mode: {activeColumn === 0 ? 'ALL GAPS' : 'ALL FULL SPECTRUM'}
+                    </div>
+                    <div>
+                      {activeColumn === 0
+                        ? `Gaps at: ${Array.from(selectedDots.values()).map(row => `${Math.round(getFrequencyForRow(row))}Hz`).join(', ')}`
+                        : 'All columns playing full spectrum'}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="font-medium">Active Column: {activeColumn + 1} (Full Spectrum)</div>
+                    <div>Frequency Gaps: {
+                      Array.from(selectedDots.entries())
+                        .filter(([col]) => col !== activeColumn)
+                        .map(([, row]) => `${Math.round(getFrequencyForRow(row))}Hz`)
+                        .join(', ')
+                    }</div>
+                  </>
+                )}
               </>
             )}
           </>

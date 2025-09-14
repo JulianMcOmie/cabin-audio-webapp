@@ -25,8 +25,13 @@ export function CalibrationControls({
   // Update frequency display when dot selection changes
   useEffect(() => {
     if (selectedDotPosition && calibrationMode) {
-      const freq = dotGridAudio.getFrequencyForDot(selectedDotPosition.y, totalRows)
-      setSelectedFrequency(freq)
+      // TODO: Implement getFrequencyForDot function in dotGridAudio
+      // For now, use a placeholder calculation
+      const minFreq = 50
+      const maxFreq = 14000
+      const normalizedY = totalRows <= 1 ? 0.5 : 1 - (selectedDotPosition.y / (totalRows - 1))
+      const freq = minFreq * Math.pow(maxFreq / minFreq, normalizedY)
+      setSelectedFrequency(Math.round(freq))
     } else {
       setSelectedFrequency(null)
     }
@@ -34,20 +39,23 @@ export function CalibrationControls({
 
   const handleModeToggle = (checked: boolean) => {
     setCalibrationMode(checked)
-    dotGridAudio.setCalibrationMode(checked)
+    // TODO: Implement setCalibrationMode in dotGridAudio
+    // dotGridAudio.setCalibrationMode(checked)
     onModeChange?.(checked)
   }
 
   const handleGainChange = (values: number[]) => {
     const gain = values[0]
     setEqGain(gain)
-    dotGridAudio.setCalibrationEQGain(gain)
+    // TODO: Implement setCalibrationEQGain in dotGridAudio
+    // dotGridAudio.setCalibrationEQGain(gain)
   }
 
   const handleQChange = (values: number[]) => {
     const q = values[0]
     setEqQ(q)
-    dotGridAudio.setCalibrationEQQ(q)
+    // TODO: Implement setCalibrationEQQ in dotGridAudio
+    // dotGridAudio.setCalibrationEQQ(q)
   }
 
   const formatFrequency = (freq: number): string => {
