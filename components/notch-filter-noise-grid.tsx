@@ -106,7 +106,7 @@ export function NotchFilterNoiseGrid({
   const animationFrameRef = useRef<number | null>(null)
   const lastBeatTimeRef = useRef(0)
   const BEAT_DURATION = 300 // ms per beat - fast rhythm
-  const BURST_DURATION = 200 // ms per burst - 150ms attack + 50ms release
+  const BURST_DURATION = 150 // ms per burst - 100ms attack + 50ms release
   const STAGGER_DELAY = 20 // ms stagger between columns
 
   // Set up observer to detect theme changes
@@ -212,7 +212,7 @@ export function NotchFilterNoiseGrid({
     envelopeGain.gain.setValueAtTime(0, audioContext.currentTime)
 
     // Short, punchy envelope
-    const attackTime = 0.15  // 150ms attack
+    const attackTime = 0.1  // 100ms attack - faster
     const releaseTime = 0.05 // 50ms release - very short
     const startTime = audioContext.currentTime + (column * STAGGER_DELAY) / 1000
     const peakGain = 0.8 // Same as dotGridAudio (ENVELOPE_MAX_GAIN * 0.8)
