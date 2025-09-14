@@ -248,8 +248,8 @@ export function NotchFilterNoiseGrid({
       // Lowpass filter - roll off frequencies above the notch
       const lowpass = audioContext.createBiquadFilter()
       lowpass.type = 'lowpass'
-      lowpass.frequency.value = notchFrequency * 0.35 // Even lower cutoff for much wider gap
-      lowpass.Q.value = 5.0 // Much sharper rolloff
+      lowpass.frequency.value = notchFrequency * 0.25 // Much lower cutoff for even wider gap
+      lowpass.Q.value = 1.0 // Gentler rolloff for smoother transition
 
       // Connect path 1: source -> slopedNoise -> lowpass -> merger
       noiseSource1.connect(slopedNoiseGen1.getInputNode())
@@ -268,8 +268,8 @@ export function NotchFilterNoiseGrid({
       // Highpass filter - roll off frequencies below the notch
       const highpass = audioContext.createBiquadFilter()
       highpass.type = 'highpass'
-      highpass.frequency.value = notchFrequency * 2.8 // Even higher cutoff for much wider gap
-      highpass.Q.value = 5.0 // Much sharper rolloff
+      highpass.frequency.value = notchFrequency * 4.0 // Much higher cutoff for even wider gap
+      highpass.Q.value = 1.0 // Gentler rolloff for smoother transition
 
       // Connect path 2: source -> slopedNoise -> highpass -> merger
       noiseSource2.connect(slopedNoiseGen2.getInputNode())
