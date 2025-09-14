@@ -104,7 +104,9 @@ export function NotchFilterNoiseGrid({
   const [columnCount, setColumnCount] = useState(initialColumnCount)
   const [playbackMode, setPlaybackMode] = useState<'sequential' | 'simultaneous'>('sequential')
   const [currentDotIndex, setCurrentDotIndex] = useState(0) // Which dot in the sequence
-  const [currentRepetition, setCurrentRepetition] = useState(0) // Which repetition (0-3)
+  const [beatPosition, setBeatPosition] = useState(0) // Current position in 8-beat pattern (0-7)
+  const beatPositionRef = useRef(0) // Use ref to avoid closure issues
+  const currentDotIndexRef = useRef(0) // Use ref to avoid closure issues
   const [isNotchedState, setIsNotchedState] = useState(true) // true = notched, false = full spectrum
   const animationFrameRef = useRef<number | null>(null)
   const lastBeatTimeRef = useRef(0)
@@ -341,65 +343,91 @@ export function NotchFilterNoiseGrid({
       const hasDotsInSameColumn = Array.from(selectedDots.values()).some(rows => rows.size > 1)
       const isMultiDotMode = hasMultipleDots || hasDotsInSameColumn
 
+
       if (isMultiDotMode) {
-        // Multi-dot mode: play one dot at a time, 4 repetitions each, alternating notched/full
-        const currentDot = allDots[currentDotIndex]
+        // Multi-dot mode: play one dot at a time with pattern F-N-N-F-N-N-F-N (8 beats)
+        const currentDot = allDots[currentDotIndexRef.current]
         const notchFreq = getFrequencyForRow(currentDot.row)
 
-        // Play only the current dot's column with alternating notch/full
-        playColumnBurst(currentDot.col, isNotchedState, isNotchedState ? notchFreq : null)
+        // Pattern: F-N-N-F-N-N-F-N (positions 0,3,6 are full spectrum)
+        const shouldBeNotched = !(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6)
 
-        // Toggle state and check if we completed a pair
-        if (isNotchedState) {
-          // Just played notched, next will be full
-          setIsNotchedState(false)
+
+        // Play only the current dot's column with appropriate filter
+        playColumnBurst(currentDot.col, shouldBeNotched, shouldBeNotched ? notchFreq : null)
+
+        // Update states for next beat
+        beatPositionRef.current = beatPositionRef.current + 1
+        if (beatPositionRef.current >= 8) {
+          // Completed the 8-beat pattern, move to next dot
+          beatPositionRef.current = 0
+          currentDotIndexRef.current = (currentDotIndexRef.current + 1) % totalDotsSelected
+          setBeatPosition(0)
+          setCurrentDotIndex(currentDotIndexRef.current)
+          setIsNotchedState(true) // Reset for visual feedback
         } else {
-          // Just played full, completing a notched→full pair
-          setIsNotchedState(true)
-
-          // Increment repetition counter
-          const nextRep = currentRepetition + 1
-          if (nextRep >= 4) {
-            // Completed 4 repetitions, move to next dot
-            setCurrentRepetition(0)
-            setCurrentDotIndex((currentDotIndex + 1) % totalDotsSelected)
-          } else {
-            setCurrentRepetition(nextRep)
-          }
+          setBeatPosition(beatPositionRef.current)
+          // Update isNotchedState for visual feedback
+          const nextShouldBeNotched = !(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6)
+          setIsNotchedState(nextShouldBeNotched)
         }
       } else if (totalDotsSelected === 1) {
-        // Single dot mode: simple alternation
+        // Single dot mode with F-N-N-F-N-N-F-N pattern
         const dot = allDots[0]
         const notchFreq = getFrequencyForRow(dot.row)
-        const applyNotch = activeColumn === 0
+        const shouldBeNotched = !(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6)
 
-        playColumnBurst(dot.col, applyNotch, applyNotch ? notchFreq : null)
-        setActiveColumn(prev => prev === 0 ? 1 : 0)
+        playColumnBurst(dot.col, shouldBeNotched, shouldBeNotched ? notchFreq : null)
+
+        // Update beat position
+        beatPositionRef.current = (beatPositionRef.current + 1) % 8
+        setBeatPosition(beatPositionRef.current)
+        setIsNotchedState(!(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6))
       } else if (playbackMode === 'simultaneous') {
-        // Original simultaneous mode for dots in different columns
+        // Simultaneous mode with F-N-N-F-N-N-F-N pattern
+        const shouldBeNotched = !(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6)
+
         selectedDots.forEach((rows, col) => {
           if (rows.size > 0) {
             const row = Array.from(rows)[0] // Take first if multiple
             const notchFreq = getFrequencyForRow(row)
-            const applyNotch = activeColumn === 0
-            playColumnBurst(col, applyNotch, applyNotch ? notchFreq : null)
+            playColumnBurst(col, shouldBeNotched, shouldBeNotched ? notchFreq : null)
           }
         })
-        setActiveColumn(prev => prev === 0 ? 1 : 0)
+
+        // Update beat position
+        beatPositionRef.current = (beatPositionRef.current + 1) % 8
+        setBeatPosition(beatPositionRef.current)
+        setIsNotchedState(!(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6))
       } else {
-        // Original sequential mode
+        // Sequential mode with F-N-N-F-N-N-F-N pattern
         const columnsWithDots = Array.from(selectedDots.keys()).sort((a, b) => a - b)
         if (columnsWithDots.length > 0) {
           const currentCol = columnsWithDots[activeColumn % columnsWithDots.length]
+
+          // Apply F-N-N-F-N-N-F-N pattern (positions 0,3,6 are full spectrum)
+          const shouldBeNotched = !(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6)
+
           selectedDots.forEach((rows, col) => {
             if (rows.size > 0) {
               const row = Array.from(rows)[0]
               const notchFreq = getFrequencyForRow(row)
-              const applyNotch = col !== currentCol
+              const applyNotch = col !== currentCol ? false : shouldBeNotched
               playColumnBurst(col, applyNotch, applyNotch ? notchFreq : null)
             }
           })
-          setActiveColumn((activeColumn + 1) % columnsWithDots.length)
+
+          // Update beat position
+          beatPositionRef.current = (beatPositionRef.current + 1) % 8
+          setBeatPosition(beatPositionRef.current)
+
+          // Move to next column after 8 beats
+          if (beatPositionRef.current === 0) {
+            setActiveColumn((activeColumn + 1) % columnsWithDots.length)
+          }
+
+          // Update visual state
+          setIsNotchedState(!(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6))
         }
       }
     }
@@ -413,6 +441,9 @@ export function NotchFilterNoiseGrid({
   useEffect(() => {
     if (isPlaying && selectedDots.size > 0) {
       lastBeatTimeRef.current = performance.now()
+      // Reset refs when starting playback
+      beatPositionRef.current = 0
+      currentDotIndexRef.current = 0
       animate()
     } else {
       if (animationFrameRef.current) {
@@ -427,7 +458,7 @@ export function NotchFilterNoiseGrid({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, selectedDots, activeColumn, isNotchedState, currentRepetition, currentDotIndex])
+  }, [isPlaying, selectedDots, activeColumn])
 
   // Draw grid
   useEffect(() => {
@@ -558,7 +589,9 @@ export function NotchFilterNoiseGrid({
 
       // Reset playback state for multi-dot mode
       setCurrentDotIndex(0)
-      setCurrentRepetition(0)
+      setBeatPosition(0)
+      beatPositionRef.current = 0
+      currentDotIndexRef.current = 0
       setIsNotchedState(true)
 
       // Auto-start if we have selections
@@ -577,7 +610,9 @@ export function NotchFilterNoiseGrid({
     setSelectedDots(new Map())
     setIsPlaying(false)
     setCurrentDotIndex(0)
-    setCurrentRepetition(0)
+    setBeatPosition(0)
+    beatPositionRef.current = 0
+    currentDotIndexRef.current = 0
     setIsNotchedState(true)
   }
 
@@ -592,7 +627,9 @@ export function NotchFilterNoiseGrid({
 
     setSelectedDots(newSelectedDots)
     setCurrentDotIndex(0)
-    setCurrentRepetition(0)
+    setBeatPosition(0)
+    beatPositionRef.current = 0
+    currentDotIndexRef.current = 0
     setIsNotchedState(true)
     if (!isPlaying) {
       setActiveColumn(0) // Set to first column BEFORE starting
@@ -721,7 +758,7 @@ export function NotchFilterNoiseGrid({
             return (
               <>
                 <div className="font-medium">
-                  Dot {currentDotIndex + 1}/{totalDots} | Rep {currentRepetition + 1}/4 | {isNotchedState ? 'GAP' : 'FULL'}
+                  Dot {currentDotIndex + 1}/{totalDots} | Beat {beatPosition + 1}/8 | {isNotchedState ? 'GAP' : 'FULL'}
                 </div>
                 <div>
                   Current: Col {currentDot.col + 1}, {Math.round(getFrequencyForRow(currentDot.row))}Hz
