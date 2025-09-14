@@ -4,7 +4,6 @@ import { useState, useEffect } from "react"
 import { Switch } from "@/components/ui/switch"
 import { Slider } from "@/components/ui/slider"
 import { Label } from "@/components/ui/label"
-import * as dotGridAudio from "@/lib/audio/dotGridAudio"
 
 interface CalibrationControlsProps {
   onModeChange?: (enabled: boolean) => void

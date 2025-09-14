@@ -349,20 +349,20 @@ export function NotchFilterNoiseGrid({
         // Play only the current dot's column with alternating notch/full
         playColumnBurst(currentDot.col, isNotchedState, isNotchedState ? notchFreq : null)
 
-        // Check if we just played full spectrum (before toggling)
-        const justPlayedFull = !isNotchedState
+        // Toggle state and check if we completed a pair
+        if (isNotchedState) {
+          // Just played notched, next will be full
+          setIsNotchedState(false)
+        } else {
+          // Just played full, completing a notched→full pair
+          setIsNotchedState(true)
 
-        // Toggle notched state for next beat
-        setIsNotchedState(prev => !prev)
-
-        // If we just played full spectrum, we completed a notched/full pair
-        if (justPlayedFull) {
+          // Increment repetition counter
           const nextRep = currentRepetition + 1
           if (nextRep >= 4) {
-            // Move to next dot
+            // Completed 4 repetitions, move to next dot
             setCurrentRepetition(0)
             setCurrentDotIndex((currentDotIndex + 1) % totalDotsSelected)
-            // Note: isNotchedState is already toggled to true for next dot
           } else {
             setCurrentRepetition(nextRep)
           }
@@ -427,7 +427,7 @@ export function NotchFilterNoiseGrid({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, selectedDots, activeColumn])
+  }, [isPlaying, selectedDots, activeColumn, isNotchedState, currentRepetition, currentDotIndex])
 
   // Draw grid
   useEffect(() => {
@@ -538,7 +538,7 @@ export function NotchFilterNoiseGrid({
       const newSelectedDots = new Map(selectedDots)
 
       // Get or create the set of rows for this column
-      let columnRows = newSelectedDots.get(gridX) || new Set<number>()
+      const columnRows = newSelectedDots.get(gridX) || new Set<number>()
 
       if (columnRows.has(gridY)) {
         // Deselect if clicking the same dot
