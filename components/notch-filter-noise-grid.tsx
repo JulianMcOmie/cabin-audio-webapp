@@ -349,17 +349,20 @@ export function NotchFilterNoiseGrid({
         // Play only the current dot's column with alternating notch/full
         playColumnBurst(currentDot.col, isNotchedState, isNotchedState ? notchFreq : null)
 
-        // Toggle notched state for next beat
-        setIsNotchedState(!isNotchedState)
+        // Check if we just played full spectrum (before toggling)
+        const justPlayedFull = !isNotchedState
 
-        // If we've completed a full/notched pair, increment repetition
-        if (isNotchedState === false) { // Just played full spectrum
+        // Toggle notched state for next beat
+        setIsNotchedState(prev => !prev)
+
+        // If we just played full spectrum, we completed a notched/full pair
+        if (justPlayedFull) {
           const nextRep = currentRepetition + 1
           if (nextRep >= 4) {
             // Move to next dot
             setCurrentRepetition(0)
             setCurrentDotIndex((currentDotIndex + 1) % totalDotsSelected)
-            setIsNotchedState(true) // Start next dot with notched
+            // Note: isNotchedState is already toggled to true for next dot
           } else {
             setCurrentRepetition(nextRep)
           }
