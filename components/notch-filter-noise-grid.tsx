@@ -105,7 +105,7 @@ export function NotchFilterNoiseGrid({
   const [playbackMode, setPlaybackMode] = useState<'sequential' | 'simultaneous'>('sequential')
   const animationFrameRef = useRef<number | null>(null)
   const lastBeatTimeRef = useRef(0)
-  const BEAT_DURATION = 300 // ms per beat - fast rhythm
+  const BEAT_DURATION = 200 // ms per beat - 150ms burst + 50ms gap
   const BURST_DURATION = 150 // ms per burst - 100ms attack + 50ms release
   const STAGGER_DELAY = 20 // ms stagger between columns
 
