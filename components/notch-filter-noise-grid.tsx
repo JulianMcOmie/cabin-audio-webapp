@@ -141,8 +141,16 @@ export function NotchFilterNoiseGrid({
 
   // Calculate frequency for a given row (exponential spacing) - INVERTED
   const getFrequencyForRow = (row: number) => {
-    const minFreq = 200  // Start at 200Hz for more audible notches
-    const maxFreq = 8000 // Go up to 8kHz for wider range
+    // Scale frequency range based on grid size
+    // Smaller grids: 200Hz-8kHz, Larger grids: approach 20Hz-20kHz
+    const gridScale = (gridSize - 3) / (9 - 3) // Normalize 3-9 to 0-1
+
+    // Interpolate min frequency: 200Hz for size 3, down to 20Hz for size 9
+    const minFreq = 200 * Math.pow(20/200, gridScale) // Exponential interpolation
+
+    // Interpolate max frequency: 8kHz for size 3, up to 20kHz for size 9
+    const maxFreq = 8000 * Math.pow(20000/8000, gridScale) // Exponential interpolation
+
     // Invert: top row (0) = high freq, bottom row = low freq
     const normalizedPosition = 1 - (row / (gridSize - 1))
     return minFreq * Math.pow(maxFreq / minFreq, normalizedPosition)
