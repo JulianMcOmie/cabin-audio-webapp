@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useRef, useEffect, useState, useMemo } from "react"
+import { useRef, useEffect, useState } from "react"
 
 // Constants matching dotGridAudio.ts
 const NUM_BANDS = 20 // Number of frequency bands for shaping
@@ -130,7 +130,7 @@ export function NotchFilterNoiseGrid({
 
   // Initialize audio context
   useEffect(() => {
-    audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)()
+    audioContextRef.current = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)()
 
     return () => {
       if (audioContextRef.current) {
@@ -381,6 +381,7 @@ export function NotchFilterNoiseGrid({
         cancelAnimationFrame(animationFrameRef.current)
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPlaying, selectedDots, activeColumn])
 
   // Draw grid
@@ -632,7 +633,7 @@ export function NotchFilterNoiseGrid({
                 <div>Frequency Gaps: {
                   Array.from(selectedDots.entries())
                     .filter(([col]) => col !== activeColumn)
-                    .map(([col, row]) => `${Math.round(getFrequencyForRow(row))}Hz`)
+                    .map(([, row]) => `${Math.round(getFrequencyForRow(row))}Hz`)
                     .join(', ')
                 }</div>
                 <div className="text-xs opacity-50">Debug: activeColumn={activeColumn}</div>

@@ -21,8 +21,6 @@ import { NotchFilterNoiseGrid } from "@/components/notch-filter-noise-grid"
 import { GlyphGrid } from "@/components/glyph-grid"
 import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
-import { Switch } from "@/components/ui/switch"
-import { Label } from "@/components/ui/label"
 
 interface EQViewProps {
 //   isPlaying: boolean
@@ -81,8 +79,6 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   // Add state for toggling between Glyph Grid and Dot Grid
   const [activeGrid, setActiveGrid] = useState<"line" | "dot" | "shape">("dot")
 
-  // New state to track selected dots for dot grid
-  const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set());
   
   // Add state to track if the device is mobile
   const [isMobile, setIsMobile] = useState(false)
@@ -91,14 +87,10 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const [shapeToolPlaying, setShapeToolPlaying] = useState(false);
   const [numShapeDots, setNumShapeDots] = useState(12); // Default number of dots for the shape tool
 
-  // New state for Dot Grid sub-hit playback mode
-  const [isSubHitPlaybackEnabled, setIsSubHitPlaybackEnabled] = useState(true);
 
   // New state for current glyph shape in Line Tool (GlyphGrid)
   const [currentGlyphShape, setCurrentGlyphShape] = useState<'line' | 'triangle'>('triangle');
 
-  // New state for bandpass bandwidth control
-  const [bandpassBandwidth, setBandpassBandwidth] = useState(2.0); // Default Q value
 
   // Detect mobile devices
   useEffect(() => {
@@ -308,26 +300,6 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   // Comment out auto-calibration related state
   // const [showCalibrationProcess, setShowCalibrationProcess] = useState(false)
 
-  // Add a function to handle dot grid play/stop
-  const handleDotGridPlayToggle = () => {
-    if (dotGridPlaying) {
-      // Just stop playing without clearing dot selection
-      setDotGridPlaying(false);
-    } else {
-      // If music is playing, pause it
-      if (isMusicPlaying) {
-        setMusicPlaying(false);
-      }
-      
-      // If starting and there are no dots selected, don't start
-      // (this is handled by the DotCalibration component internally)
-      setDotGridPlaying(true);
-    }
-    
-    // Stop the glyph grid if it's playing
-    if (glyphGridPlaying) setGlyphGridPlaying(false);
-    if (shapeToolPlaying) setShapeToolPlaying(false); // Stop shape tool if dot grid starts
-  };
 
   // If on mobile, show a message instead of the EQ interface
   if (isMobile) {
