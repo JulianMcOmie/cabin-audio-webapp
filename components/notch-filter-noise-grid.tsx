@@ -97,12 +97,15 @@ export function NotchFilterNoiseGrid({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const [isDarkMode, setIsDarkMode] = useState(false)
-  const [selectedDots, setSelectedDots] = useState<Map<number, number>>(new Map()) // column -> row
+  const [selectedDots, setSelectedDots] = useState<Map<number, Set<number>>>(new Map()) // column -> Set of rows
   const [isPlaying, setIsPlaying] = useState(false)
   const [activeColumn, setActiveColumn] = useState(0)
   const [gridSize, setGridSize] = useState(initialGridSize)
   const [columnCount, setColumnCount] = useState(initialColumnCount)
   const [playbackMode, setPlaybackMode] = useState<'sequential' | 'simultaneous'>('sequential')
+  const [currentDotIndex, setCurrentDotIndex] = useState(0) // Which dot in the sequence
+  const [currentRepetition, setCurrentRepetition] = useState(0) // Which repetition (0-3)
+  const [isNotchedState, setIsNotchedState] = useState(true) // true = notched, false = full spectrum
   const animationFrameRef = useRef<number | null>(null)
   const lastBeatTimeRef = useRef(0)
   const BEAT_DURATION = 200 // ms per beat - 150ms burst + 50ms gap
@@ -310,6 +313,17 @@ export function NotchFilterNoiseGrid({
     }, (startTime + BURST_DURATION / 1000 + 1) * 1000)
   }
 
+  // Get all selected dots as an array
+  const getAllSelectedDots = () => {
+    const allDots: {col: number, row: number}[] = []
+    selectedDots.forEach((rows, col) => {
+      rows.forEach(row => {
+        allDots.push({col, row})
+      })
+    })
+    return allDots.sort((a, b) => a.col === b.col ? a.row - b.row : a.col - b.col)
+  }
+
   // Animation loop for playback
   const animate = () => {
     const now = performance.now()
@@ -317,50 +331,72 @@ export function NotchFilterNoiseGrid({
     if (now - lastBeatTimeRef.current >= BEAT_DURATION) {
       lastBeatTimeRef.current = now
 
-      // Store current active column for this beat's playback
-      const currentActiveForPlayback = activeColumn
+      const allDots = getAllSelectedDots()
+      const totalDotsSelected = allDots.length
 
-      // Play all columns that have dots selected
-      for (let col = 0; col < columnCount; col++) {
-        const selectedRow = selectedDots.get(col)
+      if (totalDotsSelected === 0) return
 
-        if (selectedRow !== undefined) {
-          // This column has a selected dot
-          const notchFreq = getFrequencyForRow(selectedRow)
+      // Check if we're in multi-dot mode (multiple dots, potentially in same column)
+      const hasMultipleDots = totalDotsSelected > 1
+      const hasDotsInSameColumn = Array.from(selectedDots.values()).some(rows => rows.size > 1)
+      const isMultiDotMode = hasMultipleDots || hasDotsInSameColumn
 
-          // Determine whether to apply notch based on mode
-          let applyNotch = true
+      if (isMultiDotMode) {
+        // Multi-dot mode: play one dot at a time, 4 repetitions each, alternating notched/full
+        const currentDot = allDots[currentDotIndex]
+        const notchFreq = getFrequencyForRow(currentDot.row)
 
-          if (selectedDots.size === 1) {
-            // Single dot mode: alternate between notched and full spectrum
-            // Use activeColumn as a toggle (0 = notched, 1 = full)
-            applyNotch = currentActiveForPlayback === 0
-          } else if (playbackMode === 'simultaneous') {
-            // Simultaneous mode: all columns alternate together
-            // When activeColumn is 0, all play with gaps
-            // When activeColumn is 1, all play full spectrum
-            applyNotch = currentActiveForPlayback === 0
+        // Play only the current dot's column with alternating notch/full
+        playColumnBurst(currentDot.col, isNotchedState, isNotchedState ? notchFreq : null)
+
+        // Toggle notched state for next beat
+        setIsNotchedState(!isNotchedState)
+
+        // If we've completed a full/notched pair, increment repetition
+        if (isNotchedState === false) { // Just played full spectrum
+          const nextRep = currentRepetition + 1
+          if (nextRep >= 4) {
+            // Move to next dot
+            setCurrentRepetition(0)
+            setCurrentDotIndex((currentDotIndex + 1) % totalDotsSelected)
+            setIsNotchedState(true) // Start next dot with notched
           } else {
-            // Sequential mode: active column plays full spectrum, others notched
-            applyNotch = col !== currentActiveForPlayback
+            setCurrentRepetition(nextRep)
           }
-
-          playColumnBurst(col, applyNotch, applyNotch ? notchFreq : null)
         }
-      }
+      } else if (totalDotsSelected === 1) {
+        // Single dot mode: simple alternation
+        const dot = allDots[0]
+        const notchFreq = getFrequencyForRow(dot.row)
+        const applyNotch = activeColumn === 0
 
-      // Advance active column for NEXT beat
-      if (selectedDots.size === 1 || playbackMode === 'simultaneous') {
-        // Toggle between 0 (notched) and 1 (full spectrum)
-        // In simultaneous mode, this controls all columns at once
+        playColumnBurst(dot.col, applyNotch, applyNotch ? notchFreq : null)
+        setActiveColumn(prev => prev === 0 ? 1 : 0)
+      } else if (playbackMode === 'simultaneous') {
+        // Original simultaneous mode for dots in different columns
+        selectedDots.forEach((rows, col) => {
+          if (rows.size > 0) {
+            const row = Array.from(rows)[0] // Take first if multiple
+            const notchFreq = getFrequencyForRow(row)
+            const applyNotch = activeColumn === 0
+            playColumnBurst(col, applyNotch, applyNotch ? notchFreq : null)
+          }
+        })
         setActiveColumn(prev => prev === 0 ? 1 : 0)
       } else {
-        // Sequential mode: Cycle through columns with dots
+        // Original sequential mode
         const columnsWithDots = Array.from(selectedDots.keys()).sort((a, b) => a - b)
         if (columnsWithDots.length > 0) {
-          const currentIndex = columnsWithDots.indexOf(currentActiveForPlayback)
-          const nextIndex = (currentIndex + 1) % columnsWithDots.length
-          setActiveColumn(columnsWithDots[nextIndex])
+          const currentCol = columnsWithDots[activeColumn % columnsWithDots.length]
+          selectedDots.forEach((rows, col) => {
+            if (rows.size > 0) {
+              const row = Array.from(rows)[0]
+              const notchFreq = getFrequencyForRow(row)
+              const applyNotch = col !== currentCol
+              playColumnBurst(col, applyNotch, applyNotch ? notchFreq : null)
+            }
+          })
+          setActiveColumn((activeColumn + 1) % columnsWithDots.length)
         }
       }
     }
@@ -416,13 +452,30 @@ export function NotchFilterNoiseGrid({
         const centerX = (x + 0.5) * hSpacing
         const centerY = (y + 0.5) * vSpacing
 
-        const isSelected = selectedDots.get(x) === y
-        // In simultaneous mode, all selected dots pulse together
-        const isActive = isPlaying && isSelected && (
-          playbackMode === 'simultaneous'
-            ? activeColumn === 1 // All pulse when playing full spectrum
-            : x === activeColumn // Only active column pulses in sequential
-        )
+        const columnRows = selectedDots.get(x)
+        const isSelected = columnRows ? columnRows.has(y) : false
+
+        // Determine if this dot is currently active
+        let isActive = false
+        if (isPlaying && isSelected) {
+          const allDots = getAllSelectedDots()
+          const totalDots = allDots.length
+
+          if (totalDots > 1 || Array.from(selectedDots.values()).some(rows => rows.size > 1)) {
+            // Multi-dot mode: only the current dot pulses
+            const currentDot = allDots[currentDotIndex]
+            isActive = currentDot && currentDot.col === x && currentDot.row === y && !isNotchedState
+          } else if (totalDots === 1) {
+            // Single dot mode
+            isActive = activeColumn === 1
+          } else if (playbackMode === 'simultaneous') {
+            // Simultaneous mode
+            isActive = activeColumn === 1
+          } else {
+            // Sequential mode
+            isActive = x === activeColumn
+          }
+        }
 
         // Draw pulse for active dot
         if (isActive) {
@@ -481,24 +534,36 @@ export function NotchFilterNoiseGrid({
     if (gridX >= 0 && gridX < columnCount && gridY >= 0 && gridY < gridSize) {
       const newSelectedDots = new Map(selectedDots)
 
-      // Each column can only have one selected dot
-      if (newSelectedDots.get(gridX) === gridY) {
+      // Get or create the set of rows for this column
+      let columnRows = newSelectedDots.get(gridX) || new Set<number>()
+
+      if (columnRows.has(gridY)) {
         // Deselect if clicking the same dot
-        newSelectedDots.delete(gridX)
+        columnRows.delete(gridY)
+        if (columnRows.size === 0) {
+          newSelectedDots.delete(gridX)
+        } else {
+          newSelectedDots.set(gridX, columnRows)
+        }
       } else {
-        // Select this dot for the column
-        newSelectedDots.set(gridX, gridY)
+        // Add this dot to the column
+        columnRows.add(gridY)
+        newSelectedDots.set(gridX, columnRows)
       }
 
       setSelectedDots(newSelectedDots)
 
+      // Reset playback state for multi-dot mode
+      setCurrentDotIndex(0)
+      setCurrentRepetition(0)
+      setIsNotchedState(true)
+
       // Auto-start if we have selections
-      if (newSelectedDots.size > 0 && !isPlaying) {
-        // Set first column with a dot as active BEFORE starting
-        const columnsWithDots = Array.from(newSelectedDots.keys()).sort((a, b) => a - b)
-        setActiveColumn(columnsWithDots[0])
+      const totalDots = Array.from(newSelectedDots.values()).reduce((sum, rows) => sum + rows.size, 0)
+      if (totalDots > 0 && !isPlaying) {
         setIsPlaying(true)
-      } else if (newSelectedDots.size === 0) {
+        setActiveColumn(0)
+      } else if (totalDots === 0) {
         setIsPlaying(false)
       }
     }
@@ -508,18 +573,24 @@ export function NotchFilterNoiseGrid({
   const clearSelection = () => {
     setSelectedDots(new Map())
     setIsPlaying(false)
+    setCurrentDotIndex(0)
+    setCurrentRepetition(0)
+    setIsNotchedState(true)
   }
 
   // Select diagonal pattern for testing
   const selectDiagonal = () => {
-    const newSelectedDots = new Map<number, number>()
+    const newSelectedDots = new Map<number, Set<number>>()
     const minDimension = Math.min(gridSize, columnCount)
 
     for (let i = 0; i < minDimension; i++) {
-      newSelectedDots.set(i, i)
+      newSelectedDots.set(i, new Set([i]))
     }
 
     setSelectedDots(newSelectedDots)
+    setCurrentDotIndex(0)
+    setCurrentRepetition(0)
+    setIsNotchedState(true)
     if (!isPlaying) {
       setActiveColumn(0) // Set to first column BEFORE starting
       setIsPlaying(true)
@@ -635,48 +706,45 @@ export function NotchFilterNoiseGrid({
       </div>
 
       <div className="text-xs text-muted-foreground space-y-1">
-        <div>Grid: {gridSize}x{columnCount} | Selected: {selectedDots.size} dots</div>
-        {isPlaying && selectedDots.size > 0 && (
-          <>
-            {selectedDots.size === 1 ? (
+        <div>Grid: {gridSize}x{columnCount} | Selected: {Array.from(selectedDots.values()).reduce((sum, rows) => sum + rows.size, 0)} dots</div>
+        {isPlaying && selectedDots.size > 0 && (() => {
+          const allDots = getAllSelectedDots()
+          const totalDots = allDots.length
+          const hasMultipleDots = totalDots > 1 || Array.from(selectedDots.values()).some(rows => rows.size > 1)
+
+          if (hasMultipleDots) {
+            // Multi-dot mode display
+            const currentDot = allDots[currentDotIndex]
+            return (
+              <>
+                <div className="font-medium">
+                  Dot {currentDotIndex + 1}/{totalDots} | Rep {currentRepetition + 1}/4 | {isNotchedState ? 'GAP' : 'FULL'}
+                </div>
+                <div>
+                  Current: Col {currentDot.col + 1}, {Math.round(getFrequencyForRow(currentDot.row))}Hz
+                  {isNotchedState ? ' (gap)' : ' (full spectrum)'}
+                </div>
+              </>
+            )
+          } else if (totalDots === 1) {
+            // Single dot mode
+            const dot = allDots[0]
+            return (
               <>
                 <div className="font-medium">
                   Mode: {activeColumn === 0 ? 'FREQUENCY GAP' : 'FULL SPECTRUM'}
                 </div>
                 <div>
                   {activeColumn === 0
-                    ? `Gap around: ${Math.round(getFrequencyForRow(Array.from(selectedDots.values())[0]))}Hz`
+                    ? `Gap around: ${Math.round(getFrequencyForRow(dot.row))}Hz`
                     : 'Playing full frequency spectrum'}
                 </div>
               </>
-            ) : (
-              <>
-                {playbackMode === 'simultaneous' ? (
-                  <>
-                    <div className="font-medium">
-                      Mode: {activeColumn === 0 ? 'ALL GAPS' : 'ALL FULL SPECTRUM'}
-                    </div>
-                    <div>
-                      {activeColumn === 0
-                        ? `Gaps at: ${Array.from(selectedDots.values()).map(row => `${Math.round(getFrequencyForRow(row))}Hz`).join(', ')}`
-                        : 'All columns playing full spectrum'}
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="font-medium">Active Column: {activeColumn + 1} (Full Spectrum)</div>
-                    <div>Frequency Gaps: {
-                      Array.from(selectedDots.entries())
-                        .filter(([col]) => col !== activeColumn)
-                        .map(([, row]) => `${Math.round(getFrequencyForRow(row))}Hz`)
-                        .join(', ')
-                    }</div>
-                  </>
-                )}
-              </>
-            )}
-          </>
-        )}
+            )
+          } else {
+            return null
+          }
+        })()}
       </div>
     </div>
   )
