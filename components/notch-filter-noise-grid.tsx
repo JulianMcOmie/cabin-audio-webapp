@@ -90,8 +90,8 @@ class SlopedPinkNoiseGenerator {
 }
 
 export function NotchFilterNoiseGrid({
-  gridSize = 5,
-  columnCount = 5,
+  gridSize: initialGridSize = 5,
+  columnCount: initialColumnCount = 5,
   disabled = false
 }: NotchFilterNoiseGridProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -100,6 +100,8 @@ export function NotchFilterNoiseGrid({
   const [selectedDots, setSelectedDots] = useState<Map<number, number>>(new Map()) // column -> row
   const [isPlaying, setIsPlaying] = useState(false)
   const [activeColumn, setActiveColumn] = useState(0)
+  const [gridSize, setGridSize] = useState(initialGridSize)
+  const [columnCount, setColumnCount] = useState(initialColumnCount)
   const animationFrameRef = useRef<number | null>(null)
   const lastBeatTimeRef = useRef(0)
   const BEAT_DURATION = 800 // ms per beat
@@ -519,7 +521,7 @@ export function NotchFilterNoiseGrid({
         </div>
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         <button
           onClick={() => setIsPlaying(!isPlaying)}
           disabled={selectedDots.size === 0}
@@ -546,6 +548,59 @@ export function NotchFilterNoiseGrid({
         >
           Diagonal Test
         </button>
+      </div>
+
+      {/* Grid size controls */}
+      <div className="flex gap-4 items-center text-sm">
+        <div className="flex items-center gap-2">
+          <span className="text-muted-foreground">Rows:</span>
+          <button
+            onClick={() => {
+              setGridSize(Math.max(3, gridSize - 1))
+              clearSelection()
+            }}
+            className="px-2 py-0.5 rounded text-xs border hover:bg-muted"
+            disabled={gridSize <= 3}
+          >
+            -
+          </button>
+          <span className="w-8 text-center">{gridSize}</span>
+          <button
+            onClick={() => {
+              setGridSize(Math.min(9, gridSize + 1))
+              clearSelection()
+            }}
+            className="px-2 py-0.5 rounded text-xs border hover:bg-muted"
+            disabled={gridSize >= 9}
+          >
+            +
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-muted-foreground">Columns:</span>
+          <button
+            onClick={() => {
+              setColumnCount(Math.max(3, columnCount - 1))
+              clearSelection()
+            }}
+            className="px-2 py-0.5 rounded text-xs border hover:bg-muted"
+            disabled={columnCount <= 3}
+          >
+            -
+          </button>
+          <span className="w-8 text-center">{columnCount}</span>
+          <button
+            onClick={() => {
+              setColumnCount(Math.min(9, columnCount + 1))
+              clearSelection()
+            }}
+            className="px-2 py-0.5 rounded text-xs border hover:bg-muted"
+            disabled={columnCount >= 9}
+          >
+            +
+          </button>
+        </div>
       </div>
 
       <div className="text-xs text-muted-foreground space-y-1">
