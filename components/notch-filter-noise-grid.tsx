@@ -2,6 +2,7 @@
 
 import type React from "react"
 import { useRef, useEffect, useState } from "react"
+import { Slider } from "@/components/ui/slider"
 
 // Constants matching dotGridAudio.ts
 const NUM_BANDS = 20 // Number of frequency bands for shaping
@@ -108,6 +109,7 @@ export function NotchFilterNoiseGrid({
   const beatPositionRef = useRef(0) // Use ref to avoid closure issues
   const currentDotIndexRef = useRef(0) // Use ref to avoid closure issues
   const [isNotchedState, setIsNotchedState] = useState(true) // true = notched, false = full spectrum
+  const [notchBandwidth, setNotchBandwidth] = useState(4) // Bandwidth multiplier for notch filter (1-8)
   const animationFrameRef = useRef<number | null>(null)
   const lastBeatTimeRef = useRef(0)
   const BEAT_DURATION = 200 // ms per beat - 150ms burst + 50ms gap
@@ -207,7 +209,8 @@ export function NotchFilterNoiseGrid({
   const playColumnBurst = (
     column: number,
     hasNotch: boolean,
-    notchFrequency: number | null
+    notchFrequency: number | null,
+    bandwidth: number = 4
   ) => {
     const audioContext = audioContextRef.current
     if (!audioContext) return
@@ -254,7 +257,7 @@ export function NotchFilterNoiseGrid({
       // Lowpass filter - roll off frequencies above the notch
       const lowpass = audioContext.createBiquadFilter()
       lowpass.type = 'lowpass'
-      lowpass.frequency.value = notchFrequency * 0.25 // Much lower cutoff for even wider gap
+      lowpass.frequency.value = notchFrequency / bandwidth // Dynamic cutoff based on bandwidth
       lowpass.Q.value = 1.0 // Gentler rolloff for smoother transition
 
       // Connect path 1: source -> slopedNoise -> lowpass -> merger
@@ -274,7 +277,7 @@ export function NotchFilterNoiseGrid({
       // Highpass filter - roll off frequencies below the notch
       const highpass = audioContext.createBiquadFilter()
       highpass.type = 'highpass'
-      highpass.frequency.value = notchFrequency * 4.0 // Much higher cutoff for even wider gap
+      highpass.frequency.value = notchFrequency * bandwidth // Dynamic cutoff based on bandwidth
       highpass.Q.value = 1.0 // Gentler rolloff for smoother transition
 
       // Connect path 2: source -> slopedNoise -> highpass -> merger
@@ -354,7 +357,7 @@ export function NotchFilterNoiseGrid({
 
 
         // Play only the current dot's column with appropriate filter
-        playColumnBurst(currentDot.col, shouldBeNotched, shouldBeNotched ? notchFreq : null)
+        playColumnBurst(currentDot.col, shouldBeNotched, shouldBeNotched ? notchFreq : null, notchBandwidth)
 
         // Update states for next beat
         beatPositionRef.current = beatPositionRef.current + 1
@@ -377,7 +380,7 @@ export function NotchFilterNoiseGrid({
         const notchFreq = getFrequencyForRow(dot.row)
         const shouldBeNotched = !(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6)
 
-        playColumnBurst(dot.col, shouldBeNotched, shouldBeNotched ? notchFreq : null)
+        playColumnBurst(dot.col, shouldBeNotched, shouldBeNotched ? notchFreq : null, notchBandwidth)
 
         // Update beat position
         beatPositionRef.current = (beatPositionRef.current + 1) % 8
@@ -391,7 +394,7 @@ export function NotchFilterNoiseGrid({
           if (rows.size > 0) {
             const row = Array.from(rows)[0] // Take first if multiple
             const notchFreq = getFrequencyForRow(row)
-            playColumnBurst(col, shouldBeNotched, shouldBeNotched ? notchFreq : null)
+            playColumnBurst(col, shouldBeNotched, shouldBeNotched ? notchFreq : null, notchBandwidth)
           }
         })
 
@@ -413,7 +416,7 @@ export function NotchFilterNoiseGrid({
               const row = Array.from(rows)[0]
               const notchFreq = getFrequencyForRow(row)
               const applyNotch = col !== currentCol ? false : shouldBeNotched
-              playColumnBurst(col, applyNotch, applyNotch ? notchFreq : null)
+              playColumnBurst(col, applyNotch, applyNotch ? notchFreq : null, notchBandwidth)
             }
           })
 
@@ -690,6 +693,24 @@ export function NotchFilterNoiseGrid({
         >
           {playbackMode === 'sequential' ? 'Sequential' : 'Simultaneous'}
         </button>
+      </div>
+
+      {/* Notch bandwidth control */}
+      <div className="flex items-center gap-3 text-sm">
+        <span className="text-muted-foreground">Notch Width:</span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs">Narrow</span>
+          <Slider
+            value={[notchBandwidth]}
+            onValueChange={(value) => setNotchBandwidth(value[0])}
+            min={1}
+            max={8}
+            step={0.5}
+            className="w-32"
+          />
+          <span className="text-xs">Wide</span>
+          <span className="text-xs text-muted-foreground ml-2">({notchBandwidth.toFixed(1)}x)</span>
+        </div>
       </div>
 
       {/* Grid size controls */}
