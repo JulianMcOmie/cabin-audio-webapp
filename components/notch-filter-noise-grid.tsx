@@ -110,11 +110,11 @@ export function NotchFilterNoiseGrid({
   const currentDotIndexRef = useRef(0) // Use ref to avoid closure issues
   const [isNotchedState, setIsNotchedState] = useState(true) // true = notched, false = full spectrum
   const [notchBandwidth, setNotchBandwidth] = useState(4) // Bandwidth multiplier for notch filter (1-8)
+  const [staggerDelay, setStaggerDelay] = useState(20) // ms stagger between columns in simultaneous mode
   const animationFrameRef = useRef<number | null>(null)
   const lastBeatTimeRef = useRef(0)
   const BEAT_DURATION = 200 // ms per beat - 150ms burst + 50ms gap
   const BURST_DURATION = 150 // ms per burst - 100ms attack + 50ms release
-  const STAGGER_DELAY = 20 // ms stagger between columns
 
   // Set up observer to detect theme changes
   useEffect(() => {
@@ -146,6 +146,32 @@ export function NotchFilterNoiseGrid({
       }
     }
   }, [])
+
+  // Helper function to find contiguous ranges of dots in a column
+  const getContiguousRanges = (rows: Set<number>): Array<{start: number, end: number}> => {
+    const sortedRows = Array.from(rows).sort((a, b) => a - b)
+    const ranges: Array<{start: number, end: number}> = []
+
+    if (sortedRows.length === 0) return ranges
+
+    let start = sortedRows[0]
+    let end = sortedRows[0]
+
+    for (let i = 1; i < sortedRows.length; i++) {
+      if (sortedRows[i] === end + 1) {
+        // Contiguous
+        end = sortedRows[i]
+      } else {
+        // Gap found, save current range and start new one
+        ranges.push({start, end})
+        start = sortedRows[i]
+        end = sortedRows[i]
+      }
+    }
+    ranges.push({start, end})
+
+    return ranges
+  }
 
   // Calculate frequency for a given row (exponential spacing) - INVERTED
   const getFrequencyForRow = (row: number) => {
@@ -210,7 +236,9 @@ export function NotchFilterNoiseGrid({
     column: number,
     hasNotch: boolean,
     notchFrequency: number | null,
-    bandwidth: number = 4
+    bandwidth: number = 4,
+    staggerMs: number = 20,
+    notchFrequencyMax: number | null = null
   ) => {
     const audioContext = audioContextRef.current
     if (!audioContext) return
@@ -222,7 +250,7 @@ export function NotchFilterNoiseGrid({
     // Short, punchy envelope
     const attackTime = 0.1  // 100ms attack - faster
     const releaseTime = 0.05 // 50ms release - very short
-    const startTime = audioContext.currentTime + (column * STAGGER_DELAY) / 1000
+    const startTime = audioContext.currentTime + (column * staggerMs) / 1000
     const peakGain = 0.8 // Same as dotGridAudio (ENVELOPE_MAX_GAIN * 0.8)
 
     // Create envelope matching dotGridAudio
@@ -257,7 +285,9 @@ export function NotchFilterNoiseGrid({
       // Lowpass filter - roll off frequencies above the notch
       const lowpass = audioContext.createBiquadFilter()
       lowpass.type = 'lowpass'
-      lowpass.frequency.value = notchFrequency / bandwidth // Dynamic cutoff based on bandwidth
+      // If we have a range, use the minimum frequency for the lowpass
+      const effectiveNotchMin = notchFrequency
+      lowpass.frequency.value = effectiveNotchMin / bandwidth // Dynamic cutoff based on bandwidth
       lowpass.Q.value = 1.0 // Gentler rolloff for smoother transition
 
       // Connect path 1: source -> slopedNoise -> lowpass -> merger
@@ -277,7 +307,9 @@ export function NotchFilterNoiseGrid({
       // Highpass filter - roll off frequencies below the notch
       const highpass = audioContext.createBiquadFilter()
       highpass.type = 'highpass'
-      highpass.frequency.value = notchFrequency * bandwidth // Dynamic cutoff based on bandwidth
+      // If we have a range, use the maximum frequency for the highpass
+      const effectiveNotchMax = notchFrequencyMax || notchFrequency
+      highpass.frequency.value = effectiveNotchMax * bandwidth // Dynamic cutoff based on bandwidth
       highpass.Q.value = 1.0 // Gentler rolloff for smoother transition
 
       // Connect path 2: source -> slopedNoise -> highpass -> merger
@@ -344,10 +376,43 @@ export function NotchFilterNoiseGrid({
       // Check if we're in multi-dot mode (multiple dots, potentially in same column)
       const hasMultipleDots = totalDotsSelected > 1
       const hasDotsInSameColumn = Array.from(selectedDots.values()).some(rows => rows.size > 1)
-      const isMultiDotMode = hasMultipleDots || hasDotsInSameColumn
+      const isMultiDotMode = (hasMultipleDots || hasDotsInSameColumn) && playbackMode !== 'simultaneous'
 
 
-      if (isMultiDotMode) {
+      if (playbackMode === 'simultaneous' && totalDotsSelected > 0) {
+        // Simultaneous mode: play all columns at once with F-N-N-F-N-N-F-N pattern
+        // Each column has a 20ms stagger delay for a cascading effect
+        const shouldBeNotched = !(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6)
+
+        selectedDots.forEach((rows, col) => {
+          if (rows.size > 0) {
+            // Get contiguous ranges of dots in this column
+            const ranges = getContiguousRanges(rows)
+
+            if (ranges.length === 1 && ranges[0].start === ranges[0].end) {
+              // Single dot - use original behavior
+              const notchFreq = getFrequencyForRow(ranges[0].start)
+              playColumnBurst(col, shouldBeNotched, shouldBeNotched ? notchFreq : null, notchBandwidth, staggerDelay)
+            } else if (ranges.length === 1) {
+              // Single contiguous range - notch out the entire range
+              const minFreq = getFrequencyForRow(ranges[0].end) // Remember rows are inverted (higher row = lower freq)
+              const maxFreq = getFrequencyForRow(ranges[0].start)
+              playColumnBurst(col, shouldBeNotched, shouldBeNotched ? minFreq : null, notchBandwidth, staggerDelay, shouldBeNotched ? maxFreq : null)
+            } else {
+              // Multiple non-contiguous dots - for now, just use first dot
+              // Could be enhanced to handle multiple ranges in the future
+              const row = Array.from(rows)[0]
+              const notchFreq = getFrequencyForRow(row)
+              playColumnBurst(col, shouldBeNotched, shouldBeNotched ? notchFreq : null, notchBandwidth, staggerDelay)
+            }
+          }
+        })
+
+        // Update beat position
+        beatPositionRef.current = (beatPositionRef.current + 1) % 8
+        setBeatPosition(beatPositionRef.current)
+        setIsNotchedState(!(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6))
+      } else if (isMultiDotMode) {
         // Multi-dot mode: play one dot at a time with pattern F-N-N-F-N-N-F-N (8 beats)
         const currentDot = allDots[currentDotIndexRef.current]
         const notchFreq = getFrequencyForRow(currentDot.row)
@@ -357,7 +422,7 @@ export function NotchFilterNoiseGrid({
 
 
         // Play only the current dot's column with appropriate filter
-        playColumnBurst(currentDot.col, shouldBeNotched, shouldBeNotched ? notchFreq : null, notchBandwidth)
+        playColumnBurst(currentDot.col, shouldBeNotched, shouldBeNotched ? notchFreq : null, notchBandwidth, 0)
 
         // Update states for next beat
         beatPositionRef.current = beatPositionRef.current + 1
@@ -380,23 +445,7 @@ export function NotchFilterNoiseGrid({
         const notchFreq = getFrequencyForRow(dot.row)
         const shouldBeNotched = !(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6)
 
-        playColumnBurst(dot.col, shouldBeNotched, shouldBeNotched ? notchFreq : null, notchBandwidth)
-
-        // Update beat position
-        beatPositionRef.current = (beatPositionRef.current + 1) % 8
-        setBeatPosition(beatPositionRef.current)
-        setIsNotchedState(!(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6))
-      } else if (playbackMode === 'simultaneous') {
-        // Simultaneous mode with F-N-N-F-N-N-F-N pattern
-        const shouldBeNotched = !(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6)
-
-        selectedDots.forEach((rows, col) => {
-          if (rows.size > 0) {
-            const row = Array.from(rows)[0] // Take first if multiple
-            const notchFreq = getFrequencyForRow(row)
-            playColumnBurst(col, shouldBeNotched, shouldBeNotched ? notchFreq : null, notchBandwidth)
-          }
-        })
+        playColumnBurst(dot.col, shouldBeNotched, shouldBeNotched ? notchFreq : null, notchBandwidth, 0)
 
         // Update beat position
         beatPositionRef.current = (beatPositionRef.current + 1) % 8
@@ -416,7 +465,7 @@ export function NotchFilterNoiseGrid({
               const row = Array.from(rows)[0]
               const notchFreq = getFrequencyForRow(row)
               const applyNotch = col !== currentCol ? false : shouldBeNotched
-              playColumnBurst(col, applyNotch, applyNotch ? notchFreq : null, notchBandwidth)
+              playColumnBurst(col, applyNotch, applyNotch ? notchFreq : null, notchBandwidth, 0)
             }
           })
 
@@ -712,6 +761,26 @@ export function NotchFilterNoiseGrid({
           <span className="text-xs text-muted-foreground ml-2">({notchBandwidth.toFixed(1)}x)</span>
         </div>
       </div>
+
+      {/* Stagger delay control (only for simultaneous mode) */}
+      {playbackMode === 'simultaneous' && (
+        <div className="flex items-center gap-3 text-sm">
+          <span className="text-muted-foreground">Stagger:</span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs">0ms</span>
+            <Slider
+              value={[staggerDelay]}
+              onValueChange={(value) => setStaggerDelay(value[0])}
+              min={0}
+              max={50}
+              step={5}
+              className="w-32"
+            />
+            <span className="text-xs">50ms</span>
+            <span className="text-xs text-muted-foreground ml-2">({staggerDelay}ms)</span>
+          </div>
+        </div>
+      )}
 
       {/* Grid size controls */}
       <div className="flex gap-4 items-center text-sm">
