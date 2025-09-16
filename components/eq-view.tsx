@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { HelpCircle, Play, Power, Volume2, Sliders, Minus, Triangle } from "lucide-react"
+import { HelpCircle, Power, Volume2, Sliders } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { FrequencyGraph } from "@/components/frequency-graph"
 import { EQProfiles } from "@/components/eq-profiles"
@@ -45,7 +45,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   } = useEQProfileStore()
   
   // Get the player state to control music playback
-  const { isPlaying: isMusicPlaying, setIsPlaying: setMusicPlaying } = usePlayerStore()
+  const { isPlaying: isMusicPlaying } = usePlayerStore()
   
   const [showCalibrationModal, setShowCalibrationModal] = useState(false)
   const [showCreateNewDialog, setShowCreateNewDialog] = useState(false)
@@ -89,7 +89,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
 
 
   // New state for current glyph shape in Line Tool (GlyphGrid)
-  const [currentGlyphShape, setCurrentGlyphShape] = useState<'line' | 'triangle'>('triangle');
+  const [currentGlyphShape] = useState<'line' | 'triangle'>('triangle');
 
 
   // Detect mobile devices
@@ -348,10 +348,110 @@ export function EQView({ setEqEnabled }: EQViewProps) {
 
       {/* Main EQ View */}
       <div className="space-y-6">
-        {/* Combined EQ and Grid Layout */}
-        <div className="flex flex-row gap-6">
-          {/* EQ Section - Now takes more of the width */}
-          <div className="w-3/4 relative" ref={eqContainerRef}>
+        {/* Grid Visualizer - Now at the top, full width */}
+        <div className="w-full bg-gray-100 dark:bg-card rounded-lg p-4">
+          <div className="flex flex-col space-y-4">
+            {/* Updated segmented control with dot grid as default/left option */}
+            <div className="flex border rounded-md overflow-hidden w-fit">
+              <button
+                className={`px-4 py-2 text-sm font-medium ${
+                  activeGrid === "dot"
+                    ? "bg-teal-500 text-white"
+                    : "bg-background hover:bg-muted"
+                }`}
+                onClick={() => setActiveGrid("dot")}
+              >
+                Dot Grid
+              </button>
+              <button
+                className={`px-4 py-2 text-sm font-medium ${
+                  activeGrid === "line"
+                    ? "bg-teal-500 text-white"
+                    : "bg-background hover:bg-muted"
+                }`}
+                onClick={() => setActiveGrid("line")}
+              >
+                Glyph Grid
+              </button>
+              <button
+                className={`px-4 py-2 text-sm font-medium ${
+                  activeGrid === "shape"
+                    ? "bg-teal-500 text-white"
+                    : "bg-background hover:bg-muted"
+                }`}
+                onClick={() => setActiveGrid("shape")}
+              >
+                Shape Tool
+              </button>
+            </div>
+
+            {/* Grid Section */}
+            <div className="w-full">
+              {activeGrid === "line" ? (
+                <GlyphGrid
+                  gridSize={glyphGridSize}
+                  onSelectionChange={(glyph) => {
+                    // Could potentially connect to audio in the future
+                    console.log('Glyph changed:', glyph)
+                  }}
+                  isPlaying={glyphGridPlaying}
+                  disabled={false}
+                  glyphType={currentGlyphShape}
+                />
+              ) : activeGrid === "dot" ? (
+                <NotchFilterNoiseGrid
+                  disabled={false}
+                />
+              ) : (
+                <div>
+                  {/* Placeholder for ShapeTool component */}
+                  <p className="text-center text-muted-foreground p-4">
+                    Shape Tool UI (Work In Progress)
+                  </p>
+                  <div className="flex flex-col items-center gap-2 mt-2">
+                    <label htmlFor="num-shape-dots" className="text-sm">Number of Dots: {numShapeDots}</label>
+                    <input
+                      id="num-shape-dots"
+                      type="range"
+                      min="1"
+                      max="10"
+                      value={numShapeDots}
+                      onChange={(e) => setNumShapeDots(parseInt(e.target.value))}
+                      className="w-48"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Play button moved to bottom of grid section - NotchFilterNoiseGrid has its own controls */}
+            {activeGrid !== "dot" && (
+              <div className="flex justify-center mt-6">
+                <Button
+                  size="lg"
+                  variant={activeGrid === "line" ? (glyphGridPlaying ? "default" : "outline")
+                            : (shapeToolPlaying ? "default" : "outline")}
+                  className={activeGrid === "line" ? (glyphGridPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")
+                              : (shapeToolPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")}
+                  onClick={() => {
+                    if (activeGrid === "line") {
+                      toggleGlyphPlayback()
+                    } else if (activeGrid === "shape") {
+                      toggleShapePlayback()
+                    }
+                  }}
+                >
+                  {activeGrid === "line"
+                    ? (glyphGridPlaying ? "Stop" : "Play Glyph")
+                    : (shapeToolPlaying ? "Stop" : "Play Shape")}
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* EQ Section - Now below, full width */}
+        <div className="w-full relative" ref={eqContainerRef}>
             {/* FFT Visualizer should always be visible during audio playback */}
             {(calibrationPlaying || glyphGridPlaying || dotGridPlaying || shapeToolPlaying) && preEQAnalyser && (
               <div className="absolute inset-0 z-0">
@@ -398,148 +498,6 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 {isEQEnabled ? "EQ On" : "EQ Off"}
               </Button>
             </div>
-          </div>
-
-          {/* Grid Visualizer - Now takes less width */}
-          <div className="w-1/4 bg-gray-100 dark:bg-card rounded-lg p-4">
-            <div className="flex flex-col space-y-4">
-              {/* Updated segmented control with dot grid as default/left option */}
-              <div className="flex border rounded-md overflow-hidden w-fit">
-                <button
-                  className={`px-4 py-2 text-sm font-medium ${
-                    activeGrid === "dot" 
-                      ? "bg-teal-500 text-white" 
-                      : "bg-background hover:bg-muted"
-                  }`}
-                  onClick={() => setActiveGrid("dot")}
-                >
-                  Dot Grid
-                </button>
-                <button
-                  className={`px-4 py-2 text-sm font-medium ${
-                    activeGrid === "line" 
-                      ? "bg-teal-500 text-white" 
-                      : "bg-background hover:bg-muted"
-                  }`}
-                  onClick={() => setActiveGrid("line")}
-                >
-                  Line Tool
-                </button>
-                <button
-                  className={`px-4 py-2 text-sm font-medium ${
-                    activeGrid === "shape" 
-                      ? "bg-teal-500 text-white" 
-                      : "bg-background hover:bg-muted"
-                  }`}
-                  onClick={() => setActiveGrid("shape")}
-                >
-                  Shape Tool
-                </button>
-              </div>
-            </div>
-            
-            {/* Grid content area */}
-            <div className="mt-4">
-              {activeGrid === "line" ? (
-                <GlyphGrid
-                  isPlaying={glyphGridPlaying}
-                  disabled={false}
-                  glyphType={currentGlyphShape}
-                />
-              ) : activeGrid === "dot" ? (
-                <NotchFilterNoiseGrid
-                  disabled={false}
-                />
-              ) : (
-                <div>
-                  {/* Placeholder for ShapeTool component */}
-                  <p className="text-center text-muted-foreground p-4">
-                    Shape Tool UI (Work In Progress)
-                  </p>
-                  <div className="flex flex-col items-center gap-2 mt-2">
-                    <label htmlFor="num-shape-dots" className="text-sm">Number of Dots: {numShapeDots}</label>
-                    <Slider 
-                      id="num-shape-dots"
-                      min={4} 
-                      max={32} 
-                      step={1} 
-                      value={[numShapeDots]} 
-                      onValueChange={(value) => setNumShapeDots(value[0])} 
-                      className="w-3/4"
-                    />
-                  </div>
-                </div>
-              )}
-
-
-              {/* UI for selecting glyph shape when Line Tool is active */} 
-              {activeGrid === "line" && (
-                <div className="mt-4 space-y-2">
-                  <p className="text-xs text-muted-foreground text-center">Shape Type:</p>
-                  <div className="flex justify-center gap-2">
-                    <Button 
-                      variant={currentGlyphShape === 'line' ? 'default' : 'outline'}
-                      size="sm"
-                      onClick={() => setCurrentGlyphShape('line')}
-                      className={currentGlyphShape === 'line' ? "bg-sky-500 hover:bg-sky-600 text-white" : ""}
-                    >
-                      <Minus className="mr-1 h-4 w-4" /> Line
-                    </Button>
-                    <Button 
-                      variant={currentGlyphShape === 'triangle' ? 'default' : 'outline'}
-                      size="sm"
-                      onClick={() => setCurrentGlyphShape('triangle')}
-                      className={currentGlyphShape === 'triangle' ? "bg-sky-500 hover:bg-sky-600 text-white" : ""}
-                    >
-                      <Triangle className="mr-1 h-4 w-4" /> Triangle
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
-            
-            {/* Play button moved to bottom of grid section - NotchFilterNoiseGrid has its own controls */}
-            {activeGrid !== "dot" && (
-              <div className="flex justify-center mt-6">
-                <Button
-                  size="lg"
-                  variant={activeGrid === "line" ? (glyphGridPlaying ? "default" : "outline")
-                            : (shapeToolPlaying ? "default" : "outline")}
-                  className={activeGrid === "line" ? (glyphGridPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")
-                              : (shapeToolPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")}
-                  onClick={() => {
-                    if (activeGrid === "line") {
-                      setGlyphGridPlaying(!glyphGridPlaying);
-                      if (shapeToolPlaying) setShapeToolPlaying(false);
-                      if (!glyphGridPlaying && isMusicPlaying) setMusicPlaying(false);
-                    } else {
-                      setShapeToolPlaying(!shapeToolPlaying);
-                      if (glyphGridPlaying) setGlyphGridPlaying(false);
-                      if (!shapeToolPlaying && isMusicPlaying) setMusicPlaying(false);
-                    }
-                  }}
-                >
-                  <Play className="mr-2 h-5 w-5" />
-                  {activeGrid === "line"
-                    ? (glyphGridPlaying ? "Stop Calibration" : "Play Calibration")
-                    : (shapeToolPlaying ? "Stop Calibration" : "Play Calibration")}
-                </Button>
-              </div>
-            )}
-            
-            {/* Tutorial button replacing help text link */}
-            <div className="flex justify-center mt-3">
-              <Button
-                size="sm"
-                variant="ghost"
-                className="text-xs text-muted-foreground hover:text-foreground"
-                onClick={() => setShowCalibrationModal(true)}
-              >
-                <HelpCircle className="mr-1 h-3 w-3" />
-                Tutorial
-              </Button>
-            </div>
-          </div>
         </div>
 
         {/* Distortion Control Section */}
