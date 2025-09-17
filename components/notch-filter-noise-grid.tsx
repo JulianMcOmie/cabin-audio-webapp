@@ -101,6 +101,7 @@ export function NotchFilterNoiseGrid({
   const [selectedDots, setSelectedDots] = useState<Map<number, Set<number>>>(new Map()) // column -> Set of rows
   const [isPlaying, setIsPlaying] = useState(false)
   const [activeColumn, setActiveColumn] = useState(0)
+  const [, setActiveDotInColumn] = useState(0) // Track which dot in the current column
   const [gridSize, setGridSize] = useState(initialGridSize)
   const [columnCount, setColumnCount] = useState(initialColumnCount)
   const [playbackMode, setPlaybackMode] = useState<'sequential' | 'simultaneous'>('sequential')
@@ -108,6 +109,7 @@ export function NotchFilterNoiseGrid({
   const [beatPosition, setBeatPosition] = useState(0) // Current position in 8-beat pattern (0-7)
   const beatPositionRef = useRef(0) // Use ref to avoid closure issues
   const currentDotIndexRef = useRef(0) // Use ref to avoid closure issues
+  const activeDotInColumnRef = useRef(0) // Use ref for tracking which dot in column
   const [isNotchedState, setIsNotchedState] = useState(true) // true = notched, false = full spectrum
   const [notchBandwidth, setNotchBandwidth] = useState(4) // Bandwidth multiplier for notch filter (1-8)
   const [staggerDelay, setStaggerDelay] = useState(20) // ms stagger between columns in simultaneous mode
@@ -148,6 +150,7 @@ export function NotchFilterNoiseGrid({
   }, [])
 
   // Helper function to find contiguous ranges of dots in a column
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const getContiguousRanges = (rows: Set<number>): Array<{start: number, end: number}> => {
     const sortedRows = Array.from(rows).sort((a, b) => a - b)
     const ranges: Array<{start: number, end: number}> = []
@@ -235,10 +238,10 @@ export function NotchFilterNoiseGrid({
   const playColumnBurst = (
     column: number,
     hasNotch: boolean,
-    notchFrequency: number | null,
+    notchFrequencies: number[] | null,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _bandwidth: number = 4,
-    staggerMs: number = 20,
-    notchFrequencyMax: number | null = null
+    staggerMs: number = 20
   ) => {
     const audioContext = audioContextRef.current
     if (!audioContext) return
@@ -270,7 +273,7 @@ export function NotchFilterNoiseGrid({
 
     const slopedNoiseGens: SlopedPinkNoiseGenerator[] = []
 
-    if (hasNotch && notchFrequency !== null) {
+    if (hasNotch) {
       // INVERTED: When notch is active, play FULL SPECTRUM
       const noiseBuffer = createPinkNoiseBuffer(audioContext, 1.0)
       const noiseSource = audioContext.createBufferSource()
@@ -289,7 +292,7 @@ export function NotchFilterNoiseGrid({
       noiseSource.stop(startTime + BURST_DURATION / 1000)
 
     } else {
-      // INVERTED: When not notched, apply EQ BUMP at the frequency
+      // INVERTED: When not notched, apply EQ BUMP at the frequencies
       const noiseBuffer = createPinkNoiseBuffer(audioContext, 1.0)
       const noiseSource = audioContext.createBufferSource()
       noiseSource.buffer = noiseBuffer
@@ -298,32 +301,33 @@ export function NotchFilterNoiseGrid({
       const slopedNoiseGen = new SlopedPinkNoiseGenerator(audioContext)
       slopedNoiseGens.push(slopedNoiseGen)
 
-      // Add peaking filter for EQ bump when we have a frequency
-      if (notchFrequency !== null) {
-        const peakingFilter = audioContext.createBiquadFilter()
-        peakingFilter.type = 'peaking'
-        peakingFilter.frequency.value = notchFrequency
-        peakingFilter.Q.value = 2.0 // Moderate Q for noticeable bump
-        peakingFilter.gain.value = 12 // 12dB boost for more pronounced effect
+      // Add peaking filters for EQ bumps when we have frequencies
+      if (notchFrequencies !== null && notchFrequencies.length > 0) {
+        // Create a chain of peaking filters for each frequency
+        const peakingFilters: BiquadFilterNode[] = []
 
-        // If we have a range, add a second filter for the max frequency
-        if (notchFrequencyMax && notchFrequencyMax !== notchFrequency) {
-          const peakingFilter2 = audioContext.createBiquadFilter()
-          peakingFilter2.type = 'peaking'
-          peakingFilter2.frequency.value = notchFrequencyMax
-          peakingFilter2.Q.value = 2.0
-          peakingFilter2.gain.value = 12
+        for (const freq of notchFrequencies) {
+          const peakingFilter = audioContext.createBiquadFilter()
+          peakingFilter.type = 'peaking'
+          peakingFilter.frequency.value = freq
+          peakingFilter.Q.value = 2.0 // Moderate Q for noticeable bump
+          peakingFilter.gain.value = 12 // 12dB boost for more pronounced effect
+          peakingFilters.push(peakingFilter)
+        }
 
-          // Connect: source -> slopedNoise -> peak1 -> peak2 -> merger
-          noiseSource.connect(slopedNoiseGen.getInputNode())
-          slopedNoiseGen.getOutputNode().connect(peakingFilter)
-          peakingFilter.connect(peakingFilter2)
-          peakingFilter2.connect(merger)
+        // Connect the chain: source -> slopedNoise -> peak1 -> peak2 -> ... -> merger
+        noiseSource.connect(slopedNoiseGen.getInputNode())
+
+        if (peakingFilters.length === 1) {
+          slopedNoiseGen.getOutputNode().connect(peakingFilters[0])
+          peakingFilters[0].connect(merger)
         } else {
-          // Connect: source -> slopedNoise -> peakingFilter -> merger
-          noiseSource.connect(slopedNoiseGen.getInputNode())
-          slopedNoiseGen.getOutputNode().connect(peakingFilter)
-          peakingFilter.connect(merger)
+          // Chain multiple filters
+          slopedNoiseGen.getOutputNode().connect(peakingFilters[0])
+          for (let i = 0; i < peakingFilters.length - 1; i++) {
+            peakingFilters[i].connect(peakingFilters[i + 1])
+          }
+          peakingFilters[peakingFilters.length - 1].connect(merger)
         }
       } else {
         // No frequency specified, just play sloped noise
@@ -367,10 +371,11 @@ export function NotchFilterNoiseGrid({
 
       if (totalDotsSelected === 0) return
 
-      // Check if we're in multi-dot mode (multiple dots, potentially in same column)
+      // Check if we're in multi-dot mode (multiple dots across different columns)
+      // Don't use multi-dot mode for sequential mode, let sequential handle its own logic
       const hasMultipleDots = totalDotsSelected > 1
       const hasDotsInSameColumn = Array.from(selectedDots.values()).some(rows => rows.size > 1)
-      const isMultiDotMode = (hasMultipleDots || hasDotsInSameColumn) && playbackMode !== 'simultaneous'
+      const isMultiDotMode = (hasMultipleDots || hasDotsInSameColumn) && playbackMode !== 'simultaneous' && playbackMode !== 'sequential'
 
 
       if (playbackMode === 'simultaneous' && totalDotsSelected > 0) {
@@ -381,25 +386,11 @@ export function NotchFilterNoiseGrid({
 
         selectedDots.forEach((rows, col) => {
           if (rows.size > 0) {
-            // Get contiguous ranges of dots in this column
-            const ranges = getContiguousRanges(rows)
+            // Get all frequencies for the dots in this column
+            const frequencies = Array.from(rows).map(row => getFrequencyForRow(row))
 
-            if (ranges.length === 1 && ranges[0].start === ranges[0].end) {
-              // Single dot - use inverted behavior
-              const notchFreq = getFrequencyForRow(ranges[0].start)
-              playColumnBurst(col, shouldBeNotched, notchFreq, notchBandwidth, staggerDelay)
-            } else if (ranges.length === 1) {
-              // Single contiguous range - provide both frequencies for EQ bumps
-              const minFreq = getFrequencyForRow(ranges[0].end) // Remember rows are inverted (higher row = lower freq)
-              const maxFreq = getFrequencyForRow(ranges[0].start)
-              playColumnBurst(col, shouldBeNotched, minFreq, notchBandwidth, staggerDelay, maxFreq)
-            } else {
-              // Multiple non-contiguous dots - for now, just use first dot
-              // Could be enhanced to handle multiple ranges in the future
-              const row = Array.from(rows)[0]
-              const notchFreq = getFrequencyForRow(row)
-              playColumnBurst(col, shouldBeNotched, notchFreq, notchBandwidth, staggerDelay)
-            }
+            // Play column with all frequencies for EQ bumps
+            playColumnBurst(col, shouldBeNotched, shouldBeNotched ? null : frequencies, notchBandwidth, staggerDelay)
           }
         })
 
@@ -417,7 +408,7 @@ export function NotchFilterNoiseGrid({
         const shouldBeNotched = !(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6)
 
         // Play only the current dot's column with inverted logic
-        playColumnBurst(currentDot.col, shouldBeNotched, notchFreq, notchBandwidth, 0)
+        playColumnBurst(currentDot.col, shouldBeNotched, shouldBeNotched ? null : [notchFreq], notchBandwidth, 0)
 
         // Update states for next beat
         beatPositionRef.current = beatPositionRef.current + 1
@@ -441,41 +432,102 @@ export function NotchFilterNoiseGrid({
         // INVERTED: positions 0,3,6 play EQ bump (hasNotch=false), others play full spectrum (hasNotch=true)
         const shouldBeNotched = !(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6)
 
-        playColumnBurst(dot.col, shouldBeNotched, notchFreq, notchBandwidth, 0)
+        playColumnBurst(dot.col, shouldBeNotched, shouldBeNotched ? null : [notchFreq], notchBandwidth, 0)
 
         // Update beat position
         beatPositionRef.current = (beatPositionRef.current + 1) % 8
         setBeatPosition(beatPositionRef.current)
         setIsNotchedState(!(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6))
-      } else {
-        // Sequential mode with F-N-N-F-N-N-F-N pattern
-        const columnsWithDots = Array.from(selectedDots.keys()).sort((a, b) => a - b)
-        if (columnsWithDots.length > 0) {
-          const currentCol = columnsWithDots[activeColumn % columnsWithDots.length]
+      } else if (playbackMode === 'sequential') {
+        // Sequential mode - play all columns with staggered bursts, cycling EQ bump through dots in reading order
+        // Build a list of all dots in reading order
+        const allDotsInOrder: {col: number, row: number}[] = []
 
-          // INVERTED: positions 0,3,6 play EQ bump (hasNotch=false), others play full spectrum (hasNotch=true)
-          const shouldBeNotched = !(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6)
-
-          selectedDots.forEach((rows, col) => {
-            if (rows.size > 0) {
-              const row = Array.from(rows)[0]
-              const notchFreq = getFrequencyForRow(row)
-              const applyNotch = col !== currentCol ? false : shouldBeNotched
-              playColumnBurst(col, applyNotch, notchFreq, notchBandwidth, 0)
-            }
+        // Get all dots sorted by row first, then by column (reading order)
+        selectedDots.forEach((rows, col) => {
+          rows.forEach(row => {
+            allDotsInOrder.push({col, row})
           })
+        })
 
-          // Update beat position
-          beatPositionRef.current = (beatPositionRef.current + 1) % 8
-          setBeatPosition(beatPositionRef.current)
+        // Sort by row first (top to bottom), then by column (left to right)
+        allDotsInOrder.sort((a, b) => {
+          if (a.row !== b.row) return a.row - b.row
+          return a.col - b.col
+        })
 
-          // Move to next column after 8 beats
-          if (beatPositionRef.current === 0) {
-            setActiveColumn((activeColumn + 1) % columnsWithDots.length)
+        // Remove any duplicates (shouldn't happen but let's be safe)
+        const uniqueDots = allDotsInOrder.filter((dot, index, self) =>
+          index === self.findIndex(d => d.col === dot.col && d.row === dot.row)
+        )
+
+        if (uniqueDots.length > 0) {
+          if (uniqueDots.length === 1) {
+            // Single dot: use F-N-N-F-N-N-F-N pattern
+            const dot = uniqueDots[0]
+            const notchFreq = getFrequencyForRow(dot.row)
+            const shouldBeNotched = !(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6)
+
+            playColumnBurst(dot.col, shouldBeNotched, shouldBeNotched ? null : [notchFreq], notchBandwidth, 0)
+
+            // Update beat position
+            beatPositionRef.current = (beatPositionRef.current + 1) % 8
+            setBeatPosition(beatPositionRef.current)
+            setIsNotchedState(!(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6))
+          } else {
+            // Multiple dots: play all columns with staggered bursts
+            // Cycle through dots for EQ bump, alternating with full spectrum
+            const totalSteps = uniqueDots.length * 2
+            const currentStep = activeDotInColumnRef.current
+            const isFullSpectrum = currentStep % 2 === 1
+
+            // Determine which dot gets the EQ bump
+            const currentBumpDotIndex = Math.floor(currentStep / 2)
+            const currentBumpDot = uniqueDots[currentBumpDotIndex]
+
+            // Debug logging
+            console.log(`Step ${currentStep}/${totalSteps}: ${isFullSpectrum ? 'FULL' : `BUMP dot ${currentBumpDotIndex} (${currentBumpDot.col},${currentBumpDot.row})`}`)
+            console.log('All dots in order:', uniqueDots.map(d => `(${d.col},${d.row})`).join(', '))
+
+            // Get all columns in sorted order for consistent staggering
+            const sortedColumns = Array.from(selectedDots.keys()).sort((a, b) => a - b)
+
+            // Play all columns with appropriate sound
+            sortedColumns.forEach((col, colIndex) => {
+              const rows = selectedDots.get(col)
+              if (rows && rows.size > 0) {
+                // Check if this column contains the current bump dot
+                const hasCurrentBumpDot = !isFullSpectrum && col === currentBumpDot.col && rows.has(currentBumpDot.row)
+
+                if (hasCurrentBumpDot) {
+                  // This column has the current bump dot - play with EQ bump at that frequency
+                  const notchFreq = getFrequencyForRow(currentBumpDot.row)
+                  playColumnBurst(col, false, [notchFreq], notchBandwidth, colIndex * staggerDelay)
+                } else {
+                  // Play full spectrum for all other columns
+                  playColumnBurst(col, true, null, notchBandwidth, colIndex * staggerDelay)
+                }
+              }
+            })
+
+            // Visual feedback
+            setIsNotchedState(isFullSpectrum)
+            if (!isFullSpectrum) {
+              setActiveColumn(currentBumpDot.col)
+            }
+
+            // Move to next step AFTER playing
+            const nextStep = (currentStep + 1) % totalSteps
+            activeDotInColumnRef.current = nextStep
+            setActiveDotInColumn(nextStep)
           }
-
-          // Update visual state
-          setIsNotchedState(!(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6))
+        }
+      } else {
+        // Fallback for any other mode
+        const dot = allDots[0]
+        if (dot) {
+          const notchFreq = getFrequencyForRow(dot.row)
+          playColumnBurst(dot.col, false, [notchFreq], notchBandwidth, 0)
         }
       }
     }
@@ -492,6 +544,8 @@ export function NotchFilterNoiseGrid({
       // Reset refs when starting playback
       beatPositionRef.current = 0
       currentDotIndexRef.current = 0
+      activeDotInColumnRef.current = 0
+      setActiveDotInColumn(0)
       animate()
     } else {
       if (animationFrameRef.current) {
@@ -506,7 +560,7 @@ export function NotchFilterNoiseGrid({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, selectedDots, activeColumn])
+  }, [isPlaying, selectedDots])
 
   // Draw grid
   useEffect(() => {
@@ -640,7 +694,9 @@ export function NotchFilterNoiseGrid({
       setBeatPosition(0)
       beatPositionRef.current = 0
       currentDotIndexRef.current = 0
+      activeDotInColumnRef.current = 0
       setIsNotchedState(true)
+      setActiveDotInColumn(0)
 
       // Auto-start if we have selections
       const totalDots = Array.from(newSelectedDots.values()).reduce((sum, rows) => sum + rows.size, 0)
@@ -662,6 +718,7 @@ export function NotchFilterNoiseGrid({
     beatPositionRef.current = 0
     currentDotIndexRef.current = 0
     setIsNotchedState(true)
+    setActiveDotInColumn(0)
   }
 
   // Select diagonal pattern for testing
@@ -678,7 +735,9 @@ export function NotchFilterNoiseGrid({
     setBeatPosition(0)
     beatPositionRef.current = 0
     currentDotIndexRef.current = 0
+    activeDotInColumnRef.current = 0
     setIsNotchedState(true)
+    setActiveDotInColumn(0)
     if (!isPlaying) {
       setActiveColumn(0) // Set to first column BEFORE starting
       setIsPlaying(true)
