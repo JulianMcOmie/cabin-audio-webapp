@@ -238,10 +238,10 @@ export function NotchFilterNoiseGrid({
   const playColumnBurst = (
     column: number,
     hasNotch: boolean,
-    notchFrequencies: number[] | null,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _bandwidth: number = 4,
-    staggerMs: number = 20
+    notchFrequency: number | null,
+    bandwidth: number = 4,
+    staggerMs: number = 20,
+    notchFrequencyMax: number | null = null
   ) => {
     const audioContext = audioContextRef.current
     if (!audioContext) return
@@ -273,8 +273,61 @@ export function NotchFilterNoiseGrid({
 
     const slopedNoiseGens: SlopedPinkNoiseGenerator[] = []
 
-    if (hasNotch) {
-      // INVERTED: When notch is active, play FULL SPECTRUM
+    if (hasNotch && notchFrequency !== null) {
+      // CREATE TWO SEPARATE PATHS: LOWPASS AND HIGHPASS to create a frequency gap
+
+      // Path 1: Low frequencies (everything below the notch frequency)
+      const noiseBuffer1 = createPinkNoiseBuffer(audioContext, 1.0)
+      const noiseSource1 = audioContext.createBufferSource()
+      noiseSource1.buffer = noiseBuffer1
+      noiseSource1.loop = true
+
+      const slopedNoiseGen1 = new SlopedPinkNoiseGenerator(audioContext)
+      slopedNoiseGens.push(slopedNoiseGen1)
+
+      // Lowpass filter - roll off frequencies above the notch
+      const lowpass = audioContext.createBiquadFilter()
+      lowpass.type = 'lowpass'
+      // If we have a range, use the minimum frequency for the lowpass
+      const effectiveNotchMin = notchFrequency
+      lowpass.frequency.value = effectiveNotchMin / bandwidth // Dynamic cutoff based on bandwidth
+      lowpass.Q.value = 1.0 // Gentler rolloff for smoother transition
+
+      // Connect path 1: source -> slopedNoise -> lowpass -> merger
+      noiseSource1.connect(slopedNoiseGen1.getInputNode())
+      slopedNoiseGen1.getOutputNode().connect(lowpass)
+      lowpass.connect(merger)
+
+      // Path 2: High frequencies (everything above the notch frequency)
+      const noiseBuffer2 = createPinkNoiseBuffer(audioContext, 1.0)
+      const noiseSource2 = audioContext.createBufferSource()
+      noiseSource2.buffer = noiseBuffer2
+      noiseSource2.loop = true
+
+      const slopedNoiseGen2 = new SlopedPinkNoiseGenerator(audioContext)
+      slopedNoiseGens.push(slopedNoiseGen2)
+
+      // Highpass filter - roll off frequencies below the notch
+      const highpass = audioContext.createBiquadFilter()
+      highpass.type = 'highpass'
+      // If we have a range, use the maximum frequency for the highpass
+      const effectiveNotchMax = notchFrequencyMax || notchFrequency
+      highpass.frequency.value = effectiveNotchMax * bandwidth // Dynamic cutoff based on bandwidth
+      highpass.Q.value = 1.0 // Gentler rolloff for smoother transition
+
+      // Connect path 2: source -> slopedNoise -> highpass -> merger
+      noiseSource2.connect(slopedNoiseGen2.getInputNode())
+      slopedNoiseGen2.getOutputNode().connect(highpass)
+      highpass.connect(merger)
+
+      // Start both sources
+      noiseSource1.start(startTime)
+      noiseSource1.stop(startTime + BURST_DURATION / 1000)
+      noiseSource2.start(startTime)
+      noiseSource2.stop(startTime + BURST_DURATION / 1000)
+
+    } else {
+      // FULL SPECTRUM: Single path with no filtering
       const noiseBuffer = createPinkNoiseBuffer(audioContext, 1.0)
       const noiseSource = audioContext.createBufferSource()
       noiseSource.buffer = noiseBuffer
@@ -286,54 +339,6 @@ export function NotchFilterNoiseGrid({
       // Connect: source -> slopedNoise -> merger
       noiseSource.connect(slopedNoiseGen.getInputNode())
       slopedNoiseGen.getOutputNode().connect(merger)
-
-      // Start source
-      noiseSource.start(startTime)
-      noiseSource.stop(startTime + BURST_DURATION / 1000)
-
-    } else {
-      // INVERTED: When not notched, apply EQ BUMP at the frequencies
-      const noiseBuffer = createPinkNoiseBuffer(audioContext, 1.0)
-      const noiseSource = audioContext.createBufferSource()
-      noiseSource.buffer = noiseBuffer
-      noiseSource.loop = true
-
-      const slopedNoiseGen = new SlopedPinkNoiseGenerator(audioContext)
-      slopedNoiseGens.push(slopedNoiseGen)
-
-      // Add peaking filters for EQ bumps when we have frequencies
-      if (notchFrequencies !== null && notchFrequencies.length > 0) {
-        // Create a chain of peaking filters for each frequency
-        const peakingFilters: BiquadFilterNode[] = []
-
-        for (const freq of notchFrequencies) {
-          const peakingFilter = audioContext.createBiquadFilter()
-          peakingFilter.type = 'peaking'
-          peakingFilter.frequency.value = freq
-          peakingFilter.Q.value = 2.0 // Moderate Q for noticeable bump
-          peakingFilter.gain.value = 12 // 12dB boost for more pronounced effect
-          peakingFilters.push(peakingFilter)
-        }
-
-        // Connect the chain: source -> slopedNoise -> peak1 -> peak2 -> ... -> merger
-        noiseSource.connect(slopedNoiseGen.getInputNode())
-
-        if (peakingFilters.length === 1) {
-          slopedNoiseGen.getOutputNode().connect(peakingFilters[0])
-          peakingFilters[0].connect(merger)
-        } else {
-          // Chain multiple filters
-          slopedNoiseGen.getOutputNode().connect(peakingFilters[0])
-          for (let i = 0; i < peakingFilters.length - 1; i++) {
-            peakingFilters[i].connect(peakingFilters[i + 1])
-          }
-          peakingFilters[peakingFilters.length - 1].connect(merger)
-        }
-      } else {
-        // No frequency specified, just play sloped noise
-        noiseSource.connect(slopedNoiseGen.getInputNode())
-        slopedNoiseGen.getOutputNode().connect(merger)
-      }
 
       // Start source
       noiseSource.start(startTime)
@@ -381,16 +386,17 @@ export function NotchFilterNoiseGrid({
       if (playbackMode === 'simultaneous' && totalDotsSelected > 0) {
         // Simultaneous mode: play all columns at once with F-N-N-F-N-N-F-N pattern
         // Each column has a 20ms stagger delay for a cascading effect
-        // INVERTED: positions 0,3,6 play EQ bump (hasNotch=false), others play full spectrum (hasNotch=true)
+        // Pattern: F-N-N-F-N-N-F-N (positions 0,3,6 are full spectrum, others have notch)
         const shouldBeNotched = !(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6)
 
         selectedDots.forEach((rows, col) => {
           if (rows.size > 0) {
-            // Get all frequencies for the dots in this column
-            const frequencies = Array.from(rows).map(row => getFrequencyForRow(row))
+            // Get the first dot frequency for this column
+            const row = Array.from(rows)[0]
+            const notchFreq = getFrequencyForRow(row)
 
-            // Play column with all frequencies for EQ bumps
-            playColumnBurst(col, shouldBeNotched, shouldBeNotched ? null : frequencies, notchBandwidth, staggerDelay)
+            // Play column with notch at selected frequency
+            playColumnBurst(col, shouldBeNotched, shouldBeNotched ? notchFreq : null, notchBandwidth, staggerDelay)
           }
         })
 
@@ -404,11 +410,11 @@ export function NotchFilterNoiseGrid({
         const notchFreq = getFrequencyForRow(currentDot.row)
 
         // Pattern: F-N-N-F-N-N-F-N (positions 0,3,6 are full spectrum)
-        // INVERTED: positions 0,3,6 play EQ bump (hasNotch=false), others play full spectrum (hasNotch=true)
+        // Pattern: F-N-N-F-N-N-F-N (positions 0,3,6 are full spectrum, others have notch)
         const shouldBeNotched = !(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6)
 
-        // Play only the current dot's column with inverted logic
-        playColumnBurst(currentDot.col, shouldBeNotched, shouldBeNotched ? null : [notchFreq], notchBandwidth, 0)
+        // Play only the current dot's column
+        playColumnBurst(currentDot.col, shouldBeNotched, shouldBeNotched ? notchFreq : null, notchBandwidth, 0)
 
         // Update states for next beat
         beatPositionRef.current = beatPositionRef.current + 1
@@ -429,10 +435,10 @@ export function NotchFilterNoiseGrid({
         // Single dot mode with F-N-N-F-N-N-F-N pattern
         const dot = allDots[0]
         const notchFreq = getFrequencyForRow(dot.row)
-        // INVERTED: positions 0,3,6 play EQ bump (hasNotch=false), others play full spectrum (hasNotch=true)
+        // Pattern: F-N-N-F-N-N-F-N (positions 0,3,6 are full spectrum, others have notch)
         const shouldBeNotched = !(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6)
 
-        playColumnBurst(dot.col, shouldBeNotched, shouldBeNotched ? null : [notchFreq], notchBandwidth, 0)
+        playColumnBurst(dot.col, shouldBeNotched, shouldBeNotched ? notchFreq : null, notchBandwidth, 0)
 
         // Update beat position
         beatPositionRef.current = (beatPositionRef.current + 1) % 8
@@ -468,7 +474,7 @@ export function NotchFilterNoiseGrid({
             const notchFreq = getFrequencyForRow(dot.row)
             const shouldBeNotched = !(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6)
 
-            playColumnBurst(dot.col, shouldBeNotched, shouldBeNotched ? null : [notchFreq], notchBandwidth, 0)
+            playColumnBurst(dot.col, shouldBeNotched, shouldBeNotched ? notchFreq : null, notchBandwidth, 0)
 
             // Update beat position
             beatPositionRef.current = (beatPositionRef.current + 1) % 8
@@ -501,11 +507,12 @@ export function NotchFilterNoiseGrid({
 
                 if (hasCurrentBumpDot) {
                   // This column has the current bump dot - play with EQ bump at that frequency
-                  const notchFreq = getFrequencyForRow(currentBumpDot.row)
-                  playColumnBurst(col, false, [notchFreq], notchBandwidth, colIndex * staggerDelay)
+                  // const notchFreq = getFrequencyForRow(currentBumpDot.row)
+                  playColumnBurst(col, false, null, notchBandwidth, colIndex * staggerDelay)
                 } else {
                   // Play full spectrum for all other columns
-                  playColumnBurst(col, true, null, notchBandwidth, colIndex * staggerDelay)
+                  const notchFreq = getFrequencyForRow(currentBumpDot.row)
+                  playColumnBurst(col, true, notchFreq, notchBandwidth, colIndex * staggerDelay)
                 }
               }
             })
@@ -526,8 +533,8 @@ export function NotchFilterNoiseGrid({
         // Fallback for any other mode
         const dot = allDots[0]
         if (dot) {
-          const notchFreq = getFrequencyForRow(dot.row)
-          playColumnBurst(dot.col, false, [notchFreq], notchBandwidth, 0)
+          // const notchFreq = getFrequencyForRow(dot.row)
+          playColumnBurst(dot.col, false, null, notchBandwidth, 0)
         }
       }
     }
@@ -755,7 +762,7 @@ export function NotchFilterNoiseGrid({
         />
 
         <div className="mt-3 text-xs text-muted-foreground text-center">
-          Click to select dots. Alternates between full spectrum and EQ bumps at selected frequencies.
+          Click to select dots. Creates frequency gaps in -4.5dB/oct sloped noise.
         </div>
       </div>
 
@@ -903,11 +910,11 @@ export function NotchFilterNoiseGrid({
             return (
               <>
                 <div className="font-medium">
-                  Dot {currentDotIndex + 1}/{totalDots} | Beat {beatPosition + 1}/8 | {isNotchedState ? 'FULL' : 'BUMP'}
+                  Dot {currentDotIndex + 1}/{totalDots} | Beat {beatPosition + 1}/8 | {isNotchedState ? 'GAP' : 'FULL'}
                 </div>
                 <div>
                   Current: Col {currentDot.col + 1}, {Math.round(getFrequencyForRow(currentDot.row))}Hz
-                  {isNotchedState ? ' (full spectrum)' : ' (EQ bump)'}
+                  {isNotchedState ? ' (gap)' : ' (full spectrum)'}
                 </div>
               </>
             )
@@ -917,11 +924,11 @@ export function NotchFilterNoiseGrid({
             return (
               <>
                 <div className="font-medium">
-                  Mode: {activeColumn === 0 ? 'EQ BUMP' : 'FULL SPECTRUM'}
+                  Mode: {activeColumn === 0 ? 'FREQUENCY GAP' : 'FULL SPECTRUM'}
                 </div>
                 <div>
                   {activeColumn === 0
-                    ? `Bump at: ${Math.round(getFrequencyForRow(dot.row))}Hz`
+                    ? `Gap around: ${Math.round(getFrequencyForRow(dot.row))}Hz`
                     : 'Playing full frequency spectrum'}
                 </div>
               </>
