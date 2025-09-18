@@ -19,6 +19,7 @@ import { FFTVisualizer } from "@/components/audio/FFTVisualizer"
 import { getReferenceCalibrationAudio } from "@/lib/audio/referenceCalibrationAudio"
 import { NotchFilterNoiseGrid } from "@/components/notch-filter-noise-grid"
 import { GlyphGrid } from "@/components/glyph-grid"
+import { TimbreComparison } from "@/components/timbre-comparison"
 import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
 
@@ -77,7 +78,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const [glyphGridPlaying, setGlyphGridPlaying] = useState(false)
   
   // Add state for toggling between Glyph Grid and Dot Grid
-  const [activeGrid, setActiveGrid] = useState<"line" | "dot" | "shape">("dot")
+  const [activeGrid, setActiveGrid] = useState<"line" | "dot" | "shape" | "timbre">("dot")
 
   
   // Add state to track if the device is mobile
@@ -383,6 +384,16 @@ export function EQView({ setEqEnabled }: EQViewProps) {
               >
                 Shape Tool
               </button>
+              <button
+                className={`px-4 py-2 text-sm font-medium ${
+                  activeGrid === "timbre"
+                    ? "bg-teal-500 text-white"
+                    : "bg-background hover:bg-muted"
+                }`}
+                onClick={() => setActiveGrid("timbre")}
+              >
+                Timbre
+              </button>
             </div>
 
             {/* Grid Section */}
@@ -400,6 +411,10 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 />
               ) : activeGrid === "dot" ? (
                 <NotchFilterNoiseGrid
+                  disabled={false}
+                />
+              ) : activeGrid === "timbre" ? (
+                <TimbreComparison
                   disabled={false}
                 />
               ) : (
