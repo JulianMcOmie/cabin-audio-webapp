@@ -102,9 +102,10 @@ export function TimbreComparison({ disabled = false }: TimbreComparisonProps) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [referenceFreq, setReferenceFreq] = useState(DEFAULT_REFERENCE_FREQ)
   const [adjustableFreq, setAdjustableFreq] = useState(2000) // Start at 2kHz
-  const [currentStep, setCurrentStep] = useState(0) // 0-3 for the 4-step pattern
+  const [currentStep, setCurrentStep] = useState(0) // 0-15 for the 16-step pattern (2 cycles of F-N-N-F-N-N-F-N)
   const [isReferenceFixed, setIsReferenceFixed] = useState(true)
-  const [qValue, setQValue] = useState(2.0) // Q value for bandwidth control (higher = narrower)
+  const [qValue, setQValue] = useState(1.5) // Q value for notch filter bandwidth (higher = narrower)
+  const [mode, setMode] = useState<'alternating' | 'simultaneous'>('alternating') // Mode for comparison
 
   const BEAT_DURATION = 300 // ms per beat (increased to accommodate longer attack)
   const BURST_DURATION = 250 // ms per burst (200ms attack + 50ms release)
@@ -167,8 +168,8 @@ export function TimbreComparison({ disabled = false }: TimbreComparisonProps) {
     return buffer
   }
 
-  // Play a burst with either full spectrum or EQ bump
-  const playBurst = (frequency: number | null, q: number = 2.0) => {
+  // Play a burst with either full spectrum or notched frequency(ies)
+  const playBurst = (frequencies: number | number[] | null, q: number = 1.5) => {
     const audioContext = audioContextRef.current
     if (!audioContext) return
 
@@ -195,17 +196,24 @@ export function TimbreComparison({ disabled = false }: TimbreComparisonProps) {
 
     const slopedNoiseGen = new SlopedPinkNoiseGenerator(audioContext)
 
-    if (frequency !== null) {
-      // EQ bump at the specified frequency
-      const peakingFilter = audioContext.createBiquadFilter()
-      peakingFilter.type = 'peaking'
-      peakingFilter.frequency.value = frequency
-      peakingFilter.Q.value = q
-      peakingFilter.gain.value = 18 // Increased from 12dB to 18dB for more prominent bumps
-
+    if (frequencies !== null) {
+      // Notch filter(s) at the specified frequency(ies)
       noiseSource.connect(slopedNoiseGen.getInputNode())
-      slopedNoiseGen.getOutputNode().connect(peakingFilter)
-      peakingFilter.connect(merger)
+
+      const freqArray = Array.isArray(frequencies) ? frequencies : [frequencies]
+      let lastNode: AudioNode = slopedNoiseGen.getOutputNode()
+
+      // Chain notch filters for multiple frequencies
+      freqArray.forEach(freq => {
+        const notchFilter = audioContext.createBiquadFilter()
+        notchFilter.type = 'notch'
+        notchFilter.frequency.value = freq
+        notchFilter.Q.value = q
+        lastNode.connect(notchFilter)
+        lastNode = notchFilter
+      })
+
+      lastNode.connect(merger)
     } else {
       // Full spectrum
       noiseSource.connect(slopedNoiseGen.getInputNode())
@@ -228,29 +236,51 @@ export function TimbreComparison({ disabled = false }: TimbreComparisonProps) {
     if (now - lastBeatTimeRef.current >= BEAT_DURATION) {
       lastBeatTimeRef.current = now
 
-      // Pattern: reference bump -> full -> adjustable bump -> full
-      const step = currentStepRef.current % 4
+      if (mode === 'alternating') {
+        // Pattern: F-N-N-F-N-N-F-N (8-beat cycle)
+        // First 8 beats: reference frequency, Next 8 beats: adjustable frequency
+        const step = currentStepRef.current % 16
+        const isReferenceCycle = step < 8
+        const beatInCycle = step % 8
 
-      switch (step) {
-        case 0:
-          // Reference dot with EQ bump
-          playBurst(referenceFreq, qValue)
-          break
-        case 1:
+        // F-N-N-F-N-N-F-N pattern (F on beats 0,3,6; N on beats 1,2,4,5,7)
+        const isFullSpectrum = beatInCycle === 0 || beatInCycle === 3 || beatInCycle === 6
+
+        if (isFullSpectrum) {
           // Full spectrum
           playBurst(null)
-          break
-        case 2:
-          // Adjustable dot with EQ bump
-          playBurst(adjustableFreq, qValue)
-          break
-        case 3:
-          // Full spectrum
-          playBurst(null)
-          break
+        } else {
+          // Notched at either reference or adjustable frequency
+          const frequency = isReferenceCycle ? referenceFreq : adjustableFreq
+          playBurst(frequency, qValue)
+        }
+
+        currentStepRef.current = (step + 1) % 16
+      } else {
+        // Simultaneous mode: Pattern alternates both -> ref only -> both -> adj only
+        const step = currentStepRef.current % 4
+
+        switch (step) {
+          case 0:
+            // Both frequencies notched
+            playBurst([referenceFreq, adjustableFreq], qValue)
+            break
+          case 1:
+            // Only reference notched
+            playBurst(referenceFreq, qValue)
+            break
+          case 2:
+            // Both frequencies notched
+            playBurst([referenceFreq, adjustableFreq], qValue)
+            break
+          case 3:
+            // Only adjustable notched
+            playBurst(adjustableFreq, qValue)
+            break
+        }
+
+        currentStepRef.current = (step + 1) % 4
       }
-
-      currentStepRef.current = (step + 1) % 4
       setCurrentStep(currentStepRef.current)
     }
 
@@ -293,7 +323,7 @@ export function TimbreComparison({ disabled = false }: TimbreComparisonProps) {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, referenceFreq, adjustableFreq, qValue])
+  }, [isPlaying, referenceFreq, adjustableFreq, qValue, mode])
 
   // Convert frequency to Y position (inverted: high freq at top)
   const freqToY = (freq: number, height: number) => {
@@ -355,7 +385,12 @@ export function TimbreComparison({ disabled = false }: TimbreComparisonProps) {
 
     // Draw reference dot
     const refY = freqToY(referenceFreq, rect.height)
-    const isRefActive = isPlaying && currentStep === 0
+    // Active based on mode
+    const isRefActive = isPlaying && (
+      mode === 'alternating' ?
+        (currentStep < 8 && (currentStep % 8 === 1 || currentStep % 8 === 2 || currentStep % 8 === 4 || currentStep % 8 === 5 || currentStep % 8 === 7)) :
+        (currentStep === 0 || currentStep === 1 || currentStep === 2)
+    )
 
     if (isRefActive) {
       // Draw pulse
@@ -378,7 +413,12 @@ export function TimbreComparison({ disabled = false }: TimbreComparisonProps) {
 
     // Draw adjustable dot
     const adjY = freqToY(adjustableFreq, rect.height)
-    const isAdjActive = isPlaying && currentStep === 2
+    // Active based on mode
+    const isAdjActive = isPlaying && (
+      mode === 'alternating' ?
+        (currentStep >= 8 && (currentStep % 8 === 1 || currentStep % 8 === 2 || currentStep % 8 === 4 || currentStep % 8 === 5 || currentStep % 8 === 7)) :
+        (currentStep === 0 || currentStep === 2 || currentStep === 3)
+    )
 
     if (isAdjActive) {
       // Draw pulse
@@ -403,11 +443,32 @@ export function TimbreComparison({ disabled = false }: TimbreComparisonProps) {
 
     let statusText = ""
     if (isPlaying) {
-      switch (currentStep) {
-        case 0: statusText = `Reference: ${Math.round(referenceFreq)}Hz (BUMP)`; break
-        case 1: statusText = "Full Spectrum"; break
-        case 2: statusText = `Adjustable: ${Math.round(adjustableFreq)}Hz (BUMP)`; break
-        case 3: statusText = "Full Spectrum"; break
+      if (mode === 'alternating') {
+        const isReferenceCycle = currentStep < 8
+        const beatInCycle = currentStep % 8
+        const isFullSpectrum = beatInCycle === 0 || beatInCycle === 3 || beatInCycle === 6
+
+        if (isFullSpectrum) {
+          statusText = "Full Spectrum"
+        } else if (isReferenceCycle) {
+          statusText = `Reference: ${Math.round(referenceFreq)}Hz (NOTCH)`
+        } else {
+          statusText = `Adjustable: ${Math.round(adjustableFreq)}Hz (NOTCH)`
+        }
+      } else {
+        // Simultaneous mode
+        switch (currentStep % 4) {
+          case 0:
+          case 2:
+            statusText = `Both: ${Math.round(referenceFreq)}Hz & ${Math.round(adjustableFreq)}Hz (NOTCH)`
+            break
+          case 1:
+            statusText = `Reference Only: ${Math.round(referenceFreq)}Hz (NOTCH)`
+            break
+          case 3:
+            statusText = `Adjustable Only: ${Math.round(adjustableFreq)}Hz (NOTCH)`
+            break
+        }
       }
     } else {
       statusText = "Click Play to start comparison"
@@ -481,10 +542,10 @@ export function TimbreComparison({ disabled = false }: TimbreComparisonProps) {
             </div>
           </div>
 
-          {/* Bandwidth (Q) control */}
+          {/* Notch bandwidth (Q) control */}
           <div className="space-y-2">
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Bandwidth (Q)</span>
+              <span>Notch Width (Q)</span>
               <span className="font-mono">{qValue.toFixed(1)}</span>
             </div>
             <Slider
@@ -500,6 +561,20 @@ export function TimbreComparison({ disabled = false }: TimbreComparisonProps) {
               <span>Wide (0.5)</span>
               <span>Narrow (10)</span>
             </div>
+          </div>
+
+          {/* Mode toggle */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setMode(mode === 'alternating' ? 'simultaneous' : 'alternating')}
+              className="text-xs px-2 py-1 rounded border hover:bg-muted"
+              disabled={disabled}
+            >
+              Mode: {mode === 'alternating' ? 'Alternating' : 'Simultaneous'}
+            </button>
+            <span className="text-xs text-muted-foreground">
+              {mode === 'alternating' ? '(Ref → Adj cycles)' : '(Both → Ref → Both → Adj)'}
+            </span>
           </div>
 
           {/* Reference frequency control */}
@@ -565,7 +640,10 @@ export function TimbreComparison({ disabled = false }: TimbreComparisonProps) {
           </div>
 
           <div className="text-xs text-muted-foreground">
-            Pattern: Reference → Full → Adjustable → Full → Repeat
+            {mode === 'alternating' ?
+              'Pattern: F-N-N-F-N-N-F-N (Ref) → F-N-N-F-N-N-F-N (Adj)' :
+              'Pattern: Both → Ref Only → Both → Adj Only → Repeat'
+            }
           </div>
         </div>
       </div>
