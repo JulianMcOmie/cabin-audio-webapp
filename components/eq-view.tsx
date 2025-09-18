@@ -22,6 +22,7 @@ import { GlyphGrid } from "@/components/glyph-grid"
 import { TimbreComparison } from "@/components/timbre-comparison"
 import { FrequencyPanner } from "@/components/frequency-panner"
 import { CheckerboardPattern } from "@/components/checkerboard-pattern"
+import { NoiseBurstDelay } from "@/components/noise-burst-delay"
 import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
 
@@ -80,7 +81,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const [glyphGridPlaying, setGlyphGridPlaying] = useState(false)
   
   // Add state for toggling between Glyph Grid and Dot Grid
-  const [activeGrid, setActiveGrid] = useState<"line" | "dot" | "shape" | "timbre" | "panner" | "checkerboard">("dot")
+  const [activeGrid, setActiveGrid] = useState<"line" | "dot" | "shape" | "timbre" | "panner" | "checkerboard" | "delay">("dot")
 
   
   // Add state to track if the device is mobile
@@ -416,6 +417,16 @@ export function EQView({ setEqEnabled }: EQViewProps) {
               >
                 Checkerboard
               </button>
+              <button
+                className={`px-4 py-2 text-sm font-medium ${
+                  activeGrid === "delay"
+                    ? "bg-teal-500 text-white"
+                    : "bg-background hover:bg-muted"
+                }`}
+                onClick={() => setActiveGrid("delay")}
+              >
+                Delay
+              </button>
             </div>
 
             {/* Grid Section */}
@@ -445,6 +456,10 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 />
               ) : activeGrid === "checkerboard" ? (
                 <CheckerboardPattern
+                  disabled={false}
+                />
+              ) : activeGrid === "delay" ? (
+                <NoiseBurstDelay
                   disabled={false}
                 />
               ) : (
