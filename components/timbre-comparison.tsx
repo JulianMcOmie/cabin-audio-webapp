@@ -105,7 +105,7 @@ export function TimbreComparison({ disabled = false }: TimbreComparisonProps) {
   const [currentStep, setCurrentStep] = useState(0) // 0-15 for the 16-step pattern (2 cycles of F-N-N-F-N-N-F-N)
   const [isReferenceFixed, setIsReferenceFixed] = useState(true)
   const [qValue, setQValue] = useState(1.5) // Q value for notch filter bandwidth (higher = narrower)
-  const [mode, setMode] = useState<'alternating' | 'simultaneous'>('alternating') // Mode for comparison
+  const [mode, setMode] = useState<'alternating' | 'simultaneous'>('simultaneous') // Mode for comparison
 
   const BEAT_DURATION = 300 // ms per beat (increased to accommodate longer attack)
   const BURST_DURATION = 250 // ms per burst (200ms attack + 50ms release)
@@ -257,29 +257,30 @@ export function TimbreComparison({ disabled = false }: TimbreComparisonProps) {
 
         currentStepRef.current = (step + 1) % 16
       } else {
-        // Simultaneous mode: Pattern alternates both -> ref only -> both -> adj only
-        const step = currentStepRef.current % 4
+        // Simultaneous mode: Both patterns play together
+        // Lower notch (reference): F-N-F-N-F-N-F-N (notch on beats 1,3,5,7)
+        // Higher notch (adjustable): F-N-N-F-N-N-F-N (notch on beats 1,2,4,5,7)
+        const step = currentStepRef.current % 8
 
-        switch (step) {
-          case 0:
-            // Both frequencies notched
-            playBurst([referenceFreq, adjustableFreq], qValue)
-            break
-          case 1:
-            // Only reference notched
-            playBurst(referenceFreq, qValue)
-            break
-          case 2:
-            // Both frequencies notched
-            playBurst([referenceFreq, adjustableFreq], qValue)
-            break
-          case 3:
-            // Only adjustable notched
-            playBurst(adjustableFreq, qValue)
-            break
+        const lowerNotchActive = step === 1 || step === 3 || step === 5 || step === 7
+        const higherNotchActive = step === 1 || step === 2 || step === 4 || step === 5 || step === 7
+
+        const activeNotches = []
+        if (lowerNotchActive) activeNotches.push(referenceFreq)
+        if (higherNotchActive) activeNotches.push(adjustableFreq)
+
+        if (activeNotches.length === 0) {
+          // Full spectrum
+          playBurst(null)
+        } else if (activeNotches.length === 1) {
+          // Single notch
+          playBurst(activeNotches[0], qValue)
+        } else {
+          // Both notches
+          playBurst(activeNotches, qValue)
         }
 
-        currentStepRef.current = (step + 1) % 4
+        currentStepRef.current = (step + 1) % 8
       }
       setCurrentStep(currentStepRef.current)
     }
@@ -383,13 +384,14 @@ export function TimbreComparison({ disabled = false }: TimbreComparisonProps) {
       }
     })
 
-    // Draw reference dot
+    // Draw reference dot (lower frequency)
     const refY = freqToY(referenceFreq, rect.height)
     // Active based on mode
     const isRefActive = isPlaying && (
       mode === 'alternating' ?
         (currentStep < 8 && (currentStep % 8 === 1 || currentStep % 8 === 2 || currentStep % 8 === 4 || currentStep % 8 === 5 || currentStep % 8 === 7)) :
-        (currentStep === 0 || currentStep === 1 || currentStep === 2)
+        // Simultaneous mode: F-N-F-N-F-N-F-N (notch on beats 1,3,5,7)
+        (currentStep % 8 === 1 || currentStep % 8 === 3 || currentStep % 8 === 5 || currentStep % 8 === 7)
     )
 
     if (isRefActive) {
@@ -409,15 +411,16 @@ export function TimbreComparison({ disabled = false }: TimbreComparisonProps) {
     ctx.fillStyle = isDarkMode ? "#aaa" : "#666"
     ctx.font = "11px monospace"
     ctx.textAlign = "left"
-    ctx.fillText("REF", columnX + 20, refY + 4)
+    ctx.fillText("LOWER", columnX + 20, refY + 4)
 
-    // Draw adjustable dot
+    // Draw adjustable dot (higher frequency)
     const adjY = freqToY(adjustableFreq, rect.height)
     // Active based on mode
     const isAdjActive = isPlaying && (
       mode === 'alternating' ?
         (currentStep >= 8 && (currentStep % 8 === 1 || currentStep % 8 === 2 || currentStep % 8 === 4 || currentStep % 8 === 5 || currentStep % 8 === 7)) :
-        (currentStep === 0 || currentStep === 2 || currentStep === 3)
+        // Simultaneous mode: F-N-N-F-N-N-F-N (notch on beats 1,2,4,5,7)
+        (currentStep % 8 === 1 || currentStep % 8 === 2 || currentStep % 8 === 4 || currentStep % 8 === 5 || currentStep % 8 === 7)
     )
 
     if (isAdjActive) {
@@ -434,7 +437,7 @@ export function TimbreComparison({ disabled = false }: TimbreComparisonProps) {
     ctx.fill()
 
     // Label
-    ctx.fillText("ADJ", columnX + 20, adjY + 4)
+    ctx.fillText("HIGHER", columnX + 20, adjY + 4)
 
     // Draw status at bottom
     ctx.textAlign = "center"
@@ -456,18 +459,19 @@ export function TimbreComparison({ disabled = false }: TimbreComparisonProps) {
           statusText = `Adjustable: ${Math.round(adjustableFreq)}Hz (NOTCH)`
         }
       } else {
-        // Simultaneous mode
-        switch (currentStep % 4) {
-          case 0:
-          case 2:
-            statusText = `Both: ${Math.round(referenceFreq)}Hz & ${Math.round(adjustableFreq)}Hz (NOTCH)`
-            break
-          case 1:
-            statusText = `Reference Only: ${Math.round(referenceFreq)}Hz (NOTCH)`
-            break
-          case 3:
-            statusText = `Adjustable Only: ${Math.round(adjustableFreq)}Hz (NOTCH)`
-            break
+        // Simultaneous mode - show which notches are active
+        const step = currentStep % 8
+        const lowerNotchActive = step === 1 || step === 3 || step === 5 || step === 7
+        const higherNotchActive = step === 1 || step === 2 || step === 4 || step === 5 || step === 7
+
+        if (!lowerNotchActive && !higherNotchActive) {
+          statusText = "Full Spectrum"
+        } else if (lowerNotchActive && higherNotchActive) {
+          statusText = `Both Notches: ${Math.round(referenceFreq)}Hz & ${Math.round(adjustableFreq)}Hz`
+        } else if (lowerNotchActive) {
+          statusText = `Lower Notch: ${Math.round(referenceFreq)}Hz`
+        } else {
+          statusText = `Higher Notch: ${Math.round(adjustableFreq)}Hz`
         }
       }
     } else {
@@ -573,7 +577,7 @@ export function TimbreComparison({ disabled = false }: TimbreComparisonProps) {
               Mode: {mode === 'alternating' ? 'Alternating' : 'Simultaneous'}
             </button>
             <span className="text-xs text-muted-foreground">
-              {mode === 'alternating' ? '(Ref → Adj cycles)' : '(Both → Ref → Both → Adj)'}
+              {mode === 'alternating' ? '(Ref → Adj cycles)' : '(Simultaneous patterns)'}
             </span>
           </div>
 
@@ -642,7 +646,7 @@ export function TimbreComparison({ disabled = false }: TimbreComparisonProps) {
           <div className="text-xs text-muted-foreground">
             {mode === 'alternating' ?
               'Pattern: F-N-N-F-N-N-F-N (Ref) → F-N-N-F-N-N-F-N (Adj)' :
-              'Pattern: Both → Ref Only → Both → Adj Only → Repeat'
+              'Lower: F-N-F-N-F-N-F-N | Higher: F-N-N-F-N-N-F-N (Simultaneous)'
             }
           </div>
         </div>

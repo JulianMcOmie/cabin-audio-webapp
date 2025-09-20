@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
+import { CrossfeedPanner } from "@/lib/audio/crossfeed-panner"
 
 // Constants matching other components
 const NUM_BANDS = 20
@@ -102,9 +103,50 @@ export function CheckerboardPattern({ disabled = false }: CheckerboardPatternPro
   const [tempo, setTempo] = useState(120) // BPM
   const [currentBeat, setCurrentBeat] = useState(0)
   const [staggerMs, setStaggerMs] = useState(20) // Milliseconds delay between columns
+  const [useCrossfeed, setUseCrossfeed] = useState(true) // Toggle between crossfeed and normal panning
+  const [activeSquares, setActiveSquares] = useState<Set<string>>(new Set()) // Track active squares by "row,col" key
 
   const BEAT_DURATION = 60000 / tempo / 2 // Convert BPM to ms per eighth note
   const BURST_DURATION = 200 // ms per burst
+
+  // Helper to check if any squares are selected
+  const hasActiveSquares = activeSquares.size > 0
+
+  // Toggle active state of a square
+  const toggleSquareActive = (row: number, col: number) => {
+    const key = `${row},${col}`
+    setActiveSquares(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(key)) {
+        newSet.delete(key)
+      } else {
+        newSet.add(key)
+      }
+      return newSet
+    })
+  }
+
+  // Check if a square is marked as active
+  const isSquareActive = (row: number, col: number) => {
+    if (!hasActiveSquares) return true // All squares are implicitly active when none selected
+    return activeSquares.has(`${row},${col}`)
+  }
+
+  // Select all squares
+  const selectAllSquares = () => {
+    const allSquares = new Set<string>()
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < columns; col++) {
+        allSquares.add(`${row},${col}`)
+      }
+    }
+    setActiveSquares(allSquares)
+  }
+
+  // Clear all active squares
+  const clearActiveSquares = () => {
+    setActiveSquares(new Set())
+  }
 
   // Detect theme changes
   useEffect(() => {
@@ -129,6 +171,11 @@ export function CheckerboardPattern({ disabled = false }: CheckerboardPatternPro
       }
     }
   }, [])
+
+  // Clear active squares when grid dimensions change
+  useEffect(() => {
+    setActiveSquares(new Set())
+  }, [rows, columns])
 
   // Create pink noise buffer
   const createPinkNoiseBuffer = (audioContext: AudioContext, duration: number = 2) => {
@@ -195,6 +242,17 @@ export function CheckerboardPattern({ disabled = false }: CheckerboardPatternPro
     return inverted ? !isCheckerboard : isCheckerboard
   }
 
+  // Check if a column has any active squares
+  const columnHasActiveSquares = (col: number) => {
+    if (!hasActiveSquares) return true // All columns are implicitly active when none selected
+    for (let row = 0; row < rows; row++) {
+      if (isSquareActive(row, col)) {
+        return true
+      }
+    }
+    return false
+  }
+
   // Play a burst (either full spectrum or checkerboard filtered)
   const playBurst = (isFullSpectrum: boolean) => {
     const audioContext = audioContextRef.current
@@ -208,9 +266,13 @@ export function CheckerboardPattern({ disabled = false }: CheckerboardPatternPro
     if (isFullSpectrum) {
       // Full spectrum: play unfiltered pink noise with column staggering
       const slopedNoiseGens: SlopedPinkNoiseGenerator[] = []
+      const panners: CrossfeedPanner[] = []
 
       // Create separate playback for each column with stagger
       for (let col = 0; col < columns; col++) {
+        // Skip columns with no active squares
+        if (!columnHasActiveSquares(col)) continue
+
         const colStartTime = startTime + (col * staggerMs) / 1000
 
         // Create envelope for this column
@@ -220,13 +282,21 @@ export function CheckerboardPattern({ disabled = false }: CheckerboardPatternPro
         colEnvelope.gain.exponentialRampToValueAtTime(peakGain, colStartTime + attackTime)
         colEnvelope.gain.exponentialRampToValueAtTime(0.001, colStartTime + attackTime + releaseTime)
 
-        // Create panner for this column
+        // Create panner for this column (crossfeed or standard)
         const panning = getPanningForColumn(col, columns)
-        const panner = audioContext.createStereoPanner()
-        panner.pan.value = panning
 
-        colEnvelope.connect(panner)
-        panner.connect(audioContext.destination)
+        if (useCrossfeed) {
+          const panner = new CrossfeedPanner(audioContext, panning)
+          panners.push(panner)
+          colEnvelope.connect(panner.getInputNode())
+          panner.connect(audioContext.destination)
+        } else {
+          // Use standard stereo panner
+          const panner = audioContext.createStereoPanner()
+          panner.pan.value = panning
+          colEnvelope.connect(panner)
+          panner.connect(audioContext.destination)
+        }
 
         // Create noise source for this column
         const noiseBuffer = createPinkNoiseBuffer(audioContext, 1.0)
@@ -247,14 +317,19 @@ export function CheckerboardPattern({ disabled = false }: CheckerboardPatternPro
       // Clean up
       setTimeout(() => {
         slopedNoiseGens.forEach(gen => gen.dispose())
+        panners.forEach(panner => panner.dispose())
       }, BURST_DURATION + (columns * staggerMs) + 100)
     } else {
       // Checkerboard pattern: play filtered noise for each active cell with column stagger
       const frequencyBands = getFrequencyBands(rows)
       const slopedNoiseGens: SlopedPinkNoiseGenerator[] = []
+      const panners: CrossfeedPanner[] = []
 
       // Create separate playback for each column with stagger
       for (let col = 0; col < columns; col++) {
+        // Skip columns with no active squares
+        if (!columnHasActiveSquares(col)) continue
+
         const colStartTime = startTime + (col * staggerMs) / 1000
 
         // Create envelope for this column
@@ -269,7 +344,8 @@ export function CheckerboardPattern({ disabled = false }: CheckerboardPatternPro
         merger.connect(colEnvelope)
 
         for (let row = 0; row < rows; row++) {
-          if (!isCellActive(row, col, isInverted)) continue
+          // Only play cells that are both part of the checkerboard pattern AND active
+          if (!isCellActive(row, col, isInverted) || !isSquareActive(row, col)) continue
 
           const band = frequencyBands[row]
           const panning = getPanningForColumn(col, columns)
@@ -290,15 +366,25 @@ export function CheckerboardPattern({ disabled = false }: CheckerboardPatternPro
           // Calculate Q to cover the band properly
           bandpass.Q.value = band.center / (band.high - band.low)
 
-          // Create panner for this column
-          const panner = audioContext.createStereoPanner()
-          panner.pan.value = panning
-
-          // Connect: source -> slopedNoise -> bandpass -> panner -> merger
-          noiseSource.connect(slopedNoiseGen.getInputNode())
-          slopedNoiseGen.getOutputNode().connect(bandpass)
-          bandpass.connect(panner)
-          panner.connect(merger)
+          // Create panner for this column (crossfeed or standard)
+          if (useCrossfeed) {
+            const panner = new CrossfeedPanner(audioContext, panning)
+            panners.push(panner)
+            // Connect: source -> slopedNoise -> bandpass -> panner -> merger
+            noiseSource.connect(slopedNoiseGen.getInputNode())
+            slopedNoiseGen.getOutputNode().connect(bandpass)
+            bandpass.connect(panner.getInputNode())
+            panner.connect(merger)
+          } else {
+            // Use standard stereo panner
+            const panner = audioContext.createStereoPanner()
+            panner.pan.value = panning
+            // Connect: source -> slopedNoise -> bandpass -> panner -> merger
+            noiseSource.connect(slopedNoiseGen.getInputNode())
+            slopedNoiseGen.getOutputNode().connect(bandpass)
+            bandpass.connect(panner)
+            panner.connect(merger)
+          }
 
           noiseSource.start(colStartTime)
           noiseSource.stop(colStartTime + BURST_DURATION / 1000)
@@ -308,6 +394,7 @@ export function CheckerboardPattern({ disabled = false }: CheckerboardPatternPro
       // Clean up
       setTimeout(() => {
         slopedNoiseGens.forEach(gen => gen.dispose())
+        panners.forEach(panner => panner.dispose())
       }, BURST_DURATION + 100)
     }
   }
@@ -359,7 +446,29 @@ export function CheckerboardPattern({ disabled = false }: CheckerboardPatternPro
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, rows, columns, isInverted, tempo, staggerMs])
+  }, [isPlaying, rows, columns, isInverted, tempo, staggerMs, useCrossfeed])
+
+  // Handle canvas click to toggle squares
+  const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    if (isPlaying) return // Don't allow toggling while playing
+
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const rect = canvas.getBoundingClientRect()
+    const x = event.clientX - rect.left
+    const y = event.clientY - rect.top
+
+    const cellWidth = rect.width / columns
+    const cellHeight = rect.height / rows
+
+    const col = Math.floor(x / cellWidth)
+    const row = Math.floor(y / cellHeight)
+
+    if (row >= 0 && row < rows && col >= 0 && col < columns) {
+      toggleSquareActive(row, col)
+    }
+  }
 
   // Draw the checkerboard visualization
   useEffect(() => {
@@ -385,11 +494,16 @@ export function CheckerboardPattern({ disabled = false }: CheckerboardPatternPro
       for (let col = 0; col < columns; col++) {
         const x = col * cellWidth
         const y = row * cellHeight
-        const isActive = isCellActive(row, col, isInverted)
+        const isCheckerboard = isCellActive(row, col, isInverted)
+        const isActive = isSquareActive(row, col)
 
         // Draw cell background
-        if (isActive) {
-          // Active cell - show with color
+        if (!isActive) {
+          // Inactive (not selected) cell - dimmed appearance
+          ctx.fillStyle = isDarkMode ? "#1a1a1a" : "#f8fafc"
+          ctx.globalAlpha = 0.5
+        } else if (isCheckerboard) {
+          // Active and part of checkerboard pattern
           const isCurrentlyPlaying = isPlaying && currentBeat !== 0 && currentBeat !== 3 && currentBeat !== 6
 
           if (isCurrentlyPlaying) {
@@ -401,12 +515,19 @@ export function CheckerboardPattern({ disabled = false }: CheckerboardPatternPro
             ctx.globalAlpha = 1
           }
         } else {
-          // Inactive cell - lighter color
+          // Active but not part of checkerboard pattern
           ctx.fillStyle = isDarkMode ? "#27272a" : "#f1f5f9"
           ctx.globalAlpha = 1
         }
 
         ctx.fillRect(x, y, cellWidth, cellHeight)
+
+        // Draw selection indicator for active squares
+        if (isActive && hasActiveSquares) {
+          ctx.strokeStyle = isDarkMode ? "#22c55e" : "#16a34a"
+          ctx.lineWidth = 2
+          ctx.strokeRect(x + 2, y + 2, cellWidth - 4, cellHeight - 4)
+        }
 
         // Draw cell border
         ctx.strokeStyle = isDarkMode ? "#404040" : "#e2e8f0"
@@ -444,7 +565,7 @@ export function CheckerboardPattern({ disabled = false }: CheckerboardPatternPro
       ctx.fillText(`Beat ${beat + 1}: ${beatText}`, rect.width / 2, rect.height + 15)
     }
 
-  }, [rows, columns, isInverted, isDarkMode, isPlaying, currentBeat])
+  }, [rows, columns, isInverted, isDarkMode, isPlaying, currentBeat, activeSquares, hasActiveSquares])
 
   return (
     <div className="space-y-4">
@@ -454,7 +575,8 @@ export function CheckerboardPattern({ disabled = false }: CheckerboardPatternPro
         <div className="relative">
           <canvas
             ref={canvasRef}
-            className={`w-full aspect-square ${disabled ? "opacity-70" : ""}`}
+            className={`w-full aspect-square ${disabled ? "opacity-70" : ""} ${!isPlaying ? "cursor-pointer" : ""}`}
+            onClick={handleCanvasClick}
           />
         </div>
 
@@ -528,17 +650,33 @@ export function CheckerboardPattern({ disabled = false }: CheckerboardPatternPro
             />
           </div>
 
-          {/* Invert pattern toggle */}
-          <div className="flex items-center space-x-2">
-            <Switch
-              id="invert-pattern"
-              checked={isInverted}
-              onCheckedChange={setIsInverted}
-              disabled={disabled || isPlaying}
-            />
-            <Label htmlFor="invert-pattern" className="text-sm">
-              Invert Pattern
-            </Label>
+          {/* Toggle switches */}
+          <div className="flex gap-4">
+            {/* Invert pattern toggle */}
+            <div className="flex items-center space-x-2">
+              <Switch
+                id="invert-pattern"
+                checked={isInverted}
+                onCheckedChange={setIsInverted}
+                disabled={disabled || isPlaying}
+              />
+              <Label htmlFor="invert-pattern" className="text-sm">
+                Invert Pattern
+              </Label>
+            </div>
+
+            {/* Crossfeed toggle */}
+            <div className="flex items-center space-x-2">
+              <Switch
+                id="use-crossfeed"
+                checked={useCrossfeed}
+                onCheckedChange={setUseCrossfeed}
+                disabled={disabled || isPlaying}
+              />
+              <Label htmlFor="use-crossfeed" className="text-sm">
+                Crossfeed Panning
+              </Label>
+            </div>
           </div>
 
           {/* Controls */}
@@ -551,10 +689,27 @@ export function CheckerboardPattern({ disabled = false }: CheckerboardPatternPro
             >
               {isPlaying ? 'Stop' : 'Play'}
             </Button>
+            <Button
+              onClick={selectAllSquares}
+              disabled={disabled || isPlaying}
+              size="sm"
+              variant="outline"
+            >
+              Select All
+            </Button>
+            <Button
+              onClick={clearActiveSquares}
+              disabled={disabled || isPlaying}
+              size="sm"
+              variant="outline"
+            >
+              Clear Selection
+            </Button>
           </div>
 
-          <div className="text-xs text-muted-foreground">
-            Pattern: F-N-N-F-N-N-F-N (F = Full Spectrum, N = Checkerboard)
+          <div className="text-xs text-muted-foreground space-y-1">
+            <div>Pattern: F-N-N-F-N-N-F-N (F = Full Spectrum, N = Checkerboard)</div>
+            <div>Click squares to toggle active/inactive. Only active squares will be played.</div>
           </div>
         </div>
       </div>

@@ -4,6 +4,9 @@ import type React from "react"
 import { useRef, useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
+import { Switch } from "@/components/ui/switch"
+import { Label } from "@/components/ui/label"
+import { CrossfeedPanner } from "@/lib/audio/crossfeed-panner"
 
 // Constants matching other components
 const NUM_BANDS = 20
@@ -91,6 +94,8 @@ export function FrequencyPanner({ disabled = false }: FrequencyPannerProps) {
   const animationFrameRef = useRef<number | null>(null)
   const lastBeatTimeRef = useRef(0)
   const beatPositionRef = useRef(0)
+  const frequencyRef = useRef(1000)
+  const panningRef = useRef(0)
 
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -102,6 +107,7 @@ export function FrequencyPanner({ disabled = false }: FrequencyPannerProps) {
   const [notchBandwidth, setNotchBandwidth] = useState(4) // Bandwidth multiplier for notch
   const [notchMethod, setNotchMethod] = useState<'split' | 'bandstop'>('split') // Toggle between methods
   const [notchQ, setNotchQ] = useState(8) // Q factor for bandstop notch (higher = narrower)
+  const [useCrossfeed, setUseCrossfeed] = useState(false) // Toggle between crossfeed and normal panning
 
   const BEAT_DURATION = 200 // ms per beat
   const BURST_DURATION = 150 // ms per burst
@@ -164,7 +170,7 @@ export function FrequencyPanner({ disabled = false }: FrequencyPannerProps) {
   }
 
   // Play a burst with frequency gap (notch) or full spectrum
-  const playBurst = (hasNotch: boolean) => {
+  const playBurst = (hasNotch: boolean, currentFreq: number, currentPan: number) => {
     const audioContext = audioContextRef.current
     if (!audioContext) return
 
@@ -184,11 +190,20 @@ export function FrequencyPanner({ disabled = false }: FrequencyPannerProps) {
     const merger = audioContext.createGain()
     merger.connect(envelopeGain)
 
-    // Add panning
-    const panner = audioContext.createStereoPanner()
-    panner.pan.value = panning
-    envelopeGain.connect(panner)
-    panner.connect(audioContext.destination)
+    // Add panning (crossfeed or standard) - use current panning value
+    let pannerCleanup: (() => void) | null = null
+
+    if (useCrossfeed) {
+      const crossfeedPanner = new CrossfeedPanner(audioContext, currentPan)
+      envelopeGain.connect(crossfeedPanner.getInputNode())
+      crossfeedPanner.connect(audioContext.destination)
+      pannerCleanup = () => crossfeedPanner.dispose()
+    } else {
+      const panner = audioContext.createStereoPanner()
+      panner.pan.value = currentPan
+      envelopeGain.connect(panner)
+      panner.connect(audioContext.destination)
+    }
 
     const slopedNoiseGens: SlopedPinkNoiseGenerator[] = []
 
@@ -206,13 +221,13 @@ export function FrequencyPanner({ disabled = false }: FrequencyPannerProps) {
         // Create a bandstop (notch) filter
         const notchFilter = audioContext.createBiquadFilter()
         notchFilter.type = 'notch'
-        notchFilter.frequency.value = frequency
+        notchFilter.frequency.value = currentFreq
         notchFilter.Q.value = notchQ // Higher Q = narrower notch
 
         // Optional: Add a second notch for more attenuation
         const notchFilter2 = audioContext.createBiquadFilter()
         notchFilter2.type = 'notch'
-        notchFilter2.frequency.value = frequency
+        notchFilter2.frequency.value = currentFreq
         notchFilter2.Q.value = notchQ * 1.5 // Slightly different Q for deeper notch
 
         // Connect: source -> slopedNoise -> notch1 -> notch2 -> merger
@@ -237,7 +252,7 @@ export function FrequencyPanner({ disabled = false }: FrequencyPannerProps) {
 
         const lowpass = audioContext.createBiquadFilter()
         lowpass.type = 'lowpass'
-        lowpass.frequency.value = frequency / notchBandwidth
+        lowpass.frequency.value = currentFreq / notchBandwidth
         lowpass.Q.value = 1.0
 
         noiseSource1.connect(slopedNoiseGen1.getInputNode())
@@ -255,7 +270,7 @@ export function FrequencyPanner({ disabled = false }: FrequencyPannerProps) {
 
         const highpass = audioContext.createBiquadFilter()
         highpass.type = 'highpass'
-        highpass.frequency.value = frequency * notchBandwidth
+        highpass.frequency.value = currentFreq * notchBandwidth
         highpass.Q.value = 1.0
 
         noiseSource2.connect(slopedNoiseGen2.getInputNode())
@@ -288,6 +303,7 @@ export function FrequencyPanner({ disabled = false }: FrequencyPannerProps) {
 
     setTimeout(() => {
       slopedNoiseGens.forEach(gen => gen.dispose())
+      if (pannerCleanup) pannerCleanup()
     }, (BURST_DURATION + 100))
   }
 
@@ -301,7 +317,8 @@ export function FrequencyPanner({ disabled = false }: FrequencyPannerProps) {
       // F-N-N-F-N-N-F-N pattern (positions 0,3,6 are full spectrum)
       const shouldBeNotched = !(beatPositionRef.current === 0 || beatPositionRef.current === 3 || beatPositionRef.current === 6)
 
-      playBurst(shouldBeNotched)
+      // Always play bursts, passing current frequency and panning values from refs
+      playBurst(shouldBeNotched, frequencyRef.current, panningRef.current)
 
       beatPositionRef.current = (beatPositionRef.current + 1) % 8
       setBeatPosition(beatPositionRef.current)
@@ -333,7 +350,7 @@ export function FrequencyPanner({ disabled = false }: FrequencyPannerProps) {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, frequency, panning, notchBandwidth, notchMethod, notchQ])
+  }, [isPlaying])
 
   // Convert coordinates to frequency and panning
   const coordsToValues = (x: number, y: number, width: number, height: number) => {
@@ -379,9 +396,11 @@ export function FrequencyPanner({ disabled = false }: FrequencyPannerProps) {
     const { pan, freq } = coordsToValues(x, y, rect.width, rect.height)
     setPanning(pan)
     setFrequency(freq)
+    frequencyRef.current = freq
+    panningRef.current = pan
     setIsDragging(true)
 
-    // Auto-start on interaction
+    // Auto-start pattern playback if not already playing
     if (!isPlaying) {
       setIsPlaying(true)
     }
@@ -400,6 +419,8 @@ export function FrequencyPanner({ disabled = false }: FrequencyPannerProps) {
     const { pan, freq } = coordsToValues(x, y, rect.width, rect.height)
     setPanning(pan)
     setFrequency(freq)
+    frequencyRef.current = freq
+    panningRef.current = pan
   }
 
   const handlePointerUp = () => {
@@ -606,7 +627,11 @@ export function FrequencyPanner({ disabled = false }: FrequencyPannerProps) {
               min="20"
               max="20000"
               value={Math.round(frequency)}
-              onChange={(e) => setFrequency(Math.max(20, Math.min(20000, parseInt(e.target.value) || 1000)))}
+              onChange={(e) => {
+                const newFreq = Math.max(20, Math.min(20000, parseInt(e.target.value) || 1000))
+                setFrequency(newFreq)
+                frequencyRef.current = newFreq
+              }}
               className="flex-1 px-2 py-1 text-sm rounded border bg-background"
               disabled={disabled}
             />
@@ -621,13 +646,30 @@ export function FrequencyPanner({ disabled = false }: FrequencyPannerProps) {
               min="-100"
               max="100"
               value={Math.round(panning * 100)}
-              onChange={(e) => setPanning(parseInt(e.target.value) / 100)}
+              onChange={(e) => {
+                const newPan = parseInt(e.target.value) / 100
+                setPanning(newPan)
+                panningRef.current = newPan
+              }}
               className="flex-1"
               disabled={disabled}
             />
             <span className="text-xs font-mono text-muted-foreground w-12">
               {Math.round(panning * 100)}%
             </span>
+          </div>
+
+          {/* Crossfeed toggle */}
+          <div className="flex items-center space-x-2 mt-3">
+            <Switch
+              id="use-crossfeed-panner"
+              checked={useCrossfeed}
+              onCheckedChange={setUseCrossfeed}
+              disabled={disabled || isPlaying}
+            />
+            <Label htmlFor="use-crossfeed-panner" className="text-sm">
+              Crossfeed Panning
+            </Label>
           </div>
 
           {/* Controls */}
@@ -646,6 +688,8 @@ export function FrequencyPanner({ disabled = false }: FrequencyPannerProps) {
                 setFrequency(1000)
                 setPanning(0)
                 setNotchBandwidth(4)
+                frequencyRef.current = 1000
+                panningRef.current = 0
               }}
               disabled={disabled}
               size="sm"
