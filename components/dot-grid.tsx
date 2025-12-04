@@ -439,7 +439,7 @@ export function DotCalibration({
   const [internalSelectedDots, setInternalSelectedDots] = useState<Set<string>>(new Set()); // Start with no dots selected
   
   // Sound mode state
-  const [soundMode, setSoundMode] = useState<'sloped' | 'bandpassed' | 'sine'>('sloped'); // Start with sloped noise mode
+  const [soundMode, setSoundMode] = useState<'sloped' | 'bandpassed' | 'sine'>('bandpassed'); // Start with bandpassed noise mode
   
   // Use either external or internal state
   const selectedDots = externalSelectedDots !== undefined ? externalSelectedDots : internalSelectedDots;

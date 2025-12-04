@@ -47,7 +47,7 @@ const DOT_REPETITION_INTERVAL_S = 0.2; // Increased to accommodate envelope dura
 
 // Constants for bandpassed noise generator
 const BANDPASS_NOISE_SLOPE_DB_PER_OCT = -4.5; // Fixed slope for bandpassed noise
-const BANDPASS_CENTER_FREQ = 1000; // Hz, center frequency for bandpass filter
+const BANDPASS_BANDWIDTH_OCTAVES = 5.0; // Default bandwidth: 5 octaves (half of 10-octave audible range)
 const BANDPASS_NOISE_OUTPUT_GAIN_SCALAR = 0.25; // Much louder output for bandpassed noise
 
 // Constants for sine tone generator
@@ -92,7 +92,7 @@ class PositionedAudioService {
   private currentBaseDbLevel: number = 0;
   private subHitAdsrEnabled: boolean = true; // Renamed from envelopeEnabled
   private subHitPlaybackEnabled: boolean = true; // New: Toggle for sub-hit mechanism
-  private currentSoundMode: SoundMode = SoundMode.SlopedNoise; // Current sound generation mode
+  private currentSoundMode: SoundMode = SoundMode.BandpassedNoise; // Current sound generation mode - default to bandpassed
 
   constructor(audioContextInstance: AudioContext) {
     this.ctx = audioContextInstance;
@@ -394,15 +394,27 @@ class PositionedAudioService {
     if (point.slopedNoiseGenerator) {
       point.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
     }
-    // Bandpassed noise uses fixed slope, but we can adjust the bandpass frequency based on Y position
+    // Bandpassed noise uses fixed slope, bandpass position based on Y
+    // Fixed-edge positioning: top dot upper edge = 20kHz, bottom dot lower edge = 20Hz
+    let bandpassCenterFreq = 0; // Used for volume compensation later
     if (point.bandpassedNoiseGenerator) {
-      // Map Y position to bandpass frequency (higher Y = higher frequency)
-      const minFreq = 50; // Hz
-      const maxFreq = 14000; // Hz
+      const minFreq = 20; // Hz
+      const maxFreq = 20000; // Hz
+      const bandwidthOctaves = BANDPASS_BANDWIDTH_OCTAVES;
+
+      // Calculate the movable range for the bandpass region
+      const totalOctaves = Math.log2(maxFreq / minFreq); // ~9.97 octaves
+      const movableRange = totalOctaves - bandwidthOctaves;
+
+      // Position lower edge logarithmically based on Y
       const logMinFreq = Math.log2(minFreq);
-      const logMaxFreq = Math.log2(maxFreq);
-      const targetFreq = Math.pow(2, logMinFreq + point.normalizedYPos * (logMaxFreq - logMinFreq));
-      point.bandpassedNoiseGenerator.setBandpassFrequency(targetFreq);
+      const lowerEdgeOctaves = logMinFreq + point.normalizedYPos * movableRange;
+      const lowerEdge = Math.pow(2, lowerEdgeOctaves);
+      const upperEdge = lowerEdge * Math.pow(2, bandwidthOctaves);
+
+      // Calculate center frequency (geometric mean) for filter positioning
+      bandpassCenterFreq = Math.sqrt(lowerEdge * upperEdge);
+      point.bandpassedNoiseGenerator.setBandpassFrequency(bandpassCenterFreq);
     }
     // Sine tone uses the same frequency mapping as bandpassed noise
     if (point.sineToneGenerator) {
@@ -415,20 +427,39 @@ class PositionedAudioService {
       point.sineToneGenerator.setFrequency(targetFreq);
     }
 
-    // Existing attenuation based on deviation from CENTER_SLOPE_DB_PER_OCT
-    const slopeDeviationForAttenuation = Math.abs(targetOverallSlopeDbPerOctave - CENTER_SLOPE_DB_PER_OCT);
-    const existingAttenuationDb = -slopeDeviationForAttenuation * ATTENUATION_PER_DB_OCT_DEVIATION_DB;
+    // Calculate volume compensation based on generator mode
+    let finalVolumeDb: number;
 
-    // New additional boost calculation based on normalizedYPos extremity
-    const MAX_ADDITIONAL_BOOST_DB = 9.0;
-    // extremityFactor goes from 0 (at center y=0.5) to 1 (at extremes y=0 or y=1)
-    const extremityFactor = Math.abs(point.normalizedYPos - 0.5) * 2;
-    // Apply a curve (sqrt) to make the boost logarithmic-like (more boost earlier)
-    const curvedExtremityFactor = Math.sqrt(extremityFactor);
-    const additionalSlopeBoostDb = curvedExtremityFactor * MAX_ADDITIONAL_BOOST_DB;
+    if (point.bandpassedNoiseGenerator && bandpassCenterFreq > 0) {
+      // For bandpassed noise: simplified equal loudness compensation only
+      // Since all dots have same slope and bandwidth, only compensate for human hearing
+      const refFreq = 1000; // Hz, approximate equal loudness curve minimum
+      let loudnessCompensationDb = 0;
 
-    // Combine base level, existing attenuation, and new boost
-    const finalVolumeDb = this.currentBaseDbLevel + existingAttenuationDb + additionalSlopeBoostDb;
+      if (bandpassCenterFreq < refFreq) {
+        // Low frequencies: gentle boost for equal loudness
+        const octavesBelow = Math.log2(refFreq / bandpassCenterFreq);
+        loudnessCompensationDb = octavesBelow * 3; // 3dB/octave below 1kHz
+      } else if (bandpassCenterFreq > 4000) {
+        // High frequencies: slight boost
+        const octavesAbove = Math.log2(bandpassCenterFreq / 4000);
+        loudnessCompensationDb = octavesAbove * 2; // 2dB/octave above 4kHz
+      }
+
+      finalVolumeDb = this.currentBaseDbLevel + loudnessCompensationDb;
+    } else {
+      // For sloped noise and sine tones: use original slope-based compensation
+      const slopeDeviationForAttenuation = Math.abs(targetOverallSlopeDbPerOctave - CENTER_SLOPE_DB_PER_OCT);
+      const existingAttenuationDb = -slopeDeviationForAttenuation * ATTENUATION_PER_DB_OCT_DEVIATION_DB;
+
+      // Additional boost calculation based on normalizedYPos extremity
+      const MAX_ADDITIONAL_BOOST_DB = 9.0;
+      const extremityFactor = Math.abs(point.normalizedYPos - 0.5) * 2;
+      const curvedExtremityFactor = Math.sqrt(extremityFactor);
+      const additionalSlopeBoostDb = curvedExtremityFactor * MAX_ADDITIONAL_BOOST_DB;
+
+      finalVolumeDb = this.currentBaseDbLevel + existingAttenuationDb + additionalSlopeBoostDb;
+    }
     
     const gainRatio = Math.pow(10, finalVolumeDb / 20);
     const effectiveMasterGain = MASTER_GAIN * this.currentDistortionGain * gainRatio;
@@ -439,8 +470,17 @@ class PositionedAudioService {
     this.subHitAdsrEnabled = enabled;
   }
 
-  public setBandpassBandwidth(qValue: number): void {
+  public setBandpassBandwidth(bandwidthOctaves: number): void {
     // Update bandwidth for all active bandpassed noise generators
+    this.audioPoints.forEach((point) => {
+      if (point.bandpassedNoiseGenerator) {
+        point.bandpassedNoiseGenerator.setBandpassBandwidth(bandwidthOctaves);
+      }
+    });
+  }
+
+  // Legacy method for backward compatibility
+  public setBandpassQ(qValue: number): void {
     this.audioPoints.forEach((point) => {
       if (point.bandpassedNoiseGenerator) {
         point.bandpassedNoiseGenerator.setBandpassQ(qValue);
@@ -905,8 +945,13 @@ class DotGridAudioPlayer {
     return !this.audioService.isSubHitPlaybackEnabled();
   }
 
-  public setBandpassBandwidth(qValue: number): void {
-    this.audioService.setBandpassBandwidth(qValue);
+  public setBandpassBandwidth(bandwidthOctaves: number): void {
+    this.audioService.setBandpassBandwidth(bandwidthOctaves);
+  }
+
+  // Legacy method for backward compatibility
+  public setBandpassQ(qValue: number): void {
+    this.audioService.setBandpassQ(qValue);
   }
 }
 
@@ -956,6 +1001,8 @@ class BandpassedNoiseGenerator {
   private highpassFilter: BiquadFilterNode;
   private lowpassFilter: BiquadFilterNode;
   private slopingFilter: SlopedPinkNoiseGenerator;
+  private currentBandwidthOctaves: number;
+  private currentCenterFrequency: number;
 
   constructor(audioCtx: AudioContext) {
     this.ctx = audioCtx;
@@ -975,10 +1022,12 @@ class BandpassedNoiseGenerator {
     // Create sharp lowpass filter
     this.lowpassFilter = this.ctx.createBiquadFilter();
     this.lowpassFilter.type = 'lowpass';
-    this.lowpassFilter.Q.value = 10; // Sharp filter
+    this.lowpassFilter.Q.value = 10; // Sharp filter (will be recalculated based on bandwidth)
 
-    // Set initial frequencies to create bandpass around center frequency
-    this.setBandpassFrequency(BANDPASS_CENTER_FREQ);
+    // Initialize bandwidth and center frequency
+    this.currentBandwidthOctaves = BANDPASS_BANDWIDTH_OCTAVES;
+    this.currentCenterFrequency = 1000; // Default, will be updated based on Y position
+    this.setBandpassFrequency(this.currentCenterFrequency);
 
     // Connect chain: input -> slopingFilter -> highpassFilter -> lowpassFilter -> output
     this.inputGainNode.connect(this.slopingFilter.getInputNode());
@@ -995,24 +1044,47 @@ class BandpassedNoiseGenerator {
     return this.outputGainNode;
   }
 
+  private calculateQFromBandwidth(bandwidthOctaves: number): number {
+    // For a highpass + lowpass combination to approximate a bandpass:
+    // Q relates inversely to bandwidth
+    const numerator = Math.sqrt(2);
+    const denominator = Math.pow(2, bandwidthOctaves / 2) - Math.pow(2, -bandwidthOctaves / 2);
+    return Math.max(0.1, Math.min(30, numerator / denominator));
+  }
+
   public setBandpassFrequency(frequency: number): void {
     const centerFreq = Math.max(20, Math.min(20000, frequency));
-    // Calculate bandwidth based on current Q value (inverse relationship)
-    const bandwidth = centerFreq / this.highpassFilter.Q.value;
-    
-    // Set highpass and lowpass frequencies to create bandpass effect
-    this.highpassFilter.frequency.value = Math.max(20, centerFreq - bandwidth / 2);
-    this.lowpassFilter.frequency.value = Math.min(20000, centerFreq + bandwidth / 2);
+    this.currentCenterFrequency = centerFreq;
+
+    // Calculate edges from center and bandwidth in octaves
+    const halfBandwidth = this.currentBandwidthOctaves / 2;
+    const lowerEdge = Math.max(20, centerFreq / Math.pow(2, halfBandwidth));
+    const upperEdge = Math.min(20000, centerFreq * Math.pow(2, halfBandwidth));
+
+    // Set filter frequencies
+    this.highpassFilter.frequency.value = lowerEdge;
+    this.lowpassFilter.frequency.value = upperEdge;
+
+    // Calculate and set Q value based on desired bandwidth
+    const qValue = this.calculateQFromBandwidth(this.currentBandwidthOctaves);
+    this.highpassFilter.Q.value = qValue;
+    this.lowpassFilter.Q.value = qValue;
+  }
+
+  public setBandpassBandwidth(bandwidthOctaves: number): void {
+    // Store new bandwidth
+    this.currentBandwidthOctaves = Math.max(0.1, Math.min(10, bandwidthOctaves));
+
+    // Recalculate frequencies with new bandwidth
+    this.setBandpassFrequency(this.currentCenterFrequency);
   }
 
   public setBandpassQ(q: number): void {
-    const qValue = Math.max(0.1, Math.min(30, q));
-    this.highpassFilter.Q.value = qValue;
-    this.lowpassFilter.Q.value = qValue;
-    
-    // Recalculate frequencies with new Q value
-    const currentCenter = (this.highpassFilter.frequency.value + this.lowpassFilter.frequency.value) / 2;
-    this.setBandpassFrequency(currentCenter);
+    // Convert Q to approximate bandwidth for backward compatibility
+    const qClamped = Math.max(0.1, Math.min(30, q));
+    // Approximate inverse: bandwidth ≈ 2 * asinh(sqrt(2) / (2 * q)) / ln(2)
+    const approximateBandwidth = 2 * Math.asinh(Math.sqrt(2) / (2 * qClamped)) / Math.log(2);
+    this.setBandpassBandwidth(approximateBandwidth);
   }
 
   public dispose(): void {
@@ -1144,11 +1216,21 @@ export function isBandpassedNoiseMode(): boolean {
 }
 
 /**
- * Set the bandwidth (Q value) for bandpassed noise
+ * Set the bandwidth (in octaves) for bandpassed noise
+ * @param bandwidthOctaves Bandwidth in octaves (default 5.0, range 0.1-10.0)
  */
-export function setBandpassBandwidth(qValue: number): void {
+export function setBandpassBandwidth(bandwidthOctaves: number): void {
   const player = DotGridAudioPlayer.getInstance();
-  player.setBandpassBandwidth(qValue);
+  player.setBandpassBandwidth(bandwidthOctaves);
+}
+
+/**
+ * Set the bandwidth using Q value (legacy method)
+ * @deprecated Use setBandpassBandwidth with octaves instead
+ */
+export function setBandpassQ(qValue: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setBandpassQ(qValue);
 }
 
 // Export the SoundMode enum for use in UI
