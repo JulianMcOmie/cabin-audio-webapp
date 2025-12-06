@@ -444,6 +444,9 @@ export function DotCalibration({
   // Repeat settings state
   const [repeatCount, setRepeatCount] = useState(1); // Default: 1 repeat (no extra repeats)
   const [dbReductionPerRepeat, setDbReductionPerRepeat] = useState(12); // Default: 12 dB reduction
+
+  // Speed settings state
+  const [speed, setSpeed] = useState(1.0); // Default: 1.0x speed (normal)
   
   // Use either external or internal state
   const selectedDots = externalSelectedDots !== undefined ? externalSelectedDots : internalSelectedDots;
@@ -708,6 +711,11 @@ export function DotCalibration({
     dotGridAudio.setDbReductionPerRepeat(dbReductionPerRepeat);
   }, [dbReductionPerRepeat]);
 
+  // Update audio engine when speed changes
+  useEffect(() => {
+    dotGridAudio.setSpeed(speed);
+  }, [speed]);
+
   // Handlers for repeat settings
   const increaseRepeatCount = () => {
     if (repeatCount < 10) {
@@ -723,6 +731,10 @@ export function DotCalibration({
 
   const handleDbReductionChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setDbReductionPerRepeat(Number(e.target.value));
+  };
+
+  const handleSpeedChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSpeed(Number(e.target.value));
   };
   
   return (
@@ -875,6 +887,28 @@ export function DotCalibration({
             disabled={disabled || repeatCount === 1}
             className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
               disabled || repeatCount === 1
+                ? 'opacity-50 cursor-not-allowed'
+                : ''
+            } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+          />
+        </div>
+
+        {/* Speed Slider */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">Speed</span>
+            <span className="text-xs text-muted-foreground">{speed.toFixed(1)}x</span>
+          </div>
+          <input
+            type="range"
+            min="0.1"
+            max="5.0"
+            step="0.1"
+            value={speed}
+            onChange={handleSpeedChange}
+            disabled={disabled}
+            className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+              disabled
                 ? 'opacity-50 cursor-not-allowed'
                 : ''
             } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}

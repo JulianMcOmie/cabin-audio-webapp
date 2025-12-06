@@ -96,6 +96,7 @@ class PositionedAudioService {
   private currentSoundMode: SoundMode = SoundMode.BandpassedNoise; // Current sound generation mode - default to bandpassed
   private repeatCount: number = DEFAULT_REPEAT_COUNT; // Number of repeats for each dot
   private dbReductionPerRepeat: number = DEFAULT_DB_REDUCTION_PER_REPEAT; // dB reduction per repeat
+  private speed: number = 1.0; // Playback speed multiplier (1.0 = normal speed)
 
   constructor(audioContextInstance: AudioContext) {
     this.ctx = audioContextInstance;
@@ -181,6 +182,14 @@ class PositionedAudioService {
 
   public getDbReductionPerRepeat(): number {
     return this.dbReductionPerRepeat;
+  }
+
+  public setSpeed(speed: number): void {
+    this.speed = Math.max(0.1, Math.min(10, speed)); // Clamp between 0.1x and 10x
+  }
+
+  public getSpeed(): number {
+    return this.speed;
   }
 
   // Legacy methods for backwards compatibility
@@ -813,11 +822,15 @@ class DotGridAudioPlayer {
     // Get repeat settings from the audio service
     const repeatCount = this.audioService.getRepeatCount();
     const dbReductionPerRepeat = this.audioService.getDbReductionPerRepeat();
+    const speed = this.audioService.getSpeed();
+
+    // Calculate speed-adjusted stagger interval (higher speed = shorter interval)
+    const adjustedStaggerInterval = ALL_DOTS_STAGGER_INTERVAL_S / speed;
 
     // Schedule all dots to play simultaneously with staggered start times
     sortedDotKeys.forEach((dotKey, dotIndex) => {
       // Each dot starts with a small stagger offset but all repeat simultaneously
-      const staggerOffset = dotIndex * ALL_DOTS_STAGGER_INTERVAL_S;
+      const staggerOffset = dotIndex * adjustedStaggerInterval;
 
       // Schedule all repetitions for this dot with progressive volume reduction
       for (let repetition = 0; repetition < repeatCount; repetition++) {
@@ -835,7 +848,7 @@ class DotGridAudioPlayer {
     // Schedule the next iteration of the loop if there are dots
     if (sortedDotKeys.length > 0) {
       // Total time for one complete cycle = stagger time for all dots + time for all repetitions
-      const maxStaggerTime = (sortedDotKeys.length - 1) * ALL_DOTS_STAGGER_INTERVAL_S;
+      const maxStaggerTime = (sortedDotKeys.length - 1) * adjustedStaggerInterval;
       const repetitionTime = repeatCount * DOT_REPETITION_INTERVAL_S;
       const totalSequenceTime = maxStaggerTime + repetitionTime;
       const loopDelayMs = totalSequenceTime * 1000;
@@ -997,6 +1010,14 @@ class DotGridAudioPlayer {
 
   public getDbReductionPerRepeat(): number {
     return this.audioService.getDbReductionPerRepeat();
+  }
+
+  public setSpeed(speed: number): void {
+    this.audioService.setSpeed(speed);
+  }
+
+  public getSpeed(): number {
+    return this.audioService.getSpeed();
   }
 }
 
@@ -1310,6 +1331,23 @@ export function setDbReductionPerRepeat(db: number): void {
 export function getDbReductionPerRepeat(): number {
   const player = DotGridAudioPlayer.getInstance();
   return player.getDbReductionPerRepeat();
+}
+
+/**
+ * Set the playback speed
+ * @param speed Speed multiplier (1.0 = normal, 2.0 = 2x speed, 0.5 = half speed)
+ */
+export function setSpeed(speed: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setSpeed(speed);
+}
+
+/**
+ * Get the current playback speed
+ */
+export function getSpeed(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getSpeed();
 }
 
 // Export the SoundMode enum for use in UI
