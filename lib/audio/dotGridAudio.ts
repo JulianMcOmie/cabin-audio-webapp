@@ -97,6 +97,7 @@ class PositionedAudioService {
   private repeatCount: number = DEFAULT_REPEAT_COUNT; // Number of repeats for each dot
   private dbReductionPerRepeat: number = DEFAULT_DB_REDUCTION_PER_REPEAT; // dB reduction per repeat
   private speed: number = 1.0; // Playback speed multiplier (1.0 = normal speed)
+  private currentBandwidth: number = BANDPASS_BANDWIDTH_OCTAVES; // Current bandwidth in octaves for bandpassed noise
 
   constructor(audioContextInstance: AudioContext) {
     this.ctx = audioContextInstance;
@@ -259,11 +260,14 @@ class PositionedAudioService {
       // Use bandpassed noise generator
       source.loop = true;
       bandpassedNoiseGenerator = new BandpassedNoiseGenerator(this.ctx);
-      
+
+      // Apply current bandwidth setting to the new generator
+      bandpassedNoiseGenerator.setBandpassBandwidth(this.currentBandwidth);
+
       // Connect chain: source -> bandpassedGen -> mainGain -> envelopeGain -> panner -> serviceOutput
       source.connect(bandpassedNoiseGenerator.getInputNode());
       bandpassedNoiseGenerator.getOutputNode().connect(mainGain);
-      
+
       source.start(); // Start source immediately, loop, control with envelopeGain
     } else if (this.currentSoundMode === SoundMode.SineTone) {
       // Use sine tone generator
@@ -499,6 +503,9 @@ class PositionedAudioService {
   }
 
   public setBandpassBandwidth(bandwidthOctaves: number): void {
+    // Store the current bandwidth setting
+    this.currentBandwidth = bandwidthOctaves;
+
     // Update bandwidth for all active bandpassed noise generators
     this.audioPoints.forEach((point) => {
       if (point.bandpassedNoiseGenerator) {
