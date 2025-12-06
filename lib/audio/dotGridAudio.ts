@@ -427,21 +427,25 @@ class PositionedAudioService {
       point.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
     }
     // Bandpassed noise uses fixed slope, bandpass position based on Y
-    // Fixed-edge positioning: top dot upper edge = 20kHz, bottom dot lower edge = 20Hz
+    // Extended-range positioning with fixed audible edge frequencies
     let bandpassCenterFreq = 0; // Used for volume compensation later
     if (point.bandpassedNoiseGenerator) {
-      const minFreq = 20; // Hz
-      const maxFreq = 20000; // Hz
-      const bandwidthOctaves = BANDPASS_BANDWIDTH_OCTAVES;
+      const bandwidthOctaves = this.currentBandwidth;
 
-      // Calculate the movable range for the bandpass region
-      const totalOctaves = Math.log2(maxFreq / minFreq); // ~9.97 octaves
-      const movableRange = totalOctaves - bandwidthOctaves;
+      // Fixed audible edge frequencies:
+      // - Bottom dot (Y=0): lowpass at 100Hz (lower edge extends below, bypassed)
+      // - Top dot (Y=1): highpass at 10kHz (upper edge extends above, bypassed)
+      const MIN_AUDIBLE_EDGE = 100; // Hz (lowpass frequency for bottom dot)
+      const MAX_AUDIBLE_EDGE = 10000; // Hz (highpass frequency for top dot)
 
-      // Position lower edge logarithmically based on Y
-      const logMinFreq = Math.log2(minFreq);
-      const lowerEdgeOctaves = logMinFreq + point.normalizedYPos * movableRange;
-      const lowerEdge = Math.pow(2, lowerEdgeOctaves);
+      // Calculate lower edge range
+      // Y=0: lower edge well below 100Hz (will be bypassed)
+      // Y=1: lower edge at 10kHz (will be active)
+      const minLowerEdge = MIN_AUDIBLE_EDGE / Math.pow(2, bandwidthOctaves);
+      const maxLowerEdge = MAX_AUDIBLE_EDGE;
+
+      // Logarithmically interpolate lower edge based on Y position
+      const lowerEdge = minLowerEdge * Math.pow(maxLowerEdge / minLowerEdge, point.normalizedYPos);
       const upperEdge = lowerEdge * Math.pow(2, bandwidthOctaves);
 
       // Calculate center frequency (geometric mean) for filter positioning
@@ -468,13 +472,16 @@ class PositionedAudioService {
       const refFreq = 1000; // Hz, approximate equal loudness curve minimum
       let loudnessCompensationDb = 0;
 
-      if (bandpassCenterFreq < refFreq) {
+      // Clamp center freq for compensation calculation ONLY
+      const compensationFreq = Math.max(20, Math.min(20000, bandpassCenterFreq));
+
+      if (compensationFreq < refFreq) {
         // Low frequencies: gentle boost for equal loudness
-        const octavesBelow = Math.log2(refFreq / bandpassCenterFreq);
+        const octavesBelow = Math.log2(refFreq / compensationFreq);
         loudnessCompensationDb = octavesBelow * 3; // 3dB/octave below 1kHz
-      } else if (bandpassCenterFreq > 4000) {
+      } else if (compensationFreq > 4000) {
         // High frequencies: slight boost
-        const octavesAbove = Math.log2(bandpassCenterFreq / 4000);
+        const octavesAbove = Math.log2(compensationFreq / 4000);
         loudnessCompensationDb = octavesAbove * 2; // 2dB/octave above 4kHz
       }
 
@@ -1074,6 +1081,8 @@ class BandpassedNoiseGenerator {
   private slopingFilter: SlopedPinkNoiseGenerator;
   private currentBandwidthOctaves: number;
   private currentCenterFrequency: number;
+  private isHighpassActive: boolean = true;
+  private isLowpassActive: boolean = true;
 
   constructor(audioCtx: AudioContext) {
     this.ctx = audioCtx;
@@ -1098,13 +1107,15 @@ class BandpassedNoiseGenerator {
     // Initialize bandwidth and center frequency
     this.currentBandwidthOctaves = BANDPASS_BANDWIDTH_OCTAVES;
     this.currentCenterFrequency = 1000; // Default, will be updated based on Y position
-    this.setBandpassFrequency(this.currentCenterFrequency);
 
-    // Connect chain: input -> slopingFilter -> highpassFilter -> lowpassFilter -> output
+    // Connect input to sloping filter
     this.inputGainNode.connect(this.slopingFilter.getInputNode());
-    this.slopingFilter.getOutputNode().connect(this.highpassFilter);
-    this.highpassFilter.connect(this.lowpassFilter);
-    this.lowpassFilter.connect(this.outputGainNode);
+
+    // Initial chain setup with both filters (isHighpassActive and isLowpassActive default to true)
+    this.connectFilterChain(true, true);
+
+    // Set initial frequency (which will call updateFilterChain if needed)
+    this.setBandpassFrequency(this.currentCenterFrequency);
   }
 
   public getInputNode(): GainNode {
@@ -1123,18 +1134,65 @@ class BandpassedNoiseGenerator {
     return Math.max(0.1, Math.min(30, numerator / denominator));
   }
 
+  private disconnectFilterChain(): void {
+    this.slopingFilter.getOutputNode().disconnect();
+    this.highpassFilter.disconnect();
+    this.lowpassFilter.disconnect();
+  }
+
+  private connectFilterChain(useHighpass: boolean, useLowpass: boolean): void {
+    const slopingOutput = this.slopingFilter.getOutputNode();
+
+    if (useHighpass && useLowpass) {
+      // Both: sloping -> highpass -> lowpass -> output
+      slopingOutput.connect(this.highpassFilter);
+      this.highpassFilter.connect(this.lowpassFilter);
+      this.lowpassFilter.connect(this.outputGainNode);
+    } else if (useHighpass && !useLowpass) {
+      // Highpass only: sloping -> highpass -> output
+      slopingOutput.connect(this.highpassFilter);
+      this.highpassFilter.connect(this.outputGainNode);
+    } else if (!useHighpass && useLowpass) {
+      // Lowpass only: sloping -> lowpass -> output
+      slopingOutput.connect(this.lowpassFilter);
+      this.lowpassFilter.connect(this.outputGainNode);
+    } else {
+      // No filters: sloping -> output
+      slopingOutput.connect(this.outputGainNode);
+    }
+  }
+
+  private updateFilterChain(lowerEdge: number, upperEdge: number): void {
+    const MIN_AUDIBLE = 20;
+    const MAX_AUDIBLE = 20000;
+
+    const needHighpass = lowerEdge >= MIN_AUDIBLE;
+    const needLowpass = upperEdge <= MAX_AUDIBLE;
+
+    // Only rewire if configuration changed
+    if (needHighpass !== this.isHighpassActive || needLowpass !== this.isLowpassActive) {
+      this.disconnectFilterChain();
+      this.connectFilterChain(needHighpass, needLowpass);
+      this.isHighpassActive = needHighpass;
+      this.isLowpassActive = needLowpass;
+    }
+  }
+
   public setBandpassFrequency(frequency: number): void {
-    const centerFreq = Math.max(20, Math.min(20000, frequency));
-    this.currentCenterFrequency = centerFreq;
+    // Store center frequency WITHOUT clamping (allow extended range)
+    this.currentCenterFrequency = frequency;
 
-    // Calculate edges from center and bandwidth in octaves
+    // Calculate edges WITHOUT clamping
     const halfBandwidth = this.currentBandwidthOctaves / 2;
-    const lowerEdge = Math.max(20, centerFreq / Math.pow(2, halfBandwidth));
-    const upperEdge = Math.min(20000, centerFreq * Math.pow(2, halfBandwidth));
+    const lowerEdge = frequency / Math.pow(2, halfBandwidth);
+    const upperEdge = frequency * Math.pow(2, halfBandwidth);
 
-    // Set filter frequencies
-    this.highpassFilter.frequency.value = lowerEdge;
-    this.lowpassFilter.frequency.value = upperEdge;
+    // Update filter chain based on which filters are needed
+    this.updateFilterChain(lowerEdge, upperEdge);
+
+    // Set filter frequencies (clamped to safe Web Audio API values)
+    this.highpassFilter.frequency.value = Math.max(20, Math.min(20000, lowerEdge));
+    this.lowpassFilter.frequency.value = Math.max(20, Math.min(20000, upperEdge));
 
     // Calculate and set Q value based on desired bandwidth
     const qValue = this.calculateQFromBandwidth(this.currentBandwidthOctaves);
