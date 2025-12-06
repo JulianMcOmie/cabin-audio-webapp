@@ -18,6 +18,7 @@ import React, { useState } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { v4 as uuidv4 } from "uuid"
+import Image from "next/image"
 
 interface EQProfilesProps {
   onProfileClick?: () => void
@@ -314,11 +315,13 @@ function ProfileCard({
           </DropdownMenu>
         </div>
 
-        <div className="aspect-[2/1] overflow-hidden rounded-md mb-2">
-          <img 
+        <div className="aspect-[2/1] overflow-hidden rounded-md mb-2 relative">
+          <Image 
             src={generateVisualization()} 
             alt={profile.name} 
-            className="w-full h-full object-cover" 
+            className="object-cover" 
+            fill
+            unoptimized
           />
         </div>
         <div className="flex items-center justify-center">

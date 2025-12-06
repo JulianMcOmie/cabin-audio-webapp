@@ -9,6 +9,7 @@ import { usePlayerStore, useTrackStore, useArtistStore, useAlbumStore } from "@/
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
 import { cn } from "@/lib/utils"
 import * as fileStorage from "@/lib/storage/fileStorage"
+import Image from "next/image"
 
 // // Dummy track interface
 // interface Track {
@@ -334,11 +335,15 @@ export function PlayerBar() {
     <div className="player-bar p-2 w-full border-t bg-background">
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-3 w-[30%] min-w-[180px]">
-          <img
-            src={coverImageUrl}
-            alt={`${albumNameText} cover`}
-            className="h-12 w-12 rounded-md object-cover"
-          />
+          <div className="h-12 w-12 rounded-md overflow-hidden relative">
+            <Image
+              src={coverImageUrl}
+              alt={`${albumNameText} cover`}
+              fill
+              className="object-cover"
+              unoptimized
+            />
+          </div>
           <div className="flex flex-col min-w-0">
             <div className="text-sm font-medium truncate">{currentTrack.title}</div>
             <div className="text-xs text-muted-foreground truncate">{artistNameText}</div>

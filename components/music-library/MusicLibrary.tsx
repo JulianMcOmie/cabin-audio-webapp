@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Upload } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/common/ToastManager"
@@ -76,7 +76,7 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
   }, [])
 
   // Convert store tracks to UI tracks
-  const convertStoreTracksToUI = () => {
+  const convertStoreTracksToUI = useCallback(() => {
     console.log(`[convertStoreTracksToUI] Getting tracks from store`);
     const storeTracks = getTracks();
     console.log(`[convertStoreTracksToUI] Retrieved ${storeTracks.length} tracks from store`);
@@ -144,7 +144,7 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
     
     console.log(`[convertStoreTracksToUI] Converted ${uiTracks.length} tracks to UI format`);
     return uiTracks;
-  }
+  }, [getTracks, coverImageUrls, getArtistById, getAlbumById])
 
   // File import state
   const {
@@ -307,7 +307,7 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
         unsubscribe();
       }
     };
-  }, [showToast, addTrack, getTracks, isTrackStoreLoading, getArtistById, getAlbumById, coverImageUrls])
+  }, [showToast, addTrack, getTracks, isTrackStoreLoading, getArtistById, getAlbumById, coverImageUrls, convertStoreTracksToUI])
 
   // Add a new effect to listen for EQ status changes
   useEffect(() => {

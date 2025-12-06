@@ -81,14 +81,19 @@ export function GlyphGrid({ isPlaying, disabled = false, glyphType = 'triangle' 
     const audioPlayer = glyphGridAudio.getGlyphGridAudioPlayer()
     
     // Set the initial glyph based on the prop or default
-    const initialGlyphData = {
-      id: glyph.id, // Use current glyph id from state
-      type: glyphType, // Use the glyphType prop
-      position: glyph.position,
-      size: glyph.size,
-      angle: glyph.angle
-    };
-    audioPlayer.setGlyph(initialGlyphData as glyphGridAudio.GlyphData) // Cast to satisfy audio player type
+    /* 
+     * NOTE: We don't set the glyph on the audio player here to avoid using stale state 
+     * or triggering redundant updates. The useEffect below (line 114) which depends on [glyph] 
+     * will handle updating the audio player whenever the local glyph state changes.
+     */
+    // const initialGlyphData = {
+    //   id: glyph.id, // Use current glyph id from state
+    //   type: glyphType, // Use the glyphType prop
+    //   position: glyph.position,
+    //   size: glyph.size,
+    //   angle: glyph.angle
+    // };
+    // audioPlayer.setGlyph(initialGlyphData as glyphGridAudio.GlyphData) // Cast to satisfy audio player type
     
     // Update internal glyph state if prop changes
     setGlyph(prev => ({

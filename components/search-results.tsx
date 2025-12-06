@@ -3,9 +3,10 @@
 import { Music, Sliders, ExternalLink, Play } from "lucide-react"
 import { useTrackStore, usePlayerStore, useArtistStore, useAlbumStore } from "@/lib/stores"
 import { Track } from "@/lib/models/Track"
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { useTheme } from "@/components/theme-provider"
 import * as fileStorage from "@/lib/storage/fileStorage"
+import Image from "next/image"
 
 interface SearchResultsProps {
   query: string
@@ -80,15 +81,15 @@ export function SearchResults({ query, setActiveTab, onClose }: SearchResultsPro
         setCoverImageUrls(newUrls);
       });
     }
-  }, [getTracks, coverImageUrls])
+  }, [getTracks, coverImageUrls, getDefaultCoverImage])
   
   // Get the actual default image path based on theme
   // Make sure path is absolute and exists
-  const getDefaultCoverImage = () => {
+  const getDefaultCoverImage = useCallback(() => {
     const timestamp = Date.now(); // Add timestamp to prevent caching
     const basePath = theme === 'dark' ? '/default_img_dark.jpg' : '/default_img_light.jpg';
     return `${basePath}?t=${timestamp}`;
-  }
+  }, [theme])
   
   // Convert store tracks to UI tracks whenever store tracks or cover URLs change
   useEffect(() => {
@@ -132,7 +133,7 @@ export function SearchResults({ query, setActiveTab, onClose }: SearchResultsPro
     });
     
     setUITracks(convertedTracks);
-  }, [storeTracks, coverImageUrls, getArtistById, getAlbumById, theme])
+  }, [storeTracks, coverImageUrls, getArtistById, getAlbumById, theme, getDefaultCoverImage])
   
   // Format duration (seconds to mm:ss)
   const formatDuration = (seconds: number) => {
@@ -203,15 +204,21 @@ export function SearchResults({ query, setActiveTab, onClose }: SearchResultsPro
                     onClick={() => handleTrackClick(track.id)}
                   >
                     <div className="flex-shrink-0 relative group">
-                      <img 
-                        src={track.coverUrl}
-                        alt={`${track.album} cover`}
-                        className="h-10 w-10 rounded-md object-cover"
-                        onError={(e) => {
-                          console.log(`[SearchResults] Image error for ${track.id}, falling back to default`);
-                          (e.target as HTMLImageElement).src = getDefaultCoverImage();
-                        }}
-                      />
+                      <div className="h-10 w-10 rounded-md overflow-hidden relative">
+                        <Image 
+                          src={track.coverUrl}
+                          alt={`${track.album} cover`}
+                          fill
+                          className="object-cover"
+                          unoptimized
+                          onError={(e) => {
+                            console.log(`[SearchResults] Image error for ${track.id}, falling back to default`);
+                            const img = e.target as HTMLImageElement;
+                            img.src = getDefaultCoverImage();
+                            img.srcset = "";
+                          }}
+                        />
+                      </div>
                       <div
                         className="absolute inset-0 bg-black/40 rounded-md opacity-0 hover:opacity-100 flex items-center justify-center"
                       >

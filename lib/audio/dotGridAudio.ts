@@ -20,9 +20,9 @@ const BAND_Q_VALUE = 1.5; // Q value for the bandpass filters (reduced from 6.0)
 const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
 
 // Target overall slopes (mutable for tilt range control)
-let LOW_SLOPE_DB_PER_OCT = -10.5; // For low y positions (darker sound)
-let CENTER_SLOPE_DB_PER_OCT = -4.5; // For middle y positions
-let HIGH_SLOPE_DB_PER_OCT = 1.5; // For high y positions (brighter sound)
+const LOW_SLOPE_DB_PER_OCT = -10.5; // For low y positions (darker sound)
+const CENTER_SLOPE_DB_PER_OCT = -4.5; // For middle y positions
+const HIGH_SLOPE_DB_PER_OCT = 1.5; // For high y positions (brighter sound)
 const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of SlopedPinkNoiseGenerator (approx -12dB)
 
 // New constant for attenuation based on slope deviation from pink noise
@@ -865,45 +865,8 @@ class DotGridAudioPlayer {
           if (this.isPlaying && !this.isContinuousSimultaneousMode()) {
             this.startAllRhythms(); // This will handle deactivating/cleanup and rescheduling
           }
-          // Also play 3rd dot if it exists
-          if (sortedDotKeys.length >= 3) {
-            this.audioService.activatePoint(sortedDotKeys[2], beatTime);
-          }
-        } else if (beat === 1) {
-          // Beat 2: Play 3rd dot only
-          if (sortedDotKeys.length >= 3) {
-            this.audioService.activatePoint(sortedDotKeys[2], beatTime);
-          }
-        } else if (beat === 2) {
-          // Beat 3: Play 2nd dot
-          if (sortedDotKeys.length >= 2) {
-            this.audioService.activatePoint(sortedDotKeys[1], beatTime);
-          }
-          // Also play 3rd dot if it exists
-          if (sortedDotKeys.length >= 3) {
-            this.audioService.activatePoint(sortedDotKeys[2], beatTime);
-          }
-        } else if (beat === 3) {
-          // Beat 4: Play 3rd dot only
-          if (sortedDotKeys.length >= 3) {
-            this.audioService.activatePoint(sortedDotKeys[2], beatTime);
-          }
-        }
+        }, loopDelayMs);
       }
-    };
-
-    // Schedule the initial pattern
-    scheduleRhythmicPattern(currentTime);
-    
-    // Schedule the loop to continue the pattern
-    const cycleDelayMs = cycleLength * beatInterval * 1000;
-    if (cycleDelayMs > 0) {
-      this.loopTimeoutId = window.setTimeout(() => {
-        // Check playback state again before re-triggering
-        if (this.isPlaying && !this.isContinuousSimultaneousMode()) {
-          this.startAllRhythms(); // This will handle deactivating/cleanup and rescheduling
-        }
-      }, cycleDelayMs);
     }
   }
   

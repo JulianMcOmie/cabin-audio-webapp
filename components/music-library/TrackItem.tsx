@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
 import { useTheme } from "@/components/theme-provider"
+import Image from "next/image"
 
 interface Track {
   id: string
@@ -80,15 +81,26 @@ export function TrackItem({
         onMouseLeave={handleMouseLeave}
       >
         <div className="flex-shrink-0 mr-4 relative group">
-          <img
-            src={track.coverUrl || getDefaultCoverImage()}
-            alt={`${track.album} cover`}
-            className="h-12 w-12 rounded-md object-cover"
-            onError={(e) => {
-              // If image fails to load, use default
-              (e.target as HTMLImageElement).src = getDefaultCoverImage();
-            }}
-          />
+          <div className="h-12 w-12 rounded-md overflow-hidden relative">
+            <Image
+              src={track.coverUrl || getDefaultCoverImage()}
+              alt={`${track.album} cover`}
+              fill
+              className="object-cover"
+              unoptimized
+              onError={(e) => {
+                // If image fails to load, use default - with Next/Image we can't just set src directly on e.target easily
+                // Ideally we'd use a fallback state, but for now this handles some cases
+                // Or just let the next/image unoptimized handle it if it's a valid URL
+                // Since we can't easily swap src in onError for Next/Image component,
+                // we rely on proper URLs or fallback logic in parent.
+                // But for direct DOM access fallback:
+                const img = e.target as HTMLImageElement;
+                img.src = getDefaultCoverImage();
+                img.srcset = ""; // clear srcset to prevent it from trying to load again
+              }}
+            />
+          </div>
           {isCurrentTrack ? (
             <div
               className="absolute inset-0 bg-black/40 rounded-md flex items-center justify-center"

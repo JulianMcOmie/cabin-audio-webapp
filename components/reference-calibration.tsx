@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useEffect, useState } from "react"
+import { useRef, useEffect, useState, useCallback } from "react"
 import * as referenceCalibrationAudio from '@/lib/audio/referenceCalibrationAudio'
 // import { Button } from "@/components/ui/button"
 // import { Play } from "lucide-react"
@@ -154,7 +154,7 @@ export function ReferenceCalibration({ isPlaying, disabled = false, className = 
   };
   
   // Check if mouse is near the line
-  const isNearLine = (): boolean => {
+  const isNearLine = useCallback((): boolean => {
     if (!mousePosition || !canvasSize.height) return false;
     
     const audioPlayer = referenceCalibrationAudio.getReferenceCalibrationAudio();
@@ -162,7 +162,7 @@ export function ReferenceCalibration({ isPlaying, disabled = false, className = 
     const lineY = canvasSize.height - (normalizedPosition * (canvasSize.height - 4) + 2);
     
     return Math.abs(mousePosition.y - lineY) < LINE_HIT_TOLERANCE;
-  };
+  }, [mousePosition, canvasSize, calibrationFrequency]);
   
   // Draw the canvas
   useEffect(() => {
@@ -308,7 +308,7 @@ export function ReferenceCalibration({ isPlaying, disabled = false, className = 
       ctx.fill();
     }
     
-  }, [canvasSize, isDarkMode, calibrationFrequency, isDragging, activePosition, isReferenceActive, mousePosition]);
+  }, [canvasSize, isDarkMode, calibrationFrequency, isDragging, activePosition, isReferenceActive, mousePosition, isNearLine]);
   
   // Handle mouse movement for hover effects
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {

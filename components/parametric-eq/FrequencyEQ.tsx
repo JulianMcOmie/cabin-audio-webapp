@@ -57,6 +57,9 @@ export function updateAudio(
   }
 }
 
+  // Fixed frequency range outside component to be stable
+const freqRange = { min: 20, max: 20000 }
+
 export function FrequencyEQ({ profileId, disabled = false, className, onInstructionChange, onRequestEnable }: FrequencyEQProps) {
   const canvasRef = useRef<CanvasWithMargin>(null)
   const backgroundCanvasRef = useRef<CanvasWithMargin>(null)
@@ -102,11 +105,11 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     // Calculate exact frequency response using the Web Audio API's getFrequencyResponse method
     const updatedBands: EQBandWithUI[] = profile.bands.map(band => ({
       ...band,
-      isHovered: band.id === hoveredBandId,
+      isHovered: false,
       type: 'peaking' as BiquadFilterType, // Default type for all bands
       frequencyResponse: calculateBandResponse({
         ...band,
-        isHovered: band.id === hoveredBandId,
+        isHovered: false,
         type: 'peaking' as BiquadFilterType,
       })
     }))
@@ -115,7 +118,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
   }, [profile])
   
   // Fixed frequency range
-  const freqRange = { min: 20, max: 20000 }
+  // const freqRange = { min: 20, max: 20000 } // Moved outside component
   
   // Process EQ bands to get frequency response
   const { frequencyResponse } = useEQProcessor(renderableBands)
@@ -225,7 +228,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
         audioPlayer.setPlaying(true);
       }
     }
-  }, [isModifierKeyPressed, freqRange]);
+  }, [isModifierKeyPressed]);
   
   // Add a document mousemove listener to update calibration when modifier key is pressed
   useEffect(() => {
@@ -615,7 +618,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
 
     // Mark background as drawn
     backgroundDrawnRef.current = true;
-  }, [isDarkMode, freqRange]);
+  }, [isDarkMode]);
 
   // Main canvas rendering function to be called by requestAnimationFrame
   const renderCanvas = useCallback(() => {
@@ -761,7 +764,6 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     profile,
     isDraggingVolume,
     isHoveringVolume,
-    freqRange,
     renderBackgroundCanvas
   ]);
 
