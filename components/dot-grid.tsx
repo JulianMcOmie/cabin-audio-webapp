@@ -746,46 +746,7 @@ export function DotCalibration({
   };
 
   const handleBandwidthChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newBandwidth = Number(e.target.value);
-    setBandwidth(newBandwidth);
-
-    // Adjust grid size based on bandwidth
-    // Full bandwidth (10 octaves) = more rows, narrow bandwidth (0.5 octaves) = fewer rows
-    // Map 0.5-10 octaves to MIN_ROWS-MAX_ROWS
-    const minBandwidth = 0.5;
-    const maxBandwidth = 10.0;
-    const bandwidthRange = maxBandwidth - minBandwidth;
-    const normalizedBandwidth = (newBandwidth - minBandwidth) / bandwidthRange; // 0 to 1
-
-    // Use a reasonable range for rows based on bandwidth
-    const minRowsForBandwidth = 3;
-    const maxRowsForBandwidth = 50; // Cap at 50 for usability
-    const targetRows = Math.round(minRowsForBandwidth + normalizedBandwidth * (maxRowsForBandwidth - minRowsForBandwidth));
-
-    // Ensure target is odd
-    const targetRowsOdd = targetRows % 2 === 0 ? targetRows + 1 : targetRows;
-
-    // Update grid size if different
-    if (targetRowsOdd !== gridSize) {
-      const oldGridSize = gridSize;
-      const newGridSize = targetRowsOdd;
-
-      // Remap dots to preserve relative positions
-      const newSelectedDots = new Set<string>();
-      selectedDots.forEach(dot => {
-        const [x, y] = dot.split(',').map(Number);
-        if (x < columnCount) {
-          // Calculate the relative position in the old grid (0-1)
-          const relativePos = y / (oldGridSize - 1);
-          // Map to the same relative position in the new grid
-          const newY = Math.round(relativePos * (newGridSize - 1));
-          newSelectedDots.add(`${x},${newY}`);
-        }
-      });
-
-      setGridSize(newGridSize);
-      setSelectedDots(newSelectedDots);
-    }
+    setBandwidth(Number(e.target.value));
   };
   
   return (
