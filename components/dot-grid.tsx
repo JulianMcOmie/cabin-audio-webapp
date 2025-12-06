@@ -440,6 +440,10 @@ export function DotCalibration({
   
   // Sound mode state
   const [soundMode, setSoundMode] = useState<'sloped' | 'bandpassed' | 'sine'>('bandpassed'); // Start with bandpassed noise mode
+
+  // Repeat settings state
+  const [repeatCount, setRepeatCount] = useState(1); // Default: 1 repeat (no extra repeats)
+  const [dbReductionPerRepeat, setDbReductionPerRepeat] = useState(12); // Default: 12 dB reduction
   
   // Use either external or internal state
   const selectedDots = externalSelectedDots !== undefined ? externalSelectedDots : internalSelectedDots;
@@ -694,6 +698,32 @@ export function DotCalibration({
       setSoundMode('sine');
     }
   }, []);
+
+  // Update audio engine when repeat settings change
+  useEffect(() => {
+    dotGridAudio.setRepeatCount(repeatCount);
+  }, [repeatCount]);
+
+  useEffect(() => {
+    dotGridAudio.setDbReductionPerRepeat(dbReductionPerRepeat);
+  }, [dbReductionPerRepeat]);
+
+  // Handlers for repeat settings
+  const increaseRepeatCount = () => {
+    if (repeatCount < 10) {
+      setRepeatCount(repeatCount + 1);
+    }
+  };
+
+  const decreaseRepeatCount = () => {
+    if (repeatCount > 1) {
+      setRepeatCount(repeatCount - 1);
+    }
+  };
+
+  const handleDbReductionChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setDbReductionPerRepeat(Number(e.target.value));
+  };
   
   return (
     <div className="space-y-3">
@@ -794,11 +824,63 @@ export function DotCalibration({
             onClick={cycleSoundMode}
             disabled={disabled}
           >
-            {soundMode === 'sloped' ? 'Sloped' : 
+            {soundMode === 'sloped' ? 'Sloped' :
              soundMode === 'bandpassed' ? 'Bandpassed' : 'Sine Tone'}
           </button>
         </div>
-        
+
+        {/* Repeat Count Control */}
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium">Repeats</span>
+          <div className="flex items-center space-x-1">
+            <button
+              className={`h-6 w-6 rounded flex items-center justify-center border ${
+                repeatCount <= 1 || disabled
+                  ? 'opacity-50 cursor-not-allowed'
+                  : 'hover:bg-muted'
+              }`}
+              onClick={decreaseRepeatCount}
+              disabled={repeatCount <= 1 || disabled}
+            >
+              <span className="text-xs">-</span>
+            </button>
+            <span className="w-4 text-center text-xs">{repeatCount}</span>
+            <button
+              className={`h-6 w-6 rounded flex items-center justify-center border ${
+                repeatCount >= 10 || disabled
+                  ? 'opacity-50 cursor-not-allowed'
+                  : 'hover:bg-muted'
+              }`}
+              onClick={increaseRepeatCount}
+              disabled={repeatCount >= 10 || disabled}
+            >
+              <span className="text-xs">+</span>
+            </button>
+          </div>
+        </div>
+
+        {/* dB Reduction per Repeat Slider */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">Volume Drop</span>
+            <span className="text-xs text-muted-foreground">{dbReductionPerRepeat} dB</span>
+          </div>
+          <input
+            type="range"
+            min="0"
+            max="24"
+            step="1"
+            value={dbReductionPerRepeat}
+            onChange={handleDbReductionChange}
+            disabled={disabled || repeatCount === 1}
+            className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+              disabled || repeatCount === 1
+                ? 'opacity-50 cursor-not-allowed'
+                : ''
+            } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+          />
+        </div>
+
         {/* Clear button */}
         <button
           className={`px-2 py-1 rounded flex items-center justify-center text-xs border ${

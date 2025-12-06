@@ -42,8 +42,9 @@ const GLOBAL_STAGGER_RELEASE_S = 0.5; // Slower release for smoother fade
 const ALL_DOTS_STAGGER_INTERVAL_S = 0.5; // Stagger between each dot in the global sequence
 
 // New constants for dot repetition
-const DOT_REPETITIONS = 4; // Number of times each dot repeats before moving to next
 const DOT_REPETITION_INTERVAL_S = 0.2; // Increased to accommodate envelope duration (0.15 + 0.25 = 0.4s)
+const DEFAULT_REPEAT_COUNT = 1; // Default number of repeats (1 = no extra repeats, just play once)
+const DEFAULT_DB_REDUCTION_PER_REPEAT = 12; // Default dB reduction per repeat
 
 // Constants for bandpassed noise generator
 const BANDPASS_NOISE_SLOPE_DB_PER_OCT = -4.5; // Fixed slope for bandpassed noise
@@ -93,6 +94,8 @@ class PositionedAudioService {
   private subHitAdsrEnabled: boolean = true; // Renamed from envelopeEnabled
   private subHitPlaybackEnabled: boolean = true; // New: Toggle for sub-hit mechanism
   private currentSoundMode: SoundMode = SoundMode.BandpassedNoise; // Current sound generation mode - default to bandpassed
+  private repeatCount: number = DEFAULT_REPEAT_COUNT; // Number of repeats for each dot
+  private dbReductionPerRepeat: number = DEFAULT_DB_REDUCTION_PER_REPEAT; // dB reduction per repeat
 
   constructor(audioContextInstance: AudioContext) {
     this.ctx = audioContextInstance;
@@ -164,6 +167,22 @@ class PositionedAudioService {
     return this.currentSoundMode;
   }
 
+  public setRepeatCount(count: number): void {
+    this.repeatCount = Math.max(1, Math.floor(count)); // At least 1 repeat
+  }
+
+  public getRepeatCount(): number {
+    return this.repeatCount;
+  }
+
+  public setDbReductionPerRepeat(db: number): void {
+    this.dbReductionPerRepeat = Math.max(0, db); // At least 0 dB
+  }
+
+  public getDbReductionPerRepeat(): number {
+    return this.dbReductionPerRepeat;
+  }
+
   // Legacy methods for backwards compatibility
   public setBandpassedNoiseMode(enabled: boolean): void {
     this.currentSoundMode = enabled ? SoundMode.BandpassedNoise : SoundMode.SlopedNoise;
@@ -173,7 +192,7 @@ class PositionedAudioService {
     return this.currentSoundMode === SoundMode.BandpassedNoise;
   }
 
-  private _schedulePointActivationSound(pointNode: PointAudioNodes, scheduledTime: number): void {
+  private _schedulePointActivationSound(pointNode: PointAudioNodes, scheduledTime: number, gainMultiplier: number = 1.0): void {
     const gainParam = pointNode.envelopeGain.gain;
     gainParam.cancelScheduledValues(scheduledTime);
 
@@ -182,7 +201,7 @@ class PositionedAudioService {
       gainParam.setValueAtTime(0.001, scheduledTime); // Start just above zero for exponential curves
       // Attack - use exponential curve for more natural feel
       gainParam.exponentialRampToValueAtTime(
-        ENVELOPE_MAX_GAIN * 0.8, // Slightly reduce max gain to prevent too loud onset
+        ENVELOPE_MAX_GAIN * 0.8 * gainMultiplier, // Apply gain multiplier for volume reduction
         scheduledTime + GLOBAL_STAGGER_ATTACK_S
       );
       // Release
@@ -196,7 +215,7 @@ class PositionedAudioService {
       // Use Attack-Sustain for the global staggered hit
       gainParam.setValueAtTime(0.001, scheduledTime); // Start just above zero for exponential curves
       gainParam.exponentialRampToValueAtTime(
-        ENVELOPE_MAX_GAIN * 0.8, // Slightly reduce max gain
+        ENVELOPE_MAX_GAIN * 0.8 * gainMultiplier, // Apply gain multiplier for volume reduction
         scheduledTime + GLOBAL_STAGGER_ATTACK_S
       );
       // Gain remains at reduced ENVELOPE_MAX_GAIN until deactivatePoint is called
@@ -314,7 +333,7 @@ class PositionedAudioService {
     this.audioPoints.delete(id);
   }
 
-  public activatePoint(id: string, activationTime: number): void { // Added activationTime parameter
+  public activatePoint(id: string, activationTime: number, gainMultiplier: number = 1.0): void { // Added gainMultiplier parameter
     const point = this.audioPoints.get(id);
     if (!point) return;
 
@@ -324,8 +343,8 @@ class PositionedAudioService {
       // CONTINUOUS SIMULTANEOUS MODE (subHitPlaybackEnabled is false)
       const now = this.ctx.currentTime; // For immediate activation
       point.envelopeGain.gain.cancelScheduledValues(now);
-      point.envelopeGain.gain.setValueAtTime(ENVELOPE_MAX_GAIN * 0.8, now); // Use reduced gain
-      
+      point.envelopeGain.gain.setValueAtTime(ENVELOPE_MAX_GAIN * 0.8 * gainMultiplier, now); // Apply gain multiplier
+
       if (point.subHitTimerId !== null) { // Clear any old timers if mode switched
           clearTimeout(point.subHitTimerId);
           point.subHitTimerId = null;
@@ -341,7 +360,7 @@ class PositionedAudioService {
       }
       // point.subHitCount = 0; // No longer relevant for this mode
 
-      this._schedulePointActivationSound(point, activationTime);
+      this._schedulePointActivationSound(point, activationTime, gainMultiplier);
     }
   }
 
@@ -791,15 +810,25 @@ class DotGridAudioPlayer {
 
     const currentTime = audioContext.getAudioContext().currentTime;
 
+    // Get repeat settings from the audio service
+    const repeatCount = this.audioService.getRepeatCount();
+    const dbReductionPerRepeat = this.audioService.getDbReductionPerRepeat();
+
     // Schedule all dots to play simultaneously with staggered start times
     sortedDotKeys.forEach((dotKey, dotIndex) => {
       // Each dot starts with a small stagger offset but all repeat simultaneously
       const staggerOffset = dotIndex * ALL_DOTS_STAGGER_INTERVAL_S;
-      
-      // Schedule all repetitions for this dot, all starting from the staggered time
-      for (let repetition = 0; repetition < DOT_REPETITIONS; repetition++) {
+
+      // Schedule all repetitions for this dot with progressive volume reduction
+      for (let repetition = 0; repetition < repeatCount; repetition++) {
         const activationTime = currentTime + staggerOffset + repetition * DOT_REPETITION_INTERVAL_S;
-        this.audioService.activatePoint(dotKey, activationTime);
+
+        // Calculate gain multiplier based on repeat number
+        // Each repeat is quieter by dbReductionPerRepeat dB
+        const dbReduction = repetition * dbReductionPerRepeat;
+        const gainMultiplier = Math.pow(10, -dbReduction / 20); // Convert dB to linear gain
+
+        this.audioService.activatePoint(dotKey, activationTime, gainMultiplier);
       }
     });
     
@@ -807,7 +836,7 @@ class DotGridAudioPlayer {
     if (sortedDotKeys.length > 0) {
       // Total time for one complete cycle = stagger time for all dots + time for all repetitions
       const maxStaggerTime = (sortedDotKeys.length - 1) * ALL_DOTS_STAGGER_INTERVAL_S;
-      const repetitionTime = DOT_REPETITIONS * DOT_REPETITION_INTERVAL_S;
+      const repetitionTime = repeatCount * DOT_REPETITION_INTERVAL_S;
       const totalSequenceTime = maxStaggerTime + repetitionTime;
       const loopDelayMs = totalSequenceTime * 1000;
       if (loopDelayMs > 0) { // Ensure positive delay
@@ -952,6 +981,22 @@ class DotGridAudioPlayer {
   // Legacy method for backward compatibility
   public setBandpassQ(qValue: number): void {
     this.audioService.setBandpassQ(qValue);
+  }
+
+  public setRepeatCount(count: number): void {
+    this.audioService.setRepeatCount(count);
+  }
+
+  public getRepeatCount(): number {
+    return this.audioService.getRepeatCount();
+  }
+
+  public setDbReductionPerRepeat(db: number): void {
+    this.audioService.setDbReductionPerRepeat(db);
+  }
+
+  public getDbReductionPerRepeat(): number {
+    return this.audioService.getDbReductionPerRepeat();
   }
 }
 
@@ -1231,6 +1276,40 @@ export function setBandpassBandwidth(bandwidthOctaves: number): void {
 export function setBandpassQ(qValue: number): void {
   const player = DotGridAudioPlayer.getInstance();
   player.setBandpassQ(qValue);
+}
+
+/**
+ * Set the number of repeats for each dot
+ * @param count Number of repeats (minimum 1)
+ */
+export function setRepeatCount(count: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setRepeatCount(count);
+}
+
+/**
+ * Get the current repeat count
+ */
+export function getRepeatCount(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getRepeatCount();
+}
+
+/**
+ * Set the dB reduction per repeat
+ * @param db dB reduction per repeat (minimum 0)
+ */
+export function setDbReductionPerRepeat(db: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setDbReductionPerRepeat(db);
+}
+
+/**
+ * Get the current dB reduction per repeat
+ */
+export function getDbReductionPerRepeat(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getDbReductionPerRepeat();
 }
 
 // Export the SoundMode enum for use in UI
