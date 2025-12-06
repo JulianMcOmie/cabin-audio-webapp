@@ -447,6 +447,9 @@ export function DotCalibration({
 
   // Speed settings state
   const [speed, setSpeed] = useState(1.0); // Default: 1.0x speed (normal)
+
+  // Bandwidth settings state
+  const [bandwidth, setBandwidth] = useState(5.0); // Default: 5.0 octaves
   
   // Use either external or internal state
   const selectedDots = externalSelectedDots !== undefined ? externalSelectedDots : internalSelectedDots;
@@ -716,6 +719,11 @@ export function DotCalibration({
     dotGridAudio.setSpeed(speed);
   }, [speed]);
 
+  // Update audio engine when bandwidth changes
+  useEffect(() => {
+    dotGridAudio.setBandpassBandwidth(bandwidth);
+  }, [bandwidth]);
+
   // Handlers for repeat settings
   const increaseRepeatCount = () => {
     if (repeatCount < 10) {
@@ -735,6 +743,49 @@ export function DotCalibration({
 
   const handleSpeedChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSpeed(Number(e.target.value));
+  };
+
+  const handleBandwidthChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newBandwidth = Number(e.target.value);
+    setBandwidth(newBandwidth);
+
+    // Adjust grid size based on bandwidth
+    // Full bandwidth (10 octaves) = more rows, narrow bandwidth (0.5 octaves) = fewer rows
+    // Map 0.5-10 octaves to MIN_ROWS-MAX_ROWS
+    const minBandwidth = 0.5;
+    const maxBandwidth = 10.0;
+    const bandwidthRange = maxBandwidth - minBandwidth;
+    const normalizedBandwidth = (newBandwidth - minBandwidth) / bandwidthRange; // 0 to 1
+
+    // Use a reasonable range for rows based on bandwidth
+    const minRowsForBandwidth = 3;
+    const maxRowsForBandwidth = 50; // Cap at 50 for usability
+    const targetRows = Math.round(minRowsForBandwidth + normalizedBandwidth * (maxRowsForBandwidth - minRowsForBandwidth));
+
+    // Ensure target is odd
+    const targetRowsOdd = targetRows % 2 === 0 ? targetRows + 1 : targetRows;
+
+    // Update grid size if different
+    if (targetRowsOdd !== gridSize) {
+      const oldGridSize = gridSize;
+      const newGridSize = targetRowsOdd;
+
+      // Remap dots to preserve relative positions
+      const newSelectedDots = new Set<string>();
+      selectedDots.forEach(dot => {
+        const [x, y] = dot.split(',').map(Number);
+        if (x < columnCount) {
+          // Calculate the relative position in the old grid (0-1)
+          const relativePos = y / (oldGridSize - 1);
+          // Map to the same relative position in the new grid
+          const newY = Math.round(relativePos * (newGridSize - 1));
+          newSelectedDots.add(`${x},${newY}`);
+        }
+      });
+
+      setGridSize(newGridSize);
+      setSelectedDots(newSelectedDots);
+    }
   };
   
   return (
@@ -909,6 +960,28 @@ export function DotCalibration({
             disabled={disabled}
             className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
               disabled
+                ? 'opacity-50 cursor-not-allowed'
+                : ''
+            } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+          />
+        </div>
+
+        {/* Bandwidth Slider */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">Bandwidth</span>
+            <span className="text-xs text-muted-foreground">{bandwidth.toFixed(1)} oct</span>
+          </div>
+          <input
+            type="range"
+            min="0.5"
+            max="10.0"
+            step="0.1"
+            value={bandwidth}
+            onChange={handleBandwidthChange}
+            disabled={disabled || soundMode !== 'bandpassed'}
+            className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+              disabled || soundMode !== 'bandpassed'
                 ? 'opacity-50 cursor-not-allowed'
                 : ''
             } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
