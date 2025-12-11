@@ -444,13 +444,23 @@ export function DotCalibration({
   // Repeat settings state
   const [repeatCount, setRepeatCount] = useState(1); // Default: 1 repeat (no extra repeats)
   const [dbReductionPerRepeat, setDbReductionPerRepeat] = useState(12); // Default: 12 dB reduction
+  const [holdCount, setHoldCount] = useState(4); // Default: 4 times each dot plays at same volume
 
   // Speed settings state
   const [speed, setSpeed] = useState(1.0); // Default: 1.0x speed (normal)
 
   // Bandwidth settings state
   const [bandwidth, setBandwidth] = useState(5.0); // Default: 5.0 octaves
-  
+
+  // Reading direction state
+  const [readingDirection, setReadingDirection] = useState<'horizontal' | 'vertical'>('horizontal'); // Default: horizontal (left-to-right)
+
+  // Position-based volume state
+  const [positionVolumeEnabled, setPositionVolumeEnabled] = useState(false); // Default: disabled
+  const [positionVolumeAxis, setPositionVolumeAxis] = useState<'horizontal' | 'vertical'>('vertical'); // Default: vertical (up/down)
+  const [positionVolumeReversed, setPositionVolumeReversed] = useState(false); // Default: not reversed
+  const [positionVolumeMinDb, setPositionVolumeMinDb] = useState(-24); // Default: -24dB minimum
+
   // Use either external or internal state
   const selectedDots = externalSelectedDots !== undefined ? externalSelectedDots : internalSelectedDots;
   const setSelectedDots = externalSetSelectedDots !== undefined ? externalSetSelectedDots : setInternalSelectedDots;
@@ -714,6 +724,10 @@ export function DotCalibration({
     dotGridAudio.setDbReductionPerRepeat(dbReductionPerRepeat);
   }, [dbReductionPerRepeat]);
 
+  useEffect(() => {
+    dotGridAudio.setHoldCount(holdCount);
+  }, [holdCount]);
+
   // Update audio engine when speed changes
   useEffect(() => {
     dotGridAudio.setSpeed(speed);
@@ -723,6 +737,28 @@ export function DotCalibration({
   useEffect(() => {
     dotGridAudio.setBandpassBandwidth(bandwidth);
   }, [bandwidth]);
+
+  // Update audio engine when reading direction changes
+  useEffect(() => {
+    dotGridAudio.setReadingDirection(readingDirection);
+  }, [readingDirection]);
+
+  // Update audio engine when position volume settings change
+  useEffect(() => {
+    dotGridAudio.setPositionVolumeEnabled(positionVolumeEnabled);
+  }, [positionVolumeEnabled]);
+
+  useEffect(() => {
+    dotGridAudio.setPositionVolumeAxis(positionVolumeAxis);
+  }, [positionVolumeAxis]);
+
+  useEffect(() => {
+    dotGridAudio.setPositionVolumeReversed(positionVolumeReversed);
+  }, [positionVolumeReversed]);
+
+  useEffect(() => {
+    dotGridAudio.setPositionVolumeMinDb(positionVolumeMinDb);
+  }, [positionVolumeMinDb]);
 
   // Handlers for repeat settings
   const increaseRepeatCount = () => {
@@ -748,7 +784,11 @@ export function DotCalibration({
   const handleBandwidthChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setBandwidth(Number(e.target.value));
   };
-  
+
+  const toggleReadingDirection = () => {
+    setReadingDirection(prev => prev === 'horizontal' ? 'vertical' : 'horizontal');
+  };
+
   return (
     <div className="space-y-3">
       {/* Canvas */}
@@ -853,6 +893,44 @@ export function DotCalibration({
           </button>
         </div>
 
+        {/* Reading Direction Toggle */}
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium">Reading</span>
+          <button
+            className={`px-3 py-1 rounded text-xs border ${
+              disabled
+                ? 'opacity-50 cursor-not-allowed'
+                : 'hover:bg-muted'
+            }`}
+            onClick={toggleReadingDirection}
+            disabled={disabled}
+          >
+            {readingDirection === 'horizontal' ? 'Horizontal →' : 'Vertical ↓'}
+          </button>
+        </div>
+
+        {/* Hold Count Slider */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">Hold Count</span>
+            <span className="text-xs text-muted-foreground">{holdCount}x</span>
+          </div>
+          <input
+            type="range"
+            min="1"
+            max="10"
+            step="1"
+            value={holdCount}
+            onChange={(e) => setHoldCount(Number(e.target.value))}
+            disabled={disabled}
+            className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+              disabled
+                ? 'opacity-50 cursor-not-allowed'
+                : ''
+            } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+          />
+        </div>
+
         {/* Repeat Count Control */}
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium">Repeats</span>
@@ -947,6 +1025,80 @@ export function DotCalibration({
                 : ''
             } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
           />
+        </div>
+
+        {/* Position-Based Volume Controls */}
+        <div className="border-t pt-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">Position Volume</span>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={positionVolumeEnabled}
+                onChange={(e) => setPositionVolumeEnabled(e.target.checked)}
+                disabled={disabled}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+            </label>
+          </div>
+
+          {positionVolumeEnabled && (
+            <>
+              {/* Axis Selector */}
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium">Direction</span>
+                <button
+                  className={`px-3 py-1 rounded text-xs border ${
+                    disabled
+                      ? 'opacity-50 cursor-not-allowed'
+                      : 'hover:bg-muted'
+                  }`}
+                  onClick={() => setPositionVolumeAxis(prev => prev === 'vertical' ? 'horizontal' : 'vertical')}
+                  disabled={disabled}
+                >
+                  {positionVolumeAxis === 'vertical' ? 'Up ↑ / Down ↓' : 'Left ← / Right →'}
+                </button>
+              </div>
+
+              {/* Reverse Toggle */}
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium">Reverse</span>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={positionVolumeReversed}
+                    onChange={(e) => setPositionVolumeReversed(e.target.checked)}
+                    disabled={disabled}
+                    className="sr-only peer"
+                  />
+                  <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+                </label>
+              </div>
+
+              {/* Minimum Volume Slider */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium">Min Volume</span>
+                  <span className="text-xs text-muted-foreground">{positionVolumeMinDb} dB</span>
+                </div>
+                <input
+                  type="range"
+                  min="-60"
+                  max="0"
+                  step="1"
+                  value={positionVolumeMinDb}
+                  onChange={(e) => setPositionVolumeMinDb(Number(e.target.value))}
+                  disabled={disabled}
+                  className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                    disabled
+                      ? 'opacity-50 cursor-not-allowed'
+                      : ''
+                  } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+                />
+              </div>
+            </>
+          )}
         </div>
 
         {/* Clear button */}

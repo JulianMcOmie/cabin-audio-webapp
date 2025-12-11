@@ -37,14 +37,15 @@ const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 3.8; // dB reduction per dB/octave d
 // const SUB_HIT_INTERVAL_S = DOT_DURATION_S / NUM_SUB_HITS; // Approx 0.125s if DOT_DURATION_S is 0.5s
 
 // New constants for Global Staggered Mode (when subHitPlaybackEnabled is true)
-const GLOBAL_STAGGER_ATTACK_S = 0.15; // Slower, gentler attack
-const GLOBAL_STAGGER_RELEASE_S = 0.5; // Slower release for smoother fade
-const ALL_DOTS_STAGGER_INTERVAL_S = 0.5; // Stagger between each dot in the global sequence
+const GLOBAL_STAGGER_ATTACK_S = 0.05; // Quick attack (50ms)
+const GLOBAL_STAGGER_RELEASE_S = 0.25; // Shorter release for tighter sound
+// const ALL_DOTS_STAGGER_INTERVAL_S = 0.5; // Stagger between each dot in the global sequence
 
 // New constants for dot repetition
-const DOT_REPETITION_INTERVAL_S = 0.2; // Increased to accommodate envelope duration (0.15 + 0.25 = 0.4s)
+const DOT_REPETITION_INTERVAL_S = 0.35; // Interval between repetitions (attack 0.05s + release 0.25s + small gap)
 const DEFAULT_REPEAT_COUNT = 1; // Default number of repeats (1 = no extra repeats, just play once)
 const DEFAULT_DB_REDUCTION_PER_REPEAT = 12; // Default dB reduction per repeat
+const DEFAULT_HOLD_COUNT = 4; // Default number of times each dot plays at same volume
 
 // Constants for bandpassed noise generator
 const BANDPASS_NOISE_SLOPE_DB_PER_OCT = -4.5; // Fixed slope for bandpassed noise
@@ -79,6 +80,7 @@ interface PointAudioNodes {
   sineToneGenerator: SineToneGenerator | null;
   pinkNoiseBuffer: AudioBuffer;
   normalizedYPos: number; // To recalculate slope without re-passing y, totalRows
+  normalizedXPos: number; // For position-based volume control
   // New properties for sub-hit sequencing
   subHitCount: number;
   subHitTimerId: number | null;
@@ -96,8 +98,16 @@ class PositionedAudioService {
   private currentSoundMode: SoundMode = SoundMode.BandpassedNoise; // Current sound generation mode - default to bandpassed
   private repeatCount: number = DEFAULT_REPEAT_COUNT; // Number of repeats for each dot
   private dbReductionPerRepeat: number = DEFAULT_DB_REDUCTION_PER_REPEAT; // dB reduction per repeat
+  private holdCount: number = DEFAULT_HOLD_COUNT; // Number of times each dot plays at same volume
   private speed: number = 1.0; // Playback speed multiplier (1.0 = normal speed)
   private currentBandwidth: number = BANDPASS_BANDWIDTH_OCTAVES; // Current bandwidth in octaves for bandpassed noise
+  private readingDirection: 'horizontal' | 'vertical' = 'horizontal'; // Reading direction: horizontal (left-to-right) or vertical (top-to-bottom columns)
+
+  // Position-based volume mode settings
+  private isPositionVolumeEnabled: boolean = false; // Whether position-based volume is enabled
+  private positionVolumeAxis: 'horizontal' | 'vertical' = 'vertical'; // Which axis controls volume (vertical = up/down, horizontal = left/right)
+  private positionVolumeReversed: boolean = false; // Whether to reverse the volume gradient (true = swap which side is full volume)
+  private positionVolumeMinDb: number = -24; // Minimum volume in dB on the quieter side (default -24dB)
 
   constructor(audioContextInstance: AudioContext) {
     this.ctx = audioContextInstance;
@@ -193,6 +203,54 @@ class PositionedAudioService {
     return this.speed;
   }
 
+  public setReadingDirection(direction: 'horizontal' | 'vertical'): void {
+    this.readingDirection = direction;
+  }
+
+  public getReadingDirection(): 'horizontal' | 'vertical' {
+    return this.readingDirection;
+  }
+
+  public setHoldCount(count: number): void {
+    this.holdCount = Math.max(1, Math.floor(count)); // At least 1 hold
+  }
+
+  public getHoldCount(): number {
+    return this.holdCount;
+  }
+
+  public setPositionVolumeEnabled(enabled: boolean): void {
+    this.isPositionVolumeEnabled = enabled;
+  }
+
+  public getPositionVolumeEnabled(): boolean {
+    return this.isPositionVolumeEnabled;
+  }
+
+  public setPositionVolumeAxis(axis: 'horizontal' | 'vertical'): void {
+    this.positionVolumeAxis = axis;
+  }
+
+  public getPositionVolumeAxis(): 'horizontal' | 'vertical' {
+    return this.positionVolumeAxis;
+  }
+
+  public setPositionVolumeReversed(reversed: boolean): void {
+    this.positionVolumeReversed = reversed;
+  }
+
+  public getPositionVolumeReversed(): boolean {
+    return this.positionVolumeReversed;
+  }
+
+  public setPositionVolumeMinDb(minDb: number): void {
+    this.positionVolumeMinDb = Math.max(-60, Math.min(0, minDb)); // Clamp between -60dB and 0dB
+  }
+
+  public getPositionVolumeMinDb(): number {
+    return this.positionVolumeMinDb;
+  }
+
   // Legacy methods for backwards compatibility
   public setBandpassedNoiseMode(enabled: boolean): void {
     this.currentSoundMode = enabled ? SoundMode.BandpassedNoise : SoundMode.SlopedNoise;
@@ -239,7 +297,8 @@ class PositionedAudioService {
     }
 
     const normalizedY = totalRows <= 1 ? 0.5 : 1 - (y / (totalRows - 1));
-    const panPosition = totalCols <= 1 ? 0 : (2 * (x / (totalCols - 1)) - 1);
+    const normalizedX = totalCols <= 1 ? 0.5 : (x / (totalCols - 1));
+    const panPosition = totalCols <= 1 ? 0 : (2 * normalizedX - 1);
 
     const mainGain = this.ctx.createGain();
     const envelopeGain = this.ctx.createGain();
@@ -303,6 +362,7 @@ class PositionedAudioService {
       sineToneGenerator,
       pinkNoiseBuffer,
       normalizedYPos: normalizedY,
+      normalizedXPos: normalizedX,
       // Initialize new properties
       subHitCount: 0,
       subHitTimerId: null,
@@ -433,14 +493,14 @@ class PositionedAudioService {
       const bandwidthOctaves = this.currentBandwidth;
 
       // Fixed audible edge frequencies:
-      // - Bottom dot (Y=0): lowpass at 100Hz (lower edge extends below, bypassed)
-      // - Top dot (Y=1): highpass at 10kHz (upper edge extends above, bypassed)
-      const MIN_AUDIBLE_EDGE = 100; // Hz (lowpass frequency for bottom dot)
-      const MAX_AUDIBLE_EDGE = 10000; // Hz (highpass frequency for top dot)
+      // - Bottom dot (Y=0): lowpass at 50Hz (lower edge extends below, bypassed)
+      // - Top dot (Y=1): highpass at 14kHz (upper edge extends above, bypassed)
+      const MIN_AUDIBLE_EDGE = 50; // Hz (lowpass frequency for bottom dot)
+      const MAX_AUDIBLE_EDGE = 14000; // Hz (highpass frequency for top dot)
 
       // Calculate lower edge range
-      // Y=0: lower edge well below 100Hz (will be bypassed)
-      // Y=1: lower edge at 10kHz (will be active)
+      // Y=0: lower edge well below 50Hz (will be bypassed)
+      // Y=1: lower edge at 14kHz (will be active)
       const minLowerEdge = MIN_AUDIBLE_EDGE / Math.pow(2, bandwidthOctaves);
       const maxLowerEdge = MAX_AUDIBLE_EDGE;
 
@@ -499,7 +559,33 @@ class PositionedAudioService {
 
       finalVolumeDb = this.currentBaseDbLevel + existingAttenuationDb + additionalSlopeBoostDb;
     }
-    
+
+    // Apply position-based volume if enabled
+    if (this.isPositionVolumeEnabled) {
+      // Determine which position to use based on axis
+      let positionForVolume = 0;
+      if (this.positionVolumeAxis === 'vertical') {
+        // Vertical: use normalizedYPos (0 = bottom, 1 = top)
+        positionForVolume = point.normalizedYPos;
+      } else {
+        // Horizontal: use normalizedXPos (0 = left, 1 = right)
+        positionForVolume = point.normalizedXPos;
+      }
+
+      // Reverse if needed
+      if (this.positionVolumeReversed) {
+        positionForVolume = 1 - positionForVolume;
+      }
+
+      // Calculate position-based attenuation
+      // positionForVolume = 0: minimum volume (positionVolumeMinDb)
+      // positionForVolume = 1: full volume (0dB attenuation)
+      const positionAttenuationDb = this.positionVolumeMinDb * (1 - positionForVolume);
+
+      // Apply the attenuation to the final volume
+      finalVolumeDb += positionAttenuationDb;
+    }
+
     const gainRatio = Math.pow(10, finalVolumeDb / 20);
     const effectiveMasterGain = MASTER_GAIN * this.currentDistortionGain * gainRatio;
     point.mainGain.gain.setValueAtTime(effectiveMasterGain, this.ctx.currentTime);
@@ -820,51 +906,112 @@ class DotGridAudioPlayer {
     // especially if looping and sounds might overlap slightly if not fully released.
     this.audioService.deactivateAllPoints(); 
 
-    const sortedDotKeys = Array.from(this.activeDotKeys).sort((keyA, keyB) => {
-      const [xAStr, yAStr] = keyA.split(',');
-      const [xBStr, yBStr] = keyB.split(',');
-      const yA = parseInt(yAStr, 10);
-      const yB = parseInt(yBStr, 10);
-      if (yA !== yB) return yA - yB; // Sort by row first (top to bottom)
-      const xA = parseInt(xAStr, 10);
-      const xB = parseInt(xBStr, 10);
-      return xA - xB; // Then by column (left to right)
+    const readingDirection = this.audioService.getReadingDirection();
+
+    // Parse all dot keys into structured data
+    const parsedDots = Array.from(this.activeDotKeys).map(dotKey => {
+      const [xStr, yStr] = dotKey.split(',');
+      return {
+        key: dotKey,
+        x: parseInt(xStr, 10),
+        y: parseInt(yStr, 10)
+      };
     });
+
+    let sortedDotKeys: string[];
+
+    if (readingDirection === 'horizontal') {
+      // Horizontal reading with snake pattern (alternating left-to-right and right-to-left)
+      // Group dots by row
+      const rowGroups = new Map<number, typeof parsedDots>();
+      parsedDots.forEach(dot => {
+        if (!rowGroups.has(dot.y)) {
+          rowGroups.set(dot.y, []);
+        }
+        rowGroups.get(dot.y)!.push(dot);
+      });
+
+      // Sort rows by y coordinate (top to bottom)
+      const sortedRows = Array.from(rowGroups.entries()).sort((a, b) => a[0] - b[0]);
+
+      // For each row, sort left-to-right or right-to-left based on row index
+      sortedDotKeys = sortedRows.flatMap(([, dots], rowIndex) => {
+        // Sort dots in this row by x coordinate
+        const sortedDots = dots.sort((a, b) => a.x - b.x);
+
+        // Reverse every other row to create snake pattern
+        if (rowIndex % 2 === 1) {
+          sortedDots.reverse();
+        }
+
+        return sortedDots.map(d => d.key);
+      });
+    } else {
+      // Vertical reading with snake pattern (alternating top-to-bottom and bottom-to-top)
+      // Group dots by column
+      const colGroups = new Map<number, typeof parsedDots>();
+      parsedDots.forEach(dot => {
+        if (!colGroups.has(dot.x)) {
+          colGroups.set(dot.x, []);
+        }
+        colGroups.get(dot.x)!.push(dot);
+      });
+
+      // Sort columns by x coordinate (left to right)
+      const sortedCols = Array.from(colGroups.entries()).sort((a, b) => a[0] - b[0]);
+
+      // For each column, sort top-to-bottom or bottom-to-top based on column index
+      sortedDotKeys = sortedCols.flatMap(([, dots], colIndex) => {
+        // Sort dots in this column by y coordinate
+        const sortedDots = dots.sort((a, b) => a.y - b.y);
+
+        // Reverse every other column to create snake pattern
+        if (colIndex % 2 === 1) {
+          sortedDots.reverse();
+        }
+
+        return sortedDots.map(d => d.key);
+      });
+    }
 
     const currentTime = audioContext.getAudioContext().currentTime;
 
     // Get repeat settings from the audio service
     const repeatCount = this.audioService.getRepeatCount();
     const dbReductionPerRepeat = this.audioService.getDbReductionPerRepeat();
+    const holdCount = this.audioService.getHoldCount();
     const speed = this.audioService.getSpeed();
 
-    // Calculate speed-adjusted stagger interval (higher speed = shorter interval)
-    const adjustedStaggerInterval = ALL_DOTS_STAGGER_INTERVAL_S / speed;
+    // Calculate speed-adjusted repetition interval (higher speed = shorter interval)
+    const adjustedRepetitionInterval = DOT_REPETITION_INTERVAL_S / speed;
 
-    // Schedule all dots to play simultaneously with staggered start times
+    // Calculate how long each dot needs to complete all its repetitions
+    const dotCompletionTime = holdCount * repeatCount * adjustedRepetitionInterval;
+
+    // Schedule all dots to play sequentially (each starts after previous completes)
     sortedDotKeys.forEach((dotKey, dotIndex) => {
-      // Each dot starts with a small stagger offset but all repeat simultaneously
-      const staggerOffset = dotIndex * adjustedStaggerInterval;
+      // Each dot starts after all previous dots have completed their repetitions
+      const staggerOffset = dotIndex * dotCompletionTime;
 
       // Schedule all repetitions for this dot with progressive volume reduction
       for (let repetition = 0; repetition < repeatCount; repetition++) {
-        const activationTime = currentTime + staggerOffset + repetition * DOT_REPETITION_INTERVAL_S;
-
         // Calculate gain multiplier based on repeat number
         // Each repeat is quieter by dbReductionPerRepeat dB
         const dbReduction = repetition * dbReductionPerRepeat;
         const gainMultiplier = Math.pow(10, -dbReduction / 20); // Convert dB to linear gain
 
-        this.audioService.activatePoint(dotKey, activationTime, gainMultiplier);
+        // For each repeat, schedule holdCount activations at the same volume
+        for (let hold = 0; hold < holdCount; hold++) {
+          const activationTime = currentTime + staggerOffset + (repetition * holdCount + hold) * adjustedRepetitionInterval;
+          this.audioService.activatePoint(dotKey, activationTime, gainMultiplier);
+        }
       }
     });
     
     // Schedule the next iteration of the loop if there are dots
     if (sortedDotKeys.length > 0) {
-      // Total time for one complete cycle = stagger time for all dots + time for all repetitions
-      const maxStaggerTime = (sortedDotKeys.length - 1) * adjustedStaggerInterval;
-      const repetitionTime = repeatCount * DOT_REPETITION_INTERVAL_S;
-      const totalSequenceTime = maxStaggerTime + repetitionTime;
+      // Total time for one complete cycle = time for all dots to complete sequentially
+      const totalSequenceTime = sortedDotKeys.length * dotCompletionTime;
       const loopDelayMs = totalSequenceTime * 1000;
       if (loopDelayMs > 0) { // Ensure positive delay
         this.loopTimeoutId = window.setTimeout(() => {
@@ -1030,6 +1177,60 @@ class DotGridAudioPlayer {
 
   public getSpeed(): number {
     return this.audioService.getSpeed();
+  }
+
+  public setReadingDirection(direction: 'horizontal' | 'vertical'): void {
+    this.audioService.setReadingDirection(direction);
+
+    // Restart playback with new reading order if currently playing
+    if (this.isPlaying && this.activeDotKeys.size > 0) {
+      this.stopAllRhythms();
+      this.startAllRhythms();
+    }
+  }
+
+  public getReadingDirection(): 'horizontal' | 'vertical' {
+    return this.audioService.getReadingDirection();
+  }
+
+  public setHoldCount(count: number): void {
+    this.audioService.setHoldCount(count);
+  }
+
+  public getHoldCount(): number {
+    return this.audioService.getHoldCount();
+  }
+
+  public setPositionVolumeEnabled(enabled: boolean): void {
+    this.audioService.setPositionVolumeEnabled(enabled);
+  }
+
+  public getPositionVolumeEnabled(): boolean {
+    return this.audioService.getPositionVolumeEnabled();
+  }
+
+  public setPositionVolumeAxis(axis: 'horizontal' | 'vertical'): void {
+    this.audioService.setPositionVolumeAxis(axis);
+  }
+
+  public getPositionVolumeAxis(): 'horizontal' | 'vertical' {
+    return this.audioService.getPositionVolumeAxis();
+  }
+
+  public setPositionVolumeReversed(reversed: boolean): void {
+    this.audioService.setPositionVolumeReversed(reversed);
+  }
+
+  public getPositionVolumeReversed(): boolean {
+    return this.audioService.getPositionVolumeReversed();
+  }
+
+  public setPositionVolumeMinDb(minDb: number): void {
+    this.audioService.setPositionVolumeMinDb(minDb);
+  }
+
+  public getPositionVolumeMinDb(): number {
+    return this.audioService.getPositionVolumeMinDb();
   }
 }
 
@@ -1411,6 +1612,108 @@ export function setSpeed(speed: number): void {
 export function getSpeed(): number {
   const player = DotGridAudioPlayer.getInstance();
   return player.getSpeed();
+}
+
+/**
+ * Set the reading direction for the dot grid
+ * @param direction 'horizontal' for left-to-right reading, 'vertical' for top-to-bottom columns
+ */
+export function setReadingDirection(direction: 'horizontal' | 'vertical'): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setReadingDirection(direction);
+}
+
+/**
+ * Get the current reading direction
+ */
+export function getReadingDirection(): 'horizontal' | 'vertical' {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getReadingDirection();
+}
+
+/**
+ * Set the hold count (number of times each dot plays at same volume)
+ * @param count Hold count (minimum 1)
+ */
+export function setHoldCount(count: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setHoldCount(count);
+}
+
+/**
+ * Get the current hold count
+ */
+export function getHoldCount(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getHoldCount();
+}
+
+/**
+ * Enable or disable position-based volume mode
+ * @param enabled Whether position-based volume is enabled
+ */
+export function setPositionVolumeEnabled(enabled: boolean): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setPositionVolumeEnabled(enabled);
+}
+
+/**
+ * Get whether position-based volume mode is enabled
+ */
+export function getPositionVolumeEnabled(): boolean {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getPositionVolumeEnabled();
+}
+
+/**
+ * Set which axis controls the volume in position-based volume mode
+ * @param axis 'vertical' for up/down volume gradient, 'horizontal' for left/right
+ */
+export function setPositionVolumeAxis(axis: 'horizontal' | 'vertical'): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setPositionVolumeAxis(axis);
+}
+
+/**
+ * Get the current position volume axis
+ */
+export function getPositionVolumeAxis(): 'horizontal' | 'vertical' {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getPositionVolumeAxis();
+}
+
+/**
+ * Set whether to reverse the volume gradient direction
+ * @param reversed If true, swaps which side has full volume
+ */
+export function setPositionVolumeReversed(reversed: boolean): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setPositionVolumeReversed(reversed);
+}
+
+/**
+ * Get whether the volume gradient is reversed
+ */
+export function getPositionVolumeReversed(): boolean {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getPositionVolumeReversed();
+}
+
+/**
+ * Set the minimum volume in dB on the quieter side
+ * @param minDb Minimum volume in dB (range: -60 to 0)
+ */
+export function setPositionVolumeMinDb(minDb: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setPositionVolumeMinDb(minDb);
+}
+
+/**
+ * Get the current minimum volume in dB
+ */
+export function getPositionVolumeMinDb(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getPositionVolumeMinDb();
 }
 
 // Export the SoundMode enum for use in UI

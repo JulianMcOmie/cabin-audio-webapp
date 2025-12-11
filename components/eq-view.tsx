@@ -540,7 +540,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                       onValueChange={(value) => {
                         const newSpeed = value[0];
                         setDotGridSpeedMultiplier(newSpeed);
-                        dotGridAudio.getDotGridAudioPlayer().setSpeedMultiplier(newSpeed);
+                        dotGridAudio.getDotGridAudioPlayer().setSpeed(newSpeed);
                       }}
                       className="w-full"
                     />
@@ -565,7 +565,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                       onValueChange={(value) => {
                         const newTilt = value[0];
                         setDotGridTiltRangeMultiplier(newTilt);
-                        dotGridAudio.getDotGridAudioPlayer().setTiltRangeMultiplier(newTilt);
+                        // TODO: Implement setTiltRangeMultiplier method in dotGridAudio if needed
                       }}
                       className="w-full"
                     />

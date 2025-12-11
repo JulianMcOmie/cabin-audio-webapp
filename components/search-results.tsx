@@ -45,7 +45,15 @@ export function SearchResults({ query, setActiveTab, onClose }: SearchResultsPro
   const [storeTracks, setStoreTracks] = useState<Track[]>([])
   const [coverImageUrls, setCoverImageUrls] = useState<Record<string, string>>({})
   const [uiTracks, setUITracks] = useState<UITrack[]>([])
-  
+
+  // Get the actual default image path based on theme
+  // Make sure path is absolute and exists
+  const getDefaultCoverImage = useCallback(() => {
+    const timestamp = Date.now(); // Add timestamp to prevent caching
+    const basePath = theme === 'dark' ? '/default_img_dark.jpg' : '/default_img_light.jpg';
+    return `${basePath}?t=${timestamp}`;
+  }, [theme])
+
   // Load tracks on component mount
   useEffect(() => {
     const loadedTracks = getTracks()
@@ -82,15 +90,7 @@ export function SearchResults({ query, setActiveTab, onClose }: SearchResultsPro
       });
     }
   }, [getTracks, coverImageUrls, getDefaultCoverImage])
-  
-  // Get the actual default image path based on theme
-  // Make sure path is absolute and exists
-  const getDefaultCoverImage = useCallback(() => {
-    const timestamp = Date.now(); // Add timestamp to prevent caching
-    const basePath = theme === 'dark' ? '/default_img_dark.jpg' : '/default_img_light.jpg';
-    return `${basePath}?t=${timestamp}`;
-  }, [theme])
-  
+
   // Convert store tracks to UI tracks whenever store tracks or cover URLs change
   useEffect(() => {
     if (storeTracks.length === 0) return;
