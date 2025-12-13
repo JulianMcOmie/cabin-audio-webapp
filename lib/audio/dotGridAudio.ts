@@ -37,12 +37,12 @@ const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 3.8; // dB reduction per dB/octave d
 // const SUB_HIT_INTERVAL_S = DOT_DURATION_S / NUM_SUB_HITS; // Approx 0.125s if DOT_DURATION_S is 0.5s
 
 // New constants for Global Staggered Mode (when subHitPlaybackEnabled is true)
-const GLOBAL_STAGGER_ATTACK_S = 0.05; // Quick attack (50ms)
-const GLOBAL_STAGGER_RELEASE_S = 0.25; // Shorter release for tighter sound
+const GLOBAL_STAGGER_ATTACK_S = 0.01; // Very sharp attack (10ms)
+const GLOBAL_STAGGER_RELEASE_S = 0.1; // Sharp release for tight, percussive sound
 // const ALL_DOTS_STAGGER_INTERVAL_S = 0.5; // Stagger between each dot in the global sequence
 
 // New constants for dot repetition
-const DOT_REPETITION_INTERVAL_S = 0.35; // Interval between repetitions (attack 0.05s + release 0.25s + small gap)
+const DOT_REPETITION_INTERVAL_S = 0.35; // Interval between repetitions (envelope + gap for clean separation)
 const DEFAULT_REPEAT_COUNT = 1; // Default number of repeats (1 = no extra repeats, just play once)
 const DEFAULT_DB_REDUCTION_PER_REPEAT = 12; // Default dB reduction per repeat
 const DEFAULT_HOLD_COUNT = 4; // Default number of times each dot plays at same volume
@@ -101,6 +101,7 @@ class PositionedAudioService {
   private holdCount: number = DEFAULT_HOLD_COUNT; // Number of times each dot plays at same volume
   private speed: number = 1.0; // Playback speed multiplier (1.0 = normal speed)
   private currentBandwidth: number = BANDPASS_BANDWIDTH_OCTAVES; // Current bandwidth in octaves for bandpassed noise
+  private frequencyExtensionRange: number = 0; // How far beyond audible range to allow (0 = no extension, both filters always active)
   private readingDirection: 'horizontal' | 'vertical' = 'horizontal'; // Reading direction: horizontal (left-to-right) or vertical (top-to-bottom columns)
 
   // Independent rows mode settings
@@ -546,25 +547,27 @@ class PositionedAudioService {
       point.slopedNoiseGenerator.setSlope(targetOverallSlopeDbPerOctave);
     }
     // Bandpassed noise uses fixed slope, bandpass position based on Y
-    // Extended-range positioning with fixed audible edge frequencies
     let bandpassCenterFreq = 0; // Used for volume compensation later
     if (point.bandpassedNoiseGenerator) {
       const bandwidthOctaves = this.currentBandwidth;
+      const MIN_AUDIBLE = 20; // Hz
+      const MAX_AUDIBLE = 20000; // Hz
 
-      // Fixed audible edge frequencies:
-      // - Bottom dot (Y=0): lowpass at 50Hz (lower edge extends below, bypassed)
-      // - Top dot (Y=1): highpass at 14kHz (upper edge extends above, bypassed)
-      const MIN_AUDIBLE_EDGE = 50; // Hz (lowpass frequency for bottom dot)
-      const MAX_AUDIBLE_EDGE = 14000; // Hz (highpass frequency for top dot)
+      // Calculate edge frequencies based on extension range
+      // With 0 extension: edges stay at audible boundaries (20-20000 Hz)
+      // With higher extension: edges can extend beyond audible range
+      const extensionMultiplier = Math.pow(2, this.frequencyExtensionRange);
 
-      // Calculate lower edge range
-      // Y=0: lower edge well below 50Hz (will be bypassed)
-      // Y=1: lower edge at 14kHz (will be active)
-      const minLowerEdge = MIN_AUDIBLE_EDGE / Math.pow(2, bandwidthOctaves);
-      const maxLowerEdge = MAX_AUDIBLE_EDGE;
+      // Y=0 (bottom dot): lower edge at MIN_AUDIBLE / extensionMultiplier
+      const bottomLowerEdge = MIN_AUDIBLE / extensionMultiplier;
+      const bottomUpperEdge = bottomLowerEdge * Math.pow(2, bandwidthOctaves);
+
+      // Y=1 (top dot): upper edge at MAX_AUDIBLE * extensionMultiplier
+      const topUpperEdge = MAX_AUDIBLE * extensionMultiplier;
+      const topLowerEdge = topUpperEdge / Math.pow(2, bandwidthOctaves);
 
       // Logarithmically interpolate lower edge based on Y position
-      const lowerEdge = minLowerEdge * Math.pow(maxLowerEdge / minLowerEdge, point.normalizedYPos);
+      const lowerEdge = bottomLowerEdge * Math.pow(topLowerEdge / bottomLowerEdge, point.normalizedYPos);
       const upperEdge = lowerEdge * Math.pow(2, bandwidthOctaves);
 
       // Calculate center frequency (geometric mean) for filter positioning
@@ -664,6 +667,23 @@ class PositionedAudioService {
         point.bandpassedNoiseGenerator.setBandpassBandwidth(bandwidthOctaves);
       }
     });
+  }
+
+  public setFrequencyExtensionRange(octaves: number): void {
+    // Store the current extension range setting
+    this.frequencyExtensionRange = Math.max(0, Math.min(5, octaves));
+
+    // Recalculate bandpass frequencies for all active points with the new extension range
+    this.audioPoints.forEach((point) => {
+      if (point.bandpassedNoiseGenerator) {
+        // Recalculate frequency positioning by calling setMainGainAndSlope
+        this.setMainGainAndSlope(point);
+      }
+    });
+  }
+
+  public getFrequencyExtensionRange(): number {
+    return this.frequencyExtensionRange;
   }
 
   // Legacy method for backward compatibility
@@ -1471,6 +1491,14 @@ class DotGridAudioPlayer {
       }
     }
   }
+
+  public setFrequencyExtensionRange(octaves: number): void {
+    this.audioService.setFrequencyExtensionRange(octaves);
+  }
+
+  public getFrequencyExtensionRange(): number {
+    return this.audioService.getFrequencyExtensionRange();
+  }
 }
 
 class SineToneGenerator {
@@ -1606,6 +1634,7 @@ class BandpassedNoiseGenerator {
     const MIN_AUDIBLE = 20;
     const MAX_AUDIBLE = 20000;
 
+    // Determine which filters are needed based on whether edges extend beyond audible range
     const needHighpass = lowerEdge >= MIN_AUDIBLE;
     const needLowpass = upperEdge <= MAX_AUDIBLE;
 
@@ -2012,6 +2041,23 @@ export function getRowStartOffset(): number {
 export function regenerateRowTempos(): void {
   const player = DotGridAudioPlayer.getInstance();
   player.regenerateRowTempos();
+}
+
+/**
+ * Set how far beyond the audible range the bandpass can extend before filters are disabled
+ * @param octaves Extension range in octaves (0 = no extension, both filters always active; higher = allow more extension)
+ */
+export function setFrequencyExtensionRange(octaves: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setFrequencyExtensionRange(octaves);
+}
+
+/**
+ * Get the current frequency extension range in octaves
+ */
+export function getFrequencyExtensionRange(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getFrequencyExtensionRange();
 }
 
 // Export the SoundMode enum for use in UI

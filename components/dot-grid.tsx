@@ -451,6 +451,7 @@ export function DotCalibration({
 
   // Bandwidth settings state
   const [bandwidth, setBandwidth] = useState(5.0); // Default: 5.0 octaves
+  const [frequencyExtensionRange, setFrequencyExtensionRange] = useState(0); // Default: 0 octaves (no extension, both filters always active)
 
   // Reading direction state
   const [readingDirection, setReadingDirection] = useState<'horizontal' | 'vertical'>('horizontal'); // Default: horizontal (left-to-right)
@@ -743,6 +744,11 @@ export function DotCalibration({
     dotGridAudio.setBandpassBandwidth(bandwidth);
   }, [bandwidth]);
 
+  // Update audio engine when frequency extension range changes
+  useEffect(() => {
+    dotGridAudio.setFrequencyExtensionRange(frequencyExtensionRange);
+  }, [frequencyExtensionRange]);
+
   // Update audio engine when reading direction changes
   useEffect(() => {
     dotGridAudio.setReadingDirection(readingDirection);
@@ -801,6 +807,10 @@ export function DotCalibration({
 
   const handleBandwidthChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setBandwidth(Number(e.target.value));
+  };
+
+  const handleFrequencyExtensionRangeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFrequencyExtensionRange(Number(e.target.value));
   };
 
   const toggleReadingDirection = () => {
@@ -1036,6 +1046,28 @@ export function DotCalibration({
             step="0.1"
             value={bandwidth}
             onChange={handleBandwidthChange}
+            disabled={disabled || soundMode !== 'bandpassed'}
+            className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+              disabled || soundMode !== 'bandpassed'
+                ? 'opacity-50 cursor-not-allowed'
+                : ''
+            } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+          />
+        </div>
+
+        {/* Frequency Extension Range Slider */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">Freq Extension</span>
+            <span className="text-xs text-muted-foreground">{frequencyExtensionRange.toFixed(1)} oct</span>
+          </div>
+          <input
+            type="range"
+            min="0"
+            max="5"
+            step="0.5"
+            value={frequencyExtensionRange}
+            onChange={handleFrequencyExtensionRangeChange}
             disabled={disabled || soundMode !== 'bandpassed'}
             className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
               disabled || soundMode !== 'bandpassed'
