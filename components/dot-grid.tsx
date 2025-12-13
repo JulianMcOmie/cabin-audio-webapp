@@ -461,6 +461,11 @@ export function DotCalibration({
   const [positionVolumeReversed, setPositionVolumeReversed] = useState(false); // Default: not reversed
   const [positionVolumeMinDb, setPositionVolumeMinDb] = useState(-24); // Default: -24dB minimum
 
+  // Independent rows state
+  const [independentRowsEnabled, setIndependentRowsEnabled] = useState(false); // Default: disabled
+  const [rowTempoVariance, setRowTempoVariance] = useState(10); // Default: ±10%
+  const [rowStartOffset, setRowStartOffset] = useState(200); // Default: 200ms
+
   // Use either external or internal state
   const selectedDots = externalSelectedDots !== undefined ? externalSelectedDots : internalSelectedDots;
   const setSelectedDots = externalSetSelectedDots !== undefined ? externalSetSelectedDots : setInternalSelectedDots;
@@ -759,6 +764,19 @@ export function DotCalibration({
   useEffect(() => {
     dotGridAudio.setPositionVolumeMinDb(positionVolumeMinDb);
   }, [positionVolumeMinDb]);
+
+  // Update audio engine when independent rows settings change
+  useEffect(() => {
+    dotGridAudio.setIndependentRowsEnabled(independentRowsEnabled);
+  }, [independentRowsEnabled]);
+
+  useEffect(() => {
+    dotGridAudio.setRowTempoVariance(rowTempoVariance);
+  }, [rowTempoVariance]);
+
+  useEffect(() => {
+    dotGridAudio.setRowStartOffset(rowStartOffset);
+  }, [rowStartOffset]);
 
   // Handlers for repeat settings
   const increaseRepeatCount = () => {
@@ -1097,6 +1115,78 @@ export function DotCalibration({
                   } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
                 />
               </div>
+            </>
+          )}
+        </div>
+
+        {/* Independent Rows Mode Controls */}
+        <div className="border-t pt-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">Independent Rows</span>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={independentRowsEnabled}
+                onChange={(e) => setIndependentRowsEnabled(e.target.checked)}
+                disabled={disabled}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+            </label>
+          </div>
+
+          {independentRowsEnabled && (
+            <>
+              {/* Tempo Variance Slider */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium">Tempo Variance</span>
+                  <span className="text-xs text-muted-foreground">±{rowTempoVariance}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="5"
+                  max="20"
+                  step="1"
+                  value={rowTempoVariance}
+                  onChange={(e) => setRowTempoVariance(Number(e.target.value))}
+                  disabled={disabled}
+                  className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                    disabled ? 'opacity-50 cursor-not-allowed' : ''
+                  } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+                />
+              </div>
+
+              {/* Row Start Offset Slider */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium">Row Offset</span>
+                  <span className="text-xs text-muted-foreground">{rowStartOffset}ms</span>
+                </div>
+                <input
+                  type="range"
+                  min="50"
+                  max="500"
+                  step="50"
+                  value={rowStartOffset}
+                  onChange={(e) => setRowStartOffset(Number(e.target.value))}
+                  disabled={disabled}
+                  className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                    disabled ? 'opacity-50 cursor-not-allowed' : ''
+                  } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+                />
+              </div>
+
+              {/* Regenerate Tempos Button */}
+              <button
+                className={`w-full px-2 py-1 rounded flex items-center justify-center text-xs border ${
+                  disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-muted'
+                }`}
+                onClick={() => dotGridAudio.regenerateRowTempos()}
+                disabled={disabled}
+              >
+                Regenerate Tempos
+              </button>
             </>
           )}
         </div>

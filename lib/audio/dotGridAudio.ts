@@ -103,6 +103,12 @@ class PositionedAudioService {
   private currentBandwidth: number = BANDPASS_BANDWIDTH_OCTAVES; // Current bandwidth in octaves for bandpassed noise
   private readingDirection: 'horizontal' | 'vertical' = 'horizontal'; // Reading direction: horizontal (left-to-right) or vertical (top-to-bottom columns)
 
+  // Independent rows mode settings
+  private independentRowsEnabled: boolean = false; // Whether independent rows mode is enabled
+  private rowSpeedVariances: Map<number, number> = new Map(); // Per-row speed multipliers
+  private rowStartOffsetSeconds: number = 0.2; // Sequential offset between row starts (default: 200ms)
+  private rowTempoVariance: number = 10; // Tempo variance percentage (default: ±10%)
+
   // Position-based volume mode settings
   private isPositionVolumeEnabled: boolean = false; // Whether position-based volume is enabled
   private positionVolumeAxis: 'horizontal' | 'vertical' = 'vertical'; // Which axis controls volume (vertical = up/down, horizontal = left/right)
@@ -249,6 +255,59 @@ class PositionedAudioService {
 
   public getPositionVolumeMinDb(): number {
     return this.positionVolumeMinDb;
+  }
+
+  // Independent rows mode methods
+  public generateRowSpeedVariances(numRows: number): void {
+    this.rowSpeedVariances.clear();
+    const variance = this.rowTempoVariance / 100;
+
+    for (let i = 0; i < numRows; i++) {
+      const randomVariance = (Math.random() * 2 - 1) * variance;
+      const speedMultiplier = 1 + randomVariance;
+      this.rowSpeedVariances.set(i, speedMultiplier);
+    }
+  }
+
+  public ensureRowSpeedVariances(gridSize: number, columnCount: number): void {
+    const readingDirection = this.getReadingDirection();
+    const numGroups = readingDirection === 'horizontal' ? gridSize : columnCount;
+
+    if (this.rowSpeedVariances.size !== numGroups) {
+      this.generateRowSpeedVariances(numGroups);
+    }
+  }
+
+  public getRowSpeed(rowIndex: number): number {
+    const variance = this.rowSpeedVariances.get(rowIndex) || 1.0;
+    return this.speed * variance;
+  }
+
+  public setIndependentRowsEnabled(enabled: boolean): void {
+    this.independentRowsEnabled = enabled;
+    if (!enabled) {
+      this.rowSpeedVariances.clear();
+    }
+  }
+
+  public getIndependentRowsEnabled(): boolean {
+    return this.independentRowsEnabled;
+  }
+
+  public setRowTempoVariance(variance: number): void {
+    this.rowTempoVariance = Math.max(5, Math.min(20, variance));
+  }
+
+  public getRowTempoVariance(): number {
+    return this.rowTempoVariance;
+  }
+
+  public setRowStartOffset(offsetSeconds: number): void {
+    this.rowStartOffsetSeconds = Math.max(0.05, Math.min(0.5, offsetSeconds));
+  }
+
+  public getRowStartOffset(): number {
+    return this.rowStartOffsetSeconds;
   }
 
   // Legacy methods for backwards compatibility
@@ -634,6 +693,7 @@ class DotGridAudioPlayer {
   // private lastSwitchTime: number = 0;
   // private currentRowStaggerTimeouts: number[] = [];
   private loopTimeoutId: number | null = null; // New: For the main sequence loop
+  private rowLoopTimeoutIds: Map<number, number> = new Map(); // For independent row timing loops
 
   private gridSize: number = 3;
   private columnCount: number = COLUMNS;
@@ -897,14 +957,20 @@ class DotGridAudioPlayer {
     }
 
     this.stopAllRhythmsInternalCleanup(); // Clear any previous timeouts/loop
-    
+
     if (!this.isPlaying || this.activeDotKeys.size === 0) {
         return;
     }
-    
+
     // Deactivate all points before starting new sequence to ensure clean state for envelopes
     // especially if looping and sounds might overlap slightly if not fully released.
-    this.audioService.deactivateAllPoints(); 
+    this.audioService.deactivateAllPoints();
+
+    // Check if independent rows mode is enabled
+    if (this.audioService.getIndependentRowsEnabled()) {
+      this.startIndependentRowRhythms();
+      return;
+    }
 
     const readingDirection = this.audioService.getReadingDirection();
 
@@ -1023,13 +1089,135 @@ class DotGridAudioPlayer {
       }
     }
   }
-  
+
+  /**
+   * Group dots by reading order (rows or columns) for independent playback
+   */
+  private groupDotsByReadingOrder(): Map<number, string[]> {
+    const readingDirection = this.audioService.getReadingDirection();
+    const parsedDots = Array.from(this.activeDotKeys).map(dotKey => {
+      const [xStr, yStr] = dotKey.split(',');
+      return { key: dotKey, x: parseInt(xStr, 10), y: parseInt(yStr, 10) };
+    });
+
+    const result = new Map<number, string[]>();
+
+    if (readingDirection === 'horizontal') {
+      // Group by row (y coordinate)
+      const rowGroups = new Map<number, typeof parsedDots>();
+      parsedDots.forEach(dot => {
+        if (!rowGroups.has(dot.y)) rowGroups.set(dot.y, []);
+        rowGroups.get(dot.y)!.push(dot);
+      });
+
+      // Sort and apply snake pattern
+      const sortedRows = Array.from(rowGroups.entries()).sort((a, b) => a[0] - b[0]);
+      sortedRows.forEach(([, dots], rowIndex) => {
+        const sortedDots = dots.sort((a, b) => a.x - b.x);
+        if (rowIndex % 2 === 1) sortedDots.reverse();
+        result.set(rowIndex, sortedDots.map(d => d.key));
+      });
+    } else {
+      // Group by column (x coordinate)
+      const colGroups = new Map<number, typeof parsedDots>();
+      parsedDots.forEach(dot => {
+        if (!colGroups.has(dot.x)) colGroups.set(dot.x, []);
+        colGroups.get(dot.x)!.push(dot);
+      });
+
+      // Sort and apply snake pattern
+      const sortedCols = Array.from(colGroups.entries()).sort((a, b) => a[0] - b[0]);
+      sortedCols.forEach(([, dots], colIndex) => {
+        const sortedDots = dots.sort((a, b) => a.y - b.y);
+        if (colIndex % 2 === 1) sortedDots.reverse();
+        result.set(colIndex, sortedDots.map(d => d.key));
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Start independent row rhythms - each row plays with its own tempo
+   */
+  private startIndependentRowRhythms(): void {
+    this.clearRowTimeouts();
+    this.audioService.ensureRowSpeedVariances(this.gridSize, this.columnCount);
+
+    const groupedDots = this.groupDotsByReadingOrder();
+    const currentTime = audioContext.getAudioContext().currentTime;
+
+    groupedDots.forEach((dots, groupIndex) => {
+      const rowSpeed = this.audioService.getRowSpeed(groupIndex);
+      const rowStartTime = currentTime + (groupIndex * this.audioService.getRowStartOffset());
+      this.startSingleRowLoop(dots, groupIndex, rowSpeed, rowStartTime);
+    });
+  }
+
+  /**
+   * Start a single row's timing loop with independent tempo
+   */
+  private startSingleRowLoop(
+    dots: string[],
+    rowIndex: number,
+    rowSpeed: number,
+    startTime: number
+  ): void {
+    const adjustedInterval = DOT_REPETITION_INTERVAL_S / rowSpeed;
+    const dotCompletionTime = this.audioService.getHoldCount() *
+      this.audioService.getRepeatCount() * adjustedInterval;
+
+    // Schedule all dots in this row
+    dots.forEach((dotKey, dotIndex) => {
+      const staggerOffset = dotIndex * dotCompletionTime;
+
+      for (let repetition = 0; repetition < this.audioService.getRepeatCount(); repetition++) {
+        const dbReduction = repetition * this.audioService.getDbReductionPerRepeat();
+        const gainMultiplier = Math.pow(10, -dbReduction / 20);
+
+        for (let hold = 0; hold < this.audioService.getHoldCount(); hold++) {
+          const activationTime = startTime + staggerOffset +
+            (repetition * this.audioService.getHoldCount() + hold) * adjustedInterval;
+          this.audioService.activatePoint(dotKey, activationTime, gainMultiplier);
+        }
+      }
+    });
+
+    // Schedule next iteration for this row
+    const rowCycleTime = dots.length * dotCompletionTime;
+    const timeoutId = window.setTimeout(() => {
+      if (this.isPlaying && this.audioService.getIndependentRowsEnabled()) {
+        this.startSingleRowLoop(
+          dots,
+          rowIndex,
+          rowSpeed,
+          audioContext.getAudioContext().currentTime
+        );
+      }
+    }, rowCycleTime * 1000);
+
+    this.rowLoopTimeoutIds.set(rowIndex, timeoutId);
+  }
+
+  /**
+   * Clear all independent row timeout loops
+   */
+  private clearRowTimeouts(): void {
+    this.rowLoopTimeoutIds.forEach((timeoutId) => {
+      clearTimeout(timeoutId);
+    });
+    this.rowLoopTimeoutIds.clear();
+  }
+
   private stopAllRhythmsInternalCleanup(): void {
     // Clear the main sequence loop timeout
     if (this.loopTimeoutId !== null) {
       clearTimeout(this.loopTimeoutId);
       this.loopTimeoutId = null;
     }
+
+    // Clear all independent row timeouts
+    this.clearRowTimeouts();
 
     // if (this.animationFrameId !== null) { // REMOVING rAF
     //   cancelAnimationFrame(this.animationFrameId);
@@ -1231,6 +1419,57 @@ class DotGridAudioPlayer {
 
   public getPositionVolumeMinDb(): number {
     return this.audioService.getPositionVolumeMinDb();
+  }
+
+  public setIndependentRowsEnabled(enabled: boolean): void {
+    this.audioService.setIndependentRowsEnabled(enabled);
+
+    // Restart playback if currently playing
+    if (this.isPlaying && !this.isContinuousSimultaneousMode()) {
+      this.stopAllRhythms();
+      this.startAllRhythms();
+    }
+  }
+
+  public getIndependentRowsEnabled(): boolean {
+    return this.audioService.getIndependentRowsEnabled();
+  }
+
+  public setRowTempoVariance(variance: number): void {
+    this.audioService.setRowTempoVariance(variance);
+
+    // Regenerate variances with new value if independent mode is enabled
+    if (this.audioService.getIndependentRowsEnabled()) {
+      const readingDirection = this.audioService.getReadingDirection();
+      const numGroups = readingDirection === 'horizontal' ? this.gridSize : this.columnCount;
+      this.audioService.generateRowSpeedVariances(numGroups);
+    }
+  }
+
+  public getRowTempoVariance(): number {
+    return this.audioService.getRowTempoVariance();
+  }
+
+  public setRowStartOffset(offsetMs: number): void {
+    this.audioService.setRowStartOffset(offsetMs / 1000);
+  }
+
+  public getRowStartOffset(): number {
+    return this.audioService.getRowStartOffset() * 1000;
+  }
+
+  public regenerateRowTempos(): void {
+    if (this.audioService.getIndependentRowsEnabled()) {
+      const readingDirection = this.audioService.getReadingDirection();
+      const numGroups = readingDirection === 'horizontal' ? this.gridSize : this.columnCount;
+      this.audioService.generateRowSpeedVariances(numGroups);
+
+      // Restart if playing
+      if (this.isPlaying && !this.isContinuousSimultaneousMode()) {
+        this.stopAllRhythms();
+        this.startAllRhythms();
+      }
+    }
   }
 }
 
@@ -1714,6 +1953,65 @@ export function setPositionVolumeMinDb(minDb: number): void {
 export function getPositionVolumeMinDb(): number {
   const player = DotGridAudioPlayer.getInstance();
   return player.getPositionVolumeMinDb();
+}
+
+/**
+ * Enable or disable independent rows mode
+ * @param enabled Whether independent rows mode is enabled
+ */
+export function setIndependentRowsEnabled(enabled: boolean): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setIndependentRowsEnabled(enabled);
+}
+
+/**
+ * Get whether independent rows mode is enabled
+ */
+export function getIndependentRowsEnabled(): boolean {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getIndependentRowsEnabled();
+}
+
+/**
+ * Set the tempo variance percentage for independent rows
+ * @param variance Tempo variance percentage (range: 5-20, default: 10)
+ */
+export function setRowTempoVariance(variance: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setRowTempoVariance(variance);
+}
+
+/**
+ * Get the current tempo variance percentage
+ */
+export function getRowTempoVariance(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getRowTempoVariance();
+}
+
+/**
+ * Set the row start offset in milliseconds
+ * @param offsetMs Sequential offset between row starts in milliseconds (range: 50-500, default: 200)
+ */
+export function setRowStartOffset(offsetMs: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setRowStartOffset(offsetMs);
+}
+
+/**
+ * Get the current row start offset in milliseconds
+ */
+export function getRowStartOffset(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getRowStartOffset();
+}
+
+/**
+ * Regenerate random tempo variances for all rows
+ */
+export function regenerateRowTempos(): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.regenerateRowTempos();
 }
 
 // Export the SoundMode enum for use in UI
