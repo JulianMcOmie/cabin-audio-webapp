@@ -178,7 +178,9 @@ class ShapeGridAudioPlayer {
   private calculateShapeDots(shape: ShapeData): DotPosition[] {
     switch (shape.type) {
       case 'circle':
-        return calculateCircleDots(shape.position, shape.size, shape.numDots);
+        // Use aspect ratio of 1 for audio (not visual)
+        // The visual stretch is handled in the UI component
+        return calculateCircleDots(shape.position, shape.size, shape.numDots, 1.0);
 
       case 'triangle':
         const vertices = getTriangleVertices(

@@ -16,6 +16,7 @@ export interface ShapeGridProps {
   disabled?: boolean;
   numDots?: number;  // Default 12
   shapeType?: 'circle' | 'triangle' | 'five';
+  stretchFactor?: number; // Width:Height ratio (e.g., 3.0 = 3x wider than tall)
 }
 
 interface ShapeData {
@@ -27,7 +28,7 @@ interface ShapeData {
   rotation?: number;
 }
 
-export function ShapeGrid({ isPlaying, disabled = false, numDots = 12, shapeType = 'circle' }: ShapeGridProps) {
+export function ShapeGrid({ isPlaying, disabled = false, numDots = 12, shapeType = 'circle', stretchFactor = 3.0 }: ShapeGridProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [shapes, setShapes] = useState<Map<string, ShapeData>>(new Map());
   const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null);
@@ -106,28 +107,34 @@ export function ShapeGrid({ isPlaying, disabled = false, numDots = 12, shapeType
     const rect = canvas.getBoundingClientRect();
     ctx.clearRect(0, 0, rect.width, rect.height);
 
-    // Draw 4x3 grid background
+    // Draw grid background (adjusted for stretch factor)
     ctx.strokeStyle = isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)';
     ctx.lineWidth = 1;
-    for (let i = 0; i <= 4; i++) {
-      const x = (i / 4) * rect.width;
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, rect.height);
-      ctx.stroke();
-    }
-    for (let i = 0; i <= 3; i++) {
-      const y = (i / 3) * rect.height;
+
+    // Horizontal lines (fewer for stretched grid)
+    const numHorizontalLines = 3;
+    for (let i = 0; i <= numHorizontalLines; i++) {
+      const y = (i / numHorizontalLines) * rect.height;
       ctx.beginPath();
       ctx.moveTo(0, y);
       ctx.lineTo(rect.width, y);
       ctx.stroke();
     }
 
+    // Vertical lines (more for stretched grid)
+    const numVerticalLines = Math.round(numHorizontalLines * stretchFactor);
+    for (let i = 0; i <= numVerticalLines; i++) {
+      const x = (i / numVerticalLines) * rect.width;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, rect.height);
+      ctx.stroke();
+    }
+
     // Draw shapes
     shapes.forEach((shape, shapeId) => {
       const isSelected = shapeId === selectedShapeId;
-      drawShape(ctx, shape, isSelected, isDarkMode, rect, isPlaying, shapeGridAudio.getShapeGridAudioPlayer());
+      drawShape(ctx, shape, isSelected, isDarkMode, rect, isPlaying, shapeGridAudio.getShapeGridAudioPlayer(), stretchFactor);
     });
 
     // Animation frame for pulsing effect during playback
@@ -320,12 +327,15 @@ function drawShape(
   isDarkMode: boolean,
   rect: DOMRect,
   isPlaying: boolean,
-  audioPlayer: ReturnType<typeof shapeGridAudio.getShapeGridAudioPlayer>
+  audioPlayer: ReturnType<typeof shapeGridAudio.getShapeGridAudioPlayer>,
+  stretchFactor: number
 ) {
-  // Calculate dots
+  // Calculate dots with aspect ratio for circles
   let dots: DotPosition[] = [];
   if (shape.type === 'circle') {
-    dots = calculateCircleDots(shape.position, shape.size, shape.numDots);
+    // For circles, adjust the radius in Y to compensate for stretch
+    // This makes circles appear truly circular on the stretched canvas
+    dots = calculateCircleDots(shape.position, shape.size, shape.numDots, stretchFactor);
   } else if (shape.type === 'triangle') {
     const vertices = getTriangleVertices(shape.position, shape.size, shape.rotation || 0);
     dots = calculateTriangleDots(vertices, shape.numDots);
@@ -339,7 +349,11 @@ function drawShape(
 
   const centerX = toCanvasX(shape.position.x);
   const centerY = toCanvasY(shape.position.y);
-  const size = shape.size * Math.min(rect.width, rect.height) / 2;
+
+  // Size calculation adjusted for stretch factor
+  const baseSize = shape.size * rect.height / 2; // Base on height
+  const sizeX = baseSize * stretchFactor;
+  const sizeY = baseSize;
 
   // Draw shape outline
   ctx.strokeStyle = isSelected
@@ -348,8 +362,9 @@ function drawShape(
   ctx.lineWidth = isSelected ? 3 : 2;
 
   if (shape.type === 'circle') {
+    // Draw ellipse for circle to maintain circular appearance
     ctx.beginPath();
-    ctx.arc(centerX, centerY, size, 0, Math.PI * 2);
+    ctx.ellipse(centerX, centerY, sizeX, sizeY, 0, 0, Math.PI * 2);
     ctx.stroke();
   } else if (shape.type === 'triangle') {
     const vertices = getTriangleVertices(shape.position, shape.size, shape.rotation || 0);
@@ -405,10 +420,10 @@ function drawShape(
   if (isSelected) {
     const handleRadius = 6;
     const handles = [
-      { x: centerX + size, y: centerY },
-      { x: centerX - size, y: centerY },
-      { x: centerX, y: centerY + size },
-      { x: centerX, y: centerY - size }
+      { x: centerX + sizeX, y: centerY },
+      { x: centerX - sizeX, y: centerY },
+      { x: centerX, y: centerY + sizeY },
+      { x: centerX, y: centerY - sizeY }
     ];
 
     handles.forEach(handle => {

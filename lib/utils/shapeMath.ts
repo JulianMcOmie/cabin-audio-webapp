@@ -79,22 +79,29 @@ export function calculateBezierArcLength(
  * @param center Circle center position
  * @param radius Circle radius
  * @param numDots Number of dots to distribute
+ * @param aspectRatio Width:Height ratio (e.g., 3.0 = 3x wider than tall)
  * @returns Array of dot positions with progress values
  */
 export function calculateCircleDots(
   center: Point,
   radius: number,
-  numDots: number
+  numDots: number,
+  aspectRatio: number = 1.0
 ): DotPosition[] {
   const dots: DotPosition[] = [];
+
+  // Adjust Y radius to compensate for aspect ratio
+  // This makes the circle appear circular on a stretched canvas
+  const radiusX = radius;
+  const radiusY = radius / aspectRatio;
 
   for (let i = 0; i < numDots; i++) {
     const angle = (i / numDots) * 2 * Math.PI;
     const progress = i / numDots;
 
     dots.push({
-      x: center.x + radius * Math.cos(angle),
-      y: center.y + radius * Math.sin(angle),
+      x: center.x + radiusX * Math.cos(angle),
+      y: center.y + radiusY * Math.sin(angle),
       progress
     });
   }

@@ -93,6 +93,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const [shapeToolPlaying, setShapeToolPlaying] = useState(false);
   const [numShapeDots, setNumShapeDots] = useState(12); // Default number of dots for the shape tool
   const [currentShapeType, setCurrentShapeType] = useState<'circle' | 'triangle' | 'five'>('circle');
+  const [shapeGridStretch, setShapeGridStretch] = useState(3.0); // Default 1:3 aspect (3x wider than tall)
 
   // New state for Dot Grid sub-hit playback mode
   const [isSubHitPlaybackEnabled, setIsSubHitPlaybackEnabled] = useState(true);
@@ -480,6 +481,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                     disabled={false}
                     numDots={numShapeDots}
                     shapeType={currentShapeType}
+                    stretchFactor={shapeGridStretch}
                   />
 
                   {/* Shape type selector */}
@@ -525,6 +527,23 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                       onValueChange={(value) => setNumShapeDots(value[0])}
                       className="w-3/4"
                     />
+                  </div>
+
+                  {/* Grid stretch factor slider */}
+                  <div className="flex flex-col items-center gap-2 mt-4">
+                    <label htmlFor="shape-grid-stretch" className="text-sm">Grid Stretch: 1:{shapeGridStretch.toFixed(1)}</label>
+                    <Slider
+                      id="shape-grid-stretch"
+                      min={1}
+                      max={10}
+                      step={0.5}
+                      value={[shapeGridStretch]}
+                      onValueChange={(value) => setShapeGridStretch(value[0])}
+                      className="w-3/4"
+                    />
+                    <p className="text-xs text-muted-foreground text-center">
+                      Wider grid = shapes spread horizontally
+                    </p>
                   </div>
                 </>
               ) : activeGrid === "line" ? (
