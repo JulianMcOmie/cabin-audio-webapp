@@ -21,7 +21,7 @@ const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
 
 // Target overall slopes (mutable for tilt range control)
 const LOW_SLOPE_DB_PER_OCT = -10.5; // For low y positions (darker sound)
-const CENTER_SLOPE_DB_PER_OCT = -4.5; // For middle y positions
+const CENTER_SLOPE_DB_PER_OCT = -3.0; // For middle y positions
 const HIGH_SLOPE_DB_PER_OCT = 1.5; // For high y positions (brighter sound)
 const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of SlopedPinkNoiseGenerator (approx -12dB)
 
@@ -48,7 +48,7 @@ const DEFAULT_DB_REDUCTION_PER_REPEAT = 12; // Default dB reduction per repeat
 const DEFAULT_HOLD_COUNT = 4; // Default number of times each dot plays at same volume
 
 // Constants for bandpassed noise generator
-const BANDPASS_NOISE_SLOPE_DB_PER_OCT = -4.5; // Fixed slope for bandpassed noise
+const BANDPASS_NOISE_SLOPE_DB_PER_OCT = -3.0; // Fixed slope for bandpassed noise
 const BANDPASS_BANDWIDTH_OCTAVES = 5.0; // Default bandwidth: 5 octaves (half of 10-octave audible range)
 const BANDPASS_NOISE_OUTPUT_GAIN_SCALAR = 0.25; // Much louder output for bandpassed noise
 
@@ -560,7 +560,6 @@ class PositionedAudioService {
 
       // Y=0 (bottom dot): lower edge at MIN_AUDIBLE / extensionMultiplier
       const bottomLowerEdge = MIN_AUDIBLE / extensionMultiplier;
-      const bottomUpperEdge = bottomLowerEdge * Math.pow(2, bandwidthOctaves);
 
       // Y=1 (top dot): upper edge at MAX_AUDIBLE * extensionMultiplier
       const topUpperEdge = MAX_AUDIBLE * extensionMultiplier;

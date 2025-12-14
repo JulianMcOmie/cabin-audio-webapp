@@ -19,8 +19,10 @@ import { FFTVisualizer } from "@/components/audio/FFTVisualizer"
 import { getReferenceCalibrationAudio } from "@/lib/audio/referenceCalibrationAudio"
 import { DotCalibration } from "@/components/dot-grid"
 import { GlyphGrid } from "@/components/glyph-grid"
+import { ShapeGrid } from "@/components/shape-grid"
 import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
+import * as shapeGridAudio from '@/lib/audio/shapeGridAudio'
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 
@@ -90,6 +92,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   // New states for the Shape Tool
   const [shapeToolPlaying, setShapeToolPlaying] = useState(false);
   const [numShapeDots, setNumShapeDots] = useState(12); // Default number of dots for the shape tool
+  const [currentShapeType, setCurrentShapeType] = useState<'circle' | 'triangle' | 'five'>('circle');
 
   // New state for Dot Grid sub-hit playback mode
   const [isSubHitPlaybackEnabled, setIsSubHitPlaybackEnabled] = useState(true);
@@ -203,15 +206,13 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   // Add a new effect to handle the analyzer for shape tool
   useEffect(() => {
     if (shapeToolPlaying) {
-      // Placeholder for connecting shape tool audio to analyzer
-      // const shapeAudio = getShapeToolAudioPlayer(); // This will be created later
-      // const analyser = shapeAudio.createPreEQAnalyser();
-      // setPreEQAnalyser(analyser);
-      console.log("💠 Shape Tool playing - Analyzer connection placeholder");
-      // For now, let's not set an analyzer until audio is implemented
-      // setPreEQAnalyser(null); 
+      // Create and connect the analyzer for shape tool
+      const shapeAudio = shapeGridAudio.getShapeGridAudioPlayer();
+      const analyser = shapeAudio.createPreEQAnalyser();
+      setPreEQAnalyser(analyser);
+      console.log("💠 Connected shape tool to FFT analyzer");
     } else if (calibrationPlaying || glyphGridPlaying || dotGridPlaying) {
-      // Do nothing
+      // Do nothing, handled by other effects
     } else {
       setPreEQAnalyser(null);
     }
@@ -435,12 +436,22 @@ export function EQView({ setEqEnabled }: EQViewProps) {
           {/* Grid Visualizer - Now takes less width */}
           <div className="w-1/4 bg-gray-100 dark:bg-card rounded-lg p-4">
             <div className="flex flex-col space-y-4">
-              {/* Updated segmented control with dot grid as default/left option */}
+              {/* Updated segmented control with shape tool first */}
               <div className="flex border rounded-md overflow-hidden w-fit">
                 <button
                   className={`px-4 py-2 text-sm font-medium ${
-                    activeGrid === "dot" 
-                      ? "bg-teal-500 text-white" 
+                    activeGrid === "shape"
+                      ? "bg-teal-500 text-white"
+                      : "bg-background hover:bg-muted"
+                  }`}
+                  onClick={() => setActiveGrid("shape")}
+                >
+                  Shape Tool
+                </button>
+                <button
+                  className={`px-4 py-2 text-sm font-medium ${
+                    activeGrid === "dot"
+                      ? "bg-teal-500 text-white"
                       : "bg-background hover:bg-muted"
                   }`}
                   onClick={() => setActiveGrid("dot")}
@@ -449,36 +460,80 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 </button>
                 <button
                   className={`px-4 py-2 text-sm font-medium ${
-                    activeGrid === "line" 
-                      ? "bg-teal-500 text-white" 
+                    activeGrid === "line"
+                      ? "bg-teal-500 text-white"
                       : "bg-background hover:bg-muted"
                   }`}
                   onClick={() => setActiveGrid("line")}
                 >
                   Line Tool
                 </button>
-                <button
-                  className={`px-4 py-2 text-sm font-medium ${
-                    activeGrid === "shape" 
-                      ? "bg-teal-500 text-white" 
-                      : "bg-background hover:bg-muted"
-                  }`}
-                  onClick={() => setActiveGrid("shape")}
-                >
-                  Shape Tool
-                </button>
               </div>
             </div>
             
             {/* Grid content area */}
             <div className="mt-4">
-              {activeGrid === "line" ? (
+              {activeGrid === "shape" ? (
+                <>
+                  <ShapeGrid
+                    isPlaying={shapeToolPlaying}
+                    disabled={false}
+                    numDots={numShapeDots}
+                    shapeType={currentShapeType}
+                  />
+
+                  {/* Shape type selector */}
+                  <div className="mt-4 space-y-2">
+                    <p className="text-xs text-muted-foreground text-center">Shape Type:</p>
+                    <div className="flex justify-center gap-2">
+                      <Button
+                        variant={currentShapeType === 'circle' ? 'default' : 'outline'}
+                        size="sm"
+                        onClick={() => setCurrentShapeType('circle')}
+                        className={currentShapeType === 'circle' ? "bg-sky-500 hover:bg-sky-600 text-white" : ""}
+                      >
+                        Circle
+                      </Button>
+                      <Button
+                        variant={currentShapeType === 'triangle' ? 'default' : 'outline'}
+                        size="sm"
+                        onClick={() => setCurrentShapeType('triangle')}
+                        className={currentShapeType === 'triangle' ? "bg-sky-500 hover:bg-sky-600 text-white" : ""}
+                      >
+                        <Triangle className="mr-1 h-4 w-4" /> Triangle
+                      </Button>
+                      <Button
+                        variant={currentShapeType === 'five' ? 'default' : 'outline'}
+                        size="sm"
+                        onClick={() => setCurrentShapeType('five')}
+                        className={currentShapeType === 'five' ? "bg-sky-500 hover:bg-sky-600 text-white" : ""}
+                      >
+                        5
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Number of dots slider */}
+                  <div className="flex flex-col items-center gap-2 mt-4">
+                    <label htmlFor="num-shape-dots" className="text-sm">Number of Dots: {numShapeDots}</label>
+                    <Slider
+                      id="num-shape-dots"
+                      min={4}
+                      max={32}
+                      step={1}
+                      value={[numShapeDots]}
+                      onValueChange={(value) => setNumShapeDots(value[0])}
+                      className="w-3/4"
+                    />
+                  </div>
+                </>
+              ) : activeGrid === "line" ? (
                 <GlyphGrid
                   isPlaying={glyphGridPlaying}
                   disabled={false}
                   glyphType={currentGlyphShape}
                 />
-              ) : activeGrid === "dot" ? (
+              ) : (
                 <DotCalibration
                   isPlaying={dotGridPlaying}
                   setIsPlaying={setDotGridPlaying}
@@ -487,25 +542,6 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   selectedDots={selectedDots}
                   setSelectedDots={setSelectedDots}
                 />
-              ) : (
-                <div>
-                  {/* Placeholder for ShapeTool component */}
-                  <p className="text-center text-muted-foreground p-4">
-                    Shape Tool UI (Work In Progress)
-                  </p>
-                  <div className="flex flex-col items-center gap-2 mt-2">
-                    <label htmlFor="num-shape-dots" className="text-sm">Number of Dots: {numShapeDots}</label>
-                    <Slider 
-                      id="num-shape-dots"
-                      min={4} 
-                      max={32} 
-                      step={1} 
-                      value={[numShapeDots]} 
-                      onValueChange={(value) => setNumShapeDots(value[0])} 
-                      className="w-3/4"
-                    />
-                  </div>
-                </div>
               )}
 
               {/* Add Toggle for Dot Grid Sub-Hit Playback Mode */} 
