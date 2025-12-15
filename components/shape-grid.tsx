@@ -352,7 +352,7 @@ function drawShape(
 
   // Size calculation adjusted for stretch factor
   const baseSize = shape.size * rect.height / 2; // Base on height
-  const sizeX = baseSize * stretchFactor;
+  const sizeX = baseSize / stretchFactor; // Thinner to compensate for wider grid
   const sizeY = baseSize;
 
   // Draw shape outline
