@@ -15,13 +15,19 @@ const DOT_REPETITION_INTERVAL_S = 0.35; // Interval between repetitions
 const DEFAULT_REPEAT_COUNT = 1;
 const DEFAULT_DB_REDUCTION_PER_REPEAT = 12;
 const DEFAULT_HOLD_COUNT = 1; // Simpler: each dot plays once per cycle
-const BANDPASS_BANDWIDTH_OCTAVES = 5.0;
-const BANDPASS_NOISE_OUTPUT_GAIN_SCALAR = 0.25;
-const MIN_AUDIBLE_FREQ = 20;
-const MAX_AUDIBLE_FREQ = 20000;
 const MASTER_GAIN = 6.0;
 const FFT_SIZE = 2048;
 const SMOOTHING = 0.8;
+
+// Sloped noise constants
+const NUM_BANDS = 20; // Number of frequency bands for shaping
+const SLOPE_REF_FREQUENCY = 800; // Hz, reference frequency for slope calculations
+const MIN_AUDIBLE_FREQ = 20; // Hz
+const MAX_AUDIBLE_FREQ = 20000; // Hz
+const BAND_Q_VALUE = 1.5; // Q value for the bandpass filters
+const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
+const TARGET_SLOPE_DB_PER_OCT = -4.5; // Target slope for all shapes
+const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Output gain reduction
 
 // Shape data interface
 export interface ShapeData {
@@ -36,19 +42,90 @@ export interface ShapeData {
 // Audio nodes for a single dot
 interface DotAudioNodes {
   source: AudioBufferSourceNode;
+  slopedNoiseGenerator: SlopedPinkNoiseGenerator;
   mainGain: GainNode;
   envelopeGain: GainNode;
   panner: StereoPannerNode;
-  highpass: BiquadFilterNode;
-  lowpass: BiquadFilterNode;
   normalizedYPos: number; // 0=bottom, 1=top
   normalizedXPos: number; // 0=left, 1=right
+  rotationGain: GainNode; // Controls loudness based on rotation
 }
 
 // Playback state for each shape
 interface ShapePlaybackState {
   currentDotIndex: number;
   loopTimeoutId: number | null;
+}
+
+/**
+ * Sloped pink noise generator using multi-band filtering
+ * Shapes pink noise to achieve a target overall slope (e.g., -4.5dB/oct)
+ */
+class SlopedPinkNoiseGenerator {
+  private ctx: AudioContext;
+  private inputGainNode: GainNode;
+  private outputGainNode: GainNode;
+  private bandFilters: BiquadFilterNode[] = [];
+  private bandGains: GainNode[] = [];
+  private centerFrequencies: number[] = [];
+
+  constructor(audioCtx: AudioContext) {
+    this.ctx = audioCtx;
+    this.inputGainNode = this.ctx.createGain();
+    this.outputGainNode = this.ctx.createGain();
+    this.outputGainNode.gain.value = SLOPED_NOISE_OUTPUT_GAIN_SCALAR;
+
+    const logMinFreq = Math.log2(MIN_AUDIBLE_FREQ);
+    const logMaxFreq = Math.log2(MAX_AUDIBLE_FREQ);
+    const step = (logMaxFreq - logMinFreq) / (NUM_BANDS + 1);
+
+    for (let i = 0; i < NUM_BANDS; i++) {
+      const centerFreq = Math.pow(2, logMinFreq + (i + 1) * step);
+      this.centerFrequencies.push(centerFreq);
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = centerFreq;
+      filter.Q.value = BAND_Q_VALUE;
+      this.bandFilters.push(filter);
+
+      const gain = this.ctx.createGain();
+      this.bandGains.push(gain);
+
+      this.inputGainNode.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.outputGainNode);
+    }
+
+    // Set the target slope
+    this.setSlope(TARGET_SLOPE_DB_PER_OCT);
+  }
+
+  public getInputNode(): GainNode {
+    return this.inputGainNode;
+  }
+
+  public getOutputNode(): GainNode {
+    return this.outputGainNode;
+  }
+
+  public setSlope(targetOverallSlopeDbPerOctave: number): void {
+    const shapingSlope = targetOverallSlopeDbPerOctave - PINK_NOISE_SLOPE_DB_PER_OCT;
+
+    for (let i = 0; i < NUM_BANDS; i++) {
+      const fc = this.centerFrequencies[i];
+      const gainDb = shapingSlope * Math.log2(fc / SLOPE_REF_FREQUENCY);
+      const linearGain = Math.pow(10, gainDb / 20);
+      this.bandGains[i].gain.value = linearGain;
+    }
+  }
+
+  public dispose(): void {
+    this.inputGainNode.disconnect();
+    this.outputGainNode.disconnect();
+    this.bandFilters.forEach(filter => filter.disconnect());
+    this.bandGains.forEach(gain => gain.disconnect());
+  }
 }
 
 /**
@@ -68,8 +145,6 @@ class ShapeGridAudioPlayer {
   private repeatCount: number = DEFAULT_REPEAT_COUNT;
   private dbReductionPerRepeat: number = DEFAULT_DB_REDUCTION_PER_REPEAT;
   private holdCount: number = DEFAULT_HOLD_COUNT;
-  private bandwidth: number = BANDPASS_BANDWIDTH_OCTAVES;
-  private frequencyExtensionRange: number = 0;
 
   constructor(audioContextInstance: AudioContext) {
     this.ctx = audioContextInstance;
@@ -168,10 +243,10 @@ class ShapeGridAudioPlayer {
       }
     }
 
-    // Create new audio points
+    // Create new audio points with rotation
     dots.forEach((dot, index) => {
       const pointId = `${shape.id}-${index}`;
-      this.createAudioPoint(pointId, dot.x, dot.y);
+      this.createAudioPoint(pointId, dot.x, dot.y, shape.rotation || 0);
     });
   }
 
@@ -203,7 +278,7 @@ class ShapeGridAudioPlayer {
     }
   }
 
-  private createAudioPoint(pointId: string, x: number, y: number): void {
+  private createAudioPoint(pointId: string, x: number, y: number, rotation: number = 0): void {
     if (!this.pinkNoiseBuffer) return;
 
     // Normalize coordinates from -1 to 1 space to 0-1 space
@@ -216,26 +291,30 @@ class ShapeGridAudioPlayer {
     source.loop = true;
     source.start();
 
+    // Sloped noise generator (-4.5dB/oct)
+    const slopedNoiseGenerator = new SlopedPinkNoiseGenerator(this.ctx);
+
     const envelopeGain = this.ctx.createGain();
     envelopeGain.gain.value = 0; // Start silent
 
+    // Rotation gain controls loudness based on rotation
+    const rotationGain = this.ctx.createGain();
+    // Map rotation from -π to π to gain from 0 to 1
+    // rotation = 0 (front) → loud, rotation = ±π (back) → quiet
+    const rotationFactor = (Math.cos(rotation) + 1) / 2; // 0 to 1
+    rotationGain.gain.value = rotationFactor;
+
     const mainGain = this.ctx.createGain();
-    mainGain.gain.value = BANDPASS_NOISE_OUTPUT_GAIN_SCALAR;
-
-    const highpass = this.ctx.createBiquadFilter();
-    highpass.type = 'highpass';
-
-    const lowpass = this.ctx.createBiquadFilter();
-    lowpass.type = 'lowpass';
+    mainGain.gain.value = 1.0;
 
     const panner = this.ctx.createStereoPanner();
     // Map X position to panning: -1 (left) to 1 (right)
     panner.pan.value = 2 * normalizedX - 1;
 
-    // Connect nodes: source → highpass → lowpass → envelopeGain → mainGain → panner → output
-    source.connect(highpass);
-    highpass.connect(lowpass);
-    lowpass.connect(envelopeGain);
+    // Connect nodes: source → slopedNoise → rotationGain → envelopeGain → mainGain → panner → output
+    source.connect(slopedNoiseGenerator.getInputNode());
+    slopedNoiseGenerator.getOutputNode().connect(rotationGain);
+    rotationGain.connect(envelopeGain);
     envelopeGain.connect(mainGain);
     mainGain.connect(panner);
     panner.connect(this.outputGain);
@@ -243,48 +322,30 @@ class ShapeGridAudioPlayer {
     // Store nodes
     this.audioPoints.set(pointId, {
       source,
+      slopedNoiseGenerator,
       mainGain,
       envelopeGain,
       panner,
-      highpass,
-      lowpass,
+      rotationGain,
       normalizedYPos: normalizedY,
       normalizedXPos: normalizedX
     });
-
-    // Set filter frequencies based on Y position
-    this.updatePointFrequencies(pointId);
   }
 
-  private updatePointFrequencies(pointId: string): void {
-    const nodes = this.audioPoints.get(pointId);
-    if (!nodes) return;
+  public updateShapeRotation(shapeId: string, rotation: number): void {
+    const shape = this.shapes.get(shapeId);
+    if (!shape) return;
 
-    const normalizedY = nodes.normalizedYPos;
-
-    // Calculate frequency range with extension
-    const extensionMultiplier = Math.pow(2, this.frequencyExtensionRange);
-
-    // Bottom dot: lower edge starts at MIN_AUDIBLE / extensionMultiplier
-    const bottomLowerEdge = MIN_AUDIBLE_FREQ / extensionMultiplier;
-
-    // Top dot: upper edge ends at MAX_AUDIBLE * extensionMultiplier
-    const topUpperEdge = MAX_AUDIBLE_FREQ * extensionMultiplier;
-    const topLowerEdge = topUpperEdge / Math.pow(2, this.bandwidth);
-
-    // Logarithmic interpolation based on Y position
-    const lowerEdge = bottomLowerEdge * Math.pow(topLowerEdge / bottomLowerEdge, normalizedY);
-    const upperEdge = lowerEdge * Math.pow(2, this.bandwidth);
-
-    // Calculate Q value from bandwidth
-    const Q = Math.sqrt(2) / (Math.pow(2, this.bandwidth / 2) - Math.pow(2, -this.bandwidth / 2));
-
-    // Update filters
-    nodes.highpass.frequency.value = Math.max(20, lowerEdge);
-    nodes.highpass.Q.value = Q;
-
-    nodes.lowpass.frequency.value = Math.min(20000, upperEdge);
-    nodes.lowpass.Q.value = Q;
+    // Update all dots for this shape with new rotation gain
+    for (let i = 0; i < shape.numDots; i++) {
+      const pointId = `${shapeId}-${i}`;
+      const nodes = this.audioPoints.get(pointId);
+      if (nodes) {
+        // Map rotation from -π to π to gain from 0 to 1
+        const rotationFactor = (Math.cos(rotation) + 1) / 2;
+        nodes.rotationGain.gain.value = rotationFactor;
+      }
+    }
   }
 
   private removeAudioPoint(pointId: string): void {
@@ -292,8 +353,8 @@ class ShapeGridAudioPlayer {
     if (nodes) {
       nodes.source.stop();
       nodes.source.disconnect();
-      nodes.highpass.disconnect();
-      nodes.lowpass.disconnect();
+      nodes.slopedNoiseGenerator.dispose();
+      nodes.rotationGain.disconnect();
       nodes.envelopeGain.disconnect();
       nodes.mainGain.disconnect();
       nodes.panner.disconnect();
@@ -413,14 +474,6 @@ class ShapeGridAudioPlayer {
     this.speed = Math.max(0.25, Math.min(4.0, speed));
   }
 
-  public setBandwidth(bandwidth: number): void {
-    this.bandwidth = Math.max(0.1, Math.min(10, bandwidth));
-    // Update all audio points
-    this.audioPoints.forEach((nodes, pointId) => {
-      this.updatePointFrequencies(pointId);
-    });
-  }
-
   public setRepeatCount(count: number): void {
     this.repeatCount = Math.max(1, Math.min(10, count));
   }
@@ -431,14 +484,6 @@ class ShapeGridAudioPlayer {
 
   public setHoldCount(count: number): void {
     this.holdCount = Math.max(1, Math.min(10, count));
-  }
-
-  public setFrequencyExtensionRange(octaves: number): void {
-    this.frequencyExtensionRange = Math.max(0, Math.min(5, octaves));
-    // Update all audio points
-    this.audioPoints.forEach((nodes, pointId) => {
-      this.updatePointFrequencies(pointId);
-    });
   }
 
   public createPreEQAnalyser(): AnalyserNode {
@@ -488,10 +533,6 @@ export function setSpeed(speed: number): void {
   getShapeGridAudioPlayer().setSpeed(speed);
 }
 
-export function setBandwidth(bandwidth: number): void {
-  getShapeGridAudioPlayer().setBandwidth(bandwidth);
-}
-
 export function setRepeatCount(count: number): void {
   getShapeGridAudioPlayer().setRepeatCount(count);
 }
@@ -504,6 +545,6 @@ export function setHoldCount(count: number): void {
   getShapeGridAudioPlayer().setHoldCount(count);
 }
 
-export function setFrequencyExtensionRange(octaves: number): void {
-  getShapeGridAudioPlayer().setFrequencyExtensionRange(octaves);
+export function updateShapeRotation(shapeId: string, rotation: number): void {
+  getShapeGridAudioPlayer().updateShapeRotation(shapeId, rotation);
 }

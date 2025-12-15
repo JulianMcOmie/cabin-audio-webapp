@@ -183,7 +183,7 @@ export function ShapeGrid({ isPlaying, disabled = false, numDots = 12, shapeType
         position: { x: normalizedX, y: normalizedY },
         size: 0.2,  // Default size
         numDots: numDots,
-        rotation: 0
+        rotation: 0 // Rotation for loudness control
       };
       setShapes(prev => {
         const newMap = new Map(prev);
@@ -272,7 +272,7 @@ export function ShapeGrid({ isPlaying, disabled = false, numDots = 12, shapeType
     }
   };
 
-  // Keyboard handler for deletion
+  // Keyboard handler for deletion and rotation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (disabled || !selectedShapeId) return;
@@ -286,12 +286,47 @@ export function ShapeGrid({ isPlaying, disabled = false, numDots = 12, shapeType
           return newShapes;
         });
         setSelectedShapeId(null);
+      } else if (e.key === '[' || e.key === ']') {
+        // Rotate selected shape with [ and ]
+        e.preventDefault();
+        const rotationDelta = e.key === '[' ? -Math.PI / 12 : Math.PI / 12; // 15 degree increments
+        setShapes(prev => {
+          const newShapes = new Map(prev);
+          const shape = newShapes.get(selectedShapeId);
+          if (shape) {
+            const newRotation = (shape.rotation || 0) + rotationDelta;
+            const updatedShape = { ...shape, rotation: newRotation };
+            newShapes.set(selectedShapeId, updatedShape);
+            shapeGridAudio.updateShapeRotation(selectedShapeId, newRotation);
+          }
+          return newShapes;
+        });
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedShapeId, disabled]);
+
+  // Mouse wheel handler for rotation
+  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+    if (disabled || !selectedShapeId) return;
+
+    e.preventDefault();
+    const rotationDelta = e.deltaY > 0 ? Math.PI / 24 : -Math.PI / 24; // 7.5 degree increments
+
+    setShapes(prev => {
+      const newShapes = new Map(prev);
+      const shape = newShapes.get(selectedShapeId);
+      if (shape) {
+        const newRotation = (shape.rotation || 0) + rotationDelta;
+        const updatedShape = { ...shape, rotation: newRotation };
+        newShapes.set(selectedShapeId, updatedShape);
+        shapeGridAudio.updateShapeRotation(selectedShapeId, newRotation);
+      }
+      return newShapes;
+    });
+  };
 
   return (
     <div className="space-y-4">
@@ -307,13 +342,16 @@ export function ShapeGrid({ isPlaying, disabled = false, numDots = 12, shapeType
           }}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
+          onWheel={handleWheel}
         />
       </div>
 
       <div className="text-xs text-center text-muted-foreground">
         {shapes.size === 0
           ? "Click to add a shape"
-          : `${shapes.size} shape${shapes.size > 1 ? 's' : ''} • Press Delete to remove`}
+          : selectedShapeId
+          ? `${shapes.size} shape${shapes.size > 1 ? 's' : ''} • Scroll to rotate (depth) • [ ] keys • Delete to remove`
+          : `${shapes.size} shape${shapes.size > 1 ? 's' : ''} • Select a shape to rotate`}
       </div>
     </div>
   );
@@ -415,6 +453,32 @@ function drawShape(
       ctx.fill();
     }
   });
+
+  // Draw rotation indicator (for all shapes, shows depth/loudness)
+  const rotation = shape.rotation || 0;
+  const rotationFactor = (Math.cos(rotation) + 1) / 2; // 0 to 1
+
+  // Draw rotation line from center
+  const lineLength = Math.max(sizeX, sizeY) * 0.7;
+  const lineEndX = centerX + lineLength * Math.cos(rotation);
+  const lineEndY = centerY - lineLength * Math.sin(rotation);
+
+  ctx.strokeStyle = isDarkMode
+    ? `rgba(56, 189, 248, ${rotationFactor})`
+    : `rgba(2, 132, 199, ${rotationFactor})`;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(centerX, centerY);
+  ctx.lineTo(lineEndX, lineEndY);
+  ctx.stroke();
+
+  // Draw dot at end of rotation line
+  ctx.fillStyle = isDarkMode ? '#38bdf8' : '#0284c7';
+  ctx.globalAlpha = rotationFactor;
+  ctx.beginPath();
+  ctx.arc(lineEndX, lineEndY, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1.0;
 
   // Draw resize handles for selected shape
   if (isSelected) {
