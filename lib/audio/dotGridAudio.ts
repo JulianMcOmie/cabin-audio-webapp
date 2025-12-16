@@ -121,6 +121,7 @@ class PositionedAudioService {
   private alwaysPlayingSpeed: number = 1 / 1.5; // Speed of oscillation in Hz (default: 1 cycle per 1.5 seconds)
   private alwaysPlayingStartTime: number = 0; // Start time for oscillation
   private alwaysPlayingAnimationFrameId: number | null = null; // Animation frame ID for oscillation loop
+  private alwaysPlayingStaggerIntensity: number = 0; // Stagger intensity (0 = no stagger, 1 = max stagger)
 
   constructor(audioContextInstance: AudioContext) {
     this.ctx = audioContextInstance;
@@ -283,6 +284,15 @@ class PositionedAudioService {
     return this.alwaysPlayingSpeed;
   }
 
+  public setAlwaysPlayingStaggerIntensity(intensity: number): void {
+    // Clamp between 0 (no stagger) and 1 (max stagger)
+    this.alwaysPlayingStaggerIntensity = Math.max(0, Math.min(1, intensity));
+  }
+
+  public getAlwaysPlayingStaggerIntensity(): number {
+    return this.alwaysPlayingStaggerIntensity;
+  }
+
   public startAlwaysPlayingOscillation(): void {
     if (this.alwaysPlayingAnimationFrameId !== null) {
       cancelAnimationFrame(this.alwaysPlayingAnimationFrameId);
@@ -312,19 +322,25 @@ class PositionedAudioService {
     const currentTime = this.ctx.currentTime;
     const elapsedTime = currentTime - this.alwaysPlayingStartTime;
 
-    // Calculate oscillation value using sine wave: (1 + sin(2π * frequency * time)) / 2
-    // This gives a value from 0 to 1
-    const phase = 2 * Math.PI * this.alwaysPlayingSpeed * elapsedTime;
-    const t = (1 + Math.sin(phase)) / 2;
-
-    // Use logarithmic (dB-based) scaling for perceptually linear volume changes
-    // Map t (0 to 1) to a dB range (-60dB to 0dB), then convert to linear gain
     const MIN_DB = -60;
-    const dbValue = MIN_DB * (1 - t); // Goes from -60dB (when t=0) to 0dB (when t=1)
-    const volumeMultiplier = Math.pow(10, dbValue / 20);
 
     // Apply volume to all active points
     this.audioPoints.forEach((point) => {
+      // Calculate phase offset for this point based on its position
+      // Use a combination of X and Y position to create unique phase offsets
+      // This creates a diagonal wave pattern across the grid
+      const positionOffset = (point.normalizedXPos + point.normalizedYPos) / 2;
+      const phaseOffset = positionOffset * 2 * Math.PI * this.alwaysPlayingStaggerIntensity;
+
+      // Calculate oscillation value using sine wave with phase offset
+      const phase = 2 * Math.PI * this.alwaysPlayingSpeed * elapsedTime + phaseOffset;
+      const t = (1 + Math.sin(phase)) / 2;
+
+      // Use logarithmic (dB-based) scaling for perceptually linear volume changes
+      // Map t (0 to 1) to a dB range (-60dB to 0dB), then convert to linear gain
+      const dbValue = MIN_DB * (1 - t); // Goes from -60dB (when t=0) to 0dB (when t=1)
+      const volumeMultiplier = Math.pow(10, dbValue / 20);
+
       // Set the envelope gain to the oscillating volume
       point.envelopeGain.gain.setValueAtTime(
         ENVELOPE_MAX_GAIN * 0.8 * volumeMultiplier,
@@ -1612,6 +1628,14 @@ class DotGridAudioPlayer {
   public getAlwaysPlayingSpeed(): number {
     return this.audioService.getAlwaysPlayingSpeed();
   }
+
+  public setAlwaysPlayingStaggerIntensity(intensity: number): void {
+    this.audioService.setAlwaysPlayingStaggerIntensity(intensity);
+  }
+
+  public getAlwaysPlayingStaggerIntensity(): number {
+    return this.audioService.getAlwaysPlayingStaggerIntensity();
+  }
 }
 
 class SineToneGenerator {
@@ -2205,6 +2229,23 @@ export function setAlwaysPlayingSpeed(speed: number): void {
 export function getAlwaysPlayingSpeed(): number {
   const player = DotGridAudioPlayer.getInstance();
   return player.getAlwaysPlayingSpeed();
+}
+
+/**
+ * Set the stagger intensity for always playing mode
+ * @param intensity Stagger intensity (0 = no stagger, 1 = max stagger)
+ */
+export function setAlwaysPlayingStaggerIntensity(intensity: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setAlwaysPlayingStaggerIntensity(intensity);
+}
+
+/**
+ * Get the current always playing stagger intensity
+ */
+export function getAlwaysPlayingStaggerIntensity(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getAlwaysPlayingStaggerIntensity();
 }
 
 // Export the SoundMode enum for use in UI

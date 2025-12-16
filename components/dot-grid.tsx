@@ -470,6 +470,7 @@ export function DotCalibration({
   // Always playing state
   const [alwaysPlayingEnabled, setAlwaysPlayingEnabled] = useState(false); // Default: disabled
   const [alwaysPlayingSpeed, setAlwaysPlayingSpeed] = useState(1 / 1.5); // Default: 1 cycle per 1.5 seconds (0.667 Hz)
+  const [alwaysPlayingStaggerIntensity, setAlwaysPlayingStaggerIntensity] = useState(0); // Default: 0 (no stagger)
 
   // Use either external or internal state
   const selectedDots = externalSelectedDots !== undefined ? externalSelectedDots : internalSelectedDots;
@@ -796,6 +797,10 @@ export function DotCalibration({
   useEffect(() => {
     dotGridAudio.setAlwaysPlayingSpeed(alwaysPlayingSpeed);
   }, [alwaysPlayingSpeed]);
+
+  useEffect(() => {
+    dotGridAudio.setAlwaysPlayingStaggerIntensity(alwaysPlayingStaggerIntensity);
+  }, [alwaysPlayingStaggerIntensity]);
 
   // Handlers for repeat settings
   const increaseRepeatCount = () => {
@@ -1195,6 +1200,26 @@ export function DotCalibration({
                   step="0.05"
                   value={alwaysPlayingSpeed}
                   onChange={(e) => setAlwaysPlayingSpeed(Number(e.target.value))}
+                  disabled={disabled}
+                  className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                    disabled ? 'opacity-50 cursor-not-allowed' : ''
+                  } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+                />
+              </div>
+
+              {/* Stagger Intensity Slider */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium">Stagger</span>
+                  <span className="text-xs text-muted-foreground">{(alwaysPlayingStaggerIntensity * 100).toFixed(0)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={alwaysPlayingStaggerIntensity}
+                  onChange={(e) => setAlwaysPlayingStaggerIntensity(Number(e.target.value))}
                   disabled={disabled}
                   className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
                     disabled ? 'opacity-50 cursor-not-allowed' : ''
