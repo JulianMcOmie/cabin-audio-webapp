@@ -3,6 +3,7 @@
 export interface DotPosition {
   x: number;
   y: number;
+  z: number; // Depth after 3D rotation (negative = away from viewer)
   progress: number; // 0-1 along perimeter
 }
 
@@ -23,7 +24,7 @@ export function distance(p1: Point, p2: Point): number {
 }
 
 /**
- * Rotate a point around the origin by a given angle
+ * Rotate a point around the origin by a given angle (2D rotation in XY plane)
  */
 export function rotatePoint(point: Point, angle: number): Point {
   const cos = Math.cos(angle);
@@ -31,6 +32,49 @@ export function rotatePoint(point: Point, angle: number): Point {
   return {
     x: point.x * cos - point.y * sin,
     y: point.x * sin + point.y * cos
+  };
+}
+
+/**
+ * Apply 3D rotation around vertical Y-axis and perspective projection
+ * Shapes start in the XY plane (z=0, facing viewer)
+ * Positive rotation tilts the shape's right side away from viewer
+ * @param point 2D point on the shape
+ * @param rotationY Rotation angle around Y-axis in radians
+ * @returns Object with projected 2D coordinates and z-depth
+ */
+export function apply3DRotation(point: Point, rotationY: number): { x: number; y: number; z: number } {
+  // 3D coordinates before rotation (shape in XY plane, z=0)
+  const x3d = point.x;
+  const y3d = point.y;
+  const z3d = 0;
+
+  // Rotate around Y-axis (vertical)
+  // Y-axis rotation matrix:
+  // x' = x*cos(θ) + z*sin(θ)
+  // y' = y
+  // z' = -x*sin(θ) + z*cos(θ)
+  const cos = Math.cos(rotationY);
+  const sin = Math.sin(rotationY);
+
+  const xRotated = x3d * cos + z3d * sin;
+  const yRotated = y3d;
+  const zRotated = -x3d * sin + z3d * cos;
+
+  // Perspective projection
+  // Camera distance from the XY plane (larger = less perspective distortion)
+  const cameraDistance = 3.0;
+
+  // Perspective factor: objects farther away (more negative z) appear smaller
+  const perspectiveFactor = cameraDistance / (cameraDistance - zRotated);
+
+  const xProjected = xRotated * perspectiveFactor;
+  const yProjected = yRotated * perspectiveFactor;
+
+  return {
+    x: xProjected,
+    y: yProjected,
+    z: zRotated  // Return z for loudness calculation (negative = away from viewer)
   };
 }
 
@@ -80,13 +124,15 @@ export function calculateBezierArcLength(
  * @param radius Circle radius
  * @param numDots Number of dots to distribute
  * @param aspectRatio Width:Height ratio (e.g., 3.0 = 3x wider than tall)
- * @returns Array of dot positions with progress values
+ * @param rotationY 3D rotation around vertical Y-axis in radians
+ * @returns Array of dot positions with progress and z-depth values
  */
 export function calculateCircleDots(
   center: Point,
   radius: number,
   numDots: number,
-  aspectRatio: number = 1.0
+  aspectRatio: number = 1.0,
+  rotationY: number = 0
 ): DotPosition[] {
   const dots: DotPosition[] = [];
 
@@ -99,9 +145,18 @@ export function calculateCircleDots(
     const angle = (i / numDots) * 2 * Math.PI;
     const progress = i / numDots;
 
+    // Calculate position on circle (relative to center)
+    const localX = radiusX * Math.cos(angle);
+    const localY = radiusY * Math.sin(angle);
+
+    // Apply 3D rotation and perspective
+    const rotated = apply3DRotation({ x: localX, y: localY }, rotationY);
+
+    // Add center offset
     dots.push({
-      x: center.x + radiusX * Math.cos(angle),
-      y: center.y + radiusY * Math.sin(angle),
+      x: center.x + rotated.x,
+      y: center.y + rotated.y,
+      z: rotated.z,
       progress
     });
   }
@@ -145,11 +200,15 @@ export function getTriangleVertices(
  * Dots are distributed proportionally to edge lengths
  * @param vertices Array of three vertices defining the triangle
  * @param numDots Number of dots to distribute
- * @returns Array of dot positions with progress values
+ * @param rotationY 3D rotation around vertical Y-axis in radians
+ * @param center Triangle center for 3D rotation
+ * @returns Array of dot positions with progress and z-depth values
  */
 export function calculateTriangleDots(
   vertices: Point[],
-  numDots: number
+  numDots: number,
+  rotationY: number = 0,
+  center: Point = { x: 0, y: 0 }
 ): DotPosition[] {
   if (vertices.length !== 3) {
     throw new Error('Triangle must have exactly 3 vertices');
@@ -186,7 +245,17 @@ export function calculateTriangleDots(
         const x = edge.start.x + edgeProgress * (edge.end.x - edge.start.x);
         const y = edge.start.y + edgeProgress * (edge.end.y - edge.start.y);
 
-        dots.push({ x, y, progress });
+        // Apply 3D rotation and perspective (relative to center)
+        const localX = x - center.x;
+        const localY = y - center.y;
+        const rotated = apply3DRotation({ x: localX, y: localY }, rotationY);
+
+        dots.push({
+          x: center.x + rotated.x,
+          y: center.y + rotated.y,
+          z: rotated.z,
+          progress
+        });
         break;
       }
 
@@ -307,15 +376,17 @@ function samplePathAtDistance(
  * Distribute dots evenly around a "5" glyph perimeter
  * @param center Glyph center position
  * @param size Size multiplier
- * @param rotation Rotation angle in radians
+ * @param rotation 2D rotation angle in radians (in-plane rotation before 3D)
  * @param numDots Number of dots to distribute
- * @returns Array of dot positions with progress values
+ * @param rotationY 3D rotation around vertical Y-axis in radians
+ * @returns Array of dot positions with progress and z-depth values
  */
 export function calculateFiveGlyphDots(
   center: Point,
   size: number,
   rotation: number,
-  numDots: number
+  numDots: number,
+  rotationY: number = 0
 ): DotPosition[] {
   // Get base path segments (normalized)
   const pathSegments = getFiveGlyphPath();
@@ -339,16 +410,19 @@ export function calculateFiveGlyphDots(
       y: point.y * size
     };
 
-    // Apply rotation
+    // Apply 2D rotation (in-plane)
     const rotated = rotatePoint(scaled, rotation);
 
-    // Apply translation to center
-    const translated = {
-      x: rotated.x + center.x,
-      y: rotated.y + center.y
-    };
+    // Apply 3D rotation and perspective
+    const rotated3D = apply3DRotation(rotated, rotationY);
 
-    dots.push({ ...translated, progress });
+    // Apply translation to center
+    dots.push({
+      x: rotated3D.x + center.x,
+      y: rotated3D.y + center.y,
+      z: rotated3D.z,
+      progress
+    });
   }
 
   return dots;

@@ -21,7 +21,7 @@ const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
 
 // Target overall slopes (mutable for tilt range control)
 const LOW_SLOPE_DB_PER_OCT = -10.5; // For low y positions (darker sound)
-const CENTER_SLOPE_DB_PER_OCT = -3.0; // For middle y positions
+const CENTER_SLOPE_DB_PER_OCT = -4.5; // For middle y positions
 const HIGH_SLOPE_DB_PER_OCT = 1.5; // For high y positions (brighter sound)
 const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of SlopedPinkNoiseGenerator (approx -12dB)
 
@@ -48,7 +48,7 @@ const DEFAULT_DB_REDUCTION_PER_REPEAT = 12; // Default dB reduction per repeat
 const DEFAULT_HOLD_COUNT = 4; // Default number of times each dot plays at same volume
 
 // Constants for bandpassed noise generator
-const BANDPASS_NOISE_SLOPE_DB_PER_OCT = -3.0; // Fixed slope for bandpassed noise
+const BANDPASS_NOISE_SLOPE_DB_PER_OCT = -4.5; // Fixed slope for bandpassed noise
 const BANDPASS_BANDWIDTH_OCTAVES = 5.0; // Default bandwidth: 5 octaves (half of 10-octave audible range)
 const BANDPASS_NOISE_OUTPUT_GAIN_SCALAR = 0.25; // Much louder output for bandpassed noise
 
@@ -115,6 +115,12 @@ class PositionedAudioService {
   private positionVolumeAxis: 'horizontal' | 'vertical' = 'vertical'; // Which axis controls volume (vertical = up/down, horizontal = left/right)
   private positionVolumeReversed: boolean = false; // Whether to reverse the volume gradient (true = swap which side is full volume)
   private positionVolumeMinDb: number = -24; // Minimum volume in dB on the quieter side (default -24dB)
+
+  // Always playing mode settings
+  private alwaysPlayingEnabled: boolean = false; // Whether always playing mode is enabled
+  private alwaysPlayingSpeed: number = 1 / 1.5; // Speed of oscillation in Hz (default: 1 cycle per 1.5 seconds)
+  private alwaysPlayingStartTime: number = 0; // Start time for oscillation
+  private alwaysPlayingAnimationFrameId: number | null = null; // Animation frame ID for oscillation loop
 
   constructor(audioContextInstance: AudioContext) {
     this.ctx = audioContextInstance;
@@ -256,6 +262,74 @@ class PositionedAudioService {
 
   public getPositionVolumeMinDb(): number {
     return this.positionVolumeMinDb;
+  }
+
+  // Always playing mode methods
+  public setAlwaysPlayingEnabled(enabled: boolean): void {
+    this.alwaysPlayingEnabled = enabled;
+  }
+
+  public getAlwaysPlayingEnabled(): boolean {
+    return this.alwaysPlayingEnabled;
+  }
+
+  public setAlwaysPlayingSpeed(speed: number): void {
+    // Speed is in Hz (cycles per second)
+    // Clamp between 0.1 Hz (1 cycle per 10 seconds) and 10 Hz (10 cycles per second)
+    this.alwaysPlayingSpeed = Math.max(0.1, Math.min(10, speed));
+  }
+
+  public getAlwaysPlayingSpeed(): number {
+    return this.alwaysPlayingSpeed;
+  }
+
+  public startAlwaysPlayingOscillation(): void {
+    if (this.alwaysPlayingAnimationFrameId !== null) {
+      cancelAnimationFrame(this.alwaysPlayingAnimationFrameId);
+    }
+
+    // Ensure all audio points have their main gain and slope set
+    this.audioPoints.forEach((point) => {
+      this.setMainGainAndSlope(point);
+    });
+
+    this.alwaysPlayingStartTime = this.ctx.currentTime;
+    this.oscillateAlwaysPlayingVolume();
+  }
+
+  public stopAlwaysPlayingOscillation(): void {
+    if (this.alwaysPlayingAnimationFrameId !== null) {
+      cancelAnimationFrame(this.alwaysPlayingAnimationFrameId);
+      this.alwaysPlayingAnimationFrameId = null;
+    }
+  }
+
+  private oscillateAlwaysPlayingVolume(): void {
+    if (!this.alwaysPlayingEnabled) {
+      return;
+    }
+
+    const currentTime = this.ctx.currentTime;
+    const elapsedTime = currentTime - this.alwaysPlayingStartTime;
+
+    // Calculate oscillation value using sine wave: (1 + sin(2π * frequency * time)) / 2
+    // This gives a value from 0 to 1
+    const phase = 2 * Math.PI * this.alwaysPlayingSpeed * elapsedTime;
+    const volumeMultiplier = (1 + Math.sin(phase)) / 2;
+
+    // Apply volume to all active points
+    this.audioPoints.forEach((point) => {
+      // Set the envelope gain to the oscillating volume
+      point.envelopeGain.gain.setValueAtTime(
+        ENVELOPE_MAX_GAIN * 0.8 * volumeMultiplier,
+        currentTime
+      );
+    });
+
+    // Schedule next update
+    this.alwaysPlayingAnimationFrameId = requestAnimationFrame(() => {
+      this.oscillateAlwaysPlayingVolume();
+    });
   }
 
   // Independent rows mode methods
@@ -520,6 +594,7 @@ class PositionedAudioService {
   }
 
   public dispose(): void {
+    this.stopAlwaysPlayingOscillation();
     this.audioPoints.forEach((point, id) => { // Iterate over point object too
         if (point.subHitTimerId !== null) {
             clearTimeout(point.subHitTimerId);
@@ -949,19 +1024,28 @@ class DotGridAudioPlayer {
    */
   public setPlaying(playing: boolean): void {
     if (playing === this.isPlaying) return;
-    
+
     this.isPlaying = playing;
     console.log('🔊 Set playing state:', playing);
-    
+
     if (playing) {
       if (this.isContinuousSimultaneousMode()){
         this.stopAllRhythmsInternalCleanup(); // Clear any rAF/staggers from previous mode
         this.audioService.deactivateAllPoints(); // Fresh start
-        this.activeDotKeys.forEach(dotKey => this.audioService.activatePoint(dotKey, audioContext.getAudioContext().currentTime));
+
+        // Check if always playing mode is enabled
+        if (this.audioService.getAlwaysPlayingEnabled()) {
+          // Start always playing oscillation
+          this.audioService.startAlwaysPlayingOscillation();
+        } else {
+          // Normal continuous mode - activate all dots
+          this.activeDotKeys.forEach(dotKey => this.audioService.activatePoint(dotKey, audioContext.getAudioContext().currentTime));
+        }
       } else {
       this.startAllRhythms();
       }
     } else {
+      this.audioService.stopAlwaysPlayingOscillation();
       this.stopAllRhythms();
     }
   }
@@ -1497,6 +1581,30 @@ class DotGridAudioPlayer {
 
   public getFrequencyExtensionRange(): number {
     return this.audioService.getFrequencyExtensionRange();
+  }
+
+  public setAlwaysPlayingEnabled(enabled: boolean): void {
+    this.audioService.setAlwaysPlayingEnabled(enabled);
+
+    // Start or stop oscillation based on enabled state, playing state, and mode
+    // Only start oscillation in continuous simultaneous mode
+    if (this.isPlaying && enabled && this.isContinuousSimultaneousMode()) {
+      this.audioService.startAlwaysPlayingOscillation();
+    } else {
+      this.audioService.stopAlwaysPlayingOscillation();
+    }
+  }
+
+  public getAlwaysPlayingEnabled(): boolean {
+    return this.audioService.getAlwaysPlayingEnabled();
+  }
+
+  public setAlwaysPlayingSpeed(speed: number): void {
+    this.audioService.setAlwaysPlayingSpeed(speed);
+  }
+
+  public getAlwaysPlayingSpeed(): number {
+    return this.audioService.getAlwaysPlayingSpeed();
   }
 }
 
@@ -2057,6 +2165,40 @@ export function setFrequencyExtensionRange(octaves: number): void {
 export function getFrequencyExtensionRange(): number {
   const player = DotGridAudioPlayer.getInstance();
   return player.getFrequencyExtensionRange();
+}
+
+/**
+ * Enable or disable always playing mode
+ * @param enabled Whether always playing mode is enabled
+ */
+export function setAlwaysPlayingEnabled(enabled: boolean): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setAlwaysPlayingEnabled(enabled);
+}
+
+/**
+ * Get whether always playing mode is enabled
+ */
+export function getAlwaysPlayingEnabled(): boolean {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getAlwaysPlayingEnabled();
+}
+
+/**
+ * Set the speed of the always playing oscillation
+ * @param speed Speed in Hz (cycles per second), range 0.1 to 10
+ */
+export function setAlwaysPlayingSpeed(speed: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setAlwaysPlayingSpeed(speed);
+}
+
+/**
+ * Get the current always playing speed in Hz
+ */
+export function getAlwaysPlayingSpeed(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getAlwaysPlayingSpeed();
 }
 
 // Export the SoundMode enum for use in UI

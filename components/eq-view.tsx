@@ -94,6 +94,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const [numShapeDots, setNumShapeDots] = useState(12); // Default number of dots for the shape tool
   const [currentShapeType, setCurrentShapeType] = useState<'circle' | 'triangle' | 'five'>('circle');
   const [shapeGridStretch, setShapeGridStretch] = useState(3.0); // Default 1:3 aspect (3x wider than tall)
+  const [shapeContinuousMode, setShapeContinuousMode] = useState(false); // Toggle between discrete dots and continuous sweep
 
   // New state for Dot Grid sub-hit playback mode
   const [isSubHitPlaybackEnabled, setIsSubHitPlaybackEnabled] = useState(true);
@@ -218,6 +219,12 @@ export function EQView({ setEqEnabled }: EQViewProps) {
       setPreEQAnalyser(null);
     }
   }, [shapeToolPlaying, calibrationPlaying, glyphGridPlaying, dotGridPlaying]);
+
+  // Sync continuous mode with shape grid audio
+  useEffect(() => {
+    const shapeAudio = shapeGridAudio.getShapeGridAudioPlayer();
+    shapeAudio.setContinuousMode(shapeContinuousMode);
+  }, [shapeContinuousMode]);
 
   // Initialize selected profile from the active profile and keep it synced
   useEffect(() => {
@@ -545,6 +552,23 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                       Wider grid = shapes spread horizontally
                     </p>
                   </div>
+
+                  {/* Continuous mode toggle */}
+                  <div className="flex items-center justify-center gap-3 mt-4">
+                    <Switch
+                      id="shape-continuous-mode"
+                      checked={shapeContinuousMode}
+                      onCheckedChange={setShapeContinuousMode}
+                    />
+                    <Label htmlFor="shape-continuous-mode" className="text-sm cursor-pointer">
+                      Continuous Sweep Mode
+                    </Label>
+                  </div>
+                  <p className="text-xs text-muted-foreground text-center mt-1">
+                    {shapeContinuousMode
+                      ? "Smoothly sweeps around shape perimeter"
+                      : "Plays discrete dots sequentially"}
+                  </p>
                 </>
               ) : activeGrid === "line" ? (
                 <GlyphGrid

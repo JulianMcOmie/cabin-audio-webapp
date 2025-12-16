@@ -467,6 +467,10 @@ export function DotCalibration({
   const [rowTempoVariance, setRowTempoVariance] = useState(10); // Default: ±10%
   const [rowStartOffset, setRowStartOffset] = useState(200); // Default: 200ms
 
+  // Always playing state
+  const [alwaysPlayingEnabled, setAlwaysPlayingEnabled] = useState(false); // Default: disabled
+  const [alwaysPlayingSpeed, setAlwaysPlayingSpeed] = useState(1 / 1.5); // Default: 1 cycle per 1.5 seconds (0.667 Hz)
+
   // Use either external or internal state
   const selectedDots = externalSelectedDots !== undefined ? externalSelectedDots : internalSelectedDots;
   const setSelectedDots = externalSetSelectedDots !== undefined ? externalSetSelectedDots : setInternalSelectedDots;
@@ -783,6 +787,15 @@ export function DotCalibration({
   useEffect(() => {
     dotGridAudio.setRowStartOffset(rowStartOffset);
   }, [rowStartOffset]);
+
+  // Update audio engine when always playing settings change
+  useEffect(() => {
+    dotGridAudio.setAlwaysPlayingEnabled(alwaysPlayingEnabled);
+  }, [alwaysPlayingEnabled]);
+
+  useEffect(() => {
+    dotGridAudio.setAlwaysPlayingSpeed(alwaysPlayingSpeed);
+  }, [alwaysPlayingSpeed]);
 
   // Handlers for repeat settings
   const increaseRepeatCount = () => {
@@ -1144,6 +1157,47 @@ export function DotCalibration({
                     disabled
                       ? 'opacity-50 cursor-not-allowed'
                       : ''
+                  } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+                />
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Always Playing Mode Controls */}
+        <div className="border-t pt-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">Always Playing</span>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={alwaysPlayingEnabled}
+                onChange={(e) => setAlwaysPlayingEnabled(e.target.checked)}
+                disabled={disabled}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+            </label>
+          </div>
+
+          {alwaysPlayingEnabled && (
+            <>
+              {/* Speed Slider */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium">Oscillation Speed</span>
+                  <span className="text-xs text-muted-foreground">{(1 / alwaysPlayingSpeed).toFixed(2)}s/cycle</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="2.0"
+                  step="0.05"
+                  value={alwaysPlayingSpeed}
+                  onChange={(e) => setAlwaysPlayingSpeed(Number(e.target.value))}
+                  disabled={disabled}
+                  className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                    disabled ? 'opacity-50 cursor-not-allowed' : ''
                   } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
                 />
               </div>

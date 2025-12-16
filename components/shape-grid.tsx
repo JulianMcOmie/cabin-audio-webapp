@@ -350,8 +350,8 @@ export function ShapeGrid({ isPlaying, disabled = false, numDots = 12, shapeType
         {shapes.size === 0
           ? "Click to add a shape"
           : selectedShapeId
-          ? `${shapes.size} shape${shapes.size > 1 ? 's' : ''} • Scroll to rotate (depth) • [ ] keys • Delete to remove`
-          : `${shapes.size} shape${shapes.size > 1 ? 's' : ''} • Select a shape to rotate`}
+          ? `${shapes.size} shape${shapes.size > 1 ? 's' : ''} • Scroll or [ ] to rotate in 3D (depth = loudness) • Delete to remove`
+          : `${shapes.size} shape${shapes.size > 1 ? 's' : ''} • Select a shape to rotate it in 3D`}
       </div>
     </div>
   );
@@ -368,17 +368,18 @@ function drawShape(
   audioPlayer: ReturnType<typeof shapeGridAudio.getShapeGridAudioPlayer>,
   stretchFactor: number
 ) {
-  // Calculate dots with aspect ratio for circles
+  // Calculate dots with 3D rotation and perspective
+  const rotationY = shape.rotation || 0;
   let dots: DotPosition[] = [];
   if (shape.type === 'circle') {
     // For circles, adjust the radius in Y to compensate for stretch
     // This makes circles appear truly circular on the stretched canvas
-    dots = calculateCircleDots(shape.position, shape.size, shape.numDots, stretchFactor);
+    dots = calculateCircleDots(shape.position, shape.size, shape.numDots, stretchFactor, rotationY);
   } else if (shape.type === 'triangle') {
-    const vertices = getTriangleVertices(shape.position, shape.size, shape.rotation || 0);
-    dots = calculateTriangleDots(vertices, shape.numDots);
+    const vertices = getTriangleVertices(shape.position, shape.size, 0); // No 2D rotation
+    dots = calculateTriangleDots(vertices, shape.numDots, rotationY, shape.position);
   } else if (shape.type === 'five') {
-    dots = calculateFiveGlyphDots(shape.position, shape.size, shape.rotation || 0, shape.numDots);
+    dots = calculateFiveGlyphDots(shape.position, shape.size, 0, shape.numDots, rotationY);
   }
 
   // Convert normalized coordinates to canvas coordinates
@@ -405,16 +406,19 @@ function drawShape(
     ctx.ellipse(centerX, centerY, sizeX, sizeY, 0, 0, Math.PI * 2);
     ctx.stroke();
   } else if (shape.type === 'triangle') {
-    const vertices = getTriangleVertices(shape.position, shape.size, shape.rotation || 0);
+    // Draw triangle outline using first, middle, and last dots (approximates 3D rotated vertices)
     ctx.beginPath();
-    vertices.forEach((v, i) => {
-      const x = toCanvasX(v.x);
-      const y = toCanvasY(v.y);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.closePath();
-    ctx.stroke();
+    if (dots.length >= 3) {
+      const vertexIndices = [0, Math.floor(dots.length / 3), Math.floor(2 * dots.length / 3)];
+      vertexIndices.forEach((idx, i) => {
+        const x = toCanvasX(dots[idx].x);
+        const y = toCanvasY(dots[idx].y);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.closePath();
+      ctx.stroke();
+    }
   } else if (shape.type === 'five') {
     // Draw path for "5"
     ctx.beginPath();
@@ -427,58 +431,92 @@ function drawShape(
     ctx.stroke();
   }
 
-  // Get current playing dot index
-  const currentDotIndex = isPlaying ? audioPlayer.getCurrentDotIndex(shape.id) : -1;
+  // Check if continuous mode
+  const isContinuousMode = audioPlayer.getContinuousMode();
 
-  // Draw dots
-  dots.forEach((dot, index) => {
-    const dotX = toCanvasX(dot.x);
-    const dotY = toCanvasY(dot.y);
+  if (isContinuousMode) {
+    // In continuous mode, show a smooth position marker
+    if (isPlaying) {
+      const continuousProgress = audioPlayer.getContinuousProgress(shape.id);
 
-    const isCurrentlyPlaying = isPlaying && index === currentDotIndex;
+      // Interpolate position along perimeter
+      const exactIndex = continuousProgress * dots.length;
+      const index0 = Math.floor(exactIndex) % dots.length;
+      const index1 = (index0 + 1) % dots.length;
+      const t = exactIndex - Math.floor(exactIndex);
 
-    ctx.beginPath();
-    ctx.arc(dotX, dotY, isCurrentlyPlaying ? 8 : 5, 0, Math.PI * 2);
-    ctx.fillStyle = isCurrentlyPlaying
-      ? (isDarkMode ? '#38bdf8' : '#0284c7')
-      : (isDarkMode ? 'rgba(255, 255, 255, 0.7)' : 'rgba(0, 0, 0, 0.7)');
-    ctx.fill();
+      const dot0 = dots[index0];
+      const dot1 = dots[index1];
 
-    // Pulsing effect for currently playing dot
-    if (isCurrentlyPlaying) {
+      const interpX = dot0.x + (dot1.x - dot0.x) * t;
+      const interpY = dot0.y + (dot1.y - dot0.y) * t;
+
+      const markerX = toCanvasX(interpX);
+      const markerY = toCanvasY(interpY);
+
+      // Draw smooth position marker with pulsing glow
       const pulseSize = 1.2 + Math.sin(Date.now() / 200) * 0.3;
       ctx.beginPath();
-      ctx.arc(dotX, dotY, 8 * pulseSize, 0, Math.PI * 2);
+      ctx.arc(markerX, markerY, 10 * pulseSize, 0, Math.PI * 2);
       ctx.fillStyle = isDarkMode ? 'rgba(56, 189, 248, 0.2)' : 'rgba(2, 132, 199, 0.2)';
       ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(markerX, markerY, 10, 0, Math.PI * 2);
+      ctx.fillStyle = isDarkMode ? '#38bdf8' : '#0284c7';
+      ctx.fill();
     }
-  });
+  } else {
+    // Discrete mode: draw dots
+    const currentDotIndex = isPlaying ? audioPlayer.getCurrentDotIndex(shape.id) : -1;
 
-  // Draw rotation indicator (for all shapes, shows depth/loudness)
-  const rotation = shape.rotation || 0;
-  const rotationFactor = (Math.cos(rotation) + 1) / 2; // 0 to 1
+    dots.forEach((dot, index) => {
+      const dotX = toCanvasX(dot.x);
+      const dotY = toCanvasY(dot.y);
 
-  // Draw rotation line from center
-  const lineLength = Math.max(sizeX, sizeY) * 0.7;
-  const lineEndX = centerX + lineLength * Math.cos(rotation);
-  const lineEndY = centerY - lineLength * Math.sin(rotation);
+      const isCurrentlyPlaying = isPlaying && index === currentDotIndex;
 
-  ctx.strokeStyle = isDarkMode
-    ? `rgba(56, 189, 248, ${rotationFactor})`
-    : `rgba(2, 132, 199, ${rotationFactor})`;
-  ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(dotX, dotY, isCurrentlyPlaying ? 8 : 5, 0, Math.PI * 2);
+      ctx.fillStyle = isCurrentlyPlaying
+        ? (isDarkMode ? '#38bdf8' : '#0284c7')
+        : (isDarkMode ? 'rgba(255, 255, 255, 0.7)' : 'rgba(0, 0, 0, 0.7)');
+      ctx.fill();
+
+      // Pulsing effect for currently playing dot
+      if (isCurrentlyPlaying) {
+        const pulseSize = 1.2 + Math.sin(Date.now() / 200) * 0.3;
+        ctx.beginPath();
+        ctx.arc(dotX, dotY, 8 * pulseSize, 0, Math.PI * 2);
+        ctx.fillStyle = isDarkMode ? 'rgba(56, 189, 248, 0.2)' : 'rgba(2, 132, 199, 0.2)';
+        ctx.fill();
+      }
+    });
+  }
+
+  // Draw 3D depth indicator
+  // Show a small circle at the center whose size represents the average depth
+  // Calculate average Z depth from dots (negative = away, positive = towards)
+  const avgZ = dots.reduce((sum, dot) => sum + dot.z, 0) / dots.length;
+
+  // Map avgZ to visual indicator size
+  // z closer to 0 = facing viewer = larger indicator
+  // z more negative = rotated away = smaller indicator
+  const depthFactor = 0.2 + 0.8 * (Math.max(-1, Math.min(1, avgZ + 0.5))); // Map to 0.2-1.0 range
+  const indicatorRadius = 6 * depthFactor;
+
+  // Draw depth indicator circle
+  ctx.fillStyle = isDarkMode ? 'rgba(56, 189, 248, 0.6)' : 'rgba(2, 132, 199, 0.6)';
   ctx.beginPath();
-  ctx.moveTo(centerX, centerY);
-  ctx.lineTo(lineEndX, lineEndY);
-  ctx.stroke();
-
-  // Draw dot at end of rotation line
-  ctx.fillStyle = isDarkMode ? '#38bdf8' : '#0284c7';
-  ctx.globalAlpha = rotationFactor;
-  ctx.beginPath();
-  ctx.arc(lineEndX, lineEndY, 4, 0, Math.PI * 2);
+  ctx.arc(centerX, centerY, indicatorRadius, 0, Math.PI * 2);
   ctx.fill();
-  ctx.globalAlpha = 1.0;
+
+  // Draw outer ring to show max depth range
+  ctx.strokeStyle = isDarkMode ? 'rgba(56, 189, 248, 0.3)' : 'rgba(2, 132, 199, 0.3)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, 6, 0, Math.PI * 2);
+  ctx.stroke();
 
   // Draw resize handles for selected shape
   if (isSelected) {
