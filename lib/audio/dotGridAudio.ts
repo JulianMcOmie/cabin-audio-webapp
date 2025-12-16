@@ -315,7 +315,13 @@ class PositionedAudioService {
     // Calculate oscillation value using sine wave: (1 + sin(2π * frequency * time)) / 2
     // This gives a value from 0 to 1
     const phase = 2 * Math.PI * this.alwaysPlayingSpeed * elapsedTime;
-    const volumeMultiplier = (1 + Math.sin(phase)) / 2;
+    const t = (1 + Math.sin(phase)) / 2;
+
+    // Use logarithmic (dB-based) scaling for perceptually linear volume changes
+    // Map t (0 to 1) to a dB range (-60dB to 0dB), then convert to linear gain
+    const MIN_DB = -60;
+    const dbValue = MIN_DB * (1 - t); // Goes from -60dB (when t=0) to 0dB (when t=1)
+    const volumeMultiplier = Math.pow(10, dbValue / 20);
 
     // Apply volume to all active points
     this.audioPoints.forEach((point) => {
