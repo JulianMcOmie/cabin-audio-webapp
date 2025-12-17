@@ -20,6 +20,7 @@ import { getReferenceCalibrationAudio } from "@/lib/audio/referenceCalibrationAu
 import { DotCalibration } from "@/components/dot-grid"
 import { GlyphGrid } from "@/components/glyph-grid"
 import { ShapeGrid } from "@/components/shape-grid"
+import { SoundstageExplorer } from "@/components/soundstage-explorer"
 import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
 import * as shapeGridAudio from '@/lib/audio/shapeGridAudio'
@@ -79,9 +80,12 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   
   // State for the glyph grid
   const [glyphGridPlaying, setGlyphGridPlaying] = useState(false)
-  
+
+  // State for the soundstage explorer
+  const [soundstageExplorerPlaying, setSoundstageExplorerPlaying] = useState(false)
+
   // Add state for toggling between Glyph Grid and Dot Grid
-  const [activeGrid, setActiveGrid] = useState<"line" | "dot" | "shape">("dot")
+  const [activeGrid, setActiveGrid] = useState<"line" | "dot" | "shape" | "explorer">("dot")
 
   // New state to track selected dots for dot grid
   const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set());
@@ -213,12 +217,26 @@ export function EQView({ setEqEnabled }: EQViewProps) {
       const analyser = shapeAudio.createPreEQAnalyser();
       setPreEQAnalyser(analyser);
       console.log("💠 Connected shape tool to FFT analyzer");
-    } else if (calibrationPlaying || glyphGridPlaying || dotGridPlaying) {
+    } else if (calibrationPlaying || glyphGridPlaying || dotGridPlaying || soundstageExplorerPlaying) {
       // Do nothing, handled by other effects
     } else {
       setPreEQAnalyser(null);
     }
-  }, [shapeToolPlaying, calibrationPlaying, glyphGridPlaying, dotGridPlaying]);
+  }, [shapeToolPlaying, calibrationPlaying, glyphGridPlaying, dotGridPlaying, soundstageExplorerPlaying]);
+
+  // Add a new effect to handle the analyzer for soundstage explorer
+  useEffect(() => {
+    if (soundstageExplorerPlaying) {
+      // Note: soundstage explorer doesn't have a createPreEQAnalyser method yet
+      // We'll need to add it or use a different approach
+      // For now, we'll skip the analyzer for soundstage explorer
+      console.log("🎭 Soundstage explorer playing");
+    } else if (calibrationPlaying || glyphGridPlaying || dotGridPlaying || shapeToolPlaying) {
+      // Do nothing, handled by other effects
+    } else {
+      setPreEQAnalyser(null);
+    }
+  }, [soundstageExplorerPlaying, calibrationPlaying, glyphGridPlaying, dotGridPlaying, shapeToolPlaying]);
 
   // Sync continuous mode with shape grid audio
   useEffect(() => {
@@ -269,8 +287,11 @@ export function EQView({ setEqEnabled }: EQViewProps) {
       if (shapeToolPlaying) {
         setShapeToolPlaying(false);
       }
+      if (soundstageExplorerPlaying) {
+        setSoundstageExplorerPlaying(false);
+      }
     }
-  }, [isMusicPlaying, dotGridPlaying, glyphGridPlaying, shapeToolPlaying]);
+  }, [isMusicPlaying, dotGridPlaying, glyphGridPlaying, shapeToolPlaying, soundstageExplorerPlaying]);
 
   const handleProfileClick = () => {
     setNewProfileName("");
@@ -394,7 +415,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
           {/* EQ Section - Now takes more of the width */}
           <div className="w-3/4 relative" ref={eqContainerRef}>
             {/* FFT Visualizer should always be visible during audio playback */}
-            {(calibrationPlaying || glyphGridPlaying || dotGridPlaying || shapeToolPlaying) && preEQAnalyser && (
+            {(calibrationPlaying || glyphGridPlaying || dotGridPlaying || shapeToolPlaying || soundstageExplorerPlaying) && preEQAnalyser && (
               <div className="absolute inset-0 z-0">
                 <div className="w-full aspect-[2/1] frequency-graph rounded-lg border dark:border-gray-700 overflow-hidden opacity-80 relative pointer-events-none">
                   {/* The actual EQ visualization area has 40px margins on all sides */}
@@ -445,43 +466,63 @@ export function EQView({ setEqEnabled }: EQViewProps) {
           <div className="w-1/4 bg-gray-100 dark:bg-card rounded-lg p-4">
             <div className="flex flex-col space-y-4">
               {/* Updated segmented control with shape tool first */}
-              <div className="flex border rounded-md overflow-hidden w-fit">
-                <button
-                  className={`px-4 py-2 text-sm font-medium ${
-                    activeGrid === "shape"
-                      ? "bg-teal-500 text-white"
-                      : "bg-background hover:bg-muted"
-                  }`}
-                  onClick={() => setActiveGrid("shape")}
-                >
-                  Shape Tool
-                </button>
-                <button
-                  className={`px-4 py-2 text-sm font-medium ${
-                    activeGrid === "dot"
-                      ? "bg-teal-500 text-white"
-                      : "bg-background hover:bg-muted"
-                  }`}
-                  onClick={() => setActiveGrid("dot")}
-                >
-                  Dot Grid
-                </button>
-                <button
-                  className={`px-4 py-2 text-sm font-medium ${
-                    activeGrid === "line"
-                      ? "bg-teal-500 text-white"
-                      : "bg-background hover:bg-muted"
-                  }`}
-                  onClick={() => setActiveGrid("line")}
-                >
-                  Line Tool
-                </button>
+              <div className="flex flex-col gap-2">
+                <div className="flex border rounded-md overflow-hidden w-fit">
+                  <button
+                    className={`px-4 py-2 text-sm font-medium ${
+                      activeGrid === "shape"
+                        ? "bg-teal-500 text-white"
+                        : "bg-background hover:bg-muted"
+                    }`}
+                    onClick={() => setActiveGrid("shape")}
+                  >
+                    Shape Tool
+                  </button>
+                  <button
+                    className={`px-4 py-2 text-sm font-medium ${
+                      activeGrid === "dot"
+                        ? "bg-teal-500 text-white"
+                        : "bg-background hover:bg-muted"
+                    }`}
+                    onClick={() => setActiveGrid("dot")}
+                  >
+                    Dot Grid
+                  </button>
+                  <button
+                    className={`px-4 py-2 text-sm font-medium ${
+                      activeGrid === "line"
+                        ? "bg-teal-500 text-white"
+                        : "bg-background hover:bg-muted"
+                    }`}
+                    onClick={() => setActiveGrid("line")}
+                  >
+                    Line Tool
+                  </button>
+                </div>
+                <div className="flex border rounded-md overflow-hidden w-fit">
+                  <button
+                    className={`px-4 py-2 text-sm font-medium ${
+                      activeGrid === "explorer"
+                        ? "bg-purple-500 text-white"
+                        : "bg-background hover:bg-muted"
+                    }`}
+                    onClick={() => setActiveGrid("explorer")}
+                  >
+                    Soundstage Explorer
+                  </button>
+                </div>
               </div>
             </div>
             
             {/* Grid content area */}
             <div className="mt-4">
-              {activeGrid === "shape" ? (
+              {activeGrid === "explorer" ? (
+                <SoundstageExplorer
+                  isPlaying={soundstageExplorerPlaying}
+                  setIsPlaying={setSoundstageExplorerPlaying}
+                  disabled={false}
+                />
+              ) : activeGrid === "shape" ? (
                 <>
                   <ShapeGrid
                     isPlaying={shapeToolPlaying}
@@ -707,41 +748,46 @@ export function EQView({ setEqEnabled }: EQViewProps) {
               )}
             </div>
             
-            {/* Play button moved to bottom of grid section */}
-            <div className="flex justify-center mt-6">
-              <Button
-                size="lg"
-                variant={activeGrid === "line" ? (glyphGridPlaying ? "default" : "outline") 
-                          : activeGrid === "dot" ? (dotGridPlaying ? "default" : "outline") 
-                          : (shapeToolPlaying ? "default" : "outline")}
-                className={activeGrid === "line" ? (glyphGridPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "") 
-                            : activeGrid === "dot" ? (dotGridPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "") 
-                            : (shapeToolPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")}
-                onClick={() => {
-                  if (activeGrid === "line") {
-                    setGlyphGridPlaying(!glyphGridPlaying);
-                    if (dotGridPlaying) setDotGridPlaying(false);
-                    if (shapeToolPlaying) setShapeToolPlaying(false);
-                    if (!glyphGridPlaying && isMusicPlaying) setMusicPlaying(false);
-                  } else if (activeGrid === "dot") {
-                    handleDotGridPlayToggle();
-                    if (shapeToolPlaying) setShapeToolPlaying(false);
-                  } else {
-                    setShapeToolPlaying(!shapeToolPlaying);
-                    if (dotGridPlaying) setDotGridPlaying(false);
-                    if (glyphGridPlaying) setGlyphGridPlaying(false);
-                    if (!shapeToolPlaying && isMusicPlaying) setMusicPlaying(false);
-                  }
-                }}
-              >
-                <Play className="mr-2 h-5 w-5" />
-                {activeGrid === "line" 
-                  ? (glyphGridPlaying ? "Stop Calibration" : "Play Calibration") 
-                  : activeGrid === "dot" 
-                    ? (dotGridPlaying ? "Stop Calibration" : "Play Calibration")
-                    : (shapeToolPlaying ? "Stop Calibration" : "Play Calibration")}
-              </Button>
-            </div>
+            {/* Play button moved to bottom of grid section - hide for explorer since it auto-starts */}
+            {activeGrid !== "explorer" && (
+              <div className="flex justify-center mt-6">
+                <Button
+                  size="lg"
+                  variant={activeGrid === "line" ? (glyphGridPlaying ? "default" : "outline")
+                            : activeGrid === "dot" ? (dotGridPlaying ? "default" : "outline")
+                            : (shapeToolPlaying ? "default" : "outline")}
+                  className={activeGrid === "line" ? (glyphGridPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")
+                              : activeGrid === "dot" ? (dotGridPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")
+                              : (shapeToolPlaying ? "bg-teal-500 hover:bg-teal-600 text-white" : "")}
+                  onClick={() => {
+                    if (activeGrid === "line") {
+                      setGlyphGridPlaying(!glyphGridPlaying);
+                      if (dotGridPlaying) setDotGridPlaying(false);
+                      if (shapeToolPlaying) setShapeToolPlaying(false);
+                      if (soundstageExplorerPlaying) setSoundstageExplorerPlaying(false);
+                      if (!glyphGridPlaying && isMusicPlaying) setMusicPlaying(false);
+                    } else if (activeGrid === "dot") {
+                      handleDotGridPlayToggle();
+                      if (shapeToolPlaying) setShapeToolPlaying(false);
+                      if (soundstageExplorerPlaying) setSoundstageExplorerPlaying(false);
+                    } else {
+                      setShapeToolPlaying(!shapeToolPlaying);
+                      if (dotGridPlaying) setDotGridPlaying(false);
+                      if (glyphGridPlaying) setGlyphGridPlaying(false);
+                      if (soundstageExplorerPlaying) setSoundstageExplorerPlaying(false);
+                      if (!shapeToolPlaying && isMusicPlaying) setMusicPlaying(false);
+                    }
+                  }}
+                >
+                  <Play className="mr-2 h-5 w-5" />
+                  {activeGrid === "line"
+                    ? (glyphGridPlaying ? "Stop Calibration" : "Play Calibration")
+                    : activeGrid === "dot"
+                      ? (dotGridPlaying ? "Stop Calibration" : "Play Calibration")
+                      : (shapeToolPlaying ? "Stop Calibration" : "Play Calibration")}
+                </Button>
+              </div>
+            )}
             
             {/* Tutorial button replacing help text link */}
             <div className="flex justify-center mt-3">
