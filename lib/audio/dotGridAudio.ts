@@ -556,6 +556,17 @@ class PositionedAudioService {
     return this.rowStartOffsetSeconds;
   }
 
+  /**
+   * Schedule an envelope trigger for a specific point (for loop sequencer)
+   * Applies ADSR envelope without deactivating the point
+   */
+  public schedulePointEnvelope(pointId: string, scheduledTime: number, gainMultiplier: number = 1.0): void {
+    const point = this.audioPoints.get(pointId);
+    if (point) {
+      this._schedulePointActivationSound(point, scheduledTime, gainMultiplier);
+    }
+  }
+
   // Legacy methods for backwards compatibility
   public setBandpassedNoiseMode(enabled: boolean): void {
     this.currentSoundMode = enabled ? SoundMode.BandpassedNoise : SoundMode.SlopedNoise;
@@ -1436,7 +1447,7 @@ class DotGridAudioPlayer {
       return;
     }
 
-    // Activate all dots in continuous mode
+    // Activate all dots in continuous mode (sources loop, gains controlled by envelopes)
     this.activeDotKeys.forEach(dotKey => {
       this.audioService.activatePoint(dotKey, audioContext.getAudioContext().currentTime);
     });
@@ -1449,11 +1460,12 @@ class DotGridAudioPlayer {
 
     const currentTime = audioContext.getAudioContext().currentTime;
 
-    // Schedule envelope triggers for all dots in this loop cycle
+    // Schedule ADSR envelope triggers for all dots in this loop cycle
+    // Each dot fades in (attack), holds (sustain), then fades out (release)
     sortedDotKeys.forEach((dotKey, index) => {
       const triggerTime = currentTime + (index * dotInterval);
-      // Trigger with gain multiplier = 1.0 (full volume)
-      this.audioService.activatePoint(dotKey, triggerTime, 1.0);
+      // Schedule envelope (attack -> sustain -> release) with full volume gain
+      this.audioService.schedulePointEnvelope(dotKey, triggerTime, 1.0);
     });
 
     // Schedule next loop iteration
