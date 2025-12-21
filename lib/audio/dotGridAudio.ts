@@ -37,19 +37,21 @@ const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 3.8; // dB reduction per dB/octave d
 // const SUB_HIT_INTERVAL_S = DOT_DURATION_S / NUM_SUB_HITS; // Approx 0.125s if DOT_DURATION_S is 0.5s
 
 // New constants for Global Staggered Mode (when subHitPlaybackEnabled is true)
-const GLOBAL_STAGGER_ATTACK_S = 0.01; // Very sharp attack (10ms)
-const GLOBAL_STAGGER_RELEASE_S = 0.1; // Sharp release for tight, percussive sound
+const DEFAULT_GLOBAL_STAGGER_ATTACK_S = 0.01; // Very short attack (10ms) - default for "hit" style
+const DEFAULT_GLOBAL_STAGGER_SUSTAIN_S = 0.5; // Sustain/hold duration (500ms) - default for "hit" style
+const DEFAULT_GLOBAL_STAGGER_RELEASE_S = 0.01; // Very short release (10ms) - default for "hit" style
 // const ALL_DOTS_STAGGER_INTERVAL_S = 0.5; // Stagger between each dot in the global sequence
 
 // New constants for dot repetition
-const DOT_REPETITION_INTERVAL_S = 0.35; // Interval between repetitions (envelope + gap for clean separation)
-const DEFAULT_REPEAT_COUNT = 1; // Default number of repeats (1 = no extra repeats, just play once)
-const DEFAULT_DB_REDUCTION_PER_REPEAT = 12; // Default dB reduction per repeat
-const DEFAULT_HOLD_COUNT = 4; // Default number of times each dot plays at same volume
+const DOT_REPETITION_INTERVAL_S = 0.5; // Interval between hits - 500ms per hit (4 hits = 2 seconds per dot)
+const DEFAULT_REPEAT_COUNT = 4; // Default: 4 hits per dot
+const DEFAULT_DB_INCREASE_PER_REPEAT = 12; // Default dB increase per repeat (was reduction, now increase)
+const DEFAULT_HOLD_COUNT = 1; // Default: play each dot once before moving to next (one-by-one playback)
+const DEFAULT_BASE_DB = -48; // Default starting dB level for first hit
 
 // Constants for bandpassed noise generator
 const BANDPASS_NOISE_SLOPE_DB_PER_OCT = -4.5; // Fixed slope for bandpassed noise
-const BANDPASS_BANDWIDTH_OCTAVES = 5.0; // Default bandwidth: 5 octaves (half of 10-octave audible range)
+const BANDPASS_BANDWIDTH_OCTAVES = 6.0; // Default bandwidth: 6 octaves
 const BANDPASS_NOISE_OUTPUT_GAIN_SCALAR = 0.25; // Much louder output for bandpassed noise
 
 // Constants for sine tone generator
@@ -94,12 +96,16 @@ class PositionedAudioService {
   private currentDistortionGain: number = 1.0;
   private currentBaseDbLevel: number = 0;
   private subHitAdsrEnabled: boolean = true; // Renamed from envelopeEnabled
-  private subHitPlaybackEnabled: boolean = true; // New: Toggle for sub-hit mechanism
+  private subHitPlaybackEnabled: boolean = false; // New: Toggle for sub-hit mechanism - DEFAULT FALSE for continuous mode
   private currentSoundMode: SoundMode = SoundMode.BandpassedNoise; // Current sound generation mode - default to bandpassed
   private repeatCount: number = DEFAULT_REPEAT_COUNT; // Number of repeats for each dot
-  private dbReductionPerRepeat: number = DEFAULT_DB_REDUCTION_PER_REPEAT; // dB reduction per repeat
+  private dbIncreasePerRepeat: number = DEFAULT_DB_INCREASE_PER_REPEAT; // dB increase per repeat (was reduction)
+  private baseDb: number = DEFAULT_BASE_DB; // Starting dB level for first hit
   private holdCount: number = DEFAULT_HOLD_COUNT; // Number of times each dot plays at same volume
   private speed: number = 1.0; // Playback speed multiplier (1.0 = normal speed)
+  private attackDuration: number = DEFAULT_GLOBAL_STAGGER_ATTACK_S; // Attack duration in seconds
+  private sustainDuration: number = DEFAULT_GLOBAL_STAGGER_SUSTAIN_S; // Sustain/hold duration in seconds
+  private releaseDuration: number = DEFAULT_GLOBAL_STAGGER_RELEASE_S; // Release duration in seconds
   private currentBandwidth: number = BANDPASS_BANDWIDTH_OCTAVES; // Current bandwidth in octaves for bandpassed noise
   private frequencyExtensionRange: number = 0; // How far beyond audible range to allow (0 = no extension, both filters always active)
   private readingDirection: 'horizontal' | 'vertical' = 'horizontal'; // Reading direction: horizontal (left-to-right) or vertical (top-to-bottom columns)
@@ -122,6 +128,19 @@ class PositionedAudioService {
   private alwaysPlayingStartTime: number = 0; // Start time for oscillation
   private alwaysPlayingAnimationFrameId: number | null = null; // Animation frame ID for oscillation loop
   private alwaysPlayingStaggerIntensity: number = 0; // Stagger intensity (0 = no stagger, 1 = max stagger)
+
+  // Stopband mode settings (inverse sequential - all play except one)
+  private stopbandModeEnabled: boolean = false; // Whether stopband mode is enabled
+  private stopbandIterationTimeMs: number = 500; // Iteration time in milliseconds per flash (default: 500ms = 250ms silence + 250ms gap)
+  private stopbandOffDurationMs: number = 250; // How long each dot stays silent per flash (default: 250ms)
+  private stopbandFlashCount: number = 4; // How many times each dot flashes before moving to next (default: 4)
+  private stopbandDbReductionPerFlash: number = 12; // dB reduction per flash (default: 12dB)
+  private stopbandManualMode: boolean = false; // Whether to manually select flash target (true) or auto-cycle (false)
+  private stopbandManualIndex: number = 0; // Manually selected dot index to flash
+
+  // Loop sequencer mode settings
+  private loopSequencerEnabled: boolean = false; // Whether loop sequencer mode is enabled
+  private loopDuration: number = 4.0; // Total loop duration in seconds (default: 4 seconds)
 
   constructor(audioContextInstance: AudioContext) {
     this.ctx = audioContextInstance;
@@ -201,12 +220,44 @@ class PositionedAudioService {
     return this.repeatCount;
   }
 
-  public setDbReductionPerRepeat(db: number): void {
-    this.dbReductionPerRepeat = Math.max(0, db); // At least 0 dB
+  public setDbIncreasePerRepeat(db: number): void {
+    this.dbIncreasePerRepeat = Math.max(0, db); // At least 0 dB
   }
 
-  public getDbReductionPerRepeat(): number {
-    return this.dbReductionPerRepeat;
+  public getDbIncreasePerRepeat(): number {
+    return this.dbIncreasePerRepeat;
+  }
+
+  public setBaseDb(db: number): void {
+    this.baseDb = Math.max(-60, Math.min(0, db)); // Clamp between -60dB and 0dB
+  }
+
+  public getBaseDb(): number {
+    return this.baseDb;
+  }
+
+  public setAttackDuration(seconds: number): void {
+    this.attackDuration = Math.max(0.001, Math.min(2, seconds)); // Clamp between 1ms and 2s
+  }
+
+  public getAttackDuration(): number {
+    return this.attackDuration;
+  }
+
+  public setSustainDuration(seconds: number): void {
+    this.sustainDuration = Math.max(0.001, Math.min(5, seconds)); // Clamp between 1ms and 5s
+  }
+
+  public getSustainDuration(): number {
+    return this.sustainDuration;
+  }
+
+  public setReleaseDuration(seconds: number): void {
+    this.releaseDuration = Math.max(0.001, Math.min(2, seconds)); // Clamp between 1ms and 2s
+  }
+
+  public getReleaseDuration(): number {
+    return this.releaseDuration;
   }
 
   public setSpeed(speed: number): void {
@@ -293,6 +344,84 @@ class PositionedAudioService {
     return this.alwaysPlayingStaggerIntensity;
   }
 
+  // Stopband mode methods
+  public setStopbandModeEnabled(enabled: boolean): void {
+    this.stopbandModeEnabled = enabled;
+  }
+
+  public getStopbandModeEnabled(): boolean {
+    return this.stopbandModeEnabled;
+  }
+
+  public setStopbandIterationTime(timeMs: number): void {
+    // Clamp between 100ms and 5000ms (5 seconds)
+    this.stopbandIterationTimeMs = Math.max(100, Math.min(5000, timeMs));
+  }
+
+  public getStopbandIterationTime(): number {
+    return this.stopbandIterationTimeMs;
+  }
+
+  public setStopbandOffDuration(durationMs: number): void {
+    // Clamp between 50ms and 2000ms
+    this.stopbandOffDurationMs = Math.max(50, Math.min(2000, durationMs));
+  }
+
+  public getStopbandOffDuration(): number {
+    return this.stopbandOffDurationMs;
+  }
+
+  public setStopbandFlashCount(count: number): void {
+    // Clamp between 1 and 10
+    this.stopbandFlashCount = Math.max(1, Math.min(10, Math.floor(count)));
+  }
+
+  public getStopbandFlashCount(): number {
+    return this.stopbandFlashCount;
+  }
+
+  public setStopbandDbReductionPerFlash(db: number): void {
+    // Clamp between 0 and 24dB
+    this.stopbandDbReductionPerFlash = Math.max(0, Math.min(24, db));
+  }
+
+  public getStopbandDbReductionPerFlash(): number {
+    return this.stopbandDbReductionPerFlash;
+  }
+
+  public setStopbandManualMode(enabled: boolean): void {
+    this.stopbandManualMode = enabled;
+  }
+
+  public getStopbandManualMode(): boolean {
+    return this.stopbandManualMode;
+  }
+
+  public setStopbandManualIndex(index: number): void {
+    this.stopbandManualIndex = Math.max(0, Math.floor(index));
+  }
+
+  public getStopbandManualIndex(): number {
+    return this.stopbandManualIndex;
+  }
+
+  // Loop sequencer mode methods
+  public setLoopSequencerEnabled(enabled: boolean): void {
+    this.loopSequencerEnabled = enabled;
+  }
+
+  public getLoopSequencerEnabled(): boolean {
+    return this.loopSequencerEnabled;
+  }
+
+  public setLoopDuration(seconds: number): void {
+    this.loopDuration = Math.max(0.5, Math.min(60, seconds)); // Clamp 0.5-60 seconds
+  }
+
+  public getLoopDuration(): number {
+    return this.loopDuration;
+  }
+
   public startAlwaysPlayingOscillation(): void {
     if (this.alwaysPlayingAnimationFrameId !== null) {
       cancelAnimationFrame(this.alwaysPlayingAnimationFrameId);
@@ -314,6 +443,14 @@ class PositionedAudioService {
     }
   }
 
+  public activatePointWithGain(id: string, gain: number): void {
+    const point = this.audioPoints.get(id);
+    if (!point) return;
+
+    const currentTime = this.ctx.currentTime;
+    point.envelopeGain.gain.setValueAtTime(gain, currentTime);
+  }
+
   private oscillateAlwaysPlayingVolume(): void {
     if (!this.alwaysPlayingEnabled) {
       return;
@@ -324,29 +461,41 @@ class PositionedAudioService {
 
     const MIN_DB = -60;
 
-    // Apply volume to all active points
-    this.audioPoints.forEach((point) => {
-      // Calculate phase offset for this point based on its position
-      // Use a combination of X and Y position to create unique phase offsets
-      // This creates a diagonal wave pattern across the grid
-      const positionOffset = (point.normalizedXPos + point.normalizedYPos) / 2;
-      const phaseOffset = positionOffset * 2 * Math.PI * this.alwaysPlayingStaggerIntensity;
+    if (this.stopbandModeEnabled) {
+      // Stopband mode is now handled at DotGridAudioPlayer level
+      // This just ensures gains are set properly for initial state
+      this.audioPoints.forEach((point) => {
+        // All dots start at full volume, player will manage which one is silent
+        if (point.envelopeGain.gain.value < 0.01) {
+          point.envelopeGain.gain.setValueAtTime(ENVELOPE_MAX_GAIN * 0.8, currentTime);
+        }
+      });
+    } else {
+      // Original always playing mode with volume oscillation
+      // Apply volume to all active points
+      this.audioPoints.forEach((point) => {
+        // Calculate phase offset for this point based on its position
+        // Use a combination of X and Y position to create unique phase offsets
+        // This creates a diagonal wave pattern across the grid
+        const positionOffset = (point.normalizedXPos + point.normalizedYPos) / 2;
+        const phaseOffset = positionOffset * 2 * Math.PI * this.alwaysPlayingStaggerIntensity;
 
-      // Calculate oscillation value using sine wave with phase offset
-      const phase = 2 * Math.PI * this.alwaysPlayingSpeed * elapsedTime + phaseOffset;
-      const t = (1 + Math.sin(phase)) / 2;
+        // Calculate oscillation value using sine wave with phase offset
+        const phase = 2 * Math.PI * this.alwaysPlayingSpeed * elapsedTime + phaseOffset;
+        const t = (1 + Math.sin(phase)) / 2;
 
-      // Use logarithmic (dB-based) scaling for perceptually linear volume changes
-      // Map t (0 to 1) to a dB range (-60dB to 0dB), then convert to linear gain
-      const dbValue = MIN_DB * (1 - t); // Goes from -60dB (when t=0) to 0dB (when t=1)
-      const volumeMultiplier = Math.pow(10, dbValue / 20);
+        // Use logarithmic (dB-based) scaling for perceptually linear volume changes
+        // Map t (0 to 1) to a dB range (-60dB to 0dB), then convert to linear gain
+        const dbValue = MIN_DB * (1 - t); // Goes from -60dB (when t=0) to 0dB (when t=1)
+        const volumeMultiplier = Math.pow(10, dbValue / 20);
 
-      // Set the envelope gain to the oscillating volume
-      point.envelopeGain.gain.setValueAtTime(
-        ENVELOPE_MAX_GAIN * 0.8 * volumeMultiplier,
-        currentTime
-      );
-    });
+        // Set the envelope gain to the oscillating volume
+        point.envelopeGain.gain.setValueAtTime(
+          ENVELOPE_MAX_GAIN * 0.8 * volumeMultiplier,
+          currentTime
+        );
+      });
+    }
 
     // Schedule next update
     this.alwaysPlayingAnimationFrameId = requestAnimationFrame(() => {
@@ -421,26 +570,35 @@ class PositionedAudioService {
     gainParam.cancelScheduledValues(scheduledTime);
 
     if (this.subHitAdsrEnabled) {
-      // Use ADSR for the global staggered hit
+      // Use full ADSR envelope: Attack -> Sustain -> Release
       gainParam.setValueAtTime(0.001, scheduledTime); // Start just above zero for exponential curves
-      // Attack - use exponential curve for more natural feel
+
+      // Attack - fade in
       gainParam.exponentialRampToValueAtTime(
-        ENVELOPE_MAX_GAIN * 0.8 * gainMultiplier, // Apply gain multiplier for volume reduction
-        scheduledTime + GLOBAL_STAGGER_ATTACK_S
+        ENVELOPE_MAX_GAIN * 0.8 * gainMultiplier, // Apply gain multiplier for volume
+        scheduledTime + this.attackDuration
       );
-      // Release
+
+      // Sustain - hold at full volume
+      gainParam.setValueAtTime(
+        ENVELOPE_MAX_GAIN * 0.8 * gainMultiplier,
+        scheduledTime + this.attackDuration + this.sustainDuration
+      );
+
+      // Release - fade out
       gainParam.exponentialRampToValueAtTime(
         0.001, // Target for exponential ramp (close to zero)
-        scheduledTime + GLOBAL_STAGGER_ATTACK_S + GLOBAL_STAGGER_RELEASE_S
+        scheduledTime + this.attackDuration + this.sustainDuration + this.releaseDuration
       );
+
       // Ensure silence after release
-      gainParam.setValueAtTime(ENVELOPE_MIN_GAIN, scheduledTime + GLOBAL_STAGGER_ATTACK_S + GLOBAL_STAGGER_RELEASE_S + 0.001);
+      gainParam.setValueAtTime(ENVELOPE_MIN_GAIN, scheduledTime + this.attackDuration + this.sustainDuration + this.releaseDuration + 0.001);
     } else {
-      // Use Attack-Sustain for the global staggered hit
+      // Use Attack-Sustain for the global staggered hit (no automatic release)
       gainParam.setValueAtTime(0.001, scheduledTime); // Start just above zero for exponential curves
       gainParam.exponentialRampToValueAtTime(
-        ENVELOPE_MAX_GAIN * 0.8 * gainMultiplier, // Apply gain multiplier for volume reduction
-        scheduledTime + GLOBAL_STAGGER_ATTACK_S
+        ENVELOPE_MAX_GAIN * 0.8 * gainMultiplier, // Apply gain multiplier for volume
+        scheduledTime + this.attackDuration
       );
       // Gain remains at reduced ENVELOPE_MAX_GAIN until deactivatePoint is called
     }
@@ -815,8 +973,17 @@ class DotGridAudioPlayer {
   private columnCount: number = COLUMNS;
   private preEQAnalyser: AnalyserNode | null = null;
   private preEQGain: GainNode | null = null;
+
+  // Stopband mode state
+  private stopbandIntervalId: number | null = null; // For stopband cycling timer
+  private stopbandCurrentIndex: number = 0; // Current index of silent dot
+  private stopbandOnTimeoutId: number | null = null; // Timeout to turn the silent dot back on
+  private stopbandCurrentFlash: number = 0; // Current flash number (0-based) for the current dot
   // private animationFrameId: number | null = null; // REMOVING, rAF not used for global stagger
-  
+
+  // Loop sequencer mode state
+  private loopSequencerTimeoutId: number | null = null; // For loop sequencer iteration timeout
+
   private constructor() {
     this.audioService = new PositionedAudioService(audioContext.getAudioContext());
     
@@ -1031,7 +1198,11 @@ class DotGridAudioPlayer {
     });
     
     if (this.isPlaying) {
-      if (this.isContinuousSimultaneousMode()) {
+      if (this.isLoopSequencerMode()) {
+        // NEW: Restart loop sequencer with new dots
+        this.stopLoopSequencer();
+        this.startLoopSequencer();
+      } else if (this.isContinuousSimultaneousMode()) {
         addedKeys.forEach(key => this.audioService.activatePoint(key, audioContext.getAudioContext().currentTime));
         // Removed keys are handled by removePoint implicitly deactivating them
       } else {
@@ -1039,6 +1210,169 @@ class DotGridAudioPlayer {
       this.startAllRhythms();
       }
     }
+  }
+
+  /**
+   * Start stopband mode cycling
+   */
+  private startStopbandCycling(): void {
+    this.stopStopbandCycling(); // Clear any existing interval
+
+    // Get sorted dot keys in reading order
+    const sortedDots = this.getSortedDotKeys();
+    if (sortedDots.length === 0) return;
+
+    // Check if manual mode is enabled
+    const isManualMode = this.audioService.getStopbandManualMode();
+
+    if (isManualMode) {
+      // Manual mode: use the manually selected index
+      this.stopbandCurrentIndex = this.audioService.getStopbandManualIndex() % sortedDots.length;
+    } else {
+      // Auto mode: start at the beginning
+      this.stopbandCurrentIndex = 0;
+    }
+
+    this.stopbandCurrentFlash = 0;
+    this.updateStopbandState(sortedDots);
+
+    // Set up interval to cycle through flashes
+    const iterationTime = this.audioService.getStopbandIterationTime();
+    this.stopbandIntervalId = window.setInterval(() => {
+      if (!this.isPlaying || !this.audioService.getStopbandModeEnabled()) {
+        this.stopStopbandCycling();
+        return;
+      }
+
+      const currentSortedDots = this.getSortedDotKeys();
+      if (currentSortedDots.length === 0) {
+        this.stopStopbandCycling();
+        return;
+      }
+
+      const flashCount = this.audioService.getStopbandFlashCount();
+      const manualMode = this.audioService.getStopbandManualMode();
+
+      // Increment flash counter
+      this.stopbandCurrentFlash++;
+
+      // If we've completed all flashes for this dot
+      if (this.stopbandCurrentFlash >= flashCount) {
+        this.stopbandCurrentFlash = 0;
+
+        if (manualMode) {
+          // Manual mode: use the manually selected index, don't auto-advance
+          this.stopbandCurrentIndex = this.audioService.getStopbandManualIndex() % currentSortedDots.length;
+        } else {
+          // Auto mode: move to next dot
+          this.stopbandCurrentIndex = (this.stopbandCurrentIndex + 1) % currentSortedDots.length;
+        }
+      }
+
+      this.updateStopbandState(currentSortedDots);
+    }, iterationTime);
+  }
+
+  /**
+   * Stop stopband mode cycling
+   */
+  private stopStopbandCycling(): void {
+    if (this.stopbandIntervalId !== null) {
+      clearInterval(this.stopbandIntervalId);
+      this.stopbandIntervalId = null;
+    }
+    if (this.stopbandOnTimeoutId !== null) {
+      clearTimeout(this.stopbandOnTimeoutId);
+      this.stopbandOnTimeoutId = null;
+    }
+  }
+
+  /**
+   * Update which dot is silent in stopband mode
+   */
+  private updateStopbandState(sortedDots: string[]): void {
+    // Clear any existing "turn on" timeout
+    if (this.stopbandOnTimeoutId !== null) {
+      clearTimeout(this.stopbandOnTimeoutId);
+      this.stopbandOnTimeoutId = null;
+    }
+
+    const currentDotKey = sortedDots[this.stopbandCurrentIndex];
+
+    // Calculate volume reduction based on flash number
+    // Flash 0: 0dB (full volume)
+    // Flash 1: -12dB
+    // Flash 2: -24dB
+    // Flash 3: -36dB
+    const dbReductionPerFlash = this.audioService.getStopbandDbReductionPerFlash();
+    const totalDbReduction = this.stopbandCurrentFlash * dbReductionPerFlash;
+    const volumeMultiplier = Math.pow(10, -totalDbReduction / 20);
+    const targetGain = volumeMultiplier < 0.01 ? 0.001 : 0.8 * volumeMultiplier;
+
+    // Turn all dots on first at full volume
+    sortedDots.forEach((dotKey) => {
+      this.audioService.activatePointWithGain(dotKey, 0.8);
+    });
+
+    // Silence the current dot completely
+    this.audioService.activatePointWithGain(currentDotKey, 0.001);
+
+    // Schedule the dot to turn back on after the off duration at the reduced volume
+    const offDuration = this.audioService.getStopbandOffDuration();
+    this.stopbandOnTimeoutId = window.setTimeout(() => {
+      // Turn the dot back on at the reduced volume (based on flash number)
+      this.audioService.activatePointWithGain(currentDotKey, targetGain);
+      this.stopbandOnTimeoutId = null;
+    }, offDuration);
+  }
+
+  /**
+   * Get sorted dot keys in reading order
+   */
+  private getSortedDotKeys(): string[] {
+    const readingDirection = this.audioService.getReadingDirection();
+    const parsedDots = Array.from(this.activeDotKeys).map(dotKey => {
+      const [xStr, yStr] = dotKey.split(',');
+      return {
+        key: dotKey,
+        x: parseInt(xStr, 10),
+        y: parseInt(yStr, 10)
+      };
+    });
+
+    let sortedDotKeys: string[];
+
+    if (readingDirection === 'horizontal') {
+      // Horizontal reading with snake pattern
+      const rowGroups = new Map<number, typeof parsedDots>();
+      parsedDots.forEach(dot => {
+        if (!rowGroups.has(dot.y)) rowGroups.set(dot.y, []);
+        rowGroups.get(dot.y)!.push(dot);
+      });
+
+      const sortedRows = Array.from(rowGroups.entries()).sort((a, b) => a[0] - b[0]);
+      sortedDotKeys = sortedRows.flatMap(([, dots], rowIndex) => {
+        const sortedDots = dots.sort((a, b) => a.x - b.x);
+        if (rowIndex % 2 === 1) sortedDots.reverse();
+        return sortedDots.map(d => d.key);
+      });
+    } else {
+      // Vertical reading with snake pattern
+      const colGroups = new Map<number, typeof parsedDots>();
+      parsedDots.forEach(dot => {
+        if (!colGroups.has(dot.x)) colGroups.set(dot.x, []);
+        colGroups.get(dot.x)!.push(dot);
+      });
+
+      const sortedCols = Array.from(colGroups.entries()).sort((a, b) => a[0] - b[0]);
+      sortedDotKeys = sortedCols.flatMap(([, dots], colIndex) => {
+        const sortedDots = dots.sort((a, b) => a.y - b.y);
+        if (colIndex % 2 === 1) sortedDots.reverse();
+        return sortedDots.map(d => d.key);
+      });
+    }
+
+    return sortedDotKeys;
   }
 
   /**
@@ -1051,25 +1385,145 @@ class DotGridAudioPlayer {
     console.log('🔊 Set playing state:', playing);
 
     if (playing) {
-      if (this.isContinuousSimultaneousMode()){
+      // NEW: Check loop sequencer mode first
+      if (this.isLoopSequencerMode()) {
+        this.stopAllRhythmsInternalCleanup(); // Clear other modes
+        this.audioService.stopAlwaysPlayingOscillation();
+        this.stopStopbandCycling();
+        this.startLoopSequencer();
+      }
+      // EXISTING: Continuous simultaneous mode
+      else if (this.isContinuousSimultaneousMode()){
+        this.stopLoopSequencerInternalCleanup(); // NEW - Clear loop sequencer
         this.stopAllRhythmsInternalCleanup(); // Clear any rAF/staggers from previous mode
         this.audioService.deactivateAllPoints(); // Fresh start
 
         // Check if always playing mode is enabled
         if (this.audioService.getAlwaysPlayingEnabled()) {
-          // Start always playing oscillation
-          this.audioService.startAlwaysPlayingOscillation();
+          // Check if stopband mode is enabled
+          if (this.audioService.getStopbandModeEnabled()) {
+            // Start stopband cycling
+            this.startStopbandCycling();
+          } else {
+            // Start always playing oscillation
+            this.audioService.startAlwaysPlayingOscillation();
+          }
         } else {
           // Normal continuous mode - activate all dots
           this.activeDotKeys.forEach(dotKey => this.audioService.activatePoint(dotKey, audioContext.getAudioContext().currentTime));
         }
-      } else {
-      this.startAllRhythms();
+      }
+      // EXISTING: Sequential sub-hit mode
+      else {
+        this.stopLoopSequencerInternalCleanup(); // NEW - Clear loop sequencer
+        this.startAllRhythms();
       }
     } else {
       this.audioService.stopAlwaysPlayingOscillation();
+      this.stopStopbandCycling();
+      this.stopLoopSequencer(); // NEW
       this.stopAllRhythms();
     }
+  }
+
+  /**
+   * Start loop sequencer mode - evenly spaced dots with envelope triggering
+   */
+  private startLoopSequencer(): void {
+    this.stopLoopSequencerInternalCleanup();
+
+    if (!this.isPlaying || this.activeDotKeys.size === 0) {
+      return;
+    }
+
+    // Activate all dots in continuous mode
+    this.activeDotKeys.forEach(dotKey => {
+      this.audioService.activatePoint(dotKey, audioContext.getAudioContext().currentTime);
+    });
+
+    // Sort dots by reading order (horizontal/vertical snake pattern)
+    const sortedDotKeys = this.sortDotsByReadingOrder();
+    const loopDuration = this.audioService.getLoopDuration();
+    const dotCount = sortedDotKeys.length;
+    const dotInterval = loopDuration / dotCount; // Evenly space dots in time
+
+    const currentTime = audioContext.getAudioContext().currentTime;
+
+    // Schedule envelope triggers for all dots in this loop cycle
+    sortedDotKeys.forEach((dotKey, index) => {
+      const triggerTime = currentTime + (index * dotInterval);
+      // Trigger with gain multiplier = 1.0 (full volume)
+      this.audioService.activatePoint(dotKey, triggerTime, 1.0);
+    });
+
+    // Schedule next loop iteration
+    const loopDelayMs = loopDuration * 1000;
+    this.loopSequencerTimeoutId = window.setTimeout(() => {
+      if (this.isPlaying && this.isLoopSequencerMode()) {
+        this.startLoopSequencer(); // Recursive loop
+      }
+    }, loopDelayMs);
+  }
+
+  /**
+   * Stop loop sequencer and clear timeout
+   */
+  private stopLoopSequencer(): void {
+    this.stopLoopSequencerInternalCleanup();
+    // Keep dots active in continuous mode (no deactivation)
+  }
+
+  /**
+   * Internal cleanup for loop sequencer timeout
+   */
+  private stopLoopSequencerInternalCleanup(): void {
+    if (this.loopSequencerTimeoutId !== null) {
+      clearTimeout(this.loopSequencerTimeoutId);
+      this.loopSequencerTimeoutId = null;
+    }
+  }
+
+  /**
+   * Sort dots by reading order (horizontal/vertical snake pattern)
+   * Returns array of dot keys in play order
+   */
+  private sortDotsByReadingOrder(): string[] {
+    const readingDirection = this.audioService.getReadingDirection();
+
+    // Parse all dot keys
+    const parsedDots = Array.from(this.activeDotKeys).map(dotKey => {
+      const [xStr, yStr] = dotKey.split(',');
+      return {
+        key: dotKey,
+        x: parseInt(xStr, 10),
+        y: parseInt(yStr, 10)
+      };
+    });
+
+    // Sort by reading direction (copy logic from startAllRhythms)
+    if (readingDirection === 'horizontal') {
+      // Horizontal reading: group by row, snake pattern (reverse every other row)
+      parsedDots.sort((a, b) => {
+        const rowDiff = a.y - b.y;
+        if (rowDiff !== 0) return rowDiff;
+
+        // Within same row: alternate direction (snake pattern)
+        const shouldReverse = a.y % 2 === 1; // Reverse on odd rows
+        return shouldReverse ? b.x - a.x : a.x - b.x;
+      });
+    } else {
+      // Vertical reading: group by column, snake pattern (reverse every other column)
+      parsedDots.sort((a, b) => {
+        const colDiff = a.x - b.x;
+        if (colDiff !== 0) return colDiff;
+
+        // Within same column: alternate direction (snake pattern)
+        const shouldReverse = a.x % 2 === 1; // Reverse on odd columns
+        return shouldReverse ? b.y - a.y : a.y - b.y;
+      });
+    }
+
+    return parsedDots.map(d => d.key);
   }
 
   /**
@@ -1169,27 +1623,37 @@ class DotGridAudioPlayer {
 
     // Get repeat settings from the audio service
     const repeatCount = this.audioService.getRepeatCount();
-    const dbReductionPerRepeat = this.audioService.getDbReductionPerRepeat();
+    const dbIncreasePerRepeat = this.audioService.getDbIncreasePerRepeat();
+    const baseDb = this.audioService.getBaseDb();
     const holdCount = this.audioService.getHoldCount();
     const speed = this.audioService.getSpeed();
 
     // Calculate speed-adjusted repetition interval (higher speed = shorter interval)
     const adjustedRepetitionInterval = DOT_REPETITION_INTERVAL_S / speed;
 
+    // Get envelope durations to ensure dots don't overlap
+    const attackDuration = this.audioService.getAttackDuration();
+    const sustainDuration = this.audioService.getSustainDuration();
+    const releaseDuration = this.audioService.getReleaseDuration();
+    const envelopeDuration = attackDuration + sustainDuration + releaseDuration;
+
     // Calculate how long each dot needs to complete all its repetitions
-    const dotCompletionTime = holdCount * repeatCount * adjustedRepetitionInterval;
+    // Last hit starts at: (repeatCount * holdCount - 1) * interval
+    // Last hit ends at: lastHitStart + envelopeDuration
+    const dotCompletionTime = (holdCount * repeatCount - 1) * adjustedRepetitionInterval + envelopeDuration;
 
     // Schedule all dots to play sequentially (each starts after previous completes)
     sortedDotKeys.forEach((dotKey, dotIndex) => {
       // Each dot starts after all previous dots have completed their repetitions
       const staggerOffset = dotIndex * dotCompletionTime;
 
-      // Schedule all repetitions for this dot with progressive volume reduction
+      // Schedule all repetitions for this dot with progressive volume increase
       for (let repetition = 0; repetition < repeatCount; repetition++) {
         // Calculate gain multiplier based on repeat number
-        // Each repeat is quieter by dbReductionPerRepeat dB
-        const dbReduction = repetition * dbReductionPerRepeat;
-        const gainMultiplier = Math.pow(10, -dbReduction / 20); // Convert dB to linear gain
+        // Start at baseDb (e.g., -48dB) and increase by dbIncreasePerRepeat each time
+        const dbIncrease = repetition * dbIncreasePerRepeat;
+        const totalDb = baseDb + dbIncrease; // e.g., -48, -36, -24, -12
+        const gainMultiplier = Math.pow(10, totalDb / 20); // Convert dB to linear gain
 
         // For each repeat, schedule holdCount activations at the same volume
         for (let hold = 0; hold < holdCount; hold++) {
@@ -1289,16 +1753,26 @@ class DotGridAudioPlayer {
     startTime: number
   ): void {
     const adjustedInterval = DOT_REPETITION_INTERVAL_S / rowSpeed;
-    const dotCompletionTime = this.audioService.getHoldCount() *
-      this.audioService.getRepeatCount() * adjustedInterval;
+
+    // Get envelope durations to ensure dots don't overlap
+    const attackDuration = this.audioService.getAttackDuration();
+    const sustainDuration = this.audioService.getSustainDuration();
+    const releaseDuration = this.audioService.getReleaseDuration();
+    const envelopeDuration = attackDuration + sustainDuration + releaseDuration;
+
+    // Calculate completion time accounting for the last hit's envelope
+    const dotCompletionTime = (this.audioService.getHoldCount() * this.audioService.getRepeatCount() - 1) * adjustedInterval + envelopeDuration;
 
     // Schedule all dots in this row
     dots.forEach((dotKey, dotIndex) => {
       const staggerOffset = dotIndex * dotCompletionTime;
 
       for (let repetition = 0; repetition < this.audioService.getRepeatCount(); repetition++) {
-        const dbReduction = repetition * this.audioService.getDbReductionPerRepeat();
-        const gainMultiplier = Math.pow(10, -dbReduction / 20);
+        // Calculate gain multiplier with increasing volume (same as main rhythm)
+        const baseDb = this.audioService.getBaseDb();
+        const dbIncrease = repetition * this.audioService.getDbIncreasePerRepeat();
+        const totalDb = baseDb + dbIncrease;
+        const gainMultiplier = Math.pow(10, totalDb / 20);
 
         for (let hold = 0; hold < this.audioService.getHoldCount(); hold++) {
           const activationTime = startTime + staggerOffset +
@@ -1335,6 +1809,9 @@ class DotGridAudioPlayer {
   }
 
   private stopAllRhythmsInternalCleanup(): void {
+    // Clear loop sequencer timeout (NEW)
+    this.stopLoopSequencerInternalCleanup();
+
     // Clear the main sequence loop timeout
     if (this.loopTimeoutId !== null) {
       clearTimeout(this.loopTimeoutId);
@@ -1459,6 +1936,11 @@ class DotGridAudioPlayer {
     return !this.audioService.isSubHitPlaybackEnabled();
   }
 
+  private isLoopSequencerMode(): boolean {
+    return this.audioService.getLoopSequencerEnabled() &&
+           !this.audioService.isSubHitPlaybackEnabled();
+  }
+
   public setBandpassBandwidth(bandwidthOctaves: number): void {
     this.audioService.setBandpassBandwidth(bandwidthOctaves);
   }
@@ -1476,12 +1958,44 @@ class DotGridAudioPlayer {
     return this.audioService.getRepeatCount();
   }
 
-  public setDbReductionPerRepeat(db: number): void {
-    this.audioService.setDbReductionPerRepeat(db);
+  public setDbIncreasePerRepeat(db: number): void {
+    this.audioService.setDbIncreasePerRepeat(db);
   }
 
-  public getDbReductionPerRepeat(): number {
-    return this.audioService.getDbReductionPerRepeat();
+  public getDbIncreasePerRepeat(): number {
+    return this.audioService.getDbIncreasePerRepeat();
+  }
+
+  public setBaseDb(db: number): void {
+    this.audioService.setBaseDb(db);
+  }
+
+  public getBaseDb(): number {
+    return this.audioService.getBaseDb();
+  }
+
+  public setAttackDuration(seconds: number): void {
+    this.audioService.setAttackDuration(seconds);
+  }
+
+  public getAttackDuration(): number {
+    return this.audioService.getAttackDuration();
+  }
+
+  public setSustainDuration(seconds: number): void {
+    this.audioService.setSustainDuration(seconds);
+  }
+
+  public getSustainDuration(): number {
+    return this.audioService.getSustainDuration();
+  }
+
+  public setReleaseDuration(seconds: number): void {
+    this.audioService.setReleaseDuration(seconds);
+  }
+
+  public getReleaseDuration(): number {
+    return this.audioService.getReleaseDuration();
   }
 
   public setSpeed(speed: number): void {
@@ -1635,6 +2149,120 @@ class DotGridAudioPlayer {
 
   public getAlwaysPlayingStaggerIntensity(): number {
     return this.audioService.getAlwaysPlayingStaggerIntensity();
+  }
+
+  public setStopbandModeEnabled(enabled: boolean): void {
+    this.audioService.setStopbandModeEnabled(enabled);
+
+    // Restart playback if currently in always playing mode
+    if (this.isPlaying && this.audioService.getAlwaysPlayingEnabled() && this.isContinuousSimultaneousMode()) {
+      if (enabled) {
+        // Switch to stopband cycling
+        this.audioService.stopAlwaysPlayingOscillation();
+        this.startStopbandCycling();
+      } else {
+        // Switch to always playing oscillation
+        this.stopStopbandCycling();
+        this.audioService.startAlwaysPlayingOscillation();
+      }
+    }
+  }
+
+  public getStopbandModeEnabled(): boolean {
+    return this.audioService.getStopbandModeEnabled();
+  }
+
+  public setStopbandIterationTime(timeMs: number): void {
+    this.audioService.setStopbandIterationTime(timeMs);
+
+    // Restart stopband cycling if currently active to apply new timing
+    if (this.isPlaying && this.audioService.getAlwaysPlayingEnabled() &&
+        this.audioService.getStopbandModeEnabled() && this.isContinuousSimultaneousMode()) {
+      this.startStopbandCycling();
+    }
+  }
+
+  public getStopbandIterationTime(): number {
+    return this.audioService.getStopbandIterationTime();
+  }
+
+  public setStopbandOffDuration(durationMs: number): void {
+    this.audioService.setStopbandOffDuration(durationMs);
+  }
+
+  public getStopbandOffDuration(): number {
+    return this.audioService.getStopbandOffDuration();
+  }
+
+  public setStopbandFlashCount(count: number): void {
+    this.audioService.setStopbandFlashCount(count);
+  }
+
+  public getStopbandFlashCount(): number {
+    return this.audioService.getStopbandFlashCount();
+  }
+
+  public setStopbandDbReductionPerFlash(db: number): void {
+    this.audioService.setStopbandDbReductionPerFlash(db);
+  }
+
+  public getStopbandDbReductionPerFlash(): number {
+    return this.audioService.getStopbandDbReductionPerFlash();
+  }
+
+  public setStopbandManualMode(enabled: boolean): void {
+    this.audioService.setStopbandManualMode(enabled);
+
+    // Restart stopband cycling if currently active
+    if (this.isPlaying && this.audioService.getAlwaysPlayingEnabled() &&
+        this.audioService.getStopbandModeEnabled() && this.isContinuousSimultaneousMode()) {
+      this.startStopbandCycling();
+    }
+  }
+
+  public getStopbandManualMode(): boolean {
+    return this.audioService.getStopbandManualMode();
+  }
+
+  public setStopbandManualIndex(index: number): void {
+    this.audioService.setStopbandManualIndex(index);
+
+    // Restart stopband cycling if currently active in manual mode
+    if (this.isPlaying && this.audioService.getAlwaysPlayingEnabled() &&
+        this.audioService.getStopbandModeEnabled() && this.audioService.getStopbandManualMode() &&
+        this.isContinuousSimultaneousMode()) {
+      this.startStopbandCycling();
+    }
+  }
+
+  public getStopbandManualIndex(): number {
+    return this.audioService.getStopbandManualIndex();
+  }
+
+  public setLoopSequencerEnabled(enabled: boolean): void {
+    this.audioService.setLoopSequencerEnabled(enabled);
+    // Restart playback if currently playing
+    if (this.isPlaying) {
+      this.stopAllRhythms();
+      this.setPlaying(true); // Re-trigger mode selection
+    }
+  }
+
+  public getLoopSequencerEnabled(): boolean {
+    return this.audioService.getLoopSequencerEnabled();
+  }
+
+  public setLoopDuration(seconds: number): void {
+    this.audioService.setLoopDuration(seconds);
+    // If playing in loop sequencer mode, restart to apply new timing
+    if (this.isPlaying && this.isLoopSequencerMode()) {
+      this.stopLoopSequencer();
+      this.startLoopSequencer();
+    }
+  }
+
+  public getLoopDuration(): number {
+    return this.audioService.getLoopDuration();
   }
 }
 
@@ -1986,20 +2614,88 @@ export function getRepeatCount(): number {
 }
 
 /**
- * Set the dB reduction per repeat
- * @param db dB reduction per repeat (minimum 0)
+ * Set the dB increase per repeat
+ * @param db dB increase per repeat (minimum 0)
  */
-export function setDbReductionPerRepeat(db: number): void {
+export function setDbIncreasePerRepeat(db: number): void {
   const player = DotGridAudioPlayer.getInstance();
-  player.setDbReductionPerRepeat(db);
+  player.setDbIncreasePerRepeat(db);
 }
 
 /**
- * Get the current dB reduction per repeat
+ * Get the current dB increase per repeat
  */
-export function getDbReductionPerRepeat(): number {
+export function getDbIncreasePerRepeat(): number {
   const player = DotGridAudioPlayer.getInstance();
-  return player.getDbReductionPerRepeat();
+  return player.getDbIncreasePerRepeat();
+}
+
+/**
+ * Set the base dB level (starting volume for first hit)
+ * @param db Base dB level (clamped between -60dB and 0dB)
+ */
+export function setBaseDb(db: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setBaseDb(db);
+}
+
+/**
+ * Get the current base dB level
+ */
+export function getBaseDb(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getBaseDb();
+}
+
+/**
+ * Set the attack duration in seconds
+ * @param seconds Attack duration (clamped between 0.001s and 2s)
+ */
+export function setAttackDuration(seconds: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setAttackDuration(seconds);
+}
+
+/**
+ * Get the current attack duration
+ */
+export function getAttackDuration(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getAttackDuration();
+}
+
+/**
+ * Set the sustain duration in seconds
+ * @param seconds Sustain duration (clamped between 0.001s and 5s)
+ */
+export function setSustainDuration(seconds: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setSustainDuration(seconds);
+}
+
+/**
+ * Get the current sustain duration
+ */
+export function getSustainDuration(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getSustainDuration();
+}
+
+/**
+ * Set the release duration in seconds
+ * @param seconds Release duration (clamped between 0.001s and 2s)
+ */
+export function setReleaseDuration(seconds: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setReleaseDuration(seconds);
+}
+
+/**
+ * Get the current release duration
+ */
+export function getReleaseDuration(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getReleaseDuration();
 }
 
 /**
@@ -2246,6 +2942,159 @@ export function setAlwaysPlayingStaggerIntensity(intensity: number): void {
 export function getAlwaysPlayingStaggerIntensity(): number {
   const player = DotGridAudioPlayer.getInstance();
   return player.getAlwaysPlayingStaggerIntensity();
+}
+
+/**
+ * Enable or disable stopband mode (inverse sequential - all play except one)
+ * @param enabled Whether stopband mode is enabled
+ */
+export function setStopbandModeEnabled(enabled: boolean): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setStopbandModeEnabled(enabled);
+}
+
+/**
+ * Get whether stopband mode is enabled
+ */
+export function getStopbandModeEnabled(): boolean {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getStopbandModeEnabled();
+}
+
+/**
+ * Set the iteration time for stopband mode (how long each dot is silent)
+ * @param timeMs Iteration time in milliseconds (range: 100-5000, default: 750)
+ */
+export function setStopbandIterationTime(timeMs: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setStopbandIterationTime(timeMs);
+}
+
+/**
+ * Get the current stopband iteration time in milliseconds
+ */
+export function getStopbandIterationTime(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getStopbandIterationTime();
+}
+
+/**
+ * Set the off duration for stopband mode (how long each dot is silent)
+ * @param durationMs Off duration in milliseconds (range: 50-2000, default: 500)
+ */
+export function setStopbandOffDuration(durationMs: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setStopbandOffDuration(durationMs);
+}
+
+/**
+ * Get the current stopband off duration in milliseconds
+ */
+export function getStopbandOffDuration(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getStopbandOffDuration();
+}
+
+/**
+ * Set the number of flashes per dot in stopband mode
+ * @param count Number of flashes (range: 1-10, default: 4)
+ */
+export function setStopbandFlashCount(count: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setStopbandFlashCount(count);
+}
+
+/**
+ * Get the current stopband flash count
+ */
+export function getStopbandFlashCount(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getStopbandFlashCount();
+}
+
+/**
+ * Set the dB reduction per flash in stopband mode
+ * @param db dB reduction per flash (range: 0-24, default: 12)
+ */
+export function setStopbandDbReductionPerFlash(db: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setStopbandDbReductionPerFlash(db);
+}
+
+/**
+ * Get the current stopband dB reduction per flash
+ */
+export function getStopbandDbReductionPerFlash(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getStopbandDbReductionPerFlash();
+}
+
+/**
+ * Enable or disable manual mode for stopband (true = manually select dot, false = auto-cycle)
+ * @param enabled Whether manual mode is enabled
+ */
+export function setStopbandManualMode(enabled: boolean): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setStopbandManualMode(enabled);
+}
+
+/**
+ * Get whether stopband manual mode is enabled
+ */
+export function getStopbandManualMode(): boolean {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getStopbandManualMode();
+}
+
+/**
+ * Set the manually selected dot index for stopband mode
+ * @param index 0-based index of the dot to flash (will be clamped to valid range)
+ */
+export function setStopbandManualIndex(index: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setStopbandManualIndex(index);
+}
+
+/**
+ * Get the current manually selected dot index
+ */
+export function getStopbandManualIndex(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getStopbandManualIndex();
+}
+
+/**
+ * Enable or disable loop sequencer mode
+ * @param enabled Whether loop sequencer mode is enabled
+ */
+export function setLoopSequencerEnabled(enabled: boolean): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setLoopSequencerEnabled(enabled);
+}
+
+/**
+ * Get whether loop sequencer mode is enabled
+ */
+export function getLoopSequencerEnabled(): boolean {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getLoopSequencerEnabled();
+}
+
+/**
+ * Set the loop duration for loop sequencer mode
+ * @param seconds Total loop duration in seconds (range: 0.5-60, default: 4)
+ */
+export function setLoopDuration(seconds: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setLoopDuration(seconds);
+}
+
+/**
+ * Get the current loop duration in seconds
+ */
+export function getLoopDuration(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getLoopDuration();
 }
 
 // Export the SoundMode enum for use in UI

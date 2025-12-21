@@ -423,14 +423,18 @@ interface DotCalibrationProps {
   setSelectedDots?: React.Dispatch<React.SetStateAction<Set<string>>>;
 }
 
-export function DotCalibration({ 
-  isPlaying, 
-  setIsPlaying, 
-  disabled = false, 
+export function DotCalibration({
+  isPlaying,
+  setIsPlaying,
+  disabled = false,
   preEQAnalyser = null,
   selectedDots: externalSelectedDots,
-  setSelectedDots: externalSetSelectedDots 
+  setSelectedDots: externalSetSelectedDots
 }: DotCalibrationProps) {
+  // Refs for auto-movement persistence
+  const autoMoveDirectionRef = useRef(1); // Track direction for auto-movement (persists across re-renders)
+  const selectedDotsRef = useRef<Set<string>>(new Set());
+
   // Always use odd numbers for grid dimensions
   const [gridSize, setGridSize] = useState(5); // Start with 5 rows (odd number)
   const [columnCount, setColumnCount] = useState(5); // Start with 5 columns (odd number)
@@ -442,15 +446,21 @@ export function DotCalibration({
   const [soundMode, setSoundMode] = useState<'sloped' | 'bandpassed' | 'sine'>('bandpassed'); // Start with bandpassed noise mode
 
   // Repeat settings state
-  const [repeatCount, setRepeatCount] = useState(1); // Default: 1 repeat (no extra repeats)
-  const [dbReductionPerRepeat, setDbReductionPerRepeat] = useState(12); // Default: 12 dB reduction
-  const [holdCount, setHoldCount] = useState(4); // Default: 4 times each dot plays at same volume
+  const [repeatCount, setRepeatCount] = useState(4); // Default: 4 hits per dot
+  const [dbIncreasePerRepeat, setDbIncreasePerRepeat] = useState(12); // Default: 12 dB increase per hit
+  const [baseDb, setBaseDb] = useState(-48); // Default: start at -48 dB
+  const [holdCount, setHoldCount] = useState(1); // Default: 1 (play each dot once before moving to next)
+
+  // Hit duration settings
+  const [attackDuration, setAttackDuration] = useState(0.01); // Default: 10ms attack
+  const [sustainDuration, setSustainDuration] = useState(0.5); // Default: 500ms sustain
+  const [releaseDuration, setReleaseDuration] = useState(0.01); // Default: 10ms release
 
   // Speed settings state
   const [speed, setSpeed] = useState(1.0); // Default: 1.0x speed (normal)
 
   // Bandwidth settings state
-  const [bandwidth, setBandwidth] = useState(5.0); // Default: 5.0 octaves
+  const [bandwidth, setBandwidth] = useState(6.0); // Default: 6.0 octaves
   const [frequencyExtensionRange, setFrequencyExtensionRange] = useState(0); // Default: 0 octaves (no extension, both filters always active)
 
   // Reading direction state
@@ -468,14 +478,36 @@ export function DotCalibration({
   const [rowStartOffset, setRowStartOffset] = useState(200); // Default: 200ms
 
   // Always playing state
-  const [alwaysPlayingEnabled, setAlwaysPlayingEnabled] = useState(false); // Default: disabled
+  const [alwaysPlayingEnabled, setAlwaysPlayingEnabled] = useState(false); // Default: disabled (changed from true)
   const [alwaysPlayingSpeed, setAlwaysPlayingSpeed] = useState(1 / 1.5); // Default: 1 cycle per 1.5 seconds (0.667 Hz)
   const [alwaysPlayingStaggerIntensity, setAlwaysPlayingStaggerIntensity] = useState(0); // Default: 0 (no stagger)
+
+  // Loop sequencer mode state
+  const [loopSequencerEnabled, setLoopSequencerEnabled] = useState(true); // Default: enabled
+  const [loopDuration, setLoopDuration] = useState(4.0); // Default: 4 seconds
+
+  // Stopband mode state (inverse sequential - all dots play except one)
+  const [stopbandModeEnabled, setStopbandModeEnabled] = useState(false); // Default: disabled (changed from true)
+  const [stopbandIterationTime, setStopbandIterationTime] = useState(500); // Default: 500ms per flash (250ms silence + 250ms gap)
+  const [stopbandOffDuration, setStopbandOffDuration] = useState(250); // Default: 250ms off duration
+  const [stopbandFlashCount, setStopbandFlashCount] = useState(4); // Default: 4 flashes per dot
+  const [stopbandDbReductionPerFlash, setStopbandDbReductionPerFlash] = useState(12); // Default: 12dB reduction per flash
+  const [stopbandManualMode, setStopbandManualMode] = useState(false); // Default: auto-cycle mode
+  const [stopbandManualIndex, setStopbandManualIndex] = useState(0); // Default: first dot
+
+  // Auto vertical movement state
+  const [autoMoveEnabled, setAutoMoveEnabled] = useState(false); // Default: disabled
+  const [autoMoveInterval, setAutoMoveInterval] = useState(500); // Default: 500ms per move
 
   // Use either external or internal state
   const selectedDots = externalSelectedDots !== undefined ? externalSelectedDots : internalSelectedDots;
   const setSelectedDots = externalSetSelectedDots !== undefined ? externalSetSelectedDots : setInternalSelectedDots;
-  
+
+  // Keep selectedDotsRef in sync for auto-movement
+  useEffect(() => {
+    selectedDotsRef.current = selectedDots;
+  }, [selectedDots]);
+
   // Always use multiple selection mode
   const selectionMode = 'multiple';
   
@@ -560,7 +592,7 @@ export function DotCalibration({
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [disabled, selectedDots, setSelectedDots, columnCount, gridSize]);
-  
+
   // Modified dot toggle handler to support multiple selections
   const handleDotToggle = (x: number, y: number) => {
     const dotKey = `${x},${y}`;
@@ -732,12 +764,29 @@ export function DotCalibration({
   }, [repeatCount]);
 
   useEffect(() => {
-    dotGridAudio.setDbReductionPerRepeat(dbReductionPerRepeat);
-  }, [dbReductionPerRepeat]);
+    dotGridAudio.setDbIncreasePerRepeat(dbIncreasePerRepeat);
+  }, [dbIncreasePerRepeat]);
+
+  useEffect(() => {
+    dotGridAudio.setBaseDb(baseDb);
+  }, [baseDb]);
 
   useEffect(() => {
     dotGridAudio.setHoldCount(holdCount);
   }, [holdCount]);
+
+  // Update audio engine when hit duration settings change
+  useEffect(() => {
+    dotGridAudio.setAttackDuration(attackDuration);
+  }, [attackDuration]);
+
+  useEffect(() => {
+    dotGridAudio.setSustainDuration(sustainDuration);
+  }, [sustainDuration]);
+
+  useEffect(() => {
+    dotGridAudio.setReleaseDuration(releaseDuration);
+  }, [releaseDuration]);
 
   // Update audio engine when speed changes
   useEffect(() => {
@@ -802,6 +851,44 @@ export function DotCalibration({
     dotGridAudio.setAlwaysPlayingStaggerIntensity(alwaysPlayingStaggerIntensity);
   }, [alwaysPlayingStaggerIntensity]);
 
+  // Update audio engine when stopband mode settings change
+  useEffect(() => {
+    dotGridAudio.setStopbandModeEnabled(stopbandModeEnabled);
+  }, [stopbandModeEnabled]);
+
+  useEffect(() => {
+    dotGridAudio.setStopbandIterationTime(stopbandIterationTime);
+  }, [stopbandIterationTime]);
+
+  useEffect(() => {
+    dotGridAudio.setStopbandOffDuration(stopbandOffDuration);
+  }, [stopbandOffDuration]);
+
+  useEffect(() => {
+    dotGridAudio.setStopbandFlashCount(stopbandFlashCount);
+  }, [stopbandFlashCount]);
+
+  useEffect(() => {
+    dotGridAudio.setStopbandDbReductionPerFlash(stopbandDbReductionPerFlash);
+  }, [stopbandDbReductionPerFlash]);
+
+  useEffect(() => {
+    dotGridAudio.setStopbandManualMode(stopbandManualMode);
+  }, [stopbandManualMode]);
+
+  useEffect(() => {
+    dotGridAudio.setStopbandManualIndex(stopbandManualIndex);
+  }, [stopbandManualIndex]);
+
+  // Update audio engine when loop sequencer settings change
+  useEffect(() => {
+    dotGridAudio.setLoopSequencerEnabled(loopSequencerEnabled);
+  }, [loopSequencerEnabled]);
+
+  useEffect(() => {
+    dotGridAudio.setLoopDuration(loopDuration);
+  }, [loopDuration]);
+
   // Handlers for repeat settings
   const increaseRepeatCount = () => {
     if (repeatCount < 10) {
@@ -815,8 +902,24 @@ export function DotCalibration({
     }
   };
 
-  const handleDbReductionChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setDbReductionPerRepeat(Number(e.target.value));
+  const handleDbIncreaseChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setDbIncreasePerRepeat(Number(e.target.value));
+  };
+
+  const handleBaseDbChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setBaseDb(Number(e.target.value));
+  };
+
+  const handleAttackDurationChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setAttackDuration(Number(e.target.value));
+  };
+
+  const handleSustainDurationChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSustainDuration(Number(e.target.value));
+  };
+
+  const handleReleaseDurationChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setReleaseDuration(Number(e.target.value));
   };
 
   const handleSpeedChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -834,6 +937,52 @@ export function DotCalibration({
   const toggleReadingDirection = () => {
     setReadingDirection(prev => prev === 'horizontal' ? 'vertical' : 'horizontal');
   };
+
+  // Handle automatic vertical movement
+  useEffect(() => {
+    // Only run when playing, enabled, and dots are selected
+    if (!isPlaying || !autoMoveEnabled || selectedDotsRef.current.size === 0 || disabled) {
+      return;
+    }
+
+    // Reset direction when starting
+    autoMoveDirectionRef.current = 1;
+
+    const intervalId = window.setInterval(() => {
+      // Parse current selected dots
+      const parsedDots = Array.from(selectedDotsRef.current).map(dot => {
+        const [x, y] = dot.split(',').map(Number);
+        return { x, y };
+      });
+
+      // Calculate new positions
+      const dy = autoMoveDirectionRef.current;
+
+      // Check if all dots can move in the current direction
+      const canMove = parsedDots.every(dot => {
+        const newY = dot.y + dy;
+        return newY >= 0 && newY < gridSize;
+      });
+
+      if (canMove) {
+        // Move the dots
+        const newSelectedDots = new Set<string>();
+        parsedDots.forEach(dot => {
+          const newY = dot.y + dy;
+          newSelectedDots.add(`${dot.x},${newY}`);
+        });
+        setSelectedDots(newSelectedDots);
+      } else {
+        // Hit a boundary - reverse direction immediately
+        autoMoveDirectionRef.current = -autoMoveDirectionRef.current;
+      }
+    }, autoMoveInterval);
+
+    // Cleanup interval on unmount or when dependencies change
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [isPlaying, autoMoveEnabled, gridSize, autoMoveInterval, disabled, setSelectedDots]);
 
   return (
     <div className="space-y-3">
@@ -955,6 +1104,44 @@ export function DotCalibration({
           </button>
         </div>
 
+        {/* Loop Sequencer Mode Toggle */}
+        <div className="border-t pt-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">Loop Sequencer</span>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={loopSequencerEnabled}
+                onChange={(e) => setLoopSequencerEnabled(e.target.checked)}
+                disabled={disabled}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+            </label>
+          </div>
+
+          {loopSequencerEnabled && (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium">Loop Time</span>
+                <span className="text-xs text-muted-foreground">{loopDuration.toFixed(1)}s</span>
+              </div>
+              <input
+                type="range"
+                min="0.5"
+                max="60"
+                step="0.1"
+                value={loopDuration}
+                onChange={(e) => setLoopDuration(Number(e.target.value))}
+                disabled={disabled}
+                className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                  disabled ? 'opacity-50 cursor-not-allowed' : ''
+                } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+              />
+            </div>
+          )}
+        </div>
+
         {/* Hold Count Slider */}
         <div className="space-y-1">
           <div className="flex items-center justify-between">
@@ -977,9 +1164,9 @@ export function DotCalibration({
           />
         </div>
 
-        {/* Repeat Count Control */}
+        {/* Repeat Count Control - renamed to "Hits" */}
         <div className="flex items-center justify-between">
-          <span className="text-xs font-medium">Repeats</span>
+          <span className="text-xs font-medium">Hits per Dot</span>
           <div className="flex items-center space-x-1">
             <button
               className={`h-6 w-6 rounded flex items-center justify-center border ${
@@ -1007,22 +1194,110 @@ export function DotCalibration({
           </div>
         </div>
 
-        {/* dB Reduction per Repeat Slider */}
+        {/* Starting Volume Slider */}
         <div className="space-y-1">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium">Volume Drop</span>
-            <span className="text-xs text-muted-foreground">{dbReductionPerRepeat} dB</span>
+            <span className="text-xs font-medium">Start Volume</span>
+            <span className="text-xs text-muted-foreground">{baseDb} dB</span>
+          </div>
+          <input
+            type="range"
+            min="-60"
+            max="0"
+            step="1"
+            value={baseDb}
+            onChange={handleBaseDbChange}
+            disabled={disabled}
+            className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+              disabled
+                ? 'opacity-50 cursor-not-allowed'
+                : ''
+            } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+          />
+        </div>
+
+        {/* dB Increase per Hit Slider */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">Volume Increase</span>
+            <span className="text-xs text-muted-foreground">{dbIncreasePerRepeat} dB</span>
           </div>
           <input
             type="range"
             min="0"
             max="24"
             step="1"
-            value={dbReductionPerRepeat}
-            onChange={handleDbReductionChange}
+            value={dbIncreasePerRepeat}
+            onChange={handleDbIncreaseChange}
             disabled={disabled || repeatCount === 1}
             className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
               disabled || repeatCount === 1
+                ? 'opacity-50 cursor-not-allowed'
+                : ''
+            } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+          />
+        </div>
+
+        {/* Attack Duration Slider */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">Attack</span>
+            <span className="text-xs text-muted-foreground">{(attackDuration * 1000).toFixed(0)}ms</span>
+          </div>
+          <input
+            type="range"
+            min="0.001"
+            max="0.5"
+            step="0.001"
+            value={attackDuration}
+            onChange={handleAttackDurationChange}
+            disabled={disabled}
+            className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+              disabled
+                ? 'opacity-50 cursor-not-allowed'
+                : ''
+            } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+          />
+        </div>
+
+        {/* Sustain Duration Slider */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">Sustain</span>
+            <span className="text-xs text-muted-foreground">{(sustainDuration * 1000).toFixed(0)}ms</span>
+          </div>
+          <input
+            type="range"
+            min="0.001"
+            max="2.0"
+            step="0.001"
+            value={sustainDuration}
+            onChange={handleSustainDurationChange}
+            disabled={disabled}
+            className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+              disabled
+                ? 'opacity-50 cursor-not-allowed'
+                : ''
+            } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+          />
+        </div>
+
+        {/* Release Duration Slider */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">Release</span>
+            <span className="text-xs text-muted-foreground">{(releaseDuration * 1000).toFixed(0)}ms</span>
+          </div>
+          <input
+            type="range"
+            min="0.001"
+            max="0.5"
+            step="0.001"
+            value={releaseDuration}
+            onChange={handleReleaseDurationChange}
+            disabled={disabled}
+            className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+              disabled
                 ? 'opacity-50 cursor-not-allowed'
                 : ''
             } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
@@ -1220,6 +1495,185 @@ export function DotCalibration({
                   step="0.01"
                   value={alwaysPlayingStaggerIntensity}
                   onChange={(e) => setAlwaysPlayingStaggerIntensity(Number(e.target.value))}
+                  disabled={disabled || stopbandModeEnabled}
+                  className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                    disabled || stopbandModeEnabled ? 'opacity-50 cursor-not-allowed' : ''
+                  } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+                />
+              </div>
+
+              {/* Stopband Mode Toggle */}
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium">Stopband Mode</span>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={stopbandModeEnabled}
+                    onChange={(e) => setStopbandModeEnabled(e.target.checked)}
+                    disabled={disabled}
+                    className="sr-only peer"
+                  />
+                  <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+                </label>
+              </div>
+
+              {stopbandModeEnabled && (
+                <>
+                  {/* Stopband Flash Count Slider */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium">Flashes per Dot</span>
+                      <span className="text-xs text-muted-foreground">{stopbandFlashCount}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="1"
+                      max="10"
+                      step="1"
+                      value={stopbandFlashCount}
+                      onChange={(e) => setStopbandFlashCount(Number(e.target.value))}
+                      disabled={disabled}
+                      className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                        disabled ? 'opacity-50 cursor-not-allowed' : ''
+                      } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+                    />
+                  </div>
+
+                  {/* Stopband Iteration Time Slider */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium">Flash Interval</span>
+                      <span className="text-xs text-muted-foreground">{stopbandIterationTime}ms</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="100"
+                      max="2000"
+                      step="50"
+                      value={stopbandIterationTime}
+                      onChange={(e) => setStopbandIterationTime(Number(e.target.value))}
+                      disabled={disabled}
+                      className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                        disabled ? 'opacity-50 cursor-not-allowed' : ''
+                      } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+                    />
+                  </div>
+
+                  {/* Stopband Off Duration Slider */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium">Off Duration</span>
+                      <span className="text-xs text-muted-foreground">{stopbandOffDuration}ms</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="50"
+                      max="1500"
+                      step="50"
+                      value={stopbandOffDuration}
+                      onChange={(e) => setStopbandOffDuration(Number(e.target.value))}
+                      disabled={disabled}
+                      className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                        disabled ? 'opacity-50 cursor-not-allowed' : ''
+                      } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+                    />
+                  </div>
+
+                  {/* Stopband dB Reduction per Flash Slider */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium">Volume Drop</span>
+                      <span className="text-xs text-muted-foreground">{stopbandDbReductionPerFlash} dB</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="24"
+                      step="1"
+                      value={stopbandDbReductionPerFlash}
+                      onChange={(e) => setStopbandDbReductionPerFlash(Number(e.target.value))}
+                      disabled={disabled}
+                      className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                        disabled ? 'opacity-50 cursor-not-allowed' : ''
+                      } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+                    />
+                  </div>
+
+                  {/* Stopband Manual Mode Toggle */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium">Manual Dot Select</span>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={stopbandManualMode}
+                        onChange={(e) => setStopbandManualMode(e.target.checked)}
+                        disabled={disabled}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+                    </label>
+                  </div>
+
+                  {stopbandManualMode && (
+                    <>
+                      {/* Stopband Manual Index Slider */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium">Flash Dot</span>
+                          <span className="text-xs text-muted-foreground">{stopbandManualIndex + 1} of {selectedDots.size}</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max={Math.max(0, selectedDots.size - 1)}
+                          step="1"
+                          value={stopbandManualIndex}
+                          onChange={(e) => setStopbandManualIndex(Number(e.target.value))}
+                          disabled={disabled || selectedDots.size === 0}
+                          className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                            disabled || selectedDots.size === 0 ? 'opacity-50 cursor-not-allowed' : ''
+                          } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+                        />
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Auto-Vertical Movement Controls */}
+        <div className="border-t pt-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">Auto Vertical Move</span>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoMoveEnabled}
+                onChange={(e) => setAutoMoveEnabled(e.target.checked)}
+                disabled={disabled}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+            </label>
+          </div>
+
+          {autoMoveEnabled && (
+            <>
+              {/* Move Interval Slider */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium">Move Interval</span>
+                  <span className="text-xs text-muted-foreground">{autoMoveInterval}ms</span>
+                </div>
+                <input
+                  type="range"
+                  min="100"
+                  max="2000"
+                  step="50"
+                  value={autoMoveInterval}
+                  onChange={(e) => setAutoMoveInterval(Number(e.target.value))}
                   disabled={disabled}
                   className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
                     disabled ? 'opacity-50 cursor-not-allowed' : ''
