@@ -559,10 +559,14 @@ class PositionedAudioService {
   /**
    * Schedule an envelope trigger for a specific point (for loop sequencer)
    * Applies ADSR envelope without deactivating the point
+   * Also sets frequency characteristics based on position
    */
   public schedulePointEnvelope(pointId: string, scheduledTime: number, gainMultiplier: number = 1.0): void {
     const point = this.audioPoints.get(pointId);
     if (point) {
+      // Set frequency characteristics (slope/bandwidth) based on dot position
+      this.setMainGainAndSlope(point);
+      // Schedule the ADSR envelope
       this._schedulePointActivationSound(point, scheduledTime, gainMultiplier);
     }
   }
