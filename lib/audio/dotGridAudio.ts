@@ -37,9 +37,9 @@ const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 3.8; // dB reduction per dB/octave d
 // const SUB_HIT_INTERVAL_S = DOT_DURATION_S / NUM_SUB_HITS; // Approx 0.125s if DOT_DURATION_S is 0.5s
 
 // New constants for Global Staggered Mode (when subHitPlaybackEnabled is true)
-const DEFAULT_GLOBAL_STAGGER_ATTACK_S = 0.01; // Very short attack (10ms) - default for "hit" style
-const DEFAULT_GLOBAL_STAGGER_SUSTAIN_S = 0.5; // Sustain/hold duration (500ms) - default for "hit" style
-const DEFAULT_GLOBAL_STAGGER_RELEASE_S = 0.01; // Very short release (10ms) - default for "hit" style
+const DEFAULT_GLOBAL_STAGGER_ATTACK_S = 0.5; // Attack duration (500ms) - gentle fade in
+const DEFAULT_GLOBAL_STAGGER_SUSTAIN_S = 0.5; // Sustain/hold duration (500ms)
+const DEFAULT_GLOBAL_STAGGER_RELEASE_S = 0.5; // Release duration (500ms) - gentle fade out
 // const ALL_DOTS_STAGGER_INTERVAL_S = 0.5; // Stagger between each dot in the global sequence
 
 // New constants for dot repetition

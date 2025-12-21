@@ -452,9 +452,9 @@ export function DotCalibration({
   const [holdCount, setHoldCount] = useState(1); // Default: 1 (play each dot once before moving to next)
 
   // Hit duration settings
-  const [attackDuration, setAttackDuration] = useState(0.01); // Default: 10ms attack
+  const [attackDuration, setAttackDuration] = useState(0.5); // Default: 500ms attack - gentle fade in
   const [sustainDuration, setSustainDuration] = useState(0.5); // Default: 500ms sustain
-  const [releaseDuration, setReleaseDuration] = useState(0.01); // Default: 10ms release
+  const [releaseDuration, setReleaseDuration] = useState(0.5); // Default: 500ms release - gentle fade out
 
   // Speed settings state
   const [speed, setSpeed] = useState(1.0); // Default: 1.0x speed (normal)
