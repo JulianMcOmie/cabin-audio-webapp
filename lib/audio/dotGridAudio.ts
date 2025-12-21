@@ -1447,10 +1447,9 @@ class DotGridAudioPlayer {
       return;
     }
 
-    // Activate all dots in continuous mode (sources loop, gains controlled by envelopes)
-    this.activeDotKeys.forEach(dotKey => {
-      this.audioService.activatePoint(dotKey, audioContext.getAudioContext().currentTime);
-    });
+    // Ensure all dots are silent before scheduling envelopes
+    // This sets envelope gains to 0 without stopping the audio sources
+    this.audioService.deactivateAllPoints();
 
     // Sort dots by reading order (horizontal/vertical snake pattern)
     const sortedDotKeys = this.sortDotsByReadingOrder();
@@ -1462,6 +1461,7 @@ class DotGridAudioPlayer {
 
     // Schedule ADSR envelope triggers for all dots in this loop cycle
     // Each dot fades in (attack), holds (sustain), then fades out (release)
+    // Starting from silence, staggered evenly throughout the loop
     sortedDotKeys.forEach((dotKey, index) => {
       const triggerTime = currentTime + (index * dotInterval);
       // Schedule envelope (attack -> sustain -> release) with full volume gain
