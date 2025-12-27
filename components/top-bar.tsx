@@ -20,13 +20,13 @@ import { SearchResults } from "@/components/search-results"
 import { useTheme } from "@/components/theme-provider"
 
 interface TopBarProps {
-  setActiveTab?: (tab: "eq" | "library" | "export" | "desktop" | "mobile" | "profile") => void
-  history?: Array<"eq" | "library" | "export" | "desktop" | "mobile" | "profile">
+  setActiveTab?: (tab: "eq" | "library" | "export" | "desktop" | "mobile" | "profile" | "rotation") => void
+  history?: Array<"eq" | "library" | "export" | "desktop" | "mobile" | "profile" | "rotation">
   currentIndex?: number
   setCurrentIndex?: (index: number) => void
 }
 
-type TabHistory = Array<"eq" | "library" | "export" | "desktop" | "mobile" | "profile">
+type TabHistory = Array<"eq" | "library" | "export" | "desktop" | "mobile" | "profile" | "rotation">
 
 export function TopBar({ setActiveTab, history, currentIndex, setCurrentIndex }: TopBarProps) {
   const { user, signOut } = useAuth()

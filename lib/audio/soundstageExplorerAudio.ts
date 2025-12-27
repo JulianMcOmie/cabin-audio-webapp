@@ -270,10 +270,24 @@ class SoundstageExplorerService {
   private currentBandwidth: number = BANDPASS_BANDWIDTH_OCTAVES;
 
   // Always playing oscillation settings
-  private oscillationSpeed: number = 1.5; // Default: 1.5 oscillations per second
+  private positionOscillationSpeed: number = 1.5; // Default: 1.5 oscillations per second for position
+  private volumeOscillationSpeed: number = 1.5; // Default: 1.5 oscillations per second for volume
   private oscillationStartTime: number = 0;
   private oscillationAnimationFrameId: number | null = null;
   private isPlaying: boolean = false;
+  private volumeOscillationEnabled: boolean = true; // Whether volume oscillation is enabled
+  private positionOscillationEnabled: boolean = true; // Whether position oscillation is enabled
+  private volumeOscillationMinDb: number = -60; // Minimum dB for volume oscillation (default: -60 dB, was -12 dB)
+
+  // Line mode settings
+  private isLineMode: boolean = false;
+  private lineEndpoint1: { x: number; y: number } = { x: 0.3, y: 0.5 };
+  private lineEndpoint2: { x: number; y: number } = { x: 0.7, y: 0.5 };
+  private endpoint1VolumeDb: number = 0; // Volume at endpoint 1 in dB
+  private endpoint2VolumeDb: number = 0; // Volume at endpoint 2 in dB
+
+  // Manual volume control (for fade-line mode)
+  private manualVolume: number | null = null; // null means use oscillation, number 0-1 means override
 
   constructor(audioContextInstance: AudioContext) {
     this.ctx = audioContextInstance;
@@ -316,13 +330,42 @@ class SoundstageExplorerService {
     // normalizedY: 0 (top) = high frequency, 1 (bottom) = low frequency
     const minFreq = 20;
     const maxFreq = 20000;
-    const logMin = Math.log2(minFreq);
-    const logMax = Math.log2(maxFreq);
 
-    // Invert Y so top = high frequency
-    const invertedY = 1 - normalizedY;
-    const logFreq = logMin + invertedY * (logMax - logMin);
-    return Math.pow(2, logFreq);
+    // In bandpassed mode, account for bandwidth so filter edges stay within audible range
+    if (this.currentSoundMode === SoundMode.BandpassedNoise) {
+      const halfBandwidth = this.currentBandwidth / 2;
+
+      // Calculate constrained frequency range:
+      // Max center freq: upper edge = centerFreq * 2^(bandwidth/2) should equal maxFreq
+      // Min center freq: lower edge = centerFreq / 2^(bandwidth/2) should equal minFreq
+      const constrainedMaxFreq = maxFreq / Math.pow(2, halfBandwidth);
+      const constrainedMinFreq = minFreq * Math.pow(2, halfBandwidth);
+
+      const logMin = Math.log2(constrainedMinFreq);
+      const logMax = Math.log2(constrainedMaxFreq);
+
+      // Invert Y so top = high frequency
+      const invertedY = 1 - normalizedY;
+      const logFreq = logMin + invertedY * (logMax - logMin);
+      return Math.pow(2, logFreq);
+    } else {
+      // For sloped noise and sine tone, use full audible range
+      const logMin = Math.log2(minFreq);
+      const logMax = Math.log2(maxFreq);
+
+      // Invert Y so top = high frequency
+      const invertedY = 1 - normalizedY;
+      const logFreq = logMin + invertedY * (logMax - logMin);
+      return Math.pow(2, logFreq);
+    }
+  }
+
+  private calculateInterpolatedEndpointVolume(t: number): number {
+    // t is the position along the line from 0 (endpoint1) to 1 (endpoint2)
+    // Interpolate between endpoint volumes in dB space for perceptually linear results
+    const volumeDb = this.endpoint1VolumeDb + t * (this.endpoint2VolumeDb - this.endpoint1VolumeDb);
+    // Convert from dB to linear gain
+    return Math.pow(10, volumeDb / 20);
   }
 
   private updateVolumeOscillation = (): void => {
@@ -333,19 +376,55 @@ class SoundstageExplorerService {
     const currentTime = this.ctx.currentTime;
     const elapsed = currentTime - this.oscillationStartTime;
 
-    // Calculate oscillating gain using sine wave
-    // oscillationSpeed is in Hz (oscillations per second)
-    const phase = elapsed * this.oscillationSpeed * 2 * Math.PI;
+    // Calculate position oscillation triangle wave (for position movement)
+    const positionCycleProgress = (elapsed * this.positionOscillationSpeed) % 1;
+    const positionT = positionCycleProgress < 0.5
+      ? positionCycleProgress * 2
+      : 2 - positionCycleProgress * 2;
 
-    // Map sine wave [-1, 1] to dB range and then to linear gain
-    // Use a range from -12dB to 0dB for perceptually smooth oscillation
-    const minDb = -12;
-    const maxDb = 0;
-    const normalizedSine = (Math.sin(phase) + 1) / 2; // Map to [0, 1]
-    const currentDb = minDb + normalizedSine * (maxDb - minDb);
-    const linearGain = Math.pow(10, currentDb / 20);
+    // Calculate volume oscillation triangle wave (for volume modulation)
+    const volumeCycleProgress = (elapsed * this.volumeOscillationSpeed) % 1;
+    const volumeT = volumeCycleProgress < 0.5
+      ? volumeCycleProgress * 2
+      : 2 - volumeCycleProgress * 2;
 
-    this.audioNodes.volumeGain.gain.setValueAtTime(linearGain, currentTime);
+    // Check if manual volume is set (takes precedence)
+    if (this.manualVolume !== null) {
+      // Manual volume control (fade-line mode)
+      this.audioNodes.volumeGain.gain.setValueAtTime(this.manualVolume, currentTime);
+    } else {
+      // Calculate base volume from endpoint interpolation (in line mode)
+      let baseVolume = 1.0; // Default full volume
+      if (this.isLineMode) {
+        baseVolume = this.calculateInterpolatedEndpointVolume(positionT);
+      }
+
+      // Handle volume oscillation independently
+      if (this.volumeOscillationEnabled) {
+        // Map triangle wave to dB range and then to linear gain
+        // Use configurable range for volume oscillation
+        const minDb = this.volumeOscillationMinDb;
+        const maxDb = 0;
+        const currentDb = minDb + volumeT * (maxDb - minDb);
+        const oscillationGain = Math.pow(10, currentDb / 20);
+
+        // Multiply base volume by oscillation gain
+        this.audioNodes.volumeGain.gain.setValueAtTime(baseVolume * oscillationGain, currentTime);
+      } else {
+        // Volume oscillation disabled - use only base volume from endpoint interpolation
+        this.audioNodes.volumeGain.gain.setValueAtTime(baseVolume, currentTime);
+      }
+    }
+
+    // Handle position oscillation independently (only in line mode)
+    if (this.isLineMode && this.positionOscillationEnabled) {
+      // Interpolate between endpoint1 and endpoint2 using triangle wave
+      const currentX = this.lineEndpoint1.x + positionT * (this.lineEndpoint2.x - this.lineEndpoint1.x);
+      const currentY = this.lineEndpoint1.y + positionT * (this.lineEndpoint2.y - this.lineEndpoint1.y);
+
+      // Update audio position
+      this.updatePositionInternal(currentX, currentY);
+    }
 
     this.oscillationAnimationFrameId = requestAnimationFrame(this.updateVolumeOscillation);
   };
@@ -482,7 +561,7 @@ class SoundstageExplorerService {
     }
   }
 
-  public updatePosition(normalizedX: number, normalizedY: number): void {
+  private updatePositionInternal(normalizedX: number, normalizedY: number): void {
     if (!this.audioNodes) return;
 
     // Update pan position
@@ -499,6 +578,35 @@ class SoundstageExplorerService {
       this.audioNodes.slopedNoiseGenerator.setSlope(slope);
     } else if (this.audioNodes.sineToneGenerator) {
       this.audioNodes.sineToneGenerator.setFrequency(frequency);
+    }
+  }
+
+  public updatePosition(normalizedX: number, normalizedY: number): void {
+    this.updatePositionInternal(normalizedX, normalizedY);
+
+    // When position oscillation is disabled in line mode, also update volume based on position
+    if (this.isLineMode && !this.positionOscillationEnabled && this.isPlaying && this.audioNodes) {
+      // Calculate position parameter (0 to 1) along the line
+      // This is a simplified calculation assuming we're at the midpoint
+      const t = 0.5; // Midpoint
+      const baseVolume = this.calculateInterpolatedEndpointVolume(t);
+
+      const currentTime = this.ctx.currentTime;
+      if (this.volumeOscillationEnabled) {
+        // Need to get current oscillation value using triangle wave based on volumeOscillationSpeed
+        const elapsed = currentTime - this.oscillationStartTime;
+        const cycleProgress = (elapsed * this.volumeOscillationSpeed) % 1;
+        const triangleWave = cycleProgress < 0.5
+          ? cycleProgress * 2
+          : 2 - cycleProgress * 2;
+        const minDb = this.volumeOscillationMinDb;
+        const maxDb = 0;
+        const currentDb = minDb + triangleWave * (maxDb - minDb);
+        const oscillationGain = Math.pow(10, currentDb / 20);
+        this.audioNodes.volumeGain.gain.setValueAtTime(baseVolume * oscillationGain, currentTime);
+      } else {
+        this.audioNodes.volumeGain.gain.setValueAtTime(baseVolume, currentTime);
+      }
     }
   }
 
@@ -538,12 +646,84 @@ class SoundstageExplorerService {
     return this.currentBandwidth;
   }
 
-  public setOscillationSpeed(speed: number): void {
-    this.oscillationSpeed = Math.max(0.1, Math.min(10, speed));
+  public setPositionOscillationSpeed(speed: number): void {
+    this.positionOscillationSpeed = Math.max(0.1, Math.min(10, speed));
   }
 
-  public getOscillationSpeed(): number {
-    return this.oscillationSpeed;
+  public getPositionOscillationSpeed(): number {
+    return this.positionOscillationSpeed;
+  }
+
+  public setVolumeOscillationSpeed(speed: number): void {
+    this.volumeOscillationSpeed = Math.max(0.1, Math.min(10, speed));
+  }
+
+  public getVolumeOscillationSpeed(): number {
+    return this.volumeOscillationSpeed;
+  }
+
+  public setVolumeOscillationEnabled(enabled: boolean): void {
+    this.volumeOscillationEnabled = enabled;
+  }
+
+  public getVolumeOscillationEnabled(): boolean {
+    return this.volumeOscillationEnabled;
+  }
+
+  public setPositionOscillationEnabled(enabled: boolean): void {
+    this.positionOscillationEnabled = enabled;
+  }
+
+  public getPositionOscillationEnabled(): boolean {
+    return this.positionOscillationEnabled;
+  }
+
+  public setLineMode(enabled: boolean): void {
+    this.isLineMode = enabled;
+  }
+
+  public getLineMode(): boolean {
+    return this.isLineMode;
+  }
+
+  public setLineEndpoints(endpoint1: { x: number; y: number }, endpoint2: { x: number; y: number }): void {
+    this.lineEndpoint1 = { ...endpoint1 };
+    this.lineEndpoint2 = { ...endpoint2 };
+  }
+
+  public getLineEndpoints(): { endpoint1: { x: number; y: number }, endpoint2: { x: number; y: number } } {
+    return {
+      endpoint1: { ...this.lineEndpoint1 },
+      endpoint2: { ...this.lineEndpoint2 }
+    };
+  }
+
+  public setEndpointVolumes(endpoint1VolumeDb: number, endpoint2VolumeDb: number): void {
+    this.endpoint1VolumeDb = Math.max(-60, Math.min(0, endpoint1VolumeDb)); // Clamp to [-60, 0] dB
+    this.endpoint2VolumeDb = Math.max(-60, Math.min(0, endpoint2VolumeDb)); // Clamp to [-60, 0] dB
+  }
+
+  public getEndpointVolumes(): { endpoint1VolumeDb: number, endpoint2VolumeDb: number } {
+    return {
+      endpoint1VolumeDb: this.endpoint1VolumeDb,
+      endpoint2VolumeDb: this.endpoint2VolumeDb
+    };
+  }
+
+  public setVolumeOscillationMinDb(minDb: number): void {
+    this.volumeOscillationMinDb = Math.max(-60, Math.min(-6, minDb)); // Clamp to [-60, -6] dB
+  }
+
+  public getVolumeOscillationMinDb(): number {
+    return this.volumeOscillationMinDb;
+  }
+
+  public setManualVolume(volume: number | null): void {
+    this.manualVolume = volume;
+  }
+
+  public getManualVolume(): number | null {
+    return this.manualVolume;
   }
 
   public dispose(): void {
@@ -610,12 +790,76 @@ class SoundstageExplorerPlayer {
     return this.service.getBandwidth();
   }
 
-  public setOscillationSpeed(speed: number): void {
-    this.service.setOscillationSpeed(speed);
+  public setPositionOscillationSpeed(speed: number): void {
+    this.service.setPositionOscillationSpeed(speed);
   }
 
-  public getOscillationSpeed(): number {
-    return this.service.getOscillationSpeed();
+  public getPositionOscillationSpeed(): number {
+    return this.service.getPositionOscillationSpeed();
+  }
+
+  public setVolumeOscillationSpeed(speed: number): void {
+    this.service.setVolumeOscillationSpeed(speed);
+  }
+
+  public getVolumeOscillationSpeed(): number {
+    return this.service.getVolumeOscillationSpeed();
+  }
+
+  public setVolumeOscillationEnabled(enabled: boolean): void {
+    this.service.setVolumeOscillationEnabled(enabled);
+  }
+
+  public getVolumeOscillationEnabled(): boolean {
+    return this.service.getVolumeOscillationEnabled();
+  }
+
+  public setPositionOscillationEnabled(enabled: boolean): void {
+    this.service.setPositionOscillationEnabled(enabled);
+  }
+
+  public getPositionOscillationEnabled(): boolean {
+    return this.service.getPositionOscillationEnabled();
+  }
+
+  public setLineMode(enabled: boolean): void {
+    this.service.setLineMode(enabled);
+  }
+
+  public getLineMode(): boolean {
+    return this.service.getLineMode();
+  }
+
+  public setLineEndpoints(endpoint1: { x: number; y: number }, endpoint2: { x: number; y: number }): void {
+    this.service.setLineEndpoints(endpoint1, endpoint2);
+  }
+
+  public getLineEndpoints(): { endpoint1: { x: number; y: number }, endpoint2: { x: number; y: number } } {
+    return this.service.getLineEndpoints();
+  }
+
+  public setEndpointVolumes(endpoint1VolumeDb: number, endpoint2VolumeDb: number): void {
+    this.service.setEndpointVolumes(endpoint1VolumeDb, endpoint2VolumeDb);
+  }
+
+  public getEndpointVolumes(): { endpoint1VolumeDb: number, endpoint2VolumeDb: number } {
+    return this.service.getEndpointVolumes();
+  }
+
+  public setVolumeOscillationMinDb(minDb: number): void {
+    this.service.setVolumeOscillationMinDb(minDb);
+  }
+
+  public getVolumeOscillationMinDb(): number {
+    return this.service.getVolumeOscillationMinDb();
+  }
+
+  public setManualVolume(volume: number | null): void {
+    this.service.setManualVolume(volume);
+  }
+
+  public getManualVolume(): number | null {
+    return this.service.getManualVolume();
   }
 
   public dispose(): void {

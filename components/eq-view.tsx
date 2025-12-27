@@ -21,6 +21,7 @@ import { DotCalibration } from "@/components/dot-grid"
 import { GlyphGrid } from "@/components/glyph-grid"
 import { ShapeGrid } from "@/components/shape-grid"
 import { SoundstageExplorer } from "@/components/soundstage-explorer"
+import { MultiDot3DExplorer } from "@/components/multi-dot-3d-explorer"
 import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
 import * as shapeGridAudio from '@/lib/audio/shapeGridAudio'
@@ -84,8 +85,11 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   // State for the soundstage explorer
   const [soundstageExplorerPlaying, setSoundstageExplorerPlaying] = useState(false)
 
+  // State for the multi-dot 3D explorer
+  const [multiDot3DPlaying, setMultiDot3DPlaying] = useState(false)
+
   // Add state for toggling between Glyph Grid and Dot Grid
-  const [activeGrid, setActiveGrid] = useState<"line" | "dot" | "shape" | "explorer">("dot")
+  const [activeGrid, setActiveGrid] = useState<"line" | "dot" | "shape" | "explorer" | "3d">("dot")
 
   // New state to track selected dots for dot grid
   const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set());
@@ -101,7 +105,7 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const [shapeContinuousMode, setShapeContinuousMode] = useState(false); // Toggle between discrete dots and continuous sweep
 
   // New state for Dot Grid sub-hit playback mode
-  const [isSubHitPlaybackEnabled, setIsSubHitPlaybackEnabled] = useState(true);
+  const [isSubHitPlaybackEnabled, setIsSubHitPlaybackEnabled] = useState(false);
 
   // New states for Dot Grid speed and tilt range controls
   const [dotGridSpeedMultiplier, setDotGridSpeedMultiplier] = useState(1.0);
@@ -511,12 +515,30 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                     Soundstage Explorer
                   </button>
                 </div>
+                <div className="flex border rounded-md overflow-hidden w-fit">
+                  <button
+                    className={`px-4 py-2 text-sm font-medium ${
+                      activeGrid === "3d"
+                        ? "bg-purple-500 text-white"
+                        : "bg-background hover:bg-muted"
+                    }`}
+                    onClick={() => setActiveGrid("3d")}
+                  >
+                    3D Multi-Dot
+                  </button>
+                </div>
               </div>
             </div>
             
             {/* Grid content area */}
             <div className="mt-4">
-              {activeGrid === "explorer" ? (
+              {activeGrid === "3d" ? (
+                <MultiDot3DExplorer
+                  isPlaying={multiDot3DPlaying}
+                  setIsPlaying={setMultiDot3DPlaying}
+                  disabled={false}
+                />
+              ) : activeGrid === "explorer" ? (
                 <SoundstageExplorer
                   isPlaying={soundstageExplorerPlaying}
                   setIsPlaying={setSoundstageExplorerPlaying}

@@ -123,11 +123,12 @@ export function LegacyDotGrid({ selectedDot, setSelectedDot, gridSize, disabled 
 // New interface for multi-selection DotGrid
 interface MultiSelectionDotGridProps {
   gridSize: number; // Range: 3-9, now controls only rows
-  selectedDots: Set<string>; // Format: "x,y" string for each dot
+  selectedDots: Set<string>; // Format: "x,y" string for each dot (kept for backward compatibility)
   onDotToggle: (x: number, y: number) => void;
   disabled?: boolean;
   isPlaying?: boolean;
   selectionMode?: 'single' | 'multiple';
+  dotVolumeLevels?: Map<string, number>; // Volume level for each dot (0-3)
 }
 
 // Constants for the grid
@@ -139,14 +140,15 @@ const MAX_ROWS = 100; // Maximum rows (odd)
 const BASE_DOT_RADIUS = 6; // Base dot size, will be adjusted as needed
 
 // New DotGrid component with multiple selection support
-export function DotGrid({ 
+export function DotGrid({
   gridSize,
   selectedDots,
   onDotToggle,
   disabled = false,
   isPlaying = false,
   columnCount = DEFAULT_COLUMNS,
-  selectionMode = 'multiple'
+  selectionMode = 'multiple',
+  dotVolumeLevels = new Map()
 }: MultiSelectionDotGridProps & { columnCount?: number, selectionMode?: 'single' | 'multiple' }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isDarkMode, setIsDarkMode] = useState(false)
@@ -265,17 +267,23 @@ export function DotGrid({
       for (let x = 0; x < cols; x++) {
         const centerX = hGap + (x * (dotRadius * 2 + hGap)) + dotRadius
         const centerY = vGap + (y * (dotRadius * 2 + vGap)) + dotRadius
-        
-        // Check if this dot is selected
-        const isSelected = selectedDots.has(`${x},${y}`)
-        
-        // Draw pulsing animation for playing dots
-        if (isPlaying && isSelected) {
+
+        const dotKey = `${x},${y}`;
+        const volumeLevel = dotVolumeLevels.get(dotKey) ?? 0;
+
+        // Calculate opacity based on volume level
+        // Level 0: 0.2, Level 1: 0.4, Level 2: 0.7, Level 3: 1.0
+        const volumeOpacity = volumeLevel === 0 ? 0.2 : (0.2 + volumeLevel * 0.27);
+
+        // Draw pulsing animation for playing dots at full volume
+        if (isPlaying && volumeLevel === 3) {
           // Draw pulse background
           const pulseSize = 2 + Math.sin(Date.now() / 200) * 0.5
           ctx.beginPath()
           ctx.arc(centerX, centerY, dotRadius * pulseSize, 0, Math.PI * 2)
-          ctx.fillStyle = isDarkMode ? "rgba(56, 189, 248, 0.2)" : "rgba(2, 132, 199, 0.2)"
+          ctx.fillStyle = isDarkMode
+            ? `rgba(56, 189, 248, ${volumeOpacity * 0.2})`
+            : `rgba(2, 132, 199, ${volumeOpacity * 0.2})`
           ctx.fill()
         }
 
@@ -283,16 +291,19 @@ export function DotGrid({
         ctx.beginPath()
         ctx.arc(centerX, centerY, dotRadius, 0, Math.PI * 2)
 
-        if (isSelected && !disabled) {
-          ctx.fillStyle = isDarkMode ? "#38bdf8" : "#0284c7" // sky-400 or sky-600
+        if (volumeLevel > 0 && !disabled) {
+          // Active dot - color based on volume level
+          const baseColor = isDarkMode ? "56, 189, 248" : "2, 132, 199"; // sky-400 or sky-600
+          ctx.fillStyle = `rgba(${baseColor}, ${volumeOpacity})`;
         } else {
+          // Inactive dot (volume level 0)
           ctx.fillStyle = disabled
             ? isDarkMode
-              ? "#27272a" // zinc-800 - darker for better contrast in dark mode
-              : "#e2e8f0" // slate-200
+              ? `rgba(39, 39, 42, ${volumeOpacity})` // zinc-800
+              : `rgba(226, 232, 240, ${volumeOpacity})` // slate-200
             : isDarkMode
-              ? "#52525b" // zinc-600 - brighter for better visibility in dark mode
-              : "#cbd5e1" // slate-300
+              ? `rgba(82, 82, 91, ${volumeOpacity})` // zinc-600
+              : `rgba(203, 213, 225, ${volumeOpacity})` // slate-300
         }
 
         ctx.fill()
@@ -300,13 +311,13 @@ export function DotGrid({
     }
     
     // Request animation frame if playing to handle pulsing animation
-    if (isPlaying && selectedDots.size > 0) {
+    if (isPlaying) {
       requestAnimationFrame(() => {
         // Force a re-render for animation
         setCanvasSize(prev => ({ ...prev }));
       });
     }
-  }, [selectedDots, gridSize, disabled, isDarkMode, canvasSize, isPlaying, gridDimensions])
+  }, [selectedDots, gridSize, disabled, isDarkMode, canvasSize, isPlaying, gridDimensions, dotVolumeLevels])
 
   // Track drag events for continuous selection
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -438,10 +449,13 @@ export function DotCalibration({
   // Always use odd numbers for grid dimensions
   const [gridSize, setGridSize] = useState(5); // Start with 5 rows (odd number)
   const [columnCount, setColumnCount] = useState(5); // Start with 5 columns (odd number)
-  
+
   // Use either external or internal state for selected dots
   const [internalSelectedDots, setInternalSelectedDots] = useState<Set<string>>(new Set()); // Start with no dots selected
-  
+
+  // Volume level state for all dots (0 = off, 1 = -36dB, 2 = -18dB, 3 = 0dB)
+  const [dotVolumeLevels, setDotVolumeLevels] = useState<Map<string, number>>(new Map());
+
   // Sound mode state
   const [soundMode, setSoundMode] = useState<'sloped' | 'bandpassed' | 'sine'>('bandpassed'); // Start with bandpassed noise mode
 
@@ -452,9 +466,9 @@ export function DotCalibration({
   const [holdCount, setHoldCount] = useState(1); // Default: 1 (play each dot once before moving to next)
 
   // Hit duration settings
-  const [attackDuration, setAttackDuration] = useState(0.5); // Default: 500ms attack - gentle fade in
-  const [sustainDuration, setSustainDuration] = useState(0.5); // Default: 500ms sustain
-  const [releaseDuration, setReleaseDuration] = useState(0.5); // Default: 500ms release - gentle fade out
+  const [attackDuration, setAttackDuration] = useState(0.05); // Default: 50ms attack - quick fade in for continuous sound
+  const [sustainDuration, setSustainDuration] = useState(0.5); // Default: 500ms sustain - fills the dot duration
+  const [releaseDuration, setReleaseDuration] = useState(0.05); // Default: 50ms release - quick fade out for continuous sound
 
   // Speed settings state
   const [speed, setSpeed] = useState(1.0); // Default: 1.0x speed (normal)
@@ -483,8 +497,16 @@ export function DotCalibration({
   const [alwaysPlayingStaggerIntensity, setAlwaysPlayingStaggerIntensity] = useState(0); // Default: 0 (no stagger)
 
   // Loop sequencer mode state
-  const [loopSequencerEnabled, setLoopSequencerEnabled] = useState(true); // Default: enabled
-  const [loopDuration, setLoopDuration] = useState(4.0); // Default: 4 seconds
+  const [loopSequencerEnabled, setLoopSequencerEnabled] = useState(true); // Default: enabled for cycling through dots
+  const [loopDuration, setLoopDuration] = useState(4.0); // Default: 4 seconds (dynamically calculated based on dot count)
+  const [loopSequencerPlayTogether, setLoopSequencerPlayTogether] = useState(false); // Default: cycle through dots individually
+
+  // Auto volume cycle state
+  const [autoVolumeCycleEnabled, setAutoVolumeCycleEnabled] = useState(false); // Default: disabled
+  const [autoVolumeCycleSpeed, setAutoVolumeCycleSpeed] = useState(2.0); // Default: 2 seconds per cycle
+  const [autoVolumeCycleMinDb, setAutoVolumeCycleMinDb] = useState(-36); // Default: -36dB (level 1)
+  const [autoVolumeCycleMaxDb, setAutoVolumeCycleMaxDb] = useState(0); // Default: 0dB (level 3)
+  const [autoVolumeCycleSteps, setAutoVolumeCycleSteps] = useState(3); // Default: 3 steps
 
   // Stopband mode state (inverse sequential - all dots play except one)
   const [stopbandModeEnabled, setStopbandModeEnabled] = useState(false); // Default: disabled (changed from true)
@@ -510,11 +532,20 @@ export function DotCalibration({
 
   // Always use multiple selection mode
   const selectionMode = 'multiple';
-  
-  // Update audio player when selected dots change
+
+  // Initialize audio engine with grid dimensions but no active dots
   useEffect(() => {
+    // Clear all volume levels when grid dimensions change
+    setDotVolumeLevels(new Map());
+
+    // Tell the audio engine about grid dimensions (but don't activate any dots)
     const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
-    audioPlayer.updateDots(selectedDots, gridSize, columnCount);
+    audioPlayer.updateDots(new Set(), gridSize, columnCount);
+  }, [gridSize, columnCount]);
+
+  // Keep the old effect for backward compatibility but do nothing for now
+  useEffect(() => {
+    // This effect is kept for potential future use
   }, [selectedDots, gridSize, columnCount]);
   
   // Direct control of audio player playback state - no fancy logic
@@ -568,17 +599,37 @@ export function DotCalibration({
         return newX >= 0 && newX < columnCount && newY >= 0 && newY < gridSize;
       });
       
-      // If all dots can move, update the selection
+      // If all dots can move, update the selection and volume levels
       if (canAllMove) {
         const newSelectedDots = new Set<string>();
+        const newVolumeLevels = new Map<string, number>();
+
+        // Move dots and their volume levels
         parsedDots.forEach(dot => {
           const newX = dot.x + dx;
           const newY = dot.y + dy;
-          newSelectedDots.add(`${newX},${newY}`);
+          const newKey = `${newX},${newY}`;
+          const oldKey = `${dot.x},${dot.y}`;
+
+          newSelectedDots.add(newKey);
+
+          // Transfer volume level to new position
+          const volumeLevel = dotVolumeLevels.get(oldKey) ?? 0;
+          newVolumeLevels.set(newKey, volumeLevel);
         });
-        
+
         setSelectedDots(newSelectedDots);
-        
+        setDotVolumeLevels(newVolumeLevels);
+
+        // Update audio player with new positions
+        const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
+        audioPlayer.updateDots(newSelectedDots, gridSize, columnCount);
+
+        // Update volume levels in audio engine
+        newVolumeLevels.forEach((level, key) => {
+          dotGridAudio.updateDotVolumeLevel(key, level);
+        });
+
         // Prevent default behavior (scrolling)
         e.preventDefault();
       }
@@ -591,37 +642,49 @@ export function DotCalibration({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [disabled, selectedDots, setSelectedDots, columnCount, gridSize]);
+  }, [disabled, selectedDots, setSelectedDots, columnCount, gridSize, dotVolumeLevels, setDotVolumeLevels]);
 
-  // Modified dot toggle handler to support multiple selections
+  // Modified dot toggle handler to cycle volume levels
   const handleDotToggle = (x: number, y: number) => {
     const dotKey = `${x},${y}`;
-    const newSelectedDots = new Set<string>(selectedDots);
-    
+
     // Get music player state
     const { isPlaying: isMusicPlaying, setIsPlaying: setMusicPlaying } = usePlayerStore.getState();
-    
-    // Toggle this dot: if selected, deselect it; if not selected, select it
-    if (selectedDots.has(dotKey)) {
-      newSelectedDots.delete(dotKey);
-    } else {
-      newSelectedDots.add(dotKey);
-    }
-    
-    setSelectedDots(newSelectedDots);
-    
-    // Auto-start when selecting dots
-    if (newSelectedDots.size > 0 && !isPlaying) {
+
+    // Cycle volume level: 3 -> 2 -> 1 -> 0 -> 3 -> ...
+    const currentLevel = dotVolumeLevels.get(dotKey) ?? 0;
+    const nextLevel = currentLevel === 0 ? 3 : currentLevel - 1;
+
+    // Update volume level
+    const newVolumeLevels = new Map(dotVolumeLevels);
+    newVolumeLevels.set(dotKey, nextLevel);
+    setDotVolumeLevels(newVolumeLevels);
+
+    // Get all active dots (volume > 0)
+    const activeDots = new Set<string>();
+    newVolumeLevels.forEach((level, key) => {
+      if (level > 0) {
+        activeDots.add(key);
+      }
+    });
+
+    // Update selectedDots to match active dots (for arrow key navigation)
+    setSelectedDots(activeDots);
+
+    // Update audio player with active dots
+    const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
+    audioPlayer.updateDots(activeDots, gridSize, columnCount);
+
+    // Update volume level for this dot
+    dotGridAudio.updateDotVolumeLevel(dotKey, nextLevel);
+
+    // Auto-start playback on first interaction
+    if (!isPlaying) {
       // If music is playing, pause it first
       if (isMusicPlaying) {
         setMusicPlaying(false);
       }
       setIsPlaying(true);
-    }
-    
-    // Auto-stop when deselecting all dots
-    if (newSelectedDots.size === 0 && isPlaying) {
-      setIsPlaying(false);
     }
   };
   
@@ -880,6 +943,27 @@ export function DotCalibration({
     dotGridAudio.setStopbandManualIndex(stopbandManualIndex);
   }, [stopbandManualIndex]);
 
+  // Update audio engine when auto volume cycle settings change
+  useEffect(() => {
+    dotGridAudio.setAutoVolumeCycleEnabled(autoVolumeCycleEnabled);
+  }, [autoVolumeCycleEnabled]);
+
+  useEffect(() => {
+    dotGridAudio.setAutoVolumeCycleSpeed(autoVolumeCycleSpeed);
+  }, [autoVolumeCycleSpeed]);
+
+  useEffect(() => {
+    dotGridAudio.setAutoVolumeCycleMinDb(autoVolumeCycleMinDb);
+  }, [autoVolumeCycleMinDb]);
+
+  useEffect(() => {
+    dotGridAudio.setAutoVolumeCycleMaxDb(autoVolumeCycleMaxDb);
+  }, [autoVolumeCycleMaxDb]);
+
+  useEffect(() => {
+    dotGridAudio.setAutoVolumeCycleSteps(autoVolumeCycleSteps);
+  }, [autoVolumeCycleSteps]);
+
   // Update audio engine when loop sequencer settings change
   useEffect(() => {
     dotGridAudio.setLoopSequencerEnabled(loopSequencerEnabled);
@@ -888,6 +972,31 @@ export function DotCalibration({
   useEffect(() => {
     dotGridAudio.setLoopDuration(loopDuration);
   }, [loopDuration]);
+
+  useEffect(() => {
+    dotGridAudio.setLoopSequencerPlayTogether(loopSequencerPlayTogether);
+  }, [loopSequencerPlayTogether]);
+
+  // Automatically calculate loop duration based on number of active dots (1.5 seconds per dot: 500ms quiet + 500ms medium + 500ms loud)
+  useEffect(() => {
+    // Count active dots (volume level > 0)
+    let activeDotCount = 0;
+    dotVolumeLevels.forEach((level) => {
+      if (level > 0) activeDotCount++;
+    });
+
+    // Calculate loop duration based on mode
+    if (activeDotCount > 0) {
+      if (loopSequencerPlayTogether) {
+        // Play together mode: fixed 1.5 seconds for all dots to cycle through volumes
+        setLoopDuration(1.5);
+      } else {
+        // Cycle through dots mode: 1.5 seconds per dot
+        const calculatedDuration = activeDotCount * 1.5; // 1.5 seconds = 1500ms per dot
+        setLoopDuration(calculatedDuration);
+      }
+    }
+  }, [dotVolumeLevels, loopSequencerPlayTogether]); // Recalculate whenever dot volume levels or mode changes
 
   // Handlers for repeat settings
   const increaseRepeatCount = () => {
@@ -996,13 +1105,12 @@ export function DotCalibration({
           disabled={disabled}
           isPlaying={isPlaying}
           selectionMode={selectionMode}
+          dotVolumeLevels={dotVolumeLevels}
         />
         
         {/* Instruction text */}
         <div className="mt-2 text-xs text-center text-muted-foreground">
-          {selectedDots.size === 0 
-            ? "Click dots to play them"
-            : "Use arrow keys to move dots"}
+          Click dots to cycle volume levels (3 levels, 18dB apart)
         </div>
       </div>
       
@@ -1104,6 +1212,107 @@ export function DotCalibration({
           </button>
         </div>
 
+        {/* Auto Volume Cycle Toggle */}
+        <div className="border-t pt-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">Auto Volume Cycle</span>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoVolumeCycleEnabled}
+                onChange={(e) => setAutoVolumeCycleEnabled(e.target.checked)}
+                disabled={disabled}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+            </label>
+          </div>
+
+          {autoVolumeCycleEnabled && (
+            <>
+              {/* Cycle Speed Slider */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium">Cycle Time</span>
+                  <span className="text-xs text-muted-foreground">{autoVolumeCycleSpeed.toFixed(1)}s</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="10"
+                  step="0.1"
+                  value={autoVolumeCycleSpeed}
+                  onChange={(e) => setAutoVolumeCycleSpeed(Number(e.target.value))}
+                  disabled={disabled}
+                  className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                    disabled ? 'opacity-50 cursor-not-allowed' : ''
+                  } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+                />
+              </div>
+
+              {/* Min Volume Slider */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium">Min Volume</span>
+                  <span className="text-xs text-muted-foreground">{autoVolumeCycleMinDb} dB</span>
+                </div>
+                <input
+                  type="range"
+                  min="-60"
+                  max="0"
+                  step="6"
+                  value={autoVolumeCycleMinDb}
+                  onChange={(e) => setAutoVolumeCycleMinDb(Number(e.target.value))}
+                  disabled={disabled}
+                  className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                    disabled ? 'opacity-50 cursor-not-allowed' : ''
+                  } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+                />
+              </div>
+
+              {/* Max Volume Slider */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium">Max Volume</span>
+                  <span className="text-xs text-muted-foreground">{autoVolumeCycleMaxDb} dB</span>
+                </div>
+                <input
+                  type="range"
+                  min="-60"
+                  max="0"
+                  step="6"
+                  value={autoVolumeCycleMaxDb}
+                  onChange={(e) => setAutoVolumeCycleMaxDb(Number(e.target.value))}
+                  disabled={disabled}
+                  className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                    disabled ? 'opacity-50 cursor-not-allowed' : ''
+                  } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+                />
+              </div>
+
+              {/* Number of Steps Slider */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium">Steps</span>
+                  <span className="text-xs text-muted-foreground">{autoVolumeCycleSteps}</span>
+                </div>
+                <input
+                  type="range"
+                  min="2"
+                  max="10"
+                  step="1"
+                  value={autoVolumeCycleSteps}
+                  onChange={(e) => setAutoVolumeCycleSteps(Number(e.target.value))}
+                  disabled={disabled}
+                  className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                    disabled ? 'opacity-50 cursor-not-allowed' : ''
+                  } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+                />
+              </div>
+            </>
+          )}
+        </div>
+
         {/* Loop Sequencer Mode Toggle */}
         <div className="border-t pt-3 space-y-3">
           <div className="flex items-center justify-between">
@@ -1121,24 +1330,41 @@ export function DotCalibration({
           </div>
 
           {loopSequencerEnabled && (
-            <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium">Loop Time</span>
-                <span className="text-xs text-muted-foreground">{loopDuration.toFixed(1)}s</span>
+            <>
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium">Loop Time</span>
+                  <span className="text-xs text-muted-foreground">{loopDuration.toFixed(1)}s</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="60"
+                  step="0.1"
+                  value={loopDuration}
+                  onChange={(e) => setLoopDuration(Number(e.target.value))}
+                  disabled={disabled}
+                  className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                    disabled ? 'opacity-50 cursor-not-allowed' : ''
+                  } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+                />
               </div>
-              <input
-                type="range"
-                min="0.5"
-                max="60"
-                step="0.1"
-                value={loopDuration}
-                onChange={(e) => setLoopDuration(Number(e.target.value))}
-                disabled={disabled}
-                className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
-                  disabled ? 'opacity-50 cursor-not-allowed' : ''
-                } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
-              />
-            </div>
+
+              {/* Play Together Toggle */}
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium">Play Together</span>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={loopSequencerPlayTogether}
+                    onChange={(e) => setLoopSequencerPlayTogether(e.target.checked)}
+                    disabled={disabled}
+                    className="sr-only peer"
+                  />
+                  <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+                </label>
+              </div>
+            </>
           )}
         </div>
 

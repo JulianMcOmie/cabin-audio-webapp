@@ -75,6 +75,7 @@ enum SoundMode {
 interface PointAudioNodes {
     source: AudioBufferSourceNode;
   mainGain: GainNode;
+  volumeLevelGain: GainNode; // Controls volume based on dot's volume level (0-3)
     envelopeGain: GainNode;
     panner: StereoPannerNode;
   slopedNoiseGenerator: SlopedPinkNoiseGenerator | null;
@@ -86,6 +87,7 @@ interface PointAudioNodes {
   // New properties for sub-hit sequencing
   subHitCount: number;
   subHitTimerId: number | null;
+  volumeLevel: number; // 0 = off, 1 = -36dB, 2 = -18dB, 3 = 0dB
   // isPlaying: boolean; // Source starts on creation and loops, envelopeGain controls sound
 }
 
@@ -141,6 +143,16 @@ class PositionedAudioService {
   // Loop sequencer mode settings
   private loopSequencerEnabled: boolean = false; // Whether loop sequencer mode is enabled
   private loopDuration: number = 4.0; // Total loop duration in seconds (default: 4 seconds)
+  private loopSequencerPlayTogether: boolean = false; // Whether all dots play together (true) or cycle through dots (false)
+
+  // Auto volume cycle settings
+  private autoVolumeCycleEnabled: boolean = false; // Whether auto volume cycle is enabled
+  private autoVolumeCycleSpeed: number = 2.0; // Cycle duration in seconds (default: 2 seconds)
+  private autoVolumeCycleMinDb: number = -36; // Minimum volume in dB (default: -36dB)
+  private autoVolumeCycleMaxDb: number = 0; // Maximum volume in dB (default: 0dB)
+  private autoVolumeCycleSteps: number = 3; // Number of discrete steps (default: 3)
+  private autoVolumeCycleStartTime: number = 0; // Start time for cycling
+  private autoVolumeCycleAnimationFrameId: number | null = null; // Animation frame ID for cycling loop
 
   constructor(audioContextInstance: AudioContext) {
     this.ctx = audioContextInstance;
@@ -422,6 +434,131 @@ class PositionedAudioService {
     return this.loopDuration;
   }
 
+  public setLoopSequencerPlayTogether(playTogether: boolean): void {
+    this.loopSequencerPlayTogether = playTogether;
+  }
+
+  public getLoopSequencerPlayTogether(): boolean {
+    return this.loopSequencerPlayTogether;
+  }
+
+  // Auto volume cycle methods
+  public setAutoVolumeCycleEnabled(enabled: boolean): void {
+    this.autoVolumeCycleEnabled = enabled;
+  }
+
+  public getAutoVolumeCycleEnabled(): boolean {
+    return this.autoVolumeCycleEnabled;
+  }
+
+  public setAutoVolumeCycleSpeed(speed: number): void {
+    this.autoVolumeCycleSpeed = Math.max(0.5, Math.min(10, speed)); // Clamp 0.5-10 seconds
+  }
+
+  public getAutoVolumeCycleSpeed(): number {
+    return this.autoVolumeCycleSpeed;
+  }
+
+  public setAutoVolumeCycleMinDb(db: number): void {
+    this.autoVolumeCycleMinDb = Math.max(-60, Math.min(0, db)); // Clamp -60 to 0 dB
+  }
+
+  public getAutoVolumeCycleMinDb(): number {
+    return this.autoVolumeCycleMinDb;
+  }
+
+  public setAutoVolumeCycleMaxDb(db: number): void {
+    this.autoVolumeCycleMaxDb = Math.max(-60, Math.min(0, db)); // Clamp -60 to 0 dB
+  }
+
+  public getAutoVolumeCycleMaxDb(): number {
+    return this.autoVolumeCycleMaxDb;
+  }
+
+  public setAutoVolumeCycleSteps(steps: number): void {
+    this.autoVolumeCycleSteps = Math.max(2, Math.min(10, Math.floor(steps))); // Clamp 2-10 steps
+  }
+
+  public getAutoVolumeCycleSteps(): number {
+    return this.autoVolumeCycleSteps;
+  }
+
+  public startAutoVolumeCycle(): void {
+    if (this.autoVolumeCycleAnimationFrameId !== null) {
+      cancelAnimationFrame(this.autoVolumeCycleAnimationFrameId);
+    }
+
+    this.autoVolumeCycleStartTime = this.ctx.currentTime;
+    this.oscillateAutoVolumeCycle();
+  }
+
+  public stopAutoVolumeCycle(): void {
+    if (this.autoVolumeCycleAnimationFrameId !== null) {
+      cancelAnimationFrame(this.autoVolumeCycleAnimationFrameId);
+      this.autoVolumeCycleAnimationFrameId = null;
+    }
+  }
+
+  private oscillateAutoVolumeCycle(): void {
+    if (!this.autoVolumeCycleEnabled) {
+      return;
+    }
+
+    const currentTime = this.ctx.currentTime;
+    const elapsedTime = currentTime - this.autoVolumeCycleStartTime;
+
+    // Calculate which step we're on based on elapsed time
+    const cycleDuration = this.autoVolumeCycleSpeed; // in seconds
+    const progress = (elapsedTime % cycleDuration) / cycleDuration; // 0 to 1
+    const currentStep = Math.floor(progress * this.autoVolumeCycleSteps);
+
+    // Calculate the dB value for the current step
+    const minDb = this.autoVolumeCycleMinDb;
+    const maxDb = this.autoVolumeCycleMaxDb;
+    const dbRange = maxDb - minDb;
+    const stepSize = this.autoVolumeCycleSteps > 1 ? dbRange / (this.autoVolumeCycleSteps - 1) : 0;
+    const currentDb = minDb + (currentStep * stepSize);
+
+    // Convert dB to linear gain
+    const volumeMultiplier = Math.pow(10, currentDb / 20);
+
+    // Apply volume to all active points via their volumeLevelGain node
+    this.audioPoints.forEach((point) => {
+      // Only modulate dots that are active (volume level > 0)
+      if (point.volumeLevel > 0) {
+        // Calculate the base gain for the current volume level
+        const baseLevelGain = this.calculateVolumeLevelGain(point.volumeLevel);
+        // Modulate it by the cycle multiplier
+        const finalGain = baseLevelGain * volumeMultiplier;
+        point.volumeLevelGain.gain.setValueAtTime(finalGain, currentTime);
+      }
+    });
+
+    // Schedule next update
+    this.autoVolumeCycleAnimationFrameId = requestAnimationFrame(() => {
+      this.oscillateAutoVolumeCycle();
+    });
+  }
+
+  private calculateVolumeLevelGain(level: number): number {
+    // Level 0: off (silent)
+    // Level 1: -36dB
+    // Level 2: -18dB
+    // Level 3: 0dB (full volume)
+    if (level === 0) return 0;
+    const dbValue = (level - 3) * 18; // -36, -18, or 0
+    return Math.pow(10, dbValue / 20);
+  }
+
+  public updatePointVolumeLevel(id: string, volumeLevel: number): void {
+    const point = this.audioPoints.get(id);
+    if (!point) return;
+
+    point.volumeLevel = volumeLevel;
+    const gain = this.calculateVolumeLevelGain(volumeLevel);
+    point.volumeLevelGain.gain.setValueAtTime(gain, this.ctx.currentTime);
+  }
+
   public startAlwaysPlayingOscillation(): void {
     if (this.alwaysPlayingAnimationFrameId !== null) {
       cancelAnimationFrame(this.alwaysPlayingAnimationFrameId);
@@ -561,13 +698,13 @@ class PositionedAudioService {
    * Applies ADSR envelope without deactivating the point
    * Also sets frequency characteristics based on position
    */
-  public schedulePointEnvelope(pointId: string, scheduledTime: number, gainMultiplier: number = 1.0): void {
+  public schedulePointEnvelope(pointId: string, scheduledTime: number, gainMultiplier: number = 1.0, smoothTransition: boolean = false): void {
     const point = this.audioPoints.get(pointId);
     if (point) {
       // Set frequency characteristics (slope/bandwidth) based on dot position
       this.setMainGainAndSlope(point);
       // Schedule the ADSR envelope
-      this._schedulePointActivationSound(point, scheduledTime, gainMultiplier);
+      this._schedulePointActivationSound(point, scheduledTime, gainMultiplier, smoothTransition);
     }
   }
 
@@ -580,34 +717,47 @@ class PositionedAudioService {
     return this.currentSoundMode === SoundMode.BandpassedNoise;
   }
 
-  private _schedulePointActivationSound(pointNode: PointAudioNodes, scheduledTime: number, gainMultiplier: number = 1.0): void {
+  private _schedulePointActivationSound(pointNode: PointAudioNodes, scheduledTime: number, gainMultiplier: number = 1.0, smoothTransition: boolean = false): void {
     const gainParam = pointNode.envelopeGain.gain;
     gainParam.cancelScheduledValues(scheduledTime);
 
     if (this.subHitAdsrEnabled) {
       // Use full ADSR envelope: Attack -> Sustain -> Release
-      gainParam.setValueAtTime(0.001, scheduledTime); // Start just above zero for exponential curves
+      if (smoothTransition) {
+        // Smooth transition mode: smooth volume changes without resetting to silence
+        const targetGain = ENVELOPE_MAX_GAIN * 0.8 * gainMultiplier;
+        const timeConstant = 0.02; // 20ms time constant for smooth exponential approach
 
-      // Attack - fade in
-      gainParam.exponentialRampToValueAtTime(
-        ENVELOPE_MAX_GAIN * 0.8 * gainMultiplier, // Apply gain multiplier for volume
-        scheduledTime + this.attackDuration
-      );
+        // Use setTargetAtTime for smooth transition from current value
+        gainParam.setTargetAtTime(targetGain, scheduledTime, timeConstant);
 
-      // Sustain - hold at full volume
-      gainParam.setValueAtTime(
-        ENVELOPE_MAX_GAIN * 0.8 * gainMultiplier,
-        scheduledTime + this.attackDuration + this.sustainDuration
-      );
+        // After sustain duration, lock in the final value
+        gainParam.setValueAtTime(targetGain, scheduledTime + this.sustainDuration);
+      } else {
+        // Normal mode: start from silence
+        gainParam.setValueAtTime(0.001, scheduledTime); // Start just above zero for exponential curves
 
-      // Release - fade out
-      gainParam.exponentialRampToValueAtTime(
-        0.001, // Target for exponential ramp (close to zero)
-        scheduledTime + this.attackDuration + this.sustainDuration + this.releaseDuration
-      );
+        // Attack - fade in
+        gainParam.exponentialRampToValueAtTime(
+          ENVELOPE_MAX_GAIN * 0.8 * gainMultiplier, // Apply gain multiplier for volume
+          scheduledTime + this.attackDuration
+        );
 
-      // Ensure silence after release
-      gainParam.setValueAtTime(ENVELOPE_MIN_GAIN, scheduledTime + this.attackDuration + this.sustainDuration + this.releaseDuration + 0.001);
+        // Sustain - hold at full volume
+        gainParam.setValueAtTime(
+          ENVELOPE_MAX_GAIN * 0.8 * gainMultiplier,
+          scheduledTime + this.attackDuration + this.sustainDuration
+        );
+
+        // Release - fade out
+        gainParam.exponentialRampToValueAtTime(
+          0.001, // Target for exponential ramp (close to zero)
+          scheduledTime + this.attackDuration + this.sustainDuration + this.releaseDuration
+        );
+
+        // Ensure silence after release
+        gainParam.setValueAtTime(ENVELOPE_MIN_GAIN, scheduledTime + this.attackDuration + this.sustainDuration + this.releaseDuration + 0.001);
+      }
     } else {
       // Use Attack-Sustain for the global staggered hit (no automatic release)
       gainParam.setValueAtTime(0.001, scheduledTime); // Start just above zero for exponential curves
@@ -619,7 +769,7 @@ class PositionedAudioService {
     }
   }
 
-  public addPoint(id: string, x: number, y: number, totalRows: number, totalCols: number): void {
+  public addPoint(id: string, x: number, y: number, totalRows: number, totalCols: number, volumeLevel: number = 3): void {
     if (this.audioPoints.has(id)) {
       console.warn(`Audio point with id ${id} already exists.`);
       return;
@@ -630,8 +780,10 @@ class PositionedAudioService {
     const panPosition = totalCols <= 1 ? 0 : (2 * normalizedX - 1);
 
     const mainGain = this.ctx.createGain();
+    const volumeLevelGain = this.ctx.createGain();
+    volumeLevelGain.gain.value = this.calculateVolumeLevelGain(volumeLevel);
     const envelopeGain = this.ctx.createGain();
-    envelopeGain.gain.value = 0.001; // Start just above zero for exponential curves
+    envelopeGain.gain.value = ENVELOPE_MAX_GAIN * 0.8; // Start at full volume for continuous play
     const panner = this.ctx.createStereoPanner();
     panner.pan.value = panPosition;
 
@@ -677,13 +829,15 @@ class PositionedAudioService {
       source.start(); // Start source immediately, loop, control with envelopeGain
     }
 
-    mainGain.connect(envelopeGain);
+    mainGain.connect(volumeLevelGain);
+    volumeLevelGain.connect(envelopeGain);
     envelopeGain.connect(panner);
     panner.connect(this.outputGain);
 
     this.audioPoints.set(id, {
       source,
       mainGain,
+      volumeLevelGain,
       envelopeGain,
       panner,
       slopedNoiseGenerator,
@@ -695,6 +849,7 @@ class PositionedAudioService {
       // Initialize new properties
       subHitCount: 0,
       subHitTimerId: null,
+      volumeLevel,
     });
   }
 
@@ -715,7 +870,7 @@ class PositionedAudioService {
       // Ignore stop errors
     }
     point.source.disconnect();
-    
+
     // Dispose of the appropriate generator
     if (point.slopedNoiseGenerator) {
       point.slopedNoiseGenerator.dispose();
@@ -726,8 +881,9 @@ class PositionedAudioService {
     if (point.sineToneGenerator) {
       point.sineToneGenerator.dispose();
     }
-    
+
     point.mainGain.disconnect();
+    point.volumeLevelGain.disconnect();
     point.envelopeGain.disconnect();
     point.panner.disconnect();
     // point.pinkNoiseBuffer = null; // Buffer is managed by JS GC once source is gone
@@ -974,6 +1130,7 @@ class DotGridAudioPlayer {
   private static instance: DotGridAudioPlayer;
   private isPlaying: boolean = false;
   private activeDotKeys: Set<string> = new Set();
+  private dotVolumeLevels: Map<string, number> = new Map(); // Volume level for each dot (0-3)
   private audioService: PositionedAudioService;
 
   // Properties for sequential playback (now row-by-row) - REMOVING
@@ -1206,7 +1363,8 @@ class DotGridAudioPlayer {
         const x = parseInt(xStr, 10);
         const y = parseInt(yStr, 10);
         if (!isNaN(x) && !isNaN(y)) {
-            this.audioService.addPoint(dotKey, x, y, this.gridSize, this.columnCount);
+            const volumeLevel = this.dotVolumeLevels.get(dotKey) ?? 3; // Default to full volume
+            this.audioService.addPoint(dotKey, x, y, this.gridSize, this.columnCount, volumeLevel);
             addedKeys.push(dotKey);
         }
       }
@@ -1225,6 +1383,25 @@ class DotGridAudioPlayer {
       this.startAllRhythms();
       }
     }
+  }
+
+  /**
+   * Update volume level for a specific dot
+   * @param dotKey The dot key (e.g., "2,3")
+   * @param volumeLevel The volume level (0-3): 0 = silent, 1 = -36dB, 2 = -18dB, 3 = 0dB
+   */
+  public updateDotVolumeLevel(dotKey: string, volumeLevel: number): void {
+    this.dotVolumeLevels.set(dotKey, volumeLevel);
+    this.audioService.updatePointVolumeLevel(dotKey, volumeLevel);
+  }
+
+  /**
+   * Get volume level for a specific dot
+   * @param dotKey The dot key (e.g., "2,3")
+   * @returns The volume level (0-3)
+   */
+  public getDotVolumeLevel(dotKey: string): number {
+    return this.dotVolumeLevels.get(dotKey) ?? 3;
   }
 
   /**
@@ -1427,6 +1604,11 @@ class DotGridAudioPlayer {
           // Normal continuous mode - activate all dots
           this.activeDotKeys.forEach(dotKey => this.audioService.activatePoint(dotKey, audioContext.getAudioContext().currentTime));
         }
+
+        // Start auto volume cycle if enabled
+        if (this.audioService.getAutoVolumeCycleEnabled()) {
+          this.audioService.startAutoVolumeCycle();
+        }
       }
       // EXISTING: Sequential sub-hit mode
       else {
@@ -1435,6 +1617,7 @@ class DotGridAudioPlayer {
       }
     } else {
       this.audioService.stopAlwaysPlayingOscillation();
+      this.audioService.stopAutoVolumeCycle();
       this.stopStopbandCycling();
       this.stopLoopSequencer(); // NEW
       this.stopAllRhythms();
@@ -1464,13 +1647,35 @@ class DotGridAudioPlayer {
     const currentTime = audioContext.getAudioContext().currentTime;
 
     // Schedule ADSR envelope triggers for all dots in this loop cycle
-    // Each dot fades in (attack), holds (sustain), then fades out (release)
-    // Starting from silence, staggered evenly throughout the loop
-    sortedDotKeys.forEach((dotKey, index) => {
-      const triggerTime = currentTime + (index * dotInterval);
-      // Schedule envelope (attack -> sustain -> release) with full volume gain
-      this.audioService.schedulePointEnvelope(dotKey, triggerTime, 1.0);
-    });
+    // Each dot plays at 3 volume levels: quiet (500ms), medium (500ms), loud (500ms)
+    // Volume levels: 0.15 (quiet), 0.45 (medium), 1.0 (loud) for better differentiation
+    if (this.audioService.getLoopSequencerPlayTogether()) {
+      // Play all dots together mode: all dots cycle through volumes simultaneously
+      sortedDotKeys.forEach((dotKey) => {
+        // First envelope: all dots quiet for 500ms (use smooth transition)
+        this.audioService.schedulePointEnvelope(dotKey, currentTime, 0.15, true);
+
+        // Second envelope: all dots medium for 500ms (use smooth transition)
+        this.audioService.schedulePointEnvelope(dotKey, currentTime + 0.5, 0.45, true);
+
+        // Third envelope: all dots loud for 500ms (use smooth transition)
+        this.audioService.schedulePointEnvelope(dotKey, currentTime + 1.0, 1.0, true);
+      });
+    } else {
+      // Cycle through dots mode: each dot plays individually with volume levels
+      sortedDotKeys.forEach((dotKey, index) => {
+        const dotStartTime = currentTime + (index * dotInterval);
+
+        // First envelope: quiet volume for 500ms
+        this.audioService.schedulePointEnvelope(dotKey, dotStartTime, 0.15);
+
+        // Second envelope: medium volume for 500ms (starts 500ms after first)
+        this.audioService.schedulePointEnvelope(dotKey, dotStartTime + 0.5, 0.45);
+
+        // Third envelope: loud volume for 500ms (starts 1000ms after first)
+        this.audioService.schedulePointEnvelope(dotKey, dotStartTime + 1.0, 1.0);
+      });
+    }
 
     // Schedule next loop iteration
     const loopDelayMs = loopDuration * 1000;
@@ -2280,6 +2485,67 @@ class DotGridAudioPlayer {
   public getLoopDuration(): number {
     return this.audioService.getLoopDuration();
   }
+
+  public setLoopSequencerPlayTogether(playTogether: boolean): void {
+    this.audioService.setLoopSequencerPlayTogether(playTogether);
+    // If playing in loop sequencer mode, restart to apply new mode
+    if (this.isPlaying && this.isLoopSequencerMode()) {
+      this.stopLoopSequencer();
+      this.startLoopSequencer();
+    }
+  }
+
+  public getLoopSequencerPlayTogether(): boolean {
+    return this.audioService.getLoopSequencerPlayTogether();
+  }
+
+  // Auto volume cycle methods
+  public setAutoVolumeCycleEnabled(enabled: boolean): void {
+    this.audioService.setAutoVolumeCycleEnabled(enabled);
+
+    // Start or stop auto volume cycling based on enabled state and playing state
+    if (this.isPlaying && enabled && this.isContinuousSimultaneousMode()) {
+      this.audioService.startAutoVolumeCycle();
+    } else {
+      this.audioService.stopAutoVolumeCycle();
+    }
+  }
+
+  public getAutoVolumeCycleEnabled(): boolean {
+    return this.audioService.getAutoVolumeCycleEnabled();
+  }
+
+  public setAutoVolumeCycleSpeed(speed: number): void {
+    this.audioService.setAutoVolumeCycleSpeed(speed);
+  }
+
+  public getAutoVolumeCycleSpeed(): number {
+    return this.audioService.getAutoVolumeCycleSpeed();
+  }
+
+  public setAutoVolumeCycleMinDb(db: number): void {
+    this.audioService.setAutoVolumeCycleMinDb(db);
+  }
+
+  public getAutoVolumeCycleMinDb(): number {
+    return this.audioService.getAutoVolumeCycleMinDb();
+  }
+
+  public setAutoVolumeCycleMaxDb(db: number): void {
+    this.audioService.setAutoVolumeCycleMaxDb(db);
+  }
+
+  public getAutoVolumeCycleMaxDb(): number {
+    return this.audioService.getAutoVolumeCycleMaxDb();
+  }
+
+  public setAutoVolumeCycleSteps(steps: number): void {
+    this.audioService.setAutoVolumeCycleSteps(steps);
+  }
+
+  public getAutoVolumeCycleSteps(): number {
+    return this.audioService.getAutoVolumeCycleSteps();
+  }
 }
 
 class SineToneGenerator {
@@ -2380,7 +2646,13 @@ class BandpassedNoiseGenerator {
     // Q relates inversely to bandwidth
     const numerator = Math.sqrt(2);
     const denominator = Math.pow(2, bandwidthOctaves / 2) - Math.pow(2, -bandwidthOctaves / 2);
-    return Math.max(0.1, Math.min(30, numerator / denominator));
+    const baseQ = numerator / denominator;
+
+    // Multiply by 15 to make filters much sharper (steeper rolloff)
+    // This keeps filters from extending too far outside the intended passband
+    const sharperQ = baseQ * 15;
+
+    return Math.max(0.7, Math.min(100, sharperQ));
   }
 
   private disconnectFilterChain(): void {
@@ -3111,6 +3383,128 @@ export function setLoopDuration(seconds: number): void {
 export function getLoopDuration(): number {
   const player = DotGridAudioPlayer.getInstance();
   return player.getLoopDuration();
+}
+
+/**
+ * Set whether loop sequencer plays all dots together or cycles through them
+ * @param playTogether Whether all dots play together (true) or cycle through dots (false)
+ */
+export function setLoopSequencerPlayTogether(playTogether: boolean): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setLoopSequencerPlayTogether(playTogether);
+}
+
+/**
+ * Get whether loop sequencer plays all dots together
+ */
+export function getLoopSequencerPlayTogether(): boolean {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getLoopSequencerPlayTogether();
+}
+
+/**
+ * Enable or disable auto volume cycle
+ * @param enabled Whether auto volume cycle is enabled
+ */
+export function setAutoVolumeCycleEnabled(enabled: boolean): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setAutoVolumeCycleEnabled(enabled);
+}
+
+/**
+ * Get whether auto volume cycle is enabled
+ */
+export function getAutoVolumeCycleEnabled(): boolean {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getAutoVolumeCycleEnabled();
+}
+
+/**
+ * Set the speed of the auto volume cycle
+ * @param speed Cycle duration in seconds (0.5 to 10)
+ */
+export function setAutoVolumeCycleSpeed(speed: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setAutoVolumeCycleSpeed(speed);
+}
+
+/**
+ * Get the current auto volume cycle speed in seconds
+ */
+export function getAutoVolumeCycleSpeed(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getAutoVolumeCycleSpeed();
+}
+
+/**
+ * Set the minimum volume in dB for auto volume cycle
+ * @param db Minimum volume in dB (-60 to 0)
+ */
+export function setAutoVolumeCycleMinDb(db: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setAutoVolumeCycleMinDb(db);
+}
+
+/**
+ * Get the current auto volume cycle minimum dB
+ */
+export function getAutoVolumeCycleMinDb(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getAutoVolumeCycleMinDb();
+}
+
+/**
+ * Set the maximum volume in dB for auto volume cycle
+ * @param db Maximum volume in dB (-60 to 0)
+ */
+export function setAutoVolumeCycleMaxDb(db: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setAutoVolumeCycleMaxDb(db);
+}
+
+/**
+ * Get the current auto volume cycle maximum dB
+ */
+export function getAutoVolumeCycleMaxDb(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getAutoVolumeCycleMaxDb();
+}
+
+/**
+ * Set the number of steps for auto volume cycle
+ * @param steps Number of discrete volume steps (2 to 10)
+ */
+export function setAutoVolumeCycleSteps(steps: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setAutoVolumeCycleSteps(steps);
+}
+
+/**
+ * Get the current auto volume cycle steps
+ */
+export function getAutoVolumeCycleSteps(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getAutoVolumeCycleSteps();
+}
+
+/**
+ * Update volume level for a specific dot
+ * @param dotKey The dot key (e.g., "2,3")
+ * @param volumeLevel The volume level (0-3): 0 = silent, 1 = -36dB, 2 = -18dB, 3 = 0dB
+ */
+export function updateDotVolumeLevel(dotKey: string, volumeLevel: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.updateDotVolumeLevel(dotKey, volumeLevel);
+}
+
+/**
+ * Get volume level for a specific dot
+ * @param dotKey The dot key (e.g., "2,3")
+ * @returns The volume level (0-3)
+ */
+export function getDotVolumeLevel(dotKey: string): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getDotVolumeLevel(dotKey);
 }
 
 // Export the SoundMode enum for use in UI
