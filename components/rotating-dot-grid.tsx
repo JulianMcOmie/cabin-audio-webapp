@@ -43,6 +43,13 @@ export function RotatingDotGrid({
   const [soundMode, setSoundMode] = useState<SoundMode>(SoundMode.BandpassedNoise);
   const [volume, setVolume] = useState(-12); // dB
 
+  // Hit mode state
+  const [hitModeEnabled, setHitModeEnabled] = useState(true); // Default to hit mode
+  const [hitRate, setHitRate] = useState(10); // Default: 10 hits per second
+  const [hitAttackTime, setHitAttackTime] = useState(0.01); // Default: 10ms attack
+  const [hitReleaseTime, setHitReleaseTime] = useState(0.05); // Default: 50ms release
+  const [hitVolume, setHitVolume] = useState(1.0); // Default: 100% volume
+
   // Rotation state
   const [rotationEnabled, setRotationEnabled] = useState(false);
   const [rotationSpeed, setRotationSpeed] = useState(10); // RPM
@@ -263,6 +270,27 @@ export function RotatingDotGrid({
   useEffect(() => {
     rotatingDotGridPlayer.setVolumeDb(volume);
   }, [volume]);
+
+  // Update hit mode settings
+  useEffect(() => {
+    rotatingDotGridPlayer.setHitMode(hitModeEnabled);
+  }, [hitModeEnabled]);
+
+  useEffect(() => {
+    rotatingDotGridPlayer.setHitRate(hitRate);
+  }, [hitRate]);
+
+  useEffect(() => {
+    rotatingDotGridPlayer.setHitAttackTime(hitAttackTime);
+  }, [hitAttackTime]);
+
+  useEffect(() => {
+    rotatingDotGridPlayer.setHitReleaseTime(hitReleaseTime);
+  }, [hitReleaseTime]);
+
+  useEffect(() => {
+    rotatingDotGridPlayer.setHitVolume(hitVolume);
+  }, [hitVolume]);
 
   useEffect(() => {
     rotatingDotGridPlayer.setPlaying(isPlaying);
@@ -660,6 +688,99 @@ export function RotatingDotGrid({
             disabled={disabled}
             className="w-full"
           />
+        </div>
+
+        {/* Hit Mode Controls */}
+        <div className="border-t pt-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium">Hit Mode</span>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={hitModeEnabled}
+                onChange={(e) => setHitModeEnabled(e.target.checked)}
+                disabled={disabled}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+            </label>
+          </div>
+
+          {hitModeEnabled && (
+            <>
+              {/* Hit Rate */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Hit Rate</span>
+                  <span className="text-xs text-muted-foreground">{hitRate.toFixed(1)} hits/sec</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="100"
+                  step="0.1"
+                  value={hitRate}
+                  onChange={(e) => setHitRate(Number(e.target.value))}
+                  disabled={disabled}
+                  className="w-full"
+                />
+              </div>
+
+              {/* Attack Time */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Attack</span>
+                  <span className="text-xs text-muted-foreground">{(hitAttackTime * 1000).toFixed(0)} ms</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.001"
+                  max="2"
+                  step="0.001"
+                  value={hitAttackTime}
+                  onChange={(e) => setHitAttackTime(Number(e.target.value))}
+                  disabled={disabled}
+                  className="w-full"
+                />
+              </div>
+
+              {/* Release Time */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Release</span>
+                  <span className="text-xs text-muted-foreground">{(hitReleaseTime * 1000).toFixed(0)} ms</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.001"
+                  max="5"
+                  step="0.001"
+                  value={hitReleaseTime}
+                  onChange={(e) => setHitReleaseTime(Number(e.target.value))}
+                  disabled={disabled}
+                  className="w-full"
+                />
+              </div>
+
+              {/* Hit Volume */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Hit Volume</span>
+                  <span className="text-xs text-muted-foreground">{(hitVolume * 100).toFixed(0)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={hitVolume}
+                  onChange={(e) => setHitVolume(Number(e.target.value))}
+                  disabled={disabled}
+                  className="w-full"
+                />
+              </div>
+            </>
+          )}
         </div>
 
         {/* Rotation Controls */}

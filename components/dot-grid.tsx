@@ -501,6 +501,12 @@ export function DotCalibration({
   const [loopDuration, setLoopDuration] = useState(4.0); // Default: 4 seconds (dynamically calculated based on dot count)
   const [loopSequencerPlayTogether, setLoopSequencerPlayTogether] = useState(false); // Default: cycle through dots individually
 
+  // Hit mode settings for loop sequencer
+  const [hitModeRate, setHitModeRate] = useState(10); // Default: 10 hits per second
+  const [hitModeAttack, setHitModeAttack] = useState(0.01); // Default: 10ms attack
+  const [hitModeRelease, setHitModeRelease] = useState(0.05); // Default: 50ms release
+  const [hitModeVolume, setHitModeVolume] = useState(1.0); // Default: 100% volume
+
   // Auto volume cycle state
   const [autoVolumeCycleEnabled, setAutoVolumeCycleEnabled] = useState(false); // Default: disabled
   const [autoVolumeCycleSpeed, setAutoVolumeCycleSpeed] = useState(2.0); // Default: 2 seconds per cycle
@@ -977,6 +983,23 @@ export function DotCalibration({
     dotGridAudio.setLoopSequencerPlayTogether(loopSequencerPlayTogether);
   }, [loopSequencerPlayTogether]);
 
+  // Update hit mode settings
+  useEffect(() => {
+    dotGridAudio.setHitModeRate(hitModeRate);
+  }, [hitModeRate]);
+
+  useEffect(() => {
+    dotGridAudio.setHitModeAttack(hitModeAttack);
+  }, [hitModeAttack]);
+
+  useEffect(() => {
+    dotGridAudio.setHitModeRelease(hitModeRelease);
+  }, [hitModeRelease]);
+
+  useEffect(() => {
+    dotGridAudio.setHitModeVolume(hitModeVolume);
+  }, [hitModeVolume]);
+
   // Automatically calculate loop duration based on number of active dots (1.5 seconds per dot: 500ms quiet + 500ms medium + 500ms loud)
   useEffect(() => {
     // Count active dots (volume level > 0)
@@ -1331,18 +1354,79 @@ export function DotCalibration({
 
           {loopSequencerEnabled && (
             <>
+              {/* Hit Rate */}
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium">Loop Time</span>
-                  <span className="text-xs text-muted-foreground">{loopDuration.toFixed(1)}s</span>
+                  <span className="text-xs font-medium">Hit Rate</span>
+                  <span className="text-xs text-muted-foreground">{hitModeRate.toFixed(1)} hits/sec</span>
                 </div>
                 <input
                   type="range"
-                  min="0.5"
-                  max="60"
+                  min="0.1"
+                  max="100"
                   step="0.1"
-                  value={loopDuration}
-                  onChange={(e) => setLoopDuration(Number(e.target.value))}
+                  value={hitModeRate}
+                  onChange={(e) => setHitModeRate(Number(e.target.value))}
+                  disabled={disabled}
+                  className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                    disabled ? 'opacity-50 cursor-not-allowed' : ''
+                  } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+                />
+              </div>
+
+              {/* Attack Time */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium">Attack</span>
+                  <span className="text-xs text-muted-foreground">{(hitModeAttack * 1000).toFixed(0)} ms</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.001"
+                  max="2"
+                  step="0.001"
+                  value={hitModeAttack}
+                  onChange={(e) => setHitModeAttack(Number(e.target.value))}
+                  disabled={disabled}
+                  className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                    disabled ? 'opacity-50 cursor-not-allowed' : ''
+                  } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+                />
+              </div>
+
+              {/* Release Time */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium">Release</span>
+                  <span className="text-xs text-muted-foreground">{(hitModeRelease * 1000).toFixed(0)} ms</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.001"
+                  max="5"
+                  step="0.001"
+                  value={hitModeRelease}
+                  onChange={(e) => setHitModeRelease(Number(e.target.value))}
+                  disabled={disabled}
+                  className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                    disabled ? 'opacity-50 cursor-not-allowed' : ''
+                  } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+                />
+              </div>
+
+              {/* Hit Volume */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium">Hit Volume</span>
+                  <span className="text-xs text-muted-foreground">{(hitModeVolume * 100).toFixed(0)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={hitModeVolume}
+                  onChange={(e) => setHitModeVolume(Number(e.target.value))}
                   disabled={disabled}
                   className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
                     disabled ? 'opacity-50 cursor-not-allowed' : ''

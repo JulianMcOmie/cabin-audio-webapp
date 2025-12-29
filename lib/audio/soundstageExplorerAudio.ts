@@ -289,6 +289,15 @@ class SoundstageExplorerService {
   // Manual volume control (for fade-line mode)
   private manualVolume: number | null = null; // null means use oscillation, number 0-1 means override
 
+  // Hit mode settings
+  private isHitMode: boolean = false;
+  private hitRate: number = 2; // Hits per second
+  private hitAttackTime: number = 0.01; // Attack time in seconds
+  private hitReleaseTime: number = 0.1; // Release time in seconds
+  private hitVolume: number = 0.8; // Static volume for hits (0-1)
+  private hitIntervalId: number | null = null;
+  private nextHitTime: number = 0;
+
   constructor(audioContextInstance: AudioContext) {
     this.ctx = audioContextInstance;
     this.outputGain = this.ctx.createGain();
@@ -368,8 +377,65 @@ class SoundstageExplorerService {
     return Math.pow(10, volumeDb / 20);
   }
 
+  private scheduleNextHit(): void {
+    if (!this.audioNodes || !this.isHitMode || !this.isPlaying) {
+      return;
+    }
+
+    const currentTime = this.ctx.currentTime;
+
+    // Schedule the next hit
+    if (this.nextHitTime <= currentTime) {
+      this.nextHitTime = currentTime;
+    }
+
+    const volumeGain = this.audioNodes.volumeGain;
+
+    // Cancel any scheduled changes and set to 0
+    volumeGain.gain.cancelScheduledValues(this.nextHitTime);
+    volumeGain.gain.setValueAtTime(0, this.nextHitTime);
+
+    // Attack phase
+    const attackEndTime = this.nextHitTime + this.hitAttackTime;
+    volumeGain.gain.linearRampToValueAtTime(this.hitVolume, attackEndTime);
+
+    // Release phase starts immediately after attack
+    const releaseEndTime = attackEndTime + this.hitReleaseTime;
+    volumeGain.gain.linearRampToValueAtTime(0, releaseEndTime);
+
+    // Schedule next hit
+    this.nextHitTime += 1 / this.hitRate;
+
+    // Schedule the next hit callback
+    const timeUntilNextHit = Math.max(0, (this.nextHitTime - currentTime) * 1000);
+    this.hitIntervalId = window.setTimeout(() => this.scheduleNextHit(), timeUntilNextHit);
+  }
+
   private updateVolumeOscillation = (): void => {
     if (!this.isPlaying || !this.audioNodes) {
+      return;
+    }
+
+    // In hit mode, hits are scheduled separately, so we only handle position oscillation here
+    if (this.isHitMode) {
+      // Handle position oscillation independently (only in line mode)
+      if (this.isLineMode && this.positionOscillationEnabled) {
+        const currentTime = this.ctx.currentTime;
+        const elapsed = currentTime - this.oscillationStartTime;
+        const positionCycleProgress = (elapsed * this.positionOscillationSpeed) % 1;
+        const positionT = positionCycleProgress < 0.5
+          ? positionCycleProgress * 2
+          : 2 - positionCycleProgress * 2;
+
+        // Interpolate between endpoint1 and endpoint2 using triangle wave
+        const currentX = this.lineEndpoint1.x + positionT * (this.lineEndpoint2.x - this.lineEndpoint1.x);
+        const currentY = this.lineEndpoint1.y + positionT * (this.lineEndpoint2.y - this.lineEndpoint1.y);
+
+        // Update audio position
+        this.updatePositionInternal(currentX, currentY);
+      }
+
+      this.oscillationAnimationFrameId = requestAnimationFrame(this.updateVolumeOscillation);
       return;
     }
 
@@ -439,9 +505,15 @@ class SoundstageExplorerService {
       this.createAudioNodes(0.5, 0.5); // Start at center
     }
 
-    // Start volume oscillation
+    // Start volume oscillation or hit scheduling
     this.oscillationStartTime = this.ctx.currentTime;
     this.updateVolumeOscillation();
+
+    // Start hit scheduling if in hit mode
+    if (this.isHitMode) {
+      this.nextHitTime = this.ctx.currentTime;
+      this.scheduleNextHit();
+    }
   }
 
   public stopPlaying(): void {
@@ -453,6 +525,12 @@ class SoundstageExplorerService {
     if (this.oscillationAnimationFrameId !== null) {
       cancelAnimationFrame(this.oscillationAnimationFrameId);
       this.oscillationAnimationFrameId = null;
+    }
+
+    // Stop hit scheduling
+    if (this.hitIntervalId !== null) {
+      clearTimeout(this.hitIntervalId);
+      this.hitIntervalId = null;
     }
 
     // Dispose audio nodes
@@ -726,6 +804,70 @@ class SoundstageExplorerService {
     return this.manualVolume;
   }
 
+  public setHitMode(enabled: boolean): void {
+    const wasPlaying = this.isPlaying;
+
+    // Stop if playing to reset
+    if (wasPlaying) {
+      this.stopPlaying();
+    }
+
+    this.isHitMode = enabled;
+
+    // Restart if was playing
+    if (wasPlaying) {
+      this.startPlaying();
+    }
+  }
+
+  public getHitMode(): boolean {
+    return this.isHitMode;
+  }
+
+  public setHitRate(rate: number): void {
+    this.hitRate = Math.max(0.1, Math.min(20, rate)); // Clamp to [0.1, 20] hits per second
+
+    // Reschedule hits if currently playing in hit mode
+    if (this.isPlaying && this.isHitMode) {
+      // Clear current interval
+      if (this.hitIntervalId !== null) {
+        clearTimeout(this.hitIntervalId);
+        this.hitIntervalId = null;
+      }
+      // Reschedule from current time
+      this.nextHitTime = this.ctx.currentTime;
+      this.scheduleNextHit();
+    }
+  }
+
+  public getHitRate(): number {
+    return this.hitRate;
+  }
+
+  public setHitAttackTime(time: number): void {
+    this.hitAttackTime = Math.max(0.001, Math.min(2, time)); // Clamp to [1ms, 2s]
+  }
+
+  public getHitAttackTime(): number {
+    return this.hitAttackTime;
+  }
+
+  public setHitReleaseTime(time: number): void {
+    this.hitReleaseTime = Math.max(0.001, Math.min(5, time)); // Clamp to [1ms, 5s]
+  }
+
+  public getHitReleaseTime(): number {
+    return this.hitReleaseTime;
+  }
+
+  public setHitVolume(volume: number): void {
+    this.hitVolume = Math.max(0, Math.min(1, volume)); // Clamp to [0, 1]
+  }
+
+  public getHitVolume(): number {
+    return this.hitVolume;
+  }
+
   public dispose(): void {
     this.stopPlaying();
     this.outputGain.disconnect();
@@ -860,6 +1002,46 @@ class SoundstageExplorerPlayer {
 
   public getManualVolume(): number | null {
     return this.service.getManualVolume();
+  }
+
+  public setHitMode(enabled: boolean): void {
+    this.service.setHitMode(enabled);
+  }
+
+  public getHitMode(): boolean {
+    return this.service.getHitMode();
+  }
+
+  public setHitRate(rate: number): void {
+    this.service.setHitRate(rate);
+  }
+
+  public getHitRate(): number {
+    return this.service.getHitRate();
+  }
+
+  public setHitAttackTime(time: number): void {
+    this.service.setHitAttackTime(time);
+  }
+
+  public getHitAttackTime(): number {
+    return this.service.getHitAttackTime();
+  }
+
+  public setHitReleaseTime(time: number): void {
+    this.service.setHitReleaseTime(time);
+  }
+
+  public getHitReleaseTime(): number {
+    return this.service.getHitReleaseTime();
+  }
+
+  public setHitVolume(volume: number): void {
+    this.service.setHitVolume(volume);
+  }
+
+  public getHitVolume(): number {
+    return this.service.getHitVolume();
   }
 
   public dispose(): void {

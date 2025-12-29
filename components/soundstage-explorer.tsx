@@ -21,7 +21,7 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
   const [isDragging, setIsDragging] = useState(false)
 
   // Mode settings
-  const [mode, setMode] = useState<'dot' | 'line' | 'chevron' | 's-shape' | 'fade-line'>('dot')
+  const [mode, setMode] = useState<'dot' | 'line' | 'chevron' | 's-shape' | 'fade-line' | 'hit' | 'x-pattern'>('dot')
   const [lineEndpoint1, setLineEndpoint1] = useState<{ x: number; y: number }>({ x: 0.3, y: 0.5 })
   const [lineEndpoint2, setLineEndpoint2] = useState<{ x: number; y: number }>({ x: 0.7, y: 0.5 })
   const [draggingEndpoint, setDraggingEndpoint] = useState<'none' | 'endpoint1' | 'endpoint2'>('none')
@@ -43,6 +43,11 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
   const [sShapeHeight, setSShapeHeight] = useState(0.4) // Height of entire S shape (0 to 1)
   const [isDraggingSShape, setIsDraggingSShape] = useState(false)
 
+  // X-pattern mode settings
+  const [xPatternCenter, setXPatternCenter] = useState<{ x: number; y: number }>({ x: 0.5, y: 0.5 })
+  const [xPatternSize, setXPatternSize] = useState(0.4) // Size of the X (0 to 1)
+  const [isDraggingXPattern, setIsDraggingXPattern] = useState(false)
+
   // Endpoint volume settings (in dB)
   const [endpoint1VolumeDb, setEndpoint1VolumeDb] = useState(0) // Default: 0 dB (full volume)
   const [endpoint2VolumeDb, setEndpoint2VolumeDb] = useState(0) // Default: 0 dB (full volume)
@@ -55,6 +60,12 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
   const [volumeOscillationEnabled, setVolumeOscillationEnabled] = useState(true) // Default: volume oscillation enabled
   const [positionOscillationEnabled, setPositionOscillationEnabled] = useState(true) // Default: position oscillation enabled
   const [volumeOscillationMinDb, setVolumeOscillationMinDb] = useState(-60) // Default: -60 dB minimum (lower than previous -12 dB)
+
+  // Hit mode settings
+  const [hitRate, setHitRate] = useState(2) // Default: 2 hits per second
+  const [hitAttackTime, setHitAttackTime] = useState(0.01) // Default: 10ms attack
+  const [hitReleaseTime, setHitReleaseTime] = useState(0.1) // Default: 100ms release
+  const [hitVolume, setHitVolume] = useState(0.8) // Default: 80% volume
 
   // Detect dark mode
   useEffect(() => {
@@ -88,13 +99,19 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
     player.setPositionOscillationEnabled(positionOscillationEnabled)
     player.setEndpointVolumes(endpoint1VolumeDb, endpoint2VolumeDb)
     player.setVolumeOscillationMinDb(volumeOscillationMinDb)
+    player.setHitMode(mode === 'hit')
+    player.setHitRate(hitRate)
+    player.setHitAttackTime(hitAttackTime)
+    player.setHitReleaseTime(hitReleaseTime)
+    player.setHitVolume(hitVolume)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Update line mode when mode changes
+  // Update line mode and hit mode when mode changes
   useEffect(() => {
     const player = soundstageExplorerAudio.getSoundstageExplorerPlayer()
     player.setLineMode(mode === 'line')
+    player.setHitMode(mode === 'hit')
   }, [mode])
 
   // Update line endpoints when they change
@@ -127,6 +144,27 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
     player.setVolumeOscillationMinDb(volumeOscillationMinDb)
   }, [volumeOscillationMinDb])
 
+  // Update hit mode settings when they change
+  useEffect(() => {
+    const player = soundstageExplorerAudio.getSoundstageExplorerPlayer()
+    player.setHitRate(hitRate)
+  }, [hitRate])
+
+  useEffect(() => {
+    const player = soundstageExplorerAudio.getSoundstageExplorerPlayer()
+    player.setHitAttackTime(hitAttackTime)
+  }, [hitAttackTime])
+
+  useEffect(() => {
+    const player = soundstageExplorerAudio.getSoundstageExplorerPlayer()
+    player.setHitReleaseTime(hitReleaseTime)
+  }, [hitReleaseTime])
+
+  useEffect(() => {
+    const player = soundstageExplorerAudio.getSoundstageExplorerPlayer()
+    player.setHitVolume(hitVolume)
+  }, [hitVolume])
+
   // Handle playing state
   useEffect(() => {
     const player = soundstageExplorerAudio.getSoundstageExplorerPlayer()
@@ -148,8 +186,8 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
     if (isPlaying && !disabled) {
       const player = soundstageExplorerAudio.getSoundstageExplorerPlayer()
 
-      if (mode === 'dot' || (mode === 'line' && !positionOscillationEnabled) || mode === 'chevron' || mode === 's-shape' || mode === 'fade-line') {
-        // Update position in dot mode, chevron mode, s-shape mode, fade-line mode, or in line mode when position oscillation is disabled
+      if (mode === 'dot' || (mode === 'line' && !positionOscillationEnabled) || mode === 'chevron' || mode === 's-shape' || mode === 'fade-line' || mode === 'hit' || mode === 'x-pattern') {
+        // Update position in dot mode, chevron mode, s-shape mode, fade-line mode, hit mode, x-pattern mode, or in line mode when position oscillation is disabled
         player.updatePosition(dotPosition.x, dotPosition.y)
       }
     }
@@ -259,6 +297,81 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
       }
     }
   }, [mode, isPlaying, disabled, positionOscillationSpeed, chevronCenter, chevronScaleX, chevronScaleY])
+
+  // Animate dot position along X-pattern path in x-pattern mode
+  useEffect(() => {
+    if (mode === 'x-pattern' && isPlaying && !disabled) {
+      let animationFrameId: number
+
+      const startTime = Date.now()
+
+      const animate = () => {
+        const elapsed = (Date.now() - startTime) / 1000
+        const cycleProgress = (elapsed * positionOscillationSpeed) % 1
+
+        // X-pattern path has 4 segments forming an X:
+        // 1. Top-left to bottom-right (first diagonal)
+        // 2. Bottom-right to top-right (bottom edge)
+        // 3. Top-right to bottom-left (second diagonal)
+        // 4. Bottom-left to top-left (top edge)
+
+        // Define the 4 corner points
+        const topLeft = {
+          x: xPatternCenter.x - xPatternSize / 2,
+          y: xPatternCenter.y - xPatternSize / 2
+        }
+        const topRight = {
+          x: xPatternCenter.x + xPatternSize / 2,
+          y: xPatternCenter.y - xPatternSize / 2
+        }
+        const bottomLeft = {
+          x: xPatternCenter.x - xPatternSize / 2,
+          y: xPatternCenter.y + xPatternSize / 2
+        }
+        const bottomRight = {
+          x: xPatternCenter.x + xPatternSize / 2,
+          y: xPatternCenter.y + xPatternSize / 2
+        }
+
+        let currentX, currentY
+
+        // Divide the cycle into 4 equal parts for the 4 segments
+        if (cycleProgress < 0.25) {
+          // Segment 1: top-left to bottom-right
+          const t = cycleProgress * 4
+          currentX = topLeft.x + t * (bottomRight.x - topLeft.x)
+          currentY = topLeft.y + t * (bottomRight.y - topLeft.y)
+        } else if (cycleProgress < 0.5) {
+          // Segment 2: bottom-right to top-right
+          const t = (cycleProgress - 0.25) * 4
+          currentX = bottomRight.x + t * (topRight.x - bottomRight.x)
+          currentY = bottomRight.y + t * (topRight.y - bottomRight.y)
+        } else if (cycleProgress < 0.75) {
+          // Segment 3: top-right to bottom-left
+          const t = (cycleProgress - 0.5) * 4
+          currentX = topRight.x + t * (bottomLeft.x - topRight.x)
+          currentY = topRight.y + t * (bottomLeft.y - topRight.y)
+        } else {
+          // Segment 4: bottom-left to top-left
+          const t = (cycleProgress - 0.75) * 4
+          currentX = bottomLeft.x + t * (topLeft.x - bottomLeft.x)
+          currentY = bottomLeft.y + t * (topLeft.y - bottomLeft.y)
+        }
+
+        setDotPosition({ x: currentX, y: currentY })
+
+        animationFrameId = requestAnimationFrame(animate)
+      }
+
+      animate()
+
+      return () => {
+        if (animationFrameId) {
+          cancelAnimationFrame(animationFrameId)
+        }
+      }
+    }
+  }, [mode, isPlaying, disabled, positionOscillationSpeed, xPatternCenter, xPatternSize])
 
   // Animate dot position along S-shape path in s-shape mode
   useEffect(() => {
@@ -399,36 +512,24 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
 
         let currentX, currentY, currentVolume
 
-        // Each complete cycle has 4 phases:
-        // Phase 1 (0 to 0.25): endpoint1 to endpoint2, volume 0 to 1
-        // Phase 2 (0.25 to 0.5): endpoint1 to endpoint2, volume 1 to 0
-        // Phase 3 (0.5 to 0.75): endpoint2 to endpoint1, volume 0 to 1
-        // Phase 4 (0.75 to 1): endpoint2 to endpoint1, volume 1 to 0
+        // Each complete cycle has 2 sweeps:
+        // Sweep 1 (0 to 0.5): endpoint1 to endpoint2, volume 0 → 1 → 0 (triangle wave)
+        // Sweep 2 (0.5 to 1): endpoint2 to endpoint1, volume 0 → 1 → 0 (triangle wave)
 
-        if (cycleProgress < 0.25) {
-          // Phase 1: Moving forward (endpoint1 → endpoint2), fade in (0 → 1)
-          const phaseT = cycleProgress / 0.25 // 0 to 1 within this phase
-          currentX = fadeLineEndpoint1.x + phaseT * (fadeLineEndpoint2.x - fadeLineEndpoint1.x)
-          currentY = fadeLineEndpoint1.y + phaseT * (fadeLineEndpoint2.y - fadeLineEndpoint1.y)
-          currentVolume = phaseT // 0 to 1
-        } else if (cycleProgress < 0.5) {
-          // Phase 2: Moving forward (endpoint1 → endpoint2), fade out (1 → 0)
-          const phaseT = (cycleProgress - 0.25) / 0.25 // 0 to 1 within this phase
-          currentX = fadeLineEndpoint1.x + phaseT * (fadeLineEndpoint2.x - fadeLineEndpoint1.x)
-          currentY = fadeLineEndpoint1.y + phaseT * (fadeLineEndpoint2.y - fadeLineEndpoint1.y)
-          currentVolume = 1 - phaseT // 1 to 0
-        } else if (cycleProgress < 0.75) {
-          // Phase 3: Moving backward (endpoint2 → endpoint1), fade in (0 → 1)
-          const phaseT = (cycleProgress - 0.5) / 0.25 // 0 to 1 within this phase
-          currentX = fadeLineEndpoint2.x + phaseT * (fadeLineEndpoint1.x - fadeLineEndpoint2.x)
-          currentY = fadeLineEndpoint2.y + phaseT * (fadeLineEndpoint1.y - fadeLineEndpoint2.y)
-          currentVolume = phaseT // 0 to 1
+        if (cycleProgress < 0.5) {
+          // Forward sweep (endpoint1 → endpoint2)
+          const sweepT = cycleProgress * 2 // 0 to 1
+          currentX = fadeLineEndpoint1.x + sweepT * (fadeLineEndpoint2.x - fadeLineEndpoint1.x)
+          currentY = fadeLineEndpoint1.y + sweepT * (fadeLineEndpoint2.y - fadeLineEndpoint1.y)
+          // Triangle wave: quiet at start (0), loud at middle (1), quiet at end (0)
+          currentVolume = sweepT < 0.5 ? sweepT * 2 : 2 - sweepT * 2
         } else {
-          // Phase 4: Moving backward (endpoint2 → endpoint1), fade out (1 → 0)
-          const phaseT = (cycleProgress - 0.75) / 0.25 // 0 to 1 within this phase
-          currentX = fadeLineEndpoint2.x + phaseT * (fadeLineEndpoint1.x - fadeLineEndpoint2.x)
-          currentY = fadeLineEndpoint2.y + phaseT * (fadeLineEndpoint1.y - fadeLineEndpoint2.y)
-          currentVolume = 1 - phaseT // 1 to 0
+          // Backward sweep (endpoint2 → endpoint1)
+          const sweepT = (cycleProgress - 0.5) * 2 // 0 to 1
+          currentX = fadeLineEndpoint2.x + sweepT * (fadeLineEndpoint1.x - fadeLineEndpoint2.x)
+          currentY = fadeLineEndpoint2.y + sweepT * (fadeLineEndpoint1.y - fadeLineEndpoint2.y)
+          // Triangle wave: quiet at start (0), loud at middle (1), quiet at end (0)
+          currentVolume = sweepT < 0.5 ? sweepT * 2 : 2 - sweepT * 2
         }
 
         setDotPosition({ x: currentX, y: currentY })
@@ -487,8 +588,8 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
     ctx.lineTo(rect.width, rect.height / 2)
     ctx.stroke()
 
-    if (mode === 'dot') {
-      // Draw dot
+    if (mode === 'dot' || mode === 'hit') {
+      // Draw dot (same for both dot and hit mode)
       const dotX = dotPosition.x * rect.width
       const dotY = dotPosition.y * rect.height
       const dotRadius = 12
@@ -579,6 +680,107 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
       ctx.fillStyle = disabled
         ? isDarkMode ? "#71717a" : "#94a3b8"
         : isDarkMode ? "#fbbf24" : "#f59e0b" // amber color to distinguish from endpoints
+      ctx.fill()
+
+      // Draw inner highlight on moving dot
+      ctx.beginPath()
+      ctx.arc(dotX - movingDotRadius / 3, dotY - movingDotRadius / 3, movingDotRadius / 3, 0, Math.PI * 2)
+      ctx.fillStyle = isDarkMode ? "rgba(255, 255, 255, 0.3)" : "rgba(255, 255, 255, 0.5)"
+      ctx.fill()
+    } else if (mode === 'x-pattern') {
+      // X-pattern mode - draw X shape and moving dot
+      const centerX = xPatternCenter.x * rect.width
+      const centerY = xPatternCenter.y * rect.height
+      const size = xPatternSize * Math.min(rect.width, rect.height) / 2
+
+      // Calculate X pattern corner points
+      const topLeft = {
+        x: centerX - size,
+        y: centerY - size
+      }
+      const topRight = {
+        x: centerX + size,
+        y: centerY - size
+      }
+      const bottomLeft = {
+        x: centerX - size,
+        y: centerY + size
+      }
+      const bottomRight = {
+        x: centerX + size,
+        y: centerY + size
+      }
+
+      // Draw X lines (two diagonals)
+      ctx.strokeStyle = disabled
+        ? isDarkMode ? "#52525b" : "#cbd5e1"
+        : isDarkMode ? "#38bdf8" : "#0284c7"
+      ctx.lineWidth = 3
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+
+      // First diagonal: top-left to bottom-right
+      ctx.beginPath()
+      ctx.moveTo(topLeft.x, topLeft.y)
+      ctx.lineTo(bottomRight.x, bottomRight.y)
+      ctx.stroke()
+
+      // Second diagonal: top-right to bottom-left
+      ctx.beginPath()
+      ctx.moveTo(topRight.x, topRight.y)
+      ctx.lineTo(bottomLeft.x, bottomLeft.y)
+      ctx.stroke()
+
+      // Draw the path that the dot follows (the edges connecting all 4 corners)
+      ctx.strokeStyle = disabled
+        ? isDarkMode ? "#3f3f46" : "#e2e8f0"
+        : isDarkMode ? "#1e40af" : "#60a5fa"
+      ctx.lineWidth = 1
+      ctx.setLineDash([5, 5])
+
+      ctx.beginPath()
+      ctx.moveTo(topLeft.x, topLeft.y)
+      ctx.lineTo(bottomRight.x, bottomRight.y)
+      ctx.lineTo(topRight.x, topRight.y)
+      ctx.lineTo(bottomLeft.x, bottomLeft.y)
+      ctx.lineTo(topLeft.x, topLeft.y)
+      ctx.stroke()
+      ctx.setLineDash([])
+
+      // Draw center point (for dragging)
+      const centerRadius = 8
+      ctx.beginPath()
+      ctx.arc(centerX, centerY, centerRadius, 0, Math.PI * 2)
+      ctx.fillStyle = disabled
+        ? isDarkMode ? "#52525b" : "#cbd5e1"
+        : isDarkMode ? "#38bdf8" : "#0284c7"
+      ctx.fill()
+      ctx.strokeStyle = isDarkMode ? "#1f2937" : "#f8fafc"
+      ctx.lineWidth = 2
+      ctx.stroke()
+
+      // Draw moving dot (current position along X-pattern)
+      const dotX = dotPosition.x * rect.width
+      const dotY = dotPosition.y * rect.height
+      const movingDotRadius = 12
+
+      // Draw outer glow
+      ctx.beginPath()
+      ctx.arc(dotX, dotY, movingDotRadius + 8, 0, Math.PI * 2)
+      const gradient = ctx.createRadialGradient(dotX, dotY, movingDotRadius, dotX, dotY, movingDotRadius + 8)
+      gradient.addColorStop(0, disabled
+        ? isDarkMode ? "rgba(82, 82, 91, 0.3)" : "rgba(203, 213, 225, 0.3)"
+        : isDarkMode ? "rgba(251, 191, 36, 0.3)" : "rgba(245, 158, 11, 0.3)")
+      gradient.addColorStop(1, "rgba(251, 191, 36, 0)")
+      ctx.fillStyle = gradient
+      ctx.fill()
+
+      // Draw main moving dot
+      ctx.beginPath()
+      ctx.arc(dotX, dotY, movingDotRadius, 0, Math.PI * 2)
+      ctx.fillStyle = disabled
+        ? isDarkMode ? "#52525b" : "#cbd5e1"
+        : isDarkMode ? "#fbbf24" : "#f59e0b"
       ctx.fill()
 
       // Draw inner highlight on moving dot
@@ -827,7 +1029,7 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
       ctx.fill()
     }
 
-  }, [dotPosition, lineEndpoint1, lineEndpoint2, chevronCenter, chevronScaleX, chevronScaleY, sShapeCenter, sShapeWidth, sShapeHeight, fadeLineEndpoint1, fadeLineEndpoint2, mode, isDarkMode, isPlaying, disabled])
+  }, [dotPosition, lineEndpoint1, lineEndpoint2, chevronCenter, chevronScaleX, chevronScaleY, sShapeCenter, sShapeWidth, sShapeHeight, fadeLineEndpoint1, fadeLineEndpoint2, xPatternCenter, xPatternSize, mode, isDarkMode, isPlaying, disabled])
 
   const updateDotPosition = useCallback((e: React.MouseEvent<HTMLCanvasElement> | MouseEvent) => {
     const canvas = canvasRef.current
@@ -850,7 +1052,7 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
     const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
     const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height))
 
-    if (mode === 'dot') {
+    if (mode === 'dot' || mode === 'hit') {
       setIsDragging(true)
       updateDotPosition(e)
 
@@ -880,6 +1082,23 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
         }
       } else if (dist2 < endpointRadius * 2) {
         setDraggingEndpoint('endpoint2')
+        // Auto-start playing when dragging starts
+        if (!isPlaying) {
+          setIsPlaying(true)
+        }
+      }
+    } else if (mode === 'x-pattern') {
+      // X-pattern mode - check if center was clicked
+      const clickX = x * rect.width
+      const clickY = y * rect.height
+      const centerX = xPatternCenter.x * rect.width
+      const centerY = xPatternCenter.y * rect.height
+
+      const distToCenter = Math.sqrt((clickX - centerX) ** 2 + (clickY - centerY) ** 2)
+      const centerRadius = 10
+
+      if (distToCenter < centerRadius * 2) {
+        setIsDraggingXPattern(true)
         // Auto-start playing when dragging starts
         if (!isPlaying) {
           setIsPlaying(true)
@@ -952,7 +1171,7 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (disabled) return
 
-    if (mode === 'dot' && isDragging) {
+    if ((mode === 'dot' || mode === 'hit') && isDragging) {
       updateDotPosition(e)
     } else if (mode === 'line' && draggingEndpoint !== 'none') {
       const canvas = canvasRef.current
@@ -967,6 +1186,15 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
       } else if (draggingEndpoint === 'endpoint2') {
         setLineEndpoint2({ x, y })
       }
+    } else if (mode === 'x-pattern' && isDraggingXPattern) {
+      const canvas = canvasRef.current
+      if (!canvas) return
+
+      const rect = canvas.getBoundingClientRect()
+      const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+      const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height))
+
+      setXPatternCenter({ x, y })
     } else if (mode === 'chevron' && isDraggingChevron) {
       const canvas = canvasRef.current
       if (!canvas) return
@@ -1006,6 +1234,7 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
     setDraggingEndpoint('none')
     setIsDraggingChevron(false)
     setIsDraggingSShape(false)
+    setIsDraggingXPattern(false)
     setDraggingFadeLineEndpoint('none')
   }
 
@@ -1016,13 +1245,14 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
       setDraggingEndpoint('none')
       setIsDraggingChevron(false)
       setIsDraggingSShape(false)
+      setIsDraggingXPattern(false)
       setDraggingFadeLineEndpoint('none')
     }
 
     const handleGlobalMouseMove = (e: MouseEvent) => {
       if (disabled) return
 
-      if (mode === 'dot' && isDragging) {
+      if ((mode === 'dot' || mode === 'hit') && isDragging) {
         updateDotPosition(e)
       } else if (mode === 'line' && draggingEndpoint !== 'none') {
         const canvas = canvasRef.current
@@ -1078,7 +1308,7 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
       window.removeEventListener('mouseup', handleGlobalMouseUp)
       window.removeEventListener('mousemove', handleGlobalMouseMove)
     }
-  }, [mode, isDragging, draggingEndpoint, isDraggingChevron, isDraggingSShape, draggingFadeLineEndpoint, disabled, updateDotPosition])
+  }, [mode, isDragging, draggingEndpoint, isDraggingChevron, isDraggingSShape, isDraggingXPattern, draggingFadeLineEndpoint, disabled, updateDotPosition])
 
   const handleBandwidthChange = (value: number[]) => {
     const newBandwidth = value[0]
@@ -1122,7 +1352,7 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
           style={{ touchAction: 'none' }}
         />
         <div className="absolute top-2 left-2 text-xs text-muted-foreground">
-          {mode === 'dot' ? 'Drag to explore' : mode === 'line' ? 'Drag endpoints to set path' : mode === 's-shape' ? 'Drag center to move • Audio follows S path' : mode === 'fade-line' ? 'Drag endpoints to set path • Volume auto-fades' : 'Drag center to move • Audio follows path'}
+          {mode === 'dot' ? 'Drag to explore' : mode === 'line' ? 'Drag endpoints to set path' : mode === 's-shape' ? 'Drag center to move • Audio follows S path' : mode === 'fade-line' ? 'Drag endpoints to set path • Volume auto-fades' : mode === 'hit' ? 'Drag to explore • Repeating hits' : mode === 'x-pattern' ? 'Drag center to move • Audio follows X path' : 'Drag center to move • Audio follows path'}
         </div>
       </div>
 
@@ -1133,7 +1363,7 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
           <Label htmlFor="mode">Mode</Label>
           <Select
             value={mode}
-            onValueChange={(value: 'dot' | 'line' | 'chevron' | 's-shape' | 'fade-line') => setMode(value)}
+            onValueChange={(value: 'dot' | 'line' | 'chevron' | 's-shape' | 'fade-line' | 'hit' | 'x-pattern') => setMode(value)}
             disabled={disabled}
           >
             <SelectTrigger id="mode">
@@ -1145,6 +1375,8 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
               <SelectItem value="chevron">Chevron (Scalable Shape)</SelectItem>
               <SelectItem value="s-shape">S-Shape (Squared Path)</SelectItem>
               <SelectItem value="fade-line">Fade Line (Auto Volume)</SelectItem>
+              <SelectItem value="hit">Hit (Repeating Hits)</SelectItem>
+              <SelectItem value="x-pattern">X-Pattern (Diagonal Cross)</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -1225,8 +1457,96 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
           </>
         )}
 
-        {/* Volume Oscillation Toggle - Not shown in fade-line mode */}
-        {mode !== 'fade-line' && (
+        {/* X-Pattern Controls - Only show in x-pattern mode */}
+        {mode === 'x-pattern' && (
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="x-pattern-size">X-Pattern Size</Label>
+              <span className="text-xs text-muted-foreground">{(xPatternSize * 100).toFixed(0)}%</span>
+            </div>
+            <Slider
+              id="x-pattern-size"
+              min={0.1}
+              max={0.5}
+              step={0.01}
+              value={[xPatternSize]}
+              onValueChange={(value) => setXPatternSize(value[0])}
+              disabled={disabled}
+            />
+          </div>
+        )}
+
+        {/* Hit Mode Controls - Only show in hit mode */}
+        {mode === 'hit' && (
+          <>
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="hit-rate">Hit Rate</Label>
+                <span className="text-xs text-muted-foreground">{hitRate.toFixed(1)} hits/sec</span>
+              </div>
+              <Slider
+                id="hit-rate"
+                min={0.1}
+                max={20}
+                step={0.1}
+                value={[hitRate]}
+                onValueChange={(value) => setHitRate(value[0])}
+                disabled={disabled}
+              />
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="hit-attack">Attack Time</Label>
+                <span className="text-xs text-muted-foreground">{(hitAttackTime * 1000).toFixed(0)} ms</span>
+              </div>
+              <Slider
+                id="hit-attack"
+                min={0.001}
+                max={2}
+                step={0.001}
+                value={[hitAttackTime]}
+                onValueChange={(value) => setHitAttackTime(value[0])}
+                disabled={disabled}
+              />
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="hit-release">Release Time</Label>
+                <span className="text-xs text-muted-foreground">{(hitReleaseTime * 1000).toFixed(0)} ms</span>
+              </div>
+              <Slider
+                id="hit-release"
+                min={0.001}
+                max={5}
+                step={0.001}
+                value={[hitReleaseTime]}
+                onValueChange={(value) => setHitReleaseTime(value[0])}
+                disabled={disabled}
+              />
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="hit-volume">Volume</Label>
+                <span className="text-xs text-muted-foreground">{(hitVolume * 100).toFixed(0)}%</span>
+              </div>
+              <Slider
+                id="hit-volume"
+                min={0}
+                max={1}
+                step={0.01}
+                value={[hitVolume]}
+                onValueChange={(value) => setHitVolume(value[0])}
+                disabled={disabled}
+              />
+            </div>
+          </>
+        )}
+
+        {/* Volume Oscillation Toggle - Not shown in fade-line or hit mode */}
+        {mode !== 'fade-line' && mode !== 'hit' && (
           <div className="flex items-center justify-between">
             <Label htmlFor="volume-oscillation-enabled">Volume Oscillation</Label>
             <label className="relative inline-flex items-center cursor-pointer">
@@ -1315,7 +1635,7 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
         </div>
 
         {/* Position Oscillation Speed Control - Only show when position oscillation is active */}
-        {((mode === 'line' && positionOscillationEnabled) || mode === 'chevron' || mode === 's-shape' || mode === 'fade-line') && (
+        {((mode === 'line' && positionOscillationEnabled) || mode === 'chevron' || mode === 's-shape' || mode === 'fade-line' || mode === 'x-pattern') && (
           <div className="space-y-2">
             <div className="flex justify-between items-center">
               <Label htmlFor="position-oscillation-speed">Position Oscillation Speed</Label>
@@ -1333,8 +1653,8 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
           </div>
         )}
 
-        {/* Volume Oscillation Controls - Only show when volume oscillation is enabled and not in fade-line mode */}
-        {volumeOscillationEnabled && mode !== 'fade-line' && (
+        {/* Volume Oscillation Controls - Only show when volume oscillation is enabled and not in fade-line or hit mode */}
+        {volumeOscillationEnabled && mode !== 'fade-line' && mode !== 'hit' && (
           <>
             <div className="space-y-2">
               <div className="flex justify-between items-center">
@@ -1444,6 +1764,32 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
             <li>Drag the blue center point to move the S-shape</li>
             <li>Use Width slider to adjust the width of the S-shape</li>
             <li>Use Height slider to adjust the height of the S-shape</li>
+            <li>Horizontal position (X) controls stereo panning (left ↔ right)</li>
+            <li>Vertical position (Y) controls frequency (high ↑ ↓ low)</li>
+            {volumeOscillationEnabled ? (
+              <li>Volume oscillates at the set speed</li>
+            ) : (
+              <li>Volume stays constant</li>
+            )}
+            <li>Sound plays continuously while active</li>
+          </ul>
+        ) : mode === 'hit' ? (
+          <ul className="list-disc list-inside space-y-1">
+            <li>Drag the dot anywhere in the soundstage to set the position</li>
+            <li>Sound plays as repeating hits with attack/release envelopes</li>
+            <li>Hit rate controls how often hits occur (hits per second)</li>
+            <li>Attack time controls how quickly each hit fades in</li>
+            <li>Release time controls how quickly each hit fades out</li>
+            <li>Volume slider controls the peak volume of each hit</li>
+            <li>Horizontal position (X) controls stereo panning (left ↔ right)</li>
+            <li>Vertical position (Y) controls frequency (high ↑ ↓ low)</li>
+          </ul>
+        ) : mode === 'x-pattern' ? (
+          <ul className="list-disc list-inside space-y-1">
+            <li>The amber dot moves along the X-pattern path (diagonal cross)</li>
+            <li>Drag the blue center point to move the X-pattern</li>
+            <li>Use Size slider to adjust the size of the X</li>
+            <li>Path follows: top-left → bottom-right → top-right → bottom-left → repeat</li>
             <li>Horizontal position (X) controls stereo panning (left ↔ right)</li>
             <li>Vertical position (Y) controls frequency (high ↑ ↓ low)</li>
             {volumeOscillationEnabled ? (

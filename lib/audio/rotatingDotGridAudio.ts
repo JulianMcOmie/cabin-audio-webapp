@@ -40,6 +40,7 @@ interface PointAudioNodes {
   mainGain: GainNode;
   volumeLevelGain: GainNode; // Controls volume based on dot's volume level (0-3)
   depthGain: GainNode; // Controls volume based on Z-axis
+  hitEnvelopeGain: GainNode; // Controls hit envelope in hit mode
   panner: StereoPannerNode;
   slopedNoiseGenerator: SlopedPinkNoiseGenerator | null;
   bandpassedNoiseGenerator: BandpassedNoiseGenerator | null;
@@ -230,6 +231,17 @@ class RotatingDotAudioService {
   private currentBandwidth: number = BANDPASS_BANDWIDTH_OCTAVES;
   private currentBaseDbLevel: number = 0;
 
+  // Hit mode settings
+  private isHitMode: boolean = true; // Default to hit mode
+  private hitRate: number = 10; // Hits per second (default: cycle through dots quickly)
+  private hitAttackTime: number = 0.01; // Attack time in seconds (default: 10ms)
+  private hitReleaseTime: number = 0.05; // Release time in seconds (default: 50ms)
+  private hitVolume: number = 1.0; // Peak volume for hits (0-1)
+  private hitIntervalId: number | null = null;
+  private nextHitTime: number = 0;
+  private currentDotIndex: number = 0; // Current dot in sequence
+  private dotSequence: string[] = []; // Ordered list of dot IDs to sequence through
+
   constructor(audioContextInstance: AudioContext) {
     this.ctx = audioContextInstance;
     this.outputGain = this.ctx.createGain();
@@ -357,6 +369,10 @@ class RotatingDotAudioService {
     const depthGain = this.ctx.createGain();
     depthGain.gain.value = this.calculateDepthGain(z);
 
+    // Create hit envelope gain node (controls hit envelope in hit mode)
+    const hitEnvelopeGain = this.ctx.createGain();
+    hitEnvelopeGain.gain.value = this.isHitMode ? 0 : 1.0; // Start at 0 in hit mode, 1 in continuous mode
+
     // Create panner
     const panner = this.ctx.createStereoPanner();
     const panPosition = x * 2 - 1; // Map [0,1] to [-1,1]
@@ -393,10 +409,11 @@ class RotatingDotAudioService {
         break;
     }
 
-    // Connect the chain: mainGain -> volumeLevelGain -> depthGain -> panner -> output
+    // Connect the chain: mainGain -> volumeLevelGain -> depthGain -> hitEnvelopeGain -> panner -> output
     mainGain.connect(volumeLevelGain);
     volumeLevelGain.connect(depthGain);
-    depthGain.connect(panner);
+    depthGain.connect(hitEnvelopeGain);
+    hitEnvelopeGain.connect(panner);
     panner.connect(this.outputGain);
 
     // Store audio nodes
@@ -405,6 +422,7 @@ class RotatingDotAudioService {
       mainGain,
       volumeLevelGain,
       depthGain,
+      hitEnvelopeGain,
       panner,
       slopedNoiseGenerator,
       bandpassedNoiseGenerator,
@@ -418,11 +436,104 @@ class RotatingDotAudioService {
 
     // Start playing immediately
     source.start();
+
+    // Update dot sequence and restart hit scheduling if in hit mode
+    if (this.isHitMode) {
+      this.updateDotSequence();
+    }
+  }
+
+  private updateDotSequence(): void {
+    // Update the sequence of dots to cycle through
+    this.dotSequence = Array.from(this.audioPoints.keys()).sort();
+    this.currentDotIndex = 0;
+
+    // Restart hit scheduling if needed
+    if (this.hitIntervalId !== null) {
+      clearTimeout(this.hitIntervalId);
+      this.hitIntervalId = null;
+    }
+    if (this.dotSequence.length > 0) {
+      this.nextHitTime = this.ctx.currentTime;
+      this.scheduleNextHit();
+    }
+  }
+
+  private scheduleNextHit(): void {
+    if (!this.isHitMode || this.dotSequence.length === 0) {
+      return;
+    }
+
+    const currentTime = this.ctx.currentTime;
+
+    // Schedule the next hit
+    if (this.nextHitTime <= currentTime) {
+      this.nextHitTime = currentTime;
+    }
+
+    // Get the current dot to trigger
+    const dotId = this.dotSequence[this.currentDotIndex];
+    const dotNode = this.audioPoints.get(dotId);
+
+    if (dotNode) {
+      const hitEnvelopeGain = dotNode.hitEnvelopeGain;
+
+      // Cancel any scheduled changes and set to 0
+      hitEnvelopeGain.gain.cancelScheduledValues(this.nextHitTime);
+      hitEnvelopeGain.gain.setValueAtTime(0, this.nextHitTime);
+
+      // Attack phase
+      const attackEndTime = this.nextHitTime + this.hitAttackTime;
+      hitEnvelopeGain.gain.linearRampToValueAtTime(this.hitVolume, attackEndTime);
+
+      // Release phase starts immediately after attack
+      const releaseEndTime = attackEndTime + this.hitReleaseTime;
+      hitEnvelopeGain.gain.linearRampToValueAtTime(0, releaseEndTime);
+    }
+
+    // Move to next dot in sequence
+    this.currentDotIndex = (this.currentDotIndex + 1) % this.dotSequence.length;
+
+    // Schedule next hit
+    this.nextHitTime += 1 / this.hitRate;
+
+    // Schedule the next hit callback
+    const timeUntilNextHit = Math.max(0, (this.nextHitTime - currentTime) * 1000);
+    this.hitIntervalId = window.setTimeout(() => this.scheduleNextHit(), timeUntilNextHit);
+  }
+
+  public startHitMode(): void {
+    if (!this.isHitMode) return;
+
+    // Set all hit envelope gains to 0
+    this.audioPoints.forEach(point => {
+      point.hitEnvelopeGain.gain.setValueAtTime(0, this.ctx.currentTime);
+    });
+
+    // Start hit scheduling
+    this.updateDotSequence();
+  }
+
+  public stopHitMode(): void {
+    // Stop hit scheduling
+    if (this.hitIntervalId !== null) {
+      clearTimeout(this.hitIntervalId);
+      this.hitIntervalId = null;
+    }
+
+    // Set all hit envelope gains to 1 (continuous mode)
+    this.audioPoints.forEach(point => {
+      point.hitEnvelopeGain.gain.cancelScheduledValues(this.ctx.currentTime);
+      point.hitEnvelopeGain.gain.setValueAtTime(1.0, this.ctx.currentTime);
+    });
   }
 
   public removePoint(id: string): void {
     const point = this.audioPoints.get(id);
     if (!point) return;
+
+    // Update dot sequence if in hit mode (before removal)
+    const wasInSequence = this.dotSequence.includes(id);
 
     // Stop and disconnect
     try {
@@ -435,6 +546,7 @@ class RotatingDotAudioService {
     point.mainGain.disconnect();
     point.volumeLevelGain.disconnect();
     point.depthGain.disconnect();
+    point.hitEnvelopeGain.disconnect();
     point.panner.disconnect();
 
     if (point.slopedNoiseGenerator) {
@@ -448,6 +560,11 @@ class RotatingDotAudioService {
     }
 
     this.audioPoints.delete(id);
+
+    // Update dot sequence if in hit mode (after removal)
+    if (this.isHitMode && wasInSequence) {
+      this.updateDotSequence();
+    }
   }
 
   public updatePointVolumeLevel(id: string, volumeLevel: number): void {
@@ -494,7 +611,71 @@ class RotatingDotAudioService {
     point.depthGain.gain.setValueAtTime(depthGain, this.ctx.currentTime);
   }
 
+  public setHitMode(enabled: boolean): void {
+    this.isHitMode = enabled;
+
+    if (enabled) {
+      this.startHitMode();
+    } else {
+      this.stopHitMode();
+    }
+  }
+
+  public getHitMode(): boolean {
+    return this.isHitMode;
+  }
+
+  public setHitRate(rate: number): void {
+    this.hitRate = Math.max(0.1, Math.min(100, rate)); // Clamp to [0.1, 100] hits per second
+
+    // Reschedule hits if currently in hit mode
+    if (this.isHitMode && this.dotSequence.length > 0) {
+      // Clear current interval
+      if (this.hitIntervalId !== null) {
+        clearTimeout(this.hitIntervalId);
+        this.hitIntervalId = null;
+      }
+      // Reschedule from current time
+      this.nextHitTime = this.ctx.currentTime;
+      this.scheduleNextHit();
+    }
+  }
+
+  public getHitRate(): number {
+    return this.hitRate;
+  }
+
+  public setHitAttackTime(time: number): void {
+    this.hitAttackTime = Math.max(0.001, Math.min(2, time)); // Clamp to [1ms, 2s]
+  }
+
+  public getHitAttackTime(): number {
+    return this.hitAttackTime;
+  }
+
+  public setHitReleaseTime(time: number): void {
+    this.hitReleaseTime = Math.max(0.001, Math.min(5, time)); // Clamp to [1ms, 5s]
+  }
+
+  public getHitReleaseTime(): number {
+    return this.hitReleaseTime;
+  }
+
+  public setHitVolume(volume: number): void {
+    this.hitVolume = Math.max(0, Math.min(1, volume)); // Clamp to [0, 1]
+  }
+
+  public getHitVolume(): number {
+    return this.hitVolume;
+  }
+
   public dispose(): void {
+    // Stop hit scheduling
+    if (this.hitIntervalId !== null) {
+      clearTimeout(this.hitIntervalId);
+      this.hitIntervalId = null;
+    }
+
     // Remove all points
     const pointIds = Array.from(this.audioPoints.keys());
     pointIds.forEach(id => this.removePoint(id));
@@ -612,6 +793,46 @@ export class RotatingDotGridPlayer {
 
   public setVolumeDb(dbLevel: number): void {
     this.audioService.setBaseVolumeDb(dbLevel);
+  }
+
+  public setHitMode(enabled: boolean): void {
+    this.audioService.setHitMode(enabled);
+  }
+
+  public getHitMode(): boolean {
+    return this.audioService.getHitMode();
+  }
+
+  public setHitRate(rate: number): void {
+    this.audioService.setHitRate(rate);
+  }
+
+  public getHitRate(): number {
+    return this.audioService.getHitRate();
+  }
+
+  public setHitAttackTime(time: number): void {
+    this.audioService.setHitAttackTime(time);
+  }
+
+  public getHitAttackTime(): number {
+    return this.audioService.getHitAttackTime();
+  }
+
+  public setHitReleaseTime(time: number): void {
+    this.audioService.setHitReleaseTime(time);
+  }
+
+  public getHitReleaseTime(): number {
+    return this.audioService.getHitReleaseTime();
+  }
+
+  public setHitVolume(volume: number): void {
+    this.audioService.setHitVolume(volume);
+  }
+
+  public getHitVolume(): number {
+    return this.audioService.getHitVolume();
   }
 
   public dispose(): void {

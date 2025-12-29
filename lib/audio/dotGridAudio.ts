@@ -145,6 +145,12 @@ class PositionedAudioService {
   private loopDuration: number = 4.0; // Total loop duration in seconds (default: 4 seconds)
   private loopSequencerPlayTogether: boolean = false; // Whether all dots play together (true) or cycle through dots (false)
 
+  // Hit mode settings for loop sequencer
+  private hitModeRate: number = 10; // Hits per second (default: 10 for fast cycling)
+  private hitModeAttack: number = 0.01; // Attack time in seconds (default: 10ms)
+  private hitModeRelease: number = 0.05; // Release time in seconds (default: 50ms)
+  private hitModeVolume: number = 1.0; // Peak volume for hits (0-1, default: 100%)
+
   // Auto volume cycle settings
   private autoVolumeCycleEnabled: boolean = false; // Whether auto volume cycle is enabled
   private autoVolumeCycleSpeed: number = 2.0; // Cycle duration in seconds (default: 2 seconds)
@@ -442,6 +448,39 @@ class PositionedAudioService {
     return this.loopSequencerPlayTogether;
   }
 
+  // Hit mode methods for loop sequencer
+  public setHitModeRate(rate: number): void {
+    this.hitModeRate = Math.max(0.1, Math.min(100, rate)); // Clamp 0.1-100 hits/sec
+  }
+
+  public getHitModeRate(): number {
+    return this.hitModeRate;
+  }
+
+  public setHitModeAttack(time: number): void {
+    this.hitModeAttack = Math.max(0.001, Math.min(2, time)); // Clamp 1ms-2s
+  }
+
+  public getHitModeAttack(): number {
+    return this.hitModeAttack;
+  }
+
+  public setHitModeRelease(time: number): void {
+    this.hitModeRelease = Math.max(0.001, Math.min(5, time)); // Clamp 1ms-5s
+  }
+
+  public getHitModeRelease(): number {
+    return this.hitModeRelease;
+  }
+
+  public setHitModeVolume(volume: number): void {
+    this.hitModeVolume = Math.max(0, Math.min(1, volume)); // Clamp 0-1
+  }
+
+  public getHitModeVolume(): number {
+    return this.hitModeVolume;
+  }
+
   // Auto volume cycle methods
   public setAutoVolumeCycleEnabled(enabled: boolean): void {
     this.autoVolumeCycleEnabled = enabled;
@@ -706,6 +745,29 @@ class PositionedAudioService {
       // Schedule the ADSR envelope
       this._schedulePointActivationSound(point, scheduledTime, gainMultiplier, smoothTransition);
     }
+  }
+
+  /**
+   * Schedule a simple hit with custom attack/release times
+   */
+  public schedulePointHit(pointId: string, scheduledTime: number, attackTime: number, releaseTime: number, peakVolume: number): void {
+    const point = this.audioPoints.get(pointId);
+    if (!point) return;
+
+    // Set frequency characteristics based on dot position
+    this.setMainGainAndSlope(point);
+
+    const gainParam = point.envelopeGain.gain;
+    gainParam.cancelScheduledValues(scheduledTime);
+
+    // Start from silence
+    gainParam.setValueAtTime(0, scheduledTime);
+
+    // Attack - fade in
+    gainParam.linearRampToValueAtTime(peakVolume, scheduledTime + attackTime);
+
+    // Release - fade out
+    gainParam.linearRampToValueAtTime(0, scheduledTime + attackTime + releaseTime);
   }
 
   // Legacy methods for backwards compatibility
@@ -1640,44 +1702,37 @@ class DotGridAudioPlayer {
 
     // Sort dots by reading order (horizontal/vertical snake pattern)
     const sortedDotKeys = this.sortDotsByReadingOrder();
-    const loopDuration = this.audioService.getLoopDuration();
     const dotCount = sortedDotKeys.length;
-    const dotInterval = loopDuration / dotCount; // Evenly space dots in time
 
+    // Get hit mode parameters
+    const hitRate = this.audioService.getHitModeRate(); // hits per second
+    const attackTime = this.audioService.getHitModeAttack();
+    const releaseTime = this.audioService.getHitModeRelease();
+    const peakVolume = this.audioService.getHitModeVolume();
+
+    // Calculate time between hits
+    const hitInterval = 1 / hitRate; // seconds between hits
     const currentTime = audioContext.getAudioContext().currentTime;
 
-    // Schedule ADSR envelope triggers for all dots in this loop cycle
-    // Each dot plays at 3 volume levels: quiet (500ms), medium (500ms), loud (500ms)
-    // Volume levels: 0.15 (quiet), 0.45 (medium), 1.0 (loud) for better differentiation
+    // Schedule hits for all dots in this loop cycle
     if (this.audioService.getLoopSequencerPlayTogether()) {
-      // Play all dots together mode: all dots cycle through volumes simultaneously
+      // Play all dots together mode: all dots hit simultaneously
       sortedDotKeys.forEach((dotKey) => {
-        // First envelope: all dots quiet for 500ms (use smooth transition)
-        this.audioService.schedulePointEnvelope(dotKey, currentTime, 0.15, true);
-
-        // Second envelope: all dots medium for 500ms (use smooth transition)
-        this.audioService.schedulePointEnvelope(dotKey, currentTime + 0.5, 0.45, true);
-
-        // Third envelope: all dots loud for 500ms (use smooth transition)
-        this.audioService.schedulePointEnvelope(dotKey, currentTime + 1.0, 1.0, true);
+        this.audioService.schedulePointHit(dotKey, currentTime, attackTime, releaseTime, peakVolume);
       });
     } else {
-      // Cycle through dots mode: each dot plays individually with volume levels
+      // Cycle through dots mode: each dot gets a hit at evenly spaced intervals
       sortedDotKeys.forEach((dotKey, index) => {
-        const dotStartTime = currentTime + (index * dotInterval);
-
-        // First envelope: quiet volume for 500ms
-        this.audioService.schedulePointEnvelope(dotKey, dotStartTime, 0.15);
-
-        // Second envelope: medium volume for 500ms (starts 500ms after first)
-        this.audioService.schedulePointEnvelope(dotKey, dotStartTime + 0.5, 0.45);
-
-        // Third envelope: loud volume for 500ms (starts 1000ms after first)
-        this.audioService.schedulePointEnvelope(dotKey, dotStartTime + 1.0, 1.0);
+        const dotHitTime = currentTime + (index * hitInterval);
+        this.audioService.schedulePointHit(dotKey, dotHitTime, attackTime, releaseTime, peakVolume);
       });
     }
 
-    // Schedule next loop iteration
+    // Calculate loop duration based on hit rate and dot count
+    const loopDuration = this.audioService.getLoopSequencerPlayTogether()
+      ? hitInterval // If playing together, one hit interval per loop
+      : dotCount * hitInterval; // If cycling, one hit per dot
+
     const loopDelayMs = loopDuration * 1000;
     this.loopSequencerTimeoutId = window.setTimeout(() => {
       if (this.isPlaying && this.isLoopSequencerMode()) {
@@ -2497,6 +2552,44 @@ class DotGridAudioPlayer {
 
   public getLoopSequencerPlayTogether(): boolean {
     return this.audioService.getLoopSequencerPlayTogether();
+  }
+
+  // Hit mode methods for loop sequencer
+  public setHitModeRate(rate: number): void {
+    this.audioService.setHitModeRate(rate);
+    // If playing in loop sequencer mode, restart to apply new timing
+    if (this.isPlaying && this.isLoopSequencerMode()) {
+      this.stopLoopSequencer();
+      this.startLoopSequencer();
+    }
+  }
+
+  public getHitModeRate(): number {
+    return this.audioService.getHitModeRate();
+  }
+
+  public setHitModeAttack(time: number): void {
+    this.audioService.setHitModeAttack(time);
+  }
+
+  public getHitModeAttack(): number {
+    return this.audioService.getHitModeAttack();
+  }
+
+  public setHitModeRelease(time: number): void {
+    this.audioService.setHitModeRelease(time);
+  }
+
+  public getHitModeRelease(): number {
+    return this.audioService.getHitModeRelease();
+  }
+
+  public setHitModeVolume(volume: number): void {
+    this.audioService.setHitModeVolume(volume);
+  }
+
+  public getHitModeVolume(): number {
+    return this.audioService.getHitModeVolume();
   }
 
   // Auto volume cycle methods
@@ -3400,6 +3493,74 @@ export function setLoopSequencerPlayTogether(playTogether: boolean): void {
 export function getLoopSequencerPlayTogether(): boolean {
   const player = DotGridAudioPlayer.getInstance();
   return player.getLoopSequencerPlayTogether();
+}
+
+/**
+ * Set the hit rate for loop sequencer hit mode
+ * @param rate Hits per second (range: 0.1-100, default: 10)
+ */
+export function setHitModeRate(rate: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setHitModeRate(rate);
+}
+
+/**
+ * Get the hit rate for loop sequencer hit mode
+ */
+export function getHitModeRate(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getHitModeRate();
+}
+
+/**
+ * Set the attack time for loop sequencer hit mode
+ * @param time Attack time in seconds (range: 0.001-2, default: 0.01)
+ */
+export function setHitModeAttack(time: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setHitModeAttack(time);
+}
+
+/**
+ * Get the attack time for loop sequencer hit mode
+ */
+export function getHitModeAttack(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getHitModeAttack();
+}
+
+/**
+ * Set the release time for loop sequencer hit mode
+ * @param time Release time in seconds (range: 0.001-5, default: 0.05)
+ */
+export function setHitModeRelease(time: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setHitModeRelease(time);
+}
+
+/**
+ * Get the release time for loop sequencer hit mode
+ */
+export function getHitModeRelease(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getHitModeRelease();
+}
+
+/**
+ * Set the peak volume for loop sequencer hit mode
+ * @param volume Peak volume (range: 0-1, default: 1.0)
+ */
+export function setHitModeVolume(volume: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setHitModeVolume(volume);
+}
+
+/**
+ * Get the peak volume for loop sequencer hit mode
+ */
+export function getHitModeVolume(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getHitModeVolume();
 }
 
 /**
