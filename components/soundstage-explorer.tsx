@@ -7,6 +7,8 @@ import { Slider } from "@/components/ui/slider"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 import { Card } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Play, Pause } from "lucide-react"
 
 interface SoundstageExplorerProps {
   isPlaying: boolean
@@ -55,7 +57,7 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
   // Audio settings
   const [bandwidth, setBandwidth] = useState(6) // Default: 6 octaves
   const [positionOscillationSpeed, setPositionOscillationSpeed] = useState(1.5) // Default: 1.5 osc/second for position
-  const [volumeOscillationSpeed, setVolumeOscillationSpeed] = useState(1.5) // Default: 1.5 osc/second for volume
+  const [volumeOscillationSpeed, setVolumeOscillationSpeed] = useState(0.5) // Default: 0.5 osc/second for volume
   const [soundMode, setSoundMode] = useState<'sloped' | 'bandpassed' | 'sine'>('bandpassed')
   const [volumeOscillationEnabled, setVolumeOscillationEnabled] = useState(true) // Default: volume oscillation enabled
   const [positionOscillationEnabled, setPositionOscillationEnabled] = useState(true) // Default: position oscillation enabled
@@ -66,6 +68,14 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
   const [hitAttackTime, setHitAttackTime] = useState(0.01) // Default: 10ms attack
   const [hitReleaseTime, setHitReleaseTime] = useState(0.1) // Default: 100ms release
   const [hitVolume, setHitVolume] = useState(0.8) // Default: 80% volume
+
+  // Flicker settings
+  const [flickerEnabled, setFlickerEnabled] = useState(true) // Default: flicker ON
+  const [flickerSpeed, setFlickerSpeed] = useState(20) // Default: 20 Hz
+
+  // Multi-dot mode
+  const [additionalDots, setAdditionalDots] = useState<Array<{ x: number; y: number }>>([])
+  const [selectedDotIndex, setSelectedDotIndex] = useState<number>(-1) // -1 = main dot, 0+ = additional dots
 
   // Detect dark mode
   useEffect(() => {
@@ -104,6 +114,8 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
     player.setHitAttackTime(hitAttackTime)
     player.setHitReleaseTime(hitReleaseTime)
     player.setHitVolume(hitVolume)
+    player.setFlickerEnabled(flickerEnabled)
+    player.setFlickerSpeed(flickerSpeed)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -164,6 +176,18 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
     const player = soundstageExplorerAudio.getSoundstageExplorerPlayer()
     player.setHitVolume(hitVolume)
   }, [hitVolume])
+
+  // Update flicker enabled when it changes
+  useEffect(() => {
+    const player = soundstageExplorerAudio.getSoundstageExplorerPlayer()
+    player.setFlickerEnabled(flickerEnabled)
+  }, [flickerEnabled])
+
+  // Update flicker speed when it changes
+  useEffect(() => {
+    const player = soundstageExplorerAudio.getSoundstageExplorerPlayer()
+    player.setFlickerSpeed(flickerSpeed)
+  }, [flickerSpeed])
 
   // Handle playing state
   useEffect(() => {
@@ -618,6 +642,45 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
       ctx.arc(dotX - dotRadius / 3, dotY - dotRadius / 3, dotRadius / 3, 0, Math.PI * 2)
       ctx.fillStyle = isDarkMode ? "rgba(255, 255, 255, 0.3)" : "rgba(255, 255, 255, 0.5)"
       ctx.fill()
+
+      // Draw additional dots
+      additionalDots.forEach((dot, index) => {
+        const addDotX = dot.x * rect.width
+        const addDotY = dot.y * rect.height
+        const addDotRadius = 10
+
+        // Draw outer glow if playing
+        if (isPlaying && !disabled) {
+          ctx.beginPath()
+          ctx.arc(addDotX, addDotY, addDotRadius + 6, 0, Math.PI * 2)
+          const gradient = ctx.createRadialGradient(addDotX, addDotY, addDotRadius, addDotX, addDotY, addDotRadius + 6)
+          gradient.addColorStop(0, isDarkMode ? "rgba(251, 191, 36, 0.3)" : "rgba(245, 158, 11, 0.3)")
+          gradient.addColorStop(1, "rgba(251, 191, 36, 0)")
+          ctx.fillStyle = gradient
+          ctx.fill()
+        }
+
+        // Draw additional dot (amber/orange color to distinguish from main dot)
+        ctx.beginPath()
+        ctx.arc(addDotX, addDotY, addDotRadius, 0, Math.PI * 2)
+        ctx.fillStyle = disabled
+          ? isDarkMode ? "#52525b" : "#cbd5e1"
+          : isDarkMode ? "#fbbf24" : "#f59e0b" // amber-400 or amber-500
+        ctx.fill()
+
+        // Draw inner highlight
+        ctx.beginPath()
+        ctx.arc(addDotX - addDotRadius / 3, addDotY - addDotRadius / 3, addDotRadius / 3, 0, Math.PI * 2)
+        ctx.fillStyle = isDarkMode ? "rgba(255, 255, 255, 0.3)" : "rgba(255, 255, 255, 0.5)"
+        ctx.fill()
+
+        // Draw dot number label
+        ctx.font = "10px system-ui, sans-serif"
+        ctx.fillStyle = isDarkMode ? "#000" : "#fff"
+        ctx.textAlign = "center"
+        ctx.textBaseline = "middle"
+        ctx.fillText(String(index + 1), addDotX, addDotY)
+      })
     } else if (mode === 'line') {
       // Line mode - draw line between endpoints and moving dot
       const endpoint1X = lineEndpoint1.x * rect.width
@@ -1029,7 +1092,7 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
       ctx.fill()
     }
 
-  }, [dotPosition, lineEndpoint1, lineEndpoint2, chevronCenter, chevronScaleX, chevronScaleY, sShapeCenter, sShapeWidth, sShapeHeight, fadeLineEndpoint1, fadeLineEndpoint2, xPatternCenter, xPatternSize, mode, isDarkMode, isPlaying, disabled])
+  }, [dotPosition, lineEndpoint1, lineEndpoint2, chevronCenter, chevronScaleX, chevronScaleY, sShapeCenter, sShapeWidth, sShapeHeight, fadeLineEndpoint1, fadeLineEndpoint2, xPatternCenter, xPatternSize, mode, isDarkMode, isPlaying, disabled, additionalDots])
 
   const updateDotPosition = useCallback((e: React.MouseEvent<HTMLCanvasElement> | MouseEvent) => {
     const canvas = canvasRef.current
@@ -1053,8 +1116,59 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
     const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height))
 
     if (mode === 'dot' || mode === 'hit') {
-      setIsDragging(true)
-      updateDotPosition(e)
+      // Right-click to delete nearest additional dot
+      if (e.button === 2) {
+        e.preventDefault()
+        if (additionalDots.length > 0) {
+          // Find nearest additional dot
+          let nearestIndex = -1
+          let nearestDist = Infinity
+          additionalDots.forEach((dot, index) => {
+            const dist = Math.sqrt((dot.x - x) ** 2 + (dot.y - y) ** 2)
+            if (dist < nearestDist) {
+              nearestDist = dist
+              nearestIndex = index
+            }
+          })
+          // Delete if within reasonable distance (0.1 normalized units)
+          if (nearestIndex >= 0 && nearestDist < 0.15) {
+            setAdditionalDots(prev => prev.filter((_, i) => i !== nearestIndex))
+          }
+        }
+        return
+      }
+
+      // Option/Alt + click to add a new dot
+      if (e.altKey) {
+        setAdditionalDots(prev => [...prev, { x, y }])
+        // Auto-start playing when adding dot
+        if (!isPlaying) {
+          setIsPlaying(true)
+        }
+        return
+      }
+
+      // Check if clicking on an additional dot to drag it
+      let clickedAdditionalDot = -1
+      additionalDots.forEach((dot, index) => {
+        const dist = Math.sqrt((dot.x - x) ** 2 + (dot.y - y) ** 2)
+        if (dist < 0.05) { // Within 5% of canvas
+          clickedAdditionalDot = index
+        }
+      })
+
+      if (clickedAdditionalDot >= 0) {
+        setSelectedDotIndex(clickedAdditionalDot)
+        setIsDragging(true)
+      } else {
+        // Check if clicking on main dot
+        const mainDotDist = Math.sqrt((dotPosition.x - x) ** 2 + (dotPosition.y - y) ** 2)
+        if (mainDotDist < 0.05 || additionalDots.length === 0) {
+          setSelectedDotIndex(-1) // Main dot
+          setIsDragging(true)
+          updateDotPosition(e)
+        }
+      }
 
       // Auto-start playing when dragging starts
       if (!isPlaying) {
@@ -1172,7 +1286,22 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
     if (disabled) return
 
     if ((mode === 'dot' || mode === 'hit') && isDragging) {
-      updateDotPosition(e)
+      const canvas = canvasRef.current
+      if (!canvas) return
+
+      const rect = canvas.getBoundingClientRect()
+      const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+      const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height))
+
+      if (selectedDotIndex === -1) {
+        // Dragging main dot
+        updateDotPosition(e)
+      } else {
+        // Dragging additional dot
+        setAdditionalDots(prev => prev.map((dot, i) =>
+          i === selectedDotIndex ? { x, y } : dot
+        ))
+      }
     } else if (mode === 'line' && draggingEndpoint !== 'none') {
       const canvas = canvasRef.current
       if (!canvas) return
@@ -1339,6 +1468,29 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
 
   return (
     <div className="space-y-4">
+      {/* Play/Pause Button */}
+      <div className="flex justify-center">
+        <Button
+          onClick={() => setIsPlaying(!isPlaying)}
+          disabled={disabled}
+          variant={isPlaying ? "destructive" : "default"}
+          size="lg"
+          className="w-32"
+        >
+          {isPlaying ? (
+            <>
+              <Pause className="mr-2 h-5 w-5" />
+              Pause
+            </>
+          ) : (
+            <>
+              <Play className="mr-2 h-5 w-5" />
+              Play
+            </>
+          )}
+        </Button>
+      </div>
+
       {/* Soundstage Canvas */}
       <div className="relative">
         <canvas
@@ -1349,10 +1501,11 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
+          onContextMenu={(e) => e.preventDefault()}
           style={{ touchAction: 'none' }}
         />
         <div className="absolute top-2 left-2 text-xs text-muted-foreground">
-          {mode === 'dot' ? 'Drag to explore' : mode === 'line' ? 'Drag endpoints to set path' : mode === 's-shape' ? 'Drag center to move • Audio follows S path' : mode === 'fade-line' ? 'Drag endpoints to set path • Volume auto-fades' : mode === 'hit' ? 'Drag to explore • Repeating hits' : mode === 'x-pattern' ? 'Drag center to move • Audio follows X path' : 'Drag center to move • Audio follows path'}
+          {mode === 'dot' || mode === 'hit' ? 'Drag • Opt+click add • Right-click delete' : mode === 'line' ? 'Drag endpoints to set path' : mode === 's-shape' ? 'Drag center to move • Audio follows S path' : mode === 'fade-line' ? 'Drag endpoints to set path • Volume auto-fades' : mode === 'x-pattern' ? 'Drag center to move • Audio follows X path' : 'Drag center to move • Audio follows path'}
         </div>
       </div>
 
@@ -1688,6 +1841,41 @@ export function SoundstageExplorer({ isPlaying, setIsPlaying, disabled = false }
               />
             </div>
           </>
+        )}
+
+        {/* Flicker Toggle */}
+        <div className="flex items-center justify-between">
+          <Label htmlFor="flicker-enabled">Flicker</Label>
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              id="flicker-enabled"
+              checked={flickerEnabled}
+              onChange={(e) => setFlickerEnabled(e.target.checked)}
+              disabled={disabled}
+              className="sr-only peer"
+            />
+            <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+          </label>
+        </div>
+
+        {/* Flicker Speed (only show when enabled) */}
+        {flickerEnabled && (
+          <div className="space-y-2">
+            <div className="flex justify-between items-center">
+              <Label htmlFor="flicker-speed">Flicker Speed</Label>
+              <span className="text-sm text-muted-foreground">{flickerSpeed} Hz</span>
+            </div>
+            <Slider
+              id="flicker-speed"
+              min={1}
+              max={30}
+              step={1}
+              value={[flickerSpeed]}
+              onValueChange={(value) => setFlickerSpeed(value[0])}
+              disabled={disabled}
+            />
+          </div>
         )}
 
         {/* Sound Mode Control */}

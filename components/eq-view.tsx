@@ -22,6 +22,8 @@ import { GlyphGrid } from "@/components/glyph-grid"
 import { ShapeGrid } from "@/components/shape-grid"
 import { SoundstageExplorer } from "@/components/soundstage-explorer"
 import { MultiDot3DExplorer } from "@/components/multi-dot-3d-explorer"
+import { RowExplorer } from "@/components/row-explorer"
+import { StopbandExplorer } from "@/components/stopband-explorer"
 import * as glyphGridAudio from '@/lib/audio/glyphGridAudio'
 import * as dotGridAudio from '@/lib/audio/dotGridAudio'
 import * as shapeGridAudio from '@/lib/audio/shapeGridAudio'
@@ -88,8 +90,14 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   // State for the multi-dot 3D explorer
   const [multiDot3DPlaying, setMultiDot3DPlaying] = useState(false)
 
+  // State for the row explorer
+  const [rowExplorerPlaying, setRowExplorerPlaying] = useState(false)
+
+  // State for the stopband explorer
+  const [stopbandExplorerPlaying, setStopbandExplorerPlaying] = useState(false)
+
   // Add state for toggling between Glyph Grid and Dot Grid
-  const [activeGrid, setActiveGrid] = useState<"line" | "dot" | "shape" | "explorer" | "3d">("dot")
+  const [activeGrid, setActiveGrid] = useState<"line" | "dot" | "shape" | "explorer" | "3d" | "row" | "stopband">("dot")
 
   // New state to track selected dots for dot grid
   const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set());
@@ -115,7 +123,10 @@ export function EQView({ setEqEnabled }: EQViewProps) {
   const [currentGlyphShape, setCurrentGlyphShape] = useState<'line' | 'triangle'>('triangle');
 
   // New state for bandpass bandwidth control
-  const [bandpassBandwidth, setBandpassBandwidth] = useState(2.0); // Default Q value
+  const [bandpassBandwidth, setBandpassBandwidth] = useState(6.0); // Default 6 octave bandwidth
+
+  // New state for hit rate control (loop sequencer mode)
+  const [hitRate, setHitRate] = useState(2.5); // Default 2.5 hits per second (slightly slower for overlap)
 
   // Detect mobile devices
   useEffect(() => {
@@ -294,8 +305,11 @@ export function EQView({ setEqEnabled }: EQViewProps) {
       if (soundstageExplorerPlaying) {
         setSoundstageExplorerPlaying(false);
       }
+      if (rowExplorerPlaying) {
+        setRowExplorerPlaying(false);
+      }
     }
-  }, [isMusicPlaying, dotGridPlaying, glyphGridPlaying, shapeToolPlaying, soundstageExplorerPlaying]);
+  }, [isMusicPlaying, dotGridPlaying, glyphGridPlaying, shapeToolPlaying, soundstageExplorerPlaying, rowExplorerPlaying]);
 
   const handleProfileClick = () => {
     setNewProfileName("");
@@ -526,13 +540,45 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                   >
                     3D Multi-Dot
                   </button>
+                  <button
+                    className={`px-4 py-2 text-sm font-medium ${
+                      activeGrid === "row"
+                        ? "bg-purple-500 text-white"
+                        : "bg-background hover:bg-muted"
+                    }`}
+                    onClick={() => setActiveGrid("row")}
+                  >
+                    Row Explorer
+                  </button>
+                  <button
+                    className={`px-4 py-2 text-sm font-medium ${
+                      activeGrid === "stopband"
+                        ? "bg-purple-500 text-white"
+                        : "bg-background hover:bg-muted"
+                    }`}
+                    onClick={() => setActiveGrid("stopband")}
+                  >
+                    Stopband
+                  </button>
                 </div>
               </div>
             </div>
             
             {/* Grid content area */}
             <div className="mt-4">
-              {activeGrid === "3d" ? (
+              {activeGrid === "stopband" ? (
+                <StopbandExplorer
+                  isPlaying={stopbandExplorerPlaying}
+                  setIsPlaying={setStopbandExplorerPlaying}
+                  disabled={false}
+                />
+              ) : activeGrid === "row" ? (
+                <RowExplorer
+                  isPlaying={rowExplorerPlaying}
+                  setIsPlaying={setRowExplorerPlaying}
+                  disabled={false}
+                />
+              ) : activeGrid === "3d" ? (
                 <MultiDot3DExplorer
                   isPlaying={multiDot3DPlaying}
                   setIsPlaying={setMultiDot3DPlaying}
@@ -744,6 +790,31 @@ export function EQView({ setEqEnabled }: EQViewProps) {
                 </div>
               )}
 
+              {/* Hit Rate Control for Loop Sequencer Mode */}
+              {activeGrid === "dot" && (
+                <div className="mt-4 space-y-2">
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-muted-foreground">Cycle Rate</span>
+                    <span className="text-muted-foreground">{hitRate.toFixed(1)} hits/sec</span>
+                  </div>
+                  <Slider
+                    value={[hitRate]}
+                    min={0.5}
+                    max={20.0}
+                    step={0.5}
+                    onValueChange={(value) => {
+                      setHitRate(value[0]);
+                      dotGridAudio.getDotGridAudioPlayer().setHitModeRate(value[0]);
+                    }}
+                    className="w-full"
+                  />
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>Slow</span>
+                    <span>Fast</span>
+                  </div>
+                </div>
+              )}
+
               {/* UI for selecting glyph shape when Line Tool is active */} 
               {activeGrid === "line" && (
                 <div className="mt-4 space-y-2">
@@ -770,8 +841,8 @@ export function EQView({ setEqEnabled }: EQViewProps) {
               )}
             </div>
             
-            {/* Play button moved to bottom of grid section - hide for explorer since it auto-starts */}
-            {activeGrid !== "explorer" && (
+            {/* Play button moved to bottom of grid section - hide for explorer/3d/row since they auto-start */}
+            {activeGrid !== "explorer" && activeGrid !== "3d" && activeGrid !== "row" && (
               <div className="flex justify-center mt-6">
                 <Button
                   size="lg"

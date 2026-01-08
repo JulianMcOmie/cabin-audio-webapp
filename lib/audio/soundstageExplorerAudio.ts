@@ -298,6 +298,16 @@ class SoundstageExplorerService {
   private hitIntervalId: number | null = null;
   private nextHitTime: number = 0;
 
+  // Flicker settings (rapid on/off modulation)
+  private flickerEnabled: boolean = false;
+  private flickerSpeed: number = 8.0; // Flickers per second
+  private flickerStartTime: number = 0;
+  private flickerAnimationFrameId: number | null = null;
+
+  // Additional dots support
+  private additionalDotNodes: Map<number, ExplorerAudioNodes> = new Map();
+  private sharedPinkNoiseBuffer: AudioBuffer | null = null;
+
   constructor(audioContextInstance: AudioContext) {
     this.ctx = audioContextInstance;
     this.outputGain = this.ctx.createGain();
@@ -411,6 +421,24 @@ class SoundstageExplorerService {
     this.hitIntervalId = window.setTimeout(() => this.scheduleNextHit(), timeUntilNextHit);
   }
 
+  private updateFlicker = (): void => {
+    if (!this.isPlaying || !this.flickerEnabled || !this.audioNodes) {
+      return;
+    }
+
+    const currentTime = this.ctx.currentTime;
+    const elapsed = currentTime - this.flickerStartTime;
+
+    // Square wave for on/off flicker
+    const cycleProgress = (elapsed * this.flickerSpeed) % 1;
+    const isOn = cycleProgress < 0.5;
+
+    // Apply flicker by modulating the main gain (not volume gain, so it stacks with other modulations)
+    this.audioNodes.mainGain.gain.setValueAtTime(isOn ? 1.0 : 0.0, currentTime);
+
+    this.flickerAnimationFrameId = requestAnimationFrame(this.updateFlicker);
+  };
+
   private updateVolumeOscillation = (): void => {
     if (!this.isPlaying || !this.audioNodes) {
       return;
@@ -514,6 +542,12 @@ class SoundstageExplorerService {
       this.nextHitTime = this.ctx.currentTime;
       this.scheduleNextHit();
     }
+
+    // Start flicker if enabled
+    if (this.flickerEnabled) {
+      this.flickerStartTime = this.ctx.currentTime;
+      this.updateFlicker();
+    }
   }
 
   public stopPlaying(): void {
@@ -531,6 +565,12 @@ class SoundstageExplorerService {
     if (this.hitIntervalId !== null) {
       clearTimeout(this.hitIntervalId);
       this.hitIntervalId = null;
+    }
+
+    // Stop flicker
+    if (this.flickerAnimationFrameId !== null) {
+      cancelAnimationFrame(this.flickerAnimationFrameId);
+      this.flickerAnimationFrameId = null;
     }
 
     // Dispose audio nodes
@@ -690,6 +730,160 @@ class SoundstageExplorerService {
 
   public getOutputNode(): GainNode {
     return this.outputGain;
+  }
+
+  // Additional dots management
+  private getOrCreateSharedNoiseBuffer(): AudioBuffer {
+    if (!this.sharedPinkNoiseBuffer) {
+      this.sharedPinkNoiseBuffer = this.generatePinkNoiseBuffer();
+    }
+    return this.sharedPinkNoiseBuffer;
+  }
+
+  private createAdditionalDotNodes(normalizedX: number, normalizedY: number): ExplorerAudioNodes {
+    const pinkNoiseBuffer = this.getOrCreateSharedNoiseBuffer();
+
+    const source = this.ctx.createBufferSource();
+    source.buffer = pinkNoiseBuffer;
+    source.loop = true;
+
+    const mainGain = this.ctx.createGain();
+    mainGain.gain.value = 1.0;
+
+    const volumeGain = this.ctx.createGain();
+    volumeGain.gain.value = 1.0;
+
+    const panner = this.ctx.createStereoPanner();
+    const panPosition = normalizedX * 2 - 1;
+    panner.pan.value = panPosition;
+
+    let slopedNoiseGenerator: SlopedPinkNoiseGenerator | null = null;
+    let bandpassedNoiseGenerator: BandpassedNoiseGenerator | null = null;
+    let sineToneGenerator: SineToneGenerator | null = null;
+
+    const frequency = this.calculateFrequencyFromPosition(normalizedY);
+
+    if (this.currentSoundMode === SoundMode.BandpassedNoise) {
+      bandpassedNoiseGenerator = new BandpassedNoiseGenerator(this.ctx);
+      bandpassedNoiseGenerator.setBandpassBandwidth(this.currentBandwidth);
+      bandpassedNoiseGenerator.setBandpassFrequency(frequency);
+      source.connect(bandpassedNoiseGenerator.getInputNode());
+      bandpassedNoiseGenerator.getOutputNode().connect(mainGain);
+    } else if (this.currentSoundMode === SoundMode.SlopedNoise) {
+      slopedNoiseGenerator = new SlopedPinkNoiseGenerator(this.ctx);
+      const slope = -10.5 + normalizedY * (1.5 - (-10.5));
+      slopedNoiseGenerator.setSlope(slope);
+      source.connect(slopedNoiseGenerator.getInputNode());
+      slopedNoiseGenerator.getOutputNode().connect(mainGain);
+    } else if (this.currentSoundMode === SoundMode.SineTone) {
+      sineToneGenerator = new SineToneGenerator(this.ctx);
+      sineToneGenerator.setFrequency(frequency);
+      source.connect(mainGain);
+      sineToneGenerator.getOutputNode().connect(mainGain);
+    }
+
+    mainGain.connect(volumeGain);
+    volumeGain.connect(panner);
+    panner.connect(this.outputGain);
+
+    source.start();
+
+    return {
+      source,
+      mainGain,
+      volumeGain,
+      panner,
+      slopedNoiseGenerator,
+      bandpassedNoiseGenerator,
+      sineToneGenerator,
+      pinkNoiseBuffer
+    };
+  }
+
+  private disposeAdditionalDotNodes(nodes: ExplorerAudioNodes): void {
+    try {
+      nodes.source.stop();
+    } catch {
+      // Source might already be stopped
+    }
+    nodes.source.disconnect();
+    nodes.mainGain.disconnect();
+    nodes.volumeGain.disconnect();
+    nodes.panner.disconnect();
+    if (nodes.slopedNoiseGenerator) {
+      nodes.slopedNoiseGenerator.dispose();
+    }
+    if (nodes.bandpassedNoiseGenerator) {
+      nodes.bandpassedNoiseGenerator.dispose();
+    }
+    if (nodes.sineToneGenerator) {
+      nodes.sineToneGenerator.dispose();
+    }
+  }
+
+  public addAdditionalDot(index: number, normalizedX: number, normalizedY: number): void {
+    if (!this.isPlaying) return;
+
+    // Remove existing dot at this index if any
+    this.removeAdditionalDot(index);
+
+    const nodes = this.createAdditionalDotNodes(normalizedX, normalizedY);
+    this.additionalDotNodes.set(index, nodes);
+  }
+
+  public removeAdditionalDot(index: number): void {
+    const nodes = this.additionalDotNodes.get(index);
+    if (nodes) {
+      this.disposeAdditionalDotNodes(nodes);
+      this.additionalDotNodes.delete(index);
+    }
+  }
+
+  public updateAdditionalDotPosition(index: number, normalizedX: number, normalizedY: number): void {
+    const nodes = this.additionalDotNodes.get(index);
+    if (!nodes) return;
+
+    // Update pan position
+    const panPosition = normalizedX * 2 - 1;
+    nodes.panner.pan.setValueAtTime(panPosition, this.ctx.currentTime);
+
+    // Update frequency
+    const frequency = this.calculateFrequencyFromPosition(normalizedY);
+
+    if (nodes.bandpassedNoiseGenerator) {
+      nodes.bandpassedNoiseGenerator.setBandpassFrequency(frequency);
+    } else if (nodes.slopedNoiseGenerator) {
+      const slope = -10.5 + normalizedY * (1.5 - (-10.5));
+      nodes.slopedNoiseGenerator.setSlope(slope);
+    } else if (nodes.sineToneGenerator) {
+      nodes.sineToneGenerator.setFrequency(frequency);
+    }
+  }
+
+  public clearAllAdditionalDots(): void {
+    this.additionalDotNodes.forEach((nodes) => {
+      this.disposeAdditionalDotNodes(nodes);
+    });
+    this.additionalDotNodes.clear();
+  }
+
+  public syncAdditionalDots(dots: Array<{ x: number; y: number }>): void {
+    // Remove dots that no longer exist
+    const currentIndices = new Set(this.additionalDotNodes.keys());
+    currentIndices.forEach(index => {
+      if (index >= dots.length) {
+        this.removeAdditionalDot(index);
+      }
+    });
+
+    // Add or update dots
+    dots.forEach((dot, index) => {
+      if (this.additionalDotNodes.has(index)) {
+        this.updateAdditionalDotPosition(index, dot.x, dot.y);
+      } else if (this.isPlaying) {
+        this.addAdditionalDot(index, dot.x, dot.y);
+      }
+    });
   }
 
   public setSoundMode(mode: SoundMode): void {
@@ -868,6 +1062,41 @@ class SoundstageExplorerService {
     return this.hitVolume;
   }
 
+  public setFlickerEnabled(enabled: boolean): void {
+    const wasEnabled = this.flickerEnabled;
+    this.flickerEnabled = enabled;
+
+    if (this.isPlaying) {
+      if (enabled && !wasEnabled) {
+        // Start flicker
+        this.flickerStartTime = this.ctx.currentTime;
+        this.updateFlicker();
+      } else if (!enabled && wasEnabled) {
+        // Stop flicker and restore main gain
+        if (this.flickerAnimationFrameId !== null) {
+          cancelAnimationFrame(this.flickerAnimationFrameId);
+          this.flickerAnimationFrameId = null;
+        }
+        // Restore main gain to 1.0
+        if (this.audioNodes) {
+          this.audioNodes.mainGain.gain.setValueAtTime(1.0, this.ctx.currentTime);
+        }
+      }
+    }
+  }
+
+  public getFlickerEnabled(): boolean {
+    return this.flickerEnabled;
+  }
+
+  public setFlickerSpeed(speed: number): void {
+    this.flickerSpeed = Math.max(1, Math.min(30, speed)); // Clamp to [1, 30] Hz
+  }
+
+  public getFlickerSpeed(): number {
+    return this.flickerSpeed;
+  }
+
   public dispose(): void {
     this.stopPlaying();
     this.outputGain.disconnect();
@@ -1042,6 +1271,22 @@ class SoundstageExplorerPlayer {
 
   public getHitVolume(): number {
     return this.service.getHitVolume();
+  }
+
+  public setFlickerEnabled(enabled: boolean): void {
+    this.service.setFlickerEnabled(enabled);
+  }
+
+  public getFlickerEnabled(): boolean {
+    return this.service.getFlickerEnabled();
+  }
+
+  public setFlickerSpeed(speed: number): void {
+    this.service.setFlickerSpeed(speed);
+  }
+
+  public getFlickerSpeed(): number {
+    return this.service.getFlickerSpeed();
   }
 
   public dispose(): void {

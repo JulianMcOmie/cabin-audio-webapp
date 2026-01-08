@@ -71,12 +71,21 @@ enum SoundMode {
   SineTone = 'sine'
 }
 
+// Voice for polyphonic playback - allows overlapping hits with independent envelopes
+interface Voice {
+  envelopeGain: GainNode;
+  releaseEndTime: number; // When this voice will be free (after release completes)
+}
+
+// Number of voices per dot for polyphonic playback
+const VOICE_POOL_SIZE = 8; // Allow up to 8 overlapping sounds per dot
+
 // Interface for nodes managed by PositionedAudioService
 interface PointAudioNodes {
     source: AudioBufferSourceNode;
   mainGain: GainNode;
   volumeLevelGain: GainNode; // Controls volume based on dot's volume level (0-3)
-    envelopeGain: GainNode;
+    envelopeGain: GainNode; // Legacy single envelope (used for continuous mode)
     panner: StereoPannerNode;
   slopedNoiseGenerator: SlopedPinkNoiseGenerator | null;
   bandpassedNoiseGenerator: BandpassedNoiseGenerator | null;
@@ -88,6 +97,8 @@ interface PointAudioNodes {
   subHitCount: number;
   subHitTimerId: number | null;
   volumeLevel: number; // 0 = off, 1 = -36dB, 2 = -18dB, 3 = 0dB
+  // Voice pool for polyphonic playback (allows overlapping hits)
+  voicePool: Voice[];
   // isPlaying: boolean; // Source starts on creation and loops, envelopeGain controls sound
 }
 
@@ -141,14 +152,14 @@ class PositionedAudioService {
   private stopbandManualIndex: number = 0; // Manually selected dot index to flash
 
   // Loop sequencer mode settings
-  private loopSequencerEnabled: boolean = false; // Whether loop sequencer mode is enabled
+  private loopSequencerEnabled: boolean = true; // Whether loop sequencer mode is enabled (DEFAULT: ON)
   private loopDuration: number = 4.0; // Total loop duration in seconds (default: 4 seconds)
   private loopSequencerPlayTogether: boolean = false; // Whether all dots play together (true) or cycle through dots (false)
 
   // Hit mode settings for loop sequencer
-  private hitModeRate: number = 10; // Hits per second (default: 10 for fast cycling)
-  private hitModeAttack: number = 0.01; // Attack time in seconds (default: 10ms)
-  private hitModeRelease: number = 0.05; // Release time in seconds (default: 50ms)
+  private hitModeRate: number = 40; // Hits per second (default: 40 dots/sec)
+  private hitModeAttack: number = 0.010; // Attack time in seconds (default: 10ms - quick but smooth attack)
+  private hitModeRelease: number = 0.6; // Release time in seconds (default: 600ms - long release for overlap)
   private hitModeVolume: number = 1.0; // Peak volume for hits (0-1, default: 100%)
 
   // Auto volume cycle settings
@@ -159,6 +170,23 @@ class PositionedAudioService {
   private autoVolumeCycleSteps: number = 3; // Number of discrete steps (default: 3)
   private autoVolumeCycleStartTime: number = 0; // Start time for cycling
   private autoVolumeCycleAnimationFrameId: number | null = null; // Animation frame ID for cycling loop
+
+  // Per-cycle volume oscillation settings (changes volume each time all dots have played)
+  private perCycleVolumeEnabled: boolean = false; // Whether per-cycle volume oscillation is enabled
+  private perCycleVolumeSteps: number = 4; // Number of steps to go from min to max (default: 4 cycles to reach max)
+  private perCycleVolumeMinDb: number = -48; // Minimum volume in dB (default: -48dB, near silence)
+  private perCycleVolumeMaxDb: number = 0; // Maximum volume in dB (default: 0dB)
+  private perCycleVolumeCurrentStep: number = 0; // Current step in the oscillation (0 to steps*2-1 for full oscillation)
+  private perCycleVolumeDirection: 1 | -1 = 1; // Direction of oscillation: 1 = ascending, -1 = descending
+  private perCycleVolumeRedDotsOnly: boolean = false; // Whether to apply per-cycle volume only to red dots
+
+  // Per-dot volume wave settings (volume oscillates based on dot reading order position)
+  private perDotVolumeWaveEnabled: boolean = true; // Default: enabled (replaces per-cycle as primary mode)
+  private perDotVolumeWaveCycles: number = 1.0; // Number of volume cycles per full image traversal
+  private perDotVolumeWaveMinDb: number = -24; // Minimum volume in dB
+  private perDotVolumeWaveMaxDb: number = 0; // Maximum volume in dB
+  private perDotVolumeWavePhaseOffset: number = 0; // Current phase offset (radians), advances each cycle
+  private perDotVolumeWavePhaseShift: number = 0.25; // Phase shift per cycle (fraction of full cycle, 0-1)
 
   constructor(audioContextInstance: AudioContext) {
     this.ctx = audioContextInstance;
@@ -522,6 +550,201 @@ class PositionedAudioService {
     return this.autoVolumeCycleSteps;
   }
 
+  // Per-cycle volume oscillation methods
+  public setPerCycleVolumeEnabled(enabled: boolean): void {
+    this.perCycleVolumeEnabled = enabled;
+    if (enabled) {
+      // Reset to starting state when enabled
+      this.perCycleVolumeCurrentStep = 0;
+      this.perCycleVolumeDirection = 1;
+    }
+  }
+
+  public getPerCycleVolumeEnabled(): boolean {
+    return this.perCycleVolumeEnabled;
+  }
+
+  public setPerCycleVolumeSteps(steps: number): void {
+    this.perCycleVolumeSteps = Math.max(2, Math.min(20, Math.floor(steps))); // Clamp 2-20 steps
+  }
+
+  public getPerCycleVolumeSteps(): number {
+    return this.perCycleVolumeSteps;
+  }
+
+  public setPerCycleVolumeMinDb(db: number): void {
+    this.perCycleVolumeMinDb = Math.max(-60, Math.min(0, db)); // Clamp -60 to 0 dB
+  }
+
+  public getPerCycleVolumeMinDb(): number {
+    return this.perCycleVolumeMinDb;
+  }
+
+  public setPerCycleVolumeMaxDb(db: number): void {
+    this.perCycleVolumeMaxDb = Math.max(-60, Math.min(0, db)); // Clamp -60 to 0 dB
+  }
+
+  public getPerCycleVolumeMaxDb(): number {
+    return this.perCycleVolumeMaxDb;
+  }
+
+  public resetPerCycleVolume(): void {
+    this.perCycleVolumeCurrentStep = 0;
+    this.perCycleVolumeDirection = 1;
+  }
+
+  public setPerCycleVolumeRedDotsOnly(redDotsOnly: boolean): void {
+    this.perCycleVolumeRedDotsOnly = redDotsOnly;
+  }
+
+  public getPerCycleVolumeRedDotsOnly(): boolean {
+    return this.perCycleVolumeRedDotsOnly;
+  }
+
+  // Per-dot volume wave methods (volume oscillates based on dot reading order position)
+  public setPerDotVolumeWaveEnabled(enabled: boolean): void {
+    this.perDotVolumeWaveEnabled = enabled;
+  }
+
+  public getPerDotVolumeWaveEnabled(): boolean {
+    return this.perDotVolumeWaveEnabled;
+  }
+
+  public setPerDotVolumeWaveCycles(cycles: number): void {
+    this.perDotVolumeWaveCycles = Math.max(0.1, Math.min(10, cycles)); // Clamp 0.1-10 cycles
+  }
+
+  public getPerDotVolumeWaveCycles(): number {
+    return this.perDotVolumeWaveCycles;
+  }
+
+  public setPerDotVolumeWaveMinDb(db: number): void {
+    this.perDotVolumeWaveMinDb = Math.max(-60, Math.min(0, db)); // Clamp -60 to 0 dB
+  }
+
+  public getPerDotVolumeWaveMinDb(): number {
+    return this.perDotVolumeWaveMinDb;
+  }
+
+  public setPerDotVolumeWaveMaxDb(db: number): void {
+    this.perDotVolumeWaveMaxDb = Math.max(-60, Math.min(0, db)); // Clamp -60 to 0 dB
+  }
+
+  public getPerDotVolumeWaveMaxDb(): number {
+    return this.perDotVolumeWaveMaxDb;
+  }
+
+  /**
+   * Advance to the next volume step in the per-cycle oscillation.
+   * Called once each time all dots have completed a cycle.
+   * Returns the current volume multiplier (linear gain).
+   */
+  public advancePerCycleVolume(): number {
+    if (!this.perCycleVolumeEnabled) {
+      return 1.0; // No modulation when disabled
+    }
+
+    // Calculate the current dB value based on current step
+    const minDb = this.perCycleVolumeMinDb;
+    const maxDb = this.perCycleVolumeMaxDb;
+    const dbRange = maxDb - minDb;
+    const stepSize = this.perCycleVolumeSteps > 1 ? dbRange / (this.perCycleVolumeSteps - 1) : 0;
+    const currentDb = minDb + (this.perCycleVolumeCurrentStep * stepSize);
+
+    // Convert dB to linear gain
+    const volumeMultiplier = Math.pow(10, currentDb / 20);
+
+    // Advance to next step with direction change at boundaries
+    this.perCycleVolumeCurrentStep += this.perCycleVolumeDirection;
+
+    // Check boundaries and reverse direction if needed
+    if (this.perCycleVolumeCurrentStep >= this.perCycleVolumeSteps - 1) {
+      this.perCycleVolumeCurrentStep = this.perCycleVolumeSteps - 1;
+      this.perCycleVolumeDirection = -1;
+    } else if (this.perCycleVolumeCurrentStep <= 0) {
+      this.perCycleVolumeCurrentStep = 0;
+      this.perCycleVolumeDirection = 1;
+    }
+
+    return volumeMultiplier;
+  }
+
+  /**
+   * Get the current per-cycle volume multiplier without advancing.
+   * Used when scheduling hits to get the current volume level.
+   */
+  public getCurrentPerCycleVolumeMultiplier(): number {
+    if (!this.perCycleVolumeEnabled) {
+      return 1.0;
+    }
+
+    const minDb = this.perCycleVolumeMinDb;
+    const maxDb = this.perCycleVolumeMaxDb;
+    const dbRange = maxDb - minDb;
+    const stepSize = this.perCycleVolumeSteps > 1 ? dbRange / (this.perCycleVolumeSteps - 1) : 0;
+    const currentDb = minDb + (this.perCycleVolumeCurrentStep * stepSize);
+
+    return Math.pow(10, currentDb / 20);
+  }
+
+  /**
+   * Calculate the per-dot volume multiplier based on dot position in reading order.
+   * Creates a wave effect where volume oscillates based on position.
+   * @param dotIndex The index of the dot in reading order (0-based)
+   * @param totalDots Total number of dots being played
+   * @returns Linear gain multiplier for this dot
+   */
+  public getPerDotVolumeWaveMultiplier(dotIndex: number, totalDots: number): number {
+    if (!this.perDotVolumeWaveEnabled || totalDots <= 0) {
+      return 1.0;
+    }
+
+    // Calculate phase based on position in reading order
+    // Phase goes from 0 to (cycles * 2π) across all dots, plus the moving phase offset
+    const normalizedPosition = dotIndex / totalDots;
+    const phase = normalizedPosition * this.perDotVolumeWaveCycles * 2 * Math.PI + this.perDotVolumeWavePhaseOffset;
+
+    // Use cosine for smooth oscillation (starts at max when phase = 0)
+    // Map from [-1, 1] to [0, 1]
+    const oscillation = (Math.cos(phase) + 1) / 2;
+
+    // Map oscillation to dB range and convert to linear gain
+    const minDb = this.perDotVolumeWaveMinDb;
+    const maxDb = this.perDotVolumeWaveMaxDb;
+    const currentDb = minDb + oscillation * (maxDb - minDb);
+
+    return Math.pow(10, currentDb / 20);
+  }
+
+  /**
+   * Advance the phase offset for the per-dot volume wave.
+   * Called after each cycle completes to create the "moving wave" effect.
+   */
+  public advancePerDotVolumeWavePhase(): void {
+    // Advance phase by the shift amount (converted to radians)
+    this.perDotVolumeWavePhaseOffset += this.perDotVolumeWavePhaseShift * 2 * Math.PI;
+    // Keep phase in reasonable range to avoid floating point issues
+    if (this.perDotVolumeWavePhaseOffset > 2 * Math.PI) {
+      this.perDotVolumeWavePhaseOffset -= 2 * Math.PI;
+    }
+  }
+
+  public resetPerDotVolumeWavePhase(): void {
+    this.perDotVolumeWavePhaseOffset = 0;
+  }
+
+  public setPerDotVolumeWavePhaseShift(shift: number): void {
+    this.perDotVolumeWavePhaseShift = Math.max(0, Math.min(1, shift)); // Clamp 0-1
+  }
+
+  public getPerDotVolumeWavePhaseShift(): number {
+    return this.perDotVolumeWavePhaseShift;
+  }
+
+  public isPerDotVolumeWaveEnabled(): boolean {
+    return this.perDotVolumeWaveEnabled;
+  }
+
   public startAutoVolumeCycle(): void {
     if (this.autoVolumeCycleAnimationFrameId !== null) {
       cancelAnimationFrame(this.autoVolumeCycleAnimationFrameId);
@@ -749,6 +972,7 @@ class PositionedAudioService {
 
   /**
    * Schedule a simple hit with custom attack/release times
+   * Uses voice pool for polyphonic playback - allows overlapping sounds
    */
   public schedulePointHit(pointId: string, scheduledTime: number, attackTime: number, releaseTime: number, peakVolume: number): void {
     const point = this.audioPoints.get(pointId);
@@ -757,7 +981,11 @@ class PositionedAudioService {
     // Set frequency characteristics based on dot position
     this.setMainGainAndSlope(point);
 
-    const gainParam = point.envelopeGain.gain;
+    // Find an available voice from the pool (or steal the oldest one)
+    const voice = this.allocateVoice(point.voicePool, scheduledTime);
+    const gainParam = voice.envelopeGain.gain;
+
+    // Cancel any previous scheduled values and start fresh
     gainParam.cancelScheduledValues(scheduledTime);
 
     // Start from silence
@@ -768,6 +996,31 @@ class PositionedAudioService {
 
     // Release - fade out
     gainParam.linearRampToValueAtTime(0, scheduledTime + attackTime + releaseTime);
+
+    // Mark when this voice will be free
+    voice.releaseEndTime = scheduledTime + attackTime + releaseTime;
+  }
+
+  /**
+   * Allocate a voice from the pool for a new hit
+   * Returns the first available voice, or steals the oldest one if all are busy
+   */
+  private allocateVoice(voicePool: Voice[], scheduledTime: number): Voice {
+    // First, try to find a voice that's already finished (releaseEndTime < scheduledTime)
+    const availableVoice = voicePool.find(v => v.releaseEndTime <= scheduledTime);
+
+    if (availableVoice) {
+      return availableVoice;
+    }
+
+    // No available voice - steal the one that will finish soonest (oldest)
+    let oldestVoice = voicePool[0];
+    for (const voice of voicePool) {
+      if (voice.releaseEndTime < oldestVoice.releaseEndTime) {
+        oldestVoice = voice;
+      }
+    }
+    return oldestVoice;
   }
 
   // Legacy methods for backwards compatibility
@@ -892,6 +1145,21 @@ class PositionedAudioService {
     }
 
     mainGain.connect(volumeLevelGain);
+
+    // Create voice pool for polyphonic playback (overlapping hits)
+    const voicePool: Voice[] = [];
+    for (let i = 0; i < VOICE_POOL_SIZE; i++) {
+      const voiceEnvelope = this.ctx.createGain();
+      voiceEnvelope.gain.value = 0; // Start silent
+      volumeLevelGain.connect(voiceEnvelope);
+      voiceEnvelope.connect(panner);
+      voicePool.push({
+        envelopeGain: voiceEnvelope,
+        releaseEndTime: 0 // Available immediately
+      });
+    }
+
+    // Legacy envelope for continuous mode (connected in parallel with voice pool)
     volumeLevelGain.connect(envelopeGain);
     envelopeGain.connect(panner);
     panner.connect(this.outputGain);
@@ -912,6 +1180,7 @@ class PositionedAudioService {
       subHitCount: 0,
       subHitTimerId: null,
       volumeLevel,
+      voicePool,
     });
   }
 
@@ -947,6 +1216,12 @@ class PositionedAudioService {
     point.mainGain.disconnect();
     point.volumeLevelGain.disconnect();
     point.envelopeGain.disconnect();
+
+    // Disconnect all voice pool envelopes
+    for (const voice of point.voicePool) {
+      voice.envelopeGain.disconnect();
+    }
+
     point.panner.disconnect();
     // point.pinkNoiseBuffer = null; // Buffer is managed by JS GC once source is gone
 
@@ -994,12 +1269,20 @@ class PositionedAudioService {
       point.subHitTimerId = null; // Explicitly mark timer as cleared
     }
 
-    // Deactivate by ramping envelopeGain down quickly, regardless of previous state
     const now = this.ctx.currentTime;
+
+    // Deactivate legacy envelope by ramping down quickly
     point.envelopeGain.gain.cancelScheduledValues(now);
     const currentGain = Math.max(0.001, point.envelopeGain.gain.value); // Ensure we're above zero for exponential
     point.envelopeGain.gain.setValueAtTime(currentGain, now); // Hold current value
     point.envelopeGain.gain.exponentialRampToValueAtTime(0.001, now + 0.01); // Quick exponential ramp down (10ms)
+
+    // Also silence all voices in the voice pool
+    for (const voice of point.voicePool) {
+      voice.envelopeGain.gain.cancelScheduledValues(now);
+      voice.envelopeGain.gain.setValueAtTime(0, now);
+      voice.releaseEndTime = 0; // Mark as available
+    }
   }
   
   public deactivateAllPoints(): void {
@@ -1192,8 +1475,12 @@ class DotGridAudioPlayer {
   private static instance: DotGridAudioPlayer;
   private isPlaying: boolean = false;
   private activeDotKeys: Set<string> = new Set();
-  private dotVolumeLevels: Map<string, number> = new Map(); // Volume level for each dot (0-3)
+  private dotVolumeLevels: Map<string, number> = new Map(); // Volume level for each dot (0 = off, 1+ = on)
   private audioService: PositionedAudioService;
+
+  // Red dots state: dots that play less frequently (N of M cycles)
+  private redDots: Map<string, { playN: number, ofM: number }> = new Map();
+  private currentCycleNumber: number = 0; // Tracks which cycle we're on (0-indexed)
 
   // Properties for sequential playback (now row-by-row) - REMOVING
   // private orderedRowsToPlay: Array<{ rowIndex: number, dotKeys: string[] }> = [];
@@ -1467,6 +1754,53 @@ class DotGridAudioPlayer {
   }
 
   /**
+   * Update red dots configuration
+   * @param redDots Map of dot keys to their play frequency settings
+   */
+  public updateRedDots(redDots: Map<string, { playN: number, ofM: number }>): void {
+    this.redDots = new Map(redDots);
+  }
+
+  /**
+   * Check if a red dot should play on the current cycle
+   * @param dotKey The dot key to check
+   * @returns true if the dot should play, false if it should be skipped
+   */
+  public shouldRedDotPlay(dotKey: string): boolean {
+    const redDotConfig = this.redDots.get(dotKey);
+    if (!redDotConfig) {
+      // Not a red dot, always plays
+      return true;
+    }
+
+    const { playN, ofM } = redDotConfig;
+    // Play on cycles 0, 1, ..., (playN-1) out of every ofM cycles
+    const cycleInPeriod = this.currentCycleNumber % ofM;
+    return cycleInPeriod < playN;
+  }
+
+  /**
+   * Advance the cycle counter (called after each full cycle completes)
+   */
+  public advanceCycleCounter(): void {
+    this.currentCycleNumber++;
+  }
+
+  /**
+   * Reset the cycle counter (called when playback stops/starts)
+   */
+  public resetCycleCounter(): void {
+    this.currentCycleNumber = 0;
+  }
+
+  /**
+   * Get current cycle number
+   */
+  public getCurrentCycleNumber(): number {
+    return this.currentCycleNumber;
+  }
+
+  /**
    * Start stopband mode cycling
    */
   private startStopbandCycling(): void {
@@ -1639,6 +1973,9 @@ class DotGridAudioPlayer {
     console.log('🔊 Set playing state:', playing);
 
     if (playing) {
+      // Reset cycle counter when starting playback
+      this.resetCycleCounter();
+
       // NEW: Check loop sequencer mode first
       if (this.isLoopSequencerMode()) {
         this.stopAllRhythmsInternalCleanup(); // Clear other modes
@@ -1708,30 +2045,83 @@ class DotGridAudioPlayer {
     const hitRate = this.audioService.getHitModeRate(); // hits per second
     const attackTime = this.audioService.getHitModeAttack();
     const releaseTime = this.audioService.getHitModeRelease();
-    const peakVolume = this.audioService.getHitModeVolume();
+    const baseVolume = this.audioService.getHitModeVolume();
+
+    // Get per-cycle volume multiplier (advances after this cycle completes)
+    const perCycleVolumeMultiplier = this.audioService.getCurrentPerCycleVolumeMultiplier();
+    const perCycleVolumeRedDotsOnly = this.audioService.getPerCycleVolumeRedDotsOnly();
 
     // Calculate time between hits
     const hitInterval = 1 / hitRate; // seconds between hits
     const currentTime = audioContext.getAudioContext().currentTime;
 
+    // Check if per-dot volume wave is enabled
+    const perDotWaveEnabled = this.audioService.isPerDotVolumeWaveEnabled();
+
+    // Get hold count (number of times each dot plays before moving to next)
+    const holdCount = this.audioService.getHoldCount();
+
     // Schedule hits for all dots in this loop cycle
     if (this.audioService.getLoopSequencerPlayTogether()) {
-      // Play all dots together mode: all dots hit simultaneously
-      sortedDotKeys.forEach((dotKey) => {
-        this.audioService.schedulePointHit(dotKey, currentTime, attackTime, releaseTime, peakVolume);
-      });
+      // Play all dots together mode: all dots hit simultaneously, repeated holdCount times
+      for (let hold = 0; hold < holdCount; hold++) {
+        sortedDotKeys.forEach((dotKey, index) => {
+          // Skip red dots that shouldn't play on this cycle
+          if (!this.shouldRedDotPlay(dotKey)) {
+            return;
+          }
+          // Check if this dot is red
+          const isRedDot = this.redDots.has(dotKey);
+          // Apply per-cycle volume only to red dots if that option is enabled
+          const effectivePerCycleMultiplier = (perCycleVolumeRedDotsOnly && !isRedDot) ? 1.0 : perCycleVolumeMultiplier;
+          const basePeakVolume = baseVolume * effectivePerCycleMultiplier;
+          // Apply per-dot volume wave if enabled
+          const perDotMultiplier = perDotWaveEnabled
+            ? this.audioService.getPerDotVolumeWaveMultiplier(index, dotCount)
+            : 1.0;
+          const peakVolume = basePeakVolume * perDotMultiplier;
+          const dotHitTime = currentTime + (hold * hitInterval);
+          this.audioService.schedulePointHit(dotKey, dotHitTime, attackTime, releaseTime, peakVolume);
+        });
+      }
     } else {
-      // Cycle through dots mode: each dot gets a hit at evenly spaced intervals
+      // Cycle through dots mode: each dot gets holdCount hits at evenly spaced intervals
       sortedDotKeys.forEach((dotKey, index) => {
-        const dotHitTime = currentTime + (index * hitInterval);
-        this.audioService.schedulePointHit(dotKey, dotHitTime, attackTime, releaseTime, peakVolume);
+        // Skip red dots that shouldn't play on this cycle
+        if (!this.shouldRedDotPlay(dotKey)) {
+          return;
+        }
+        // Check if this dot is red
+        const isRedDot = this.redDots.has(dotKey);
+        // Apply per-cycle volume only to red dots if that option is enabled
+        const effectivePerCycleMultiplier = (perCycleVolumeRedDotsOnly && !isRedDot) ? 1.0 : perCycleVolumeMultiplier;
+        const basePeakVolume = baseVolume * effectivePerCycleMultiplier;
+        // Apply per-dot volume wave if enabled
+        const perDotMultiplier = perDotWaveEnabled
+          ? this.audioService.getPerDotVolumeWaveMultiplier(index, dotCount)
+          : 1.0;
+        const peakVolume = basePeakVolume * perDotMultiplier;
+        // Schedule holdCount hits for this dot
+        for (let hold = 0; hold < holdCount; hold++) {
+          const dotHitTime = currentTime + ((index * holdCount + hold) * hitInterval);
+          this.audioService.schedulePointHit(dotKey, dotHitTime, attackTime, releaseTime, peakVolume);
+        }
       });
     }
 
-    // Calculate loop duration based on hit rate and dot count
+    // Advance per-cycle volume for the next cycle
+    this.audioService.advancePerCycleVolume();
+
+    // Advance per-dot volume wave phase for the "moving wave" effect
+    this.audioService.advancePerDotVolumeWavePhase();
+
+    // Advance cycle counter for red dot scheduling
+    this.advanceCycleCounter();
+
+    // Calculate loop duration based on hit rate, dot count, and hold count
     const loopDuration = this.audioService.getLoopSequencerPlayTogether()
-      ? hitInterval // If playing together, one hit interval per loop
-      : dotCount * hitInterval; // If cycling, one hit per dot
+      ? hitInterval * holdCount // If playing together, holdCount hit intervals per loop
+      : dotCount * holdCount * hitInterval; // If cycling, holdCount hits per dot
 
     const loopDelayMs = loopDuration * 1000;
     this.loopSequencerTimeoutId = window.setTimeout(() => {
@@ -2638,6 +3028,96 @@ class DotGridAudioPlayer {
 
   public getAutoVolumeCycleSteps(): number {
     return this.audioService.getAutoVolumeCycleSteps();
+  }
+
+  // Per-cycle volume oscillation methods
+  public setPerCycleVolumeEnabled(enabled: boolean): void {
+    this.audioService.setPerCycleVolumeEnabled(enabled);
+  }
+
+  public getPerCycleVolumeEnabled(): boolean {
+    return this.audioService.getPerCycleVolumeEnabled();
+  }
+
+  public setPerCycleVolumeSteps(steps: number): void {
+    this.audioService.setPerCycleVolumeSteps(steps);
+  }
+
+  public getPerCycleVolumeSteps(): number {
+    return this.audioService.getPerCycleVolumeSteps();
+  }
+
+  public setPerCycleVolumeMinDb(db: number): void {
+    this.audioService.setPerCycleVolumeMinDb(db);
+  }
+
+  public getPerCycleVolumeMinDb(): number {
+    return this.audioService.getPerCycleVolumeMinDb();
+  }
+
+  public setPerCycleVolumeMaxDb(db: number): void {
+    this.audioService.setPerCycleVolumeMaxDb(db);
+  }
+
+  public getPerCycleVolumeMaxDb(): number {
+    return this.audioService.getPerCycleVolumeMaxDb();
+  }
+
+  public resetPerCycleVolume(): void {
+    this.audioService.resetPerCycleVolume();
+  }
+
+  public setPerCycleVolumeRedDotsOnly(redDotsOnly: boolean): void {
+    this.audioService.setPerCycleVolumeRedDotsOnly(redDotsOnly);
+  }
+
+  public getPerCycleVolumeRedDotsOnly(): boolean {
+    return this.audioService.getPerCycleVolumeRedDotsOnly();
+  }
+
+  // Per-dot volume wave methods (volume oscillates based on dot reading order position)
+  public setPerDotVolumeWaveEnabled(enabled: boolean): void {
+    this.audioService.setPerDotVolumeWaveEnabled(enabled);
+  }
+
+  public getPerDotVolumeWaveEnabled(): boolean {
+    return this.audioService.getPerDotVolumeWaveEnabled();
+  }
+
+  public setPerDotVolumeWaveCycles(cycles: number): void {
+    this.audioService.setPerDotVolumeWaveCycles(cycles);
+  }
+
+  public getPerDotVolumeWaveCycles(): number {
+    return this.audioService.getPerDotVolumeWaveCycles();
+  }
+
+  public setPerDotVolumeWaveMinDb(db: number): void {
+    this.audioService.setPerDotVolumeWaveMinDb(db);
+  }
+
+  public getPerDotVolumeWaveMinDb(): number {
+    return this.audioService.getPerDotVolumeWaveMinDb();
+  }
+
+  public setPerDotVolumeWaveMaxDb(db: number): void {
+    this.audioService.setPerDotVolumeWaveMaxDb(db);
+  }
+
+  public getPerDotVolumeWaveMaxDb(): number {
+    return this.audioService.getPerDotVolumeWaveMaxDb();
+  }
+
+  public setPerDotVolumeWavePhaseShift(shift: number): void {
+    this.audioService.setPerDotVolumeWavePhaseShift(shift);
+  }
+
+  public getPerDotVolumeWavePhaseShift(): number {
+    return this.audioService.getPerDotVolumeWavePhaseShift();
+  }
+
+  public resetPerDotVolumeWavePhase(): void {
+    this.audioService.resetPerDotVolumeWavePhase();
   }
 }
 
@@ -3666,6 +4146,212 @@ export function updateDotVolumeLevel(dotKey: string, volumeLevel: number): void 
 export function getDotVolumeLevel(dotKey: string): number {
   const player = DotGridAudioPlayer.getInstance();
   return player.getDotVolumeLevel(dotKey);
+}
+
+/**
+ * Enable or disable per-cycle volume oscillation
+ * Volume changes each time all dots have completed a cycle
+ * @param enabled Whether per-cycle volume oscillation is enabled
+ */
+export function setPerCycleVolumeEnabled(enabled: boolean): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setPerCycleVolumeEnabled(enabled);
+}
+
+/**
+ * Get whether per-cycle volume oscillation is enabled
+ */
+export function getPerCycleVolumeEnabled(): boolean {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getPerCycleVolumeEnabled();
+}
+
+/**
+ * Set the number of steps for per-cycle volume oscillation
+ * @param steps Number of cycles to go from min to max volume (2 to 20)
+ */
+export function setPerCycleVolumeSteps(steps: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setPerCycleVolumeSteps(steps);
+}
+
+/**
+ * Get the current per-cycle volume steps
+ */
+export function getPerCycleVolumeSteps(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getPerCycleVolumeSteps();
+}
+
+/**
+ * Set the minimum volume in dB for per-cycle volume oscillation
+ * @param db Minimum volume in dB (-60 to 0)
+ */
+export function setPerCycleVolumeMinDb(db: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setPerCycleVolumeMinDb(db);
+}
+
+/**
+ * Get the current per-cycle volume minimum dB
+ */
+export function getPerCycleVolumeMinDb(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getPerCycleVolumeMinDb();
+}
+
+/**
+ * Set the maximum volume in dB for per-cycle volume oscillation
+ * @param db Maximum volume in dB (-60 to 0)
+ */
+export function setPerCycleVolumeMaxDb(db: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setPerCycleVolumeMaxDb(db);
+}
+
+/**
+ * Get the current per-cycle volume maximum dB
+ */
+export function getPerCycleVolumeMaxDb(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getPerCycleVolumeMaxDb();
+}
+
+/**
+ * Reset per-cycle volume to initial state (step 0, ascending)
+ */
+export function resetPerCycleVolume(): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.resetPerCycleVolume();
+}
+
+/**
+ * Set whether per-cycle volume should only apply to red dots
+ * @param redDotsOnly If true, only red dots get the volume cycle modulation
+ */
+export function setPerCycleVolumeRedDotsOnly(redDotsOnly: boolean): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setPerCycleVolumeRedDotsOnly(redDotsOnly);
+}
+
+/**
+ * Get whether per-cycle volume only applies to red dots
+ */
+export function getPerCycleVolumeRedDotsOnly(): boolean {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getPerCycleVolumeRedDotsOnly();
+}
+
+/**
+ * Enable or disable per-dot volume wave
+ * Volume oscillates based on dot reading order position
+ * @param enabled Whether per-dot volume wave is enabled
+ */
+export function setPerDotVolumeWaveEnabled(enabled: boolean): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setPerDotVolumeWaveEnabled(enabled);
+}
+
+/**
+ * Get whether per-dot volume wave is enabled
+ */
+export function getPerDotVolumeWaveEnabled(): boolean {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getPerDotVolumeWaveEnabled();
+}
+
+/**
+ * Set the number of volume cycles per full image traversal
+ * @param cycles Number of cycles (0.1 to 10)
+ */
+export function setPerDotVolumeWaveCycles(cycles: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setPerDotVolumeWaveCycles(cycles);
+}
+
+/**
+ * Get the current per-dot volume wave cycles
+ */
+export function getPerDotVolumeWaveCycles(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getPerDotVolumeWaveCycles();
+}
+
+/**
+ * Set the minimum volume in dB for per-dot volume wave
+ * @param db Minimum volume in dB (-60 to 0)
+ */
+export function setPerDotVolumeWaveMinDb(db: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setPerDotVolumeWaveMinDb(db);
+}
+
+/**
+ * Get the current per-dot volume wave minimum dB
+ */
+export function getPerDotVolumeWaveMinDb(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getPerDotVolumeWaveMinDb();
+}
+
+/**
+ * Set the maximum volume in dB for per-dot volume wave
+ * @param db Maximum volume in dB (-60 to 0)
+ */
+export function setPerDotVolumeWaveMaxDb(db: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setPerDotVolumeWaveMaxDb(db);
+}
+
+/**
+ * Get the current per-dot volume wave maximum dB
+ */
+export function getPerDotVolumeWaveMaxDb(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getPerDotVolumeWaveMaxDb();
+}
+
+/**
+ * Set the phase shift per cycle for per-dot volume wave
+ * Controls how much the wave "moves" each cycle
+ * @param shift Phase shift as fraction of full cycle (0 to 1)
+ */
+export function setPerDotVolumeWavePhaseShift(shift: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setPerDotVolumeWavePhaseShift(shift);
+}
+
+/**
+ * Get the current per-dot volume wave phase shift
+ */
+export function getPerDotVolumeWavePhaseShift(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getPerDotVolumeWavePhaseShift();
+}
+
+/**
+ * Reset the per-dot volume wave phase to initial state
+ */
+export function resetPerDotVolumeWavePhase(): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.resetPerDotVolumeWavePhase();
+}
+
+/**
+ * Update red dots configuration
+ * Red dots play less frequently (N of M cycles)
+ */
+export function updateRedDots(redDots: Map<string, { playN: number, ofM: number }>): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.updateRedDots(redDots);
+}
+
+/**
+ * Get current cycle number for red dot scheduling
+ */
+export function getCurrentCycleNumber(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getCurrentCycleNumber();
 }
 
 // Export the SoundMode enum for use in UI
