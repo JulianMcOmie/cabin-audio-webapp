@@ -275,8 +275,8 @@ export function DotGrid({
         const isRedDot = redDots.has(dotKey);
         const isActive = volumeLevel > 0;
 
-        // Opacity based on volume level: 0 = 0.2, 1 = 0.4, 2 = 0.7, 3 = 1.0
-        const dotOpacity = volumeLevel === 0 ? 0.2 : 0.2 + (volumeLevel / 3) * 0.8;
+        // Opacity based on on/off state: 0 = 0.2 (dim), 1+ = 1.0 (full)
+        const dotOpacity = volumeLevel === 0 ? 0.2 : 1.0;
 
         // Draw pulsing animation for active playing dots
         if (isPlaying && isActive) {
@@ -471,7 +471,7 @@ export function DotCalibration({
   // Use either external or internal state for selected dots
   const [internalSelectedDots, setInternalSelectedDots] = useState<Set<string>>(new Set()); // Start with no dots selected
 
-  // Volume level state for all dots (0 = off, 1 = on at full volume)
+  // Volume level state for all dots (0 = off, 1+ = on)
   const [dotVolumeLevels, setDotVolumeLevels] = useState<Map<string, number>>(new Map());
 
   // Red dot state: tracks which dots are "red" (play less frequently)
@@ -524,10 +524,11 @@ export function DotCalibration({
   const [loopSequencerPlayTogether, setLoopSequencerPlayTogether] = useState(false); // Default: cycle through dots individually
 
   // Hit mode settings for loop sequencer
-  const [hitModeRate, setHitModeRate] = useState(25); // Default: 25 hits per second
+  const [hitModeRate, setHitModeRate] = useState(50); // Default: 50 hits per second
   const [hitModeAttack, setHitModeAttack] = useState(0.01); // Default: 10ms attack
   const [hitModeRelease, setHitModeRelease] = useState(0.1); // Default: 100ms release
-  const [hitModeVolume, setHitModeVolume] = useState(1.0); // Default: 100% volume
+  const [numberOfHits, setNumberOfHits] = useState(4); // Default: 4 hits per dot
+  const [hitDecay, setHitDecay] = useState(12); // Default: 12dB decay
 
   // Auto volume cycle state
   const [autoVolumeCycleEnabled, setAutoVolumeCycleEnabled] = useState(false); // Default: disabled
@@ -712,7 +713,7 @@ export function DotCalibration({
       if (currentLevel === 0) {
         // Inactive dot: activate it AND make it red
         const newVolumeLevels = new Map(dotVolumeLevels);
-        newVolumeLevels.set(dotKey, 3);
+        newVolumeLevels.set(dotKey, 1);
         setDotVolumeLevels(newVolumeLevels);
 
         // Make it red with default settings (play 1 of 2 cycles)
@@ -729,7 +730,7 @@ export function DotCalibration({
 
         const audioPlayer = dotGridAudio.getDotGridAudioPlayer();
         audioPlayer.updateDots(activeDots, gridSize, columnCount);
-        dotGridAudio.updateDotVolumeLevel(dotKey, 3);
+        dotGridAudio.updateDotVolumeLevel(dotKey, 1);
       } else {
         // Active dot: toggle red status
         if (isRed) {
@@ -749,8 +750,8 @@ export function DotCalibration({
       return;
     }
 
-    // Normal click - cycle through volume levels (0 → 1 → 2 → 3 → 0)
-    const nextLevel = (currentLevel + 1) % 4;
+    // Normal click - toggle on/off (0 → 1 → 0)
+    const nextLevel = currentLevel === 0 ? 1 : 0;
 
     // Update volume level
     const newVolumeLevels = new Map(dotVolumeLevels);
@@ -1138,8 +1139,12 @@ export function DotCalibration({
   }, [hitModeRelease]);
 
   useEffect(() => {
-    dotGridAudio.setHitModeVolume(hitModeVolume);
-  }, [hitModeVolume]);
+    dotGridAudio.setNumberOfHits(numberOfHits);
+  }, [numberOfHits]);
+
+  useEffect(() => {
+    dotGridAudio.setHitDecay(hitDecay);
+  }, [hitDecay]);
 
   // Automatically calculate loop duration based on number of active dots (1.5 seconds per dot: 500ms quiet + 500ms medium + 500ms loud)
   useEffect(() => {
@@ -1603,7 +1608,7 @@ export function DotCalibration({
                 <input
                   type="range"
                   min="0.1"
-                  max="100"
+                  max="200"
                   step="0.1"
                   value={hitModeRate}
                   onChange={(e) => setHitModeRate(Number(e.target.value))}
@@ -1654,19 +1659,39 @@ export function DotCalibration({
                 />
               </div>
 
-              {/* Hit Volume */}
+              {/* Number of Hits */}
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium">Hit Volume</span>
-                  <span className="text-xs text-muted-foreground">{(hitModeVolume * 100).toFixed(0)}%</span>
+                  <span className="text-xs font-medium">Number of Hits</span>
+                  <span className="text-xs text-muted-foreground">{numberOfHits}</span>
+                </div>
+                <input
+                  type="range"
+                  min="1"
+                  max="10"
+                  step="1"
+                  value={numberOfHits}
+                  onChange={(e) => setNumberOfHits(Number(e.target.value))}
+                  disabled={disabled}
+                  className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                    disabled ? 'opacity-50 cursor-not-allowed' : ''
+                  } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+                />
+              </div>
+
+              {/* Hit Decay */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium">Hit Decay</span>
+                  <span className="text-xs text-muted-foreground">{hitDecay} dB</span>
                 </div>
                 <input
                   type="range"
                   min="0"
-                  max="1"
-                  step="0.01"
-                  value={hitModeVolume}
-                  onChange={(e) => setHitModeVolume(Number(e.target.value))}
+                  max="48"
+                  step="1"
+                  value={hitDecay}
+                  onChange={(e) => setHitDecay(Number(e.target.value))}
                   disabled={disabled}
                   className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
                     disabled ? 'opacity-50 cursor-not-allowed' : ''
