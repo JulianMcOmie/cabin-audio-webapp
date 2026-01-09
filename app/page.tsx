@@ -1,7 +1,6 @@
 "use client"
 
 import { useState } from "react"
-import dynamic from "next/dynamic"
 import { TopBar } from "@/components/top-bar"
 import { EQView } from "@/components/eq-view"
 import { MusicLibrary } from "@/components/music-library/MusicLibrary"
@@ -15,13 +14,7 @@ import { ProfilePage } from "@/components/profile-page"
 import { SignupModal } from "@/components/signup-modal"
 // import { usePlayerStore } from "@/lib/stores"
 
-// Dynamic import for client-only component (uses Web Audio API)
-const RotatingDotGrid = dynamic(
-  () => import("@/components/rotating-dot-grid").then(mod => ({ default: mod.RotatingDotGrid })),
-  { ssr: false }
-)
-
-type TabType = "eq" | "library" | "export" | "desktop" | "mobile" | "profile" | "rotation";
+type TabType = "eq" | "library" | "export" | "desktop" | "mobile" | "profile";
 type TabHistory = Array<TabType>;
 
 export default function Home() {
@@ -105,13 +98,6 @@ export default function Home() {
                   setActiveTab={pushToHistory}
                   onSignupClick={handleShowSignup}
                 />
-              ) : activeTab === "rotation" ? (
-                <div className="h-full flex flex-col">
-                  <h2 className="text-2xl font-bold mb-4">Rotating Dot Grid</h2>
-                  <div className="flex-1">
-                    <RotatingDotGrid />
-                  </div>
-                </div>
               ) : activeTab === "export" ? (
                 <ExportView />
               ) : activeTab === "desktop" ? (

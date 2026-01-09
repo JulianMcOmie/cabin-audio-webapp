@@ -1,16 +1,16 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { ExternalLink, Menu, Monitor, Music, RotateCcw, Sliders, Smartphone, Sparkles, X } from "lucide-react"
+import { ExternalLink, Menu, Monitor, Music, Sliders, Smartphone, Sparkles, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 
 interface SidebarProps {
-  activeTab: "eq" | "library" | "export" | "desktop" | "mobile" | "profile" | "rotation"
-  setActiveTab: (tab: "eq" | "library" | "export" | "desktop" | "mobile" | "profile" | "rotation") => void
+  activeTab: "eq" | "library" | "export" | "desktop" | "mobile" | "profile"
+  setActiveTab: (tab: "eq" | "library" | "export" | "desktop" | "mobile" | "profile") => void
   onUpgradeClick: () => void
-  pushToHistory?: (tab: "eq" | "library" | "export" | "desktop" | "mobile" | "profile" | "rotation") => void
+  pushToHistory?: (tab: "eq" | "library" | "export" | "desktop" | "mobile" | "profile") => void
 }
 
 export function Sidebar({ activeTab, setActiveTab, onUpgradeClick, pushToHistory }: SidebarProps) {
@@ -34,7 +34,7 @@ export function Sidebar({ activeTab, setActiveTab, onUpgradeClick, pushToHistory
   }, [])
   
   // Helper function to handle tab changes
-  const handleTabChange = (tab: "eq" | "library" | "export" | "desktop" | "mobile" | "profile" | "rotation") => {
+  const handleTabChange = (tab: "eq" | "library" | "export" | "desktop" | "mobile" | "profile") => {
     if (pushToHistory) {
       // If pushToHistory is provided, use it to update history
       pushToHistory(tab);
@@ -100,14 +100,6 @@ export function Sidebar({ activeTab, setActiveTab, onUpgradeClick, pushToHistory
               >
                 <Sliders className={`mr-2 h-4 w-4 ${activeTab === "eq" ? "text-electric-blue" : ""}`} />
                 EQ
-              </Button>
-              <Button
-                variant="ghost"
-                className={`w-full justify-start ${activeTab === "rotation" ? "bg-teal-light text-teal hover:bg-teal-light hover:text-teal" : ""}`}
-                onClick={() => handleTabChange("rotation")}
-              >
-                <RotateCcw className={`mr-2 h-4 w-4 ${activeTab === "rotation" ? "text-teal" : ""}`} />
-                Rotation Grid
               </Button>
             </div>
 
