@@ -275,8 +275,9 @@ export function DotGrid({
         const isRedDot = redDots.has(dotKey);
         const isActive = volumeLevel > 0;
 
-        // Opacity based on on/off state: 0 = 0.2 (dim), 1+ = 1.0 (full)
-        const dotOpacity = volumeLevel === 0 ? 0.2 : 1.0;
+        // Opacity based on volume level: 0 = 0.2 (off), 1-3 = increasing opacity
+        const opacityLevels = [0.2, 0.4, 0.7, 1.0];
+        const dotOpacity = opacityLevels[volumeLevel] ?? 0.2;
 
         // Draw pulsing animation for active playing dots
         if (isPlaying && isActive) {
@@ -529,6 +530,7 @@ export function DotCalibration({
   const [hitModeRelease, setHitModeRelease] = useState(0.1); // Default: 100ms release
   const [numberOfHits, setNumberOfHits] = useState(4); // Default: 4 hits per dot
   const [hitDecay, setHitDecay] = useState(12); // Default: 12dB decay
+  const [volumeLevelRangeDb, setVolumeLevelRangeDb] = useState(20); // Default: 20dB range between volume levels
 
   // Auto volume cycle state
   const [autoVolumeCycleEnabled, setAutoVolumeCycleEnabled] = useState(false); // Default: disabled
@@ -750,8 +752,8 @@ export function DotCalibration({
       return;
     }
 
-    // Normal click - toggle on/off (0 → 1 → 0)
-    const nextLevel = currentLevel === 0 ? 1 : 0;
+    // Normal click - cycle through 4 volume levels (0 → 1 → 2 → 3 → 0)
+    const nextLevel = (currentLevel + 1) % 4;
 
     // Update volume level
     const newVolumeLevels = new Map(dotVolumeLevels);
@@ -1145,6 +1147,10 @@ export function DotCalibration({
   useEffect(() => {
     dotGridAudio.setHitDecay(hitDecay);
   }, [hitDecay]);
+
+  useEffect(() => {
+    dotGridAudio.setVolumeLevelRangeDb(volumeLevelRangeDb);
+  }, [volumeLevelRangeDb]);
 
   // Automatically calculate loop duration based on number of active dots (1.5 seconds per dot: 500ms quiet + 500ms medium + 500ms loud)
   useEffect(() => {
@@ -1692,6 +1698,26 @@ export function DotCalibration({
                   step="1"
                   value={hitDecay}
                   onChange={(e) => setHitDecay(Number(e.target.value))}
+                  disabled={disabled}
+                  className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                    disabled ? 'opacity-50 cursor-not-allowed' : ''
+                  } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
+                />
+              </div>
+
+              {/* Volume Level Range */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium">Volume Level Range</span>
+                  <span className="text-xs text-muted-foreground">{volumeLevelRangeDb} dB</span>
+                </div>
+                <input
+                  type="range"
+                  min="1"
+                  max="48"
+                  step="1"
+                  value={volumeLevelRangeDb}
+                  onChange={(e) => setVolumeLevelRangeDb(Number(e.target.value))}
                   disabled={disabled}
                   className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
                     disabled ? 'opacity-50 cursor-not-allowed' : ''

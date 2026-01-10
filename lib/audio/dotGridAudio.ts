@@ -162,6 +162,7 @@ class PositionedAudioService {
   private hitModeRelease: number = 0.6; // Release time in seconds (default: 600ms - long release for overlap)
   private numberOfHits: number = 4; // Number of hits per dot (default: 4)
   private hitDecayDb: number = 12; // Decay in dB from first to last hit (default: 12dB)
+  private volumeLevelRangeDb: number = 20; // Range in dB between quietest (level 1) and loudest (level 3) dot volume
 
   // Auto volume cycle settings
   private autoVolumeCycleEnabled: boolean = false; // Whether auto volume cycle is enabled
@@ -518,6 +519,19 @@ class PositionedAudioService {
     return this.hitDecayDb;
   }
 
+  public setVolumeLevelRangeDb(rangeDb: number): void {
+    this.volumeLevelRangeDb = Math.max(1, Math.min(48, rangeDb)); // Clamp 1-48 dB
+    // Update all existing points with the new gain calculation
+    this.audioPoints.forEach((point) => {
+      const gain = this.calculateVolumeLevelGain(point.volumeLevel);
+      point.volumeLevelGain.gain.setValueAtTime(gain, this.ctx.currentTime);
+    });
+  }
+
+  public getVolumeLevelRangeDb(): number {
+    return this.volumeLevelRangeDb;
+  }
+
   // Auto volume cycle methods
   public setAutoVolumeCycleEnabled(enabled: boolean): void {
     this.autoVolumeCycleEnabled = enabled;
@@ -812,9 +826,12 @@ class PositionedAudioService {
   }
 
   private calculateVolumeLevelGain(level: number): number {
-    // Level 0: off (silent)
-    // Level 1+: on (full volume)
-    return level > 0 ? 1 : 0;
+    // 4 volume levels: 0 = off, 1-3 = dB-based gain spread across volumeLevelRangeDb
+    if (level <= 0) return 0;
+    // Level 3 = 0dB (gain 1.0), Level 1 = -volumeLevelRangeDb dB
+    // Spread levels 1, 2, 3 evenly across the range
+    const dbFromMax = -this.volumeLevelRangeDb * (3 - level) / 2;
+    return Math.pow(10, dbFromMax / 20);
   }
 
   public updatePointVolumeLevel(id: string, volumeLevel: number): void {
@@ -3016,6 +3033,14 @@ class DotGridAudioPlayer {
     return this.audioService.getHitDecay();
   }
 
+  public setVolumeLevelRangeDb(rangeDb: number): void {
+    this.audioService.setVolumeLevelRangeDb(rangeDb);
+  }
+
+  public getVolumeLevelRangeDb(): number {
+    return this.audioService.getVolumeLevelRangeDb();
+  }
+
   // Auto volume cycle methods
   public setAutoVolumeCycleEnabled(enabled: boolean): void {
     this.audioService.setAutoVolumeCycleEnabled(enabled);
@@ -4092,6 +4117,23 @@ export function setHitDecay(decayDb: number): void {
 export function getHitDecay(): number {
   const player = DotGridAudioPlayer.getInstance();
   return player.getHitDecay();
+}
+
+/**
+ * Set the volume level range in dB (spread between quietest and loudest dot volume levels)
+ * @param rangeDb Range in dB (range: 1-48, default: 20)
+ */
+export function setVolumeLevelRangeDb(rangeDb: number): void {
+  const player = DotGridAudioPlayer.getInstance();
+  player.setVolumeLevelRangeDb(rangeDb);
+}
+
+/**
+ * Get the volume level range in dB
+ */
+export function getVolumeLevelRangeDb(): number {
+  const player = DotGridAudioPlayer.getInstance();
+  return player.getVolumeLevelRangeDb();
 }
 
 /**
