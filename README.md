@@ -1,36 +1,103 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Cabin Audio
+
+A web-based audio calibration and music player application built with Next.js and the Web Audio API.
+
+## Features
+
+### Dot Grid Calibration System
+
+The dot grid is an interactive audio calibration tool that generates bandpassed noise at different frequency ranges, allowing users to calibrate their audio system's frequency response.
+
+#### Core Functionality
+
+- **Bandpassed Noise Generation**: Each dot represents a frequency band, with lower dots producing lower frequencies and higher dots producing higher frequencies
+- **Grid Layouts**: Configurable grid sizes (3x3 up to 9x9) for different calibration resolutions
+- **Volume Levels**: Click dots to cycle through volume levels (off, quiet, medium, loud)
+- **Stereo Panning**: Dots are panned left-to-right based on their horizontal position
+
+#### Playback System
+
+The dot grid uses a loop sequencer that cycles through active dots with a sophisticated volume progression system:
+
+- **Volume Steps**: 4 discrete volume levels per dot (quiet to loud progression)
+- **Hits per Volume Level**: Configurable multiplier (1x, 2x, 4x, 8x, 16x, 32x) determining how many times each dot plays at each volume level before progressing. Default: 16x
+- **Hit Rate**: Adjustable playback speed. Default: 24 hits/second
+- **Hit Decay**: Configurable dB range for the quiet-to-loud progression. Default: 40dB
+
+#### Playback Modes
+
+- **Sequential Mode** (default): Each dot completes all its hits before moving to the next dot
+- **Interleaved Mode**: Cycles through all dots at each volume level, creating an alternating pattern between dots
+- **Play Together Mode**: All dots play simultaneously
+
+#### Advanced Features
+
+- **Red Dots**: Mark specific dots to play less frequently (N of M cycles)
+- **Per-Cycle Volume Oscillation**: Volume automatically oscillates across playback cycles
+- **Per-Dot Volume Wave**: Creates a moving wave pattern across the dot sequence
+- **Bandwidth Control**: Adjust the frequency bandwidth of each dot's bandpass filter
+- **Attack/Release Envelope**: Configurable envelope for smooth sound transitions
+
+### Music Player
+
+A full-featured music player with local file support:
+
+- **Local Music Library**: Import audio files (MP3, FLAC, WAV, etc.) from your device
+- **Persistent Storage**: Tracks are stored locally using IndexedDB
+- **Playback Controls**: Play, pause, skip forward/back, seek
+- **Volume Control**: Adjustable volume with mute toggle
+- **Track Information**: Displays title, artist, album, and cover art
+
+### Parametric EQ
+
+- **Multi-band EQ**: Add and adjust EQ bands on a frequency graph
+- **EQ Profiles**: Save and switch between different EQ configurations
+- **Real-time Processing**: All audio is processed through the Web Audio API
+- **FFT Visualization**: Real-time frequency spectrum display
+
+## Tech Stack
+
+- **Framework**: Next.js 15 with React 19
+- **Audio**: Web Audio API
+- **State Management**: Zustand
+- **Storage**: IndexedDB for local persistence
+- **Styling**: Tailwind CSS
+- **UI Components**: Radix UI primitives
 
 ## Getting Started
 
-First, run the development server:
-
 ```bash
+# Install dependencies
+npm install
+
+# Run development server
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+
+# Build for production
+npm run build
+
+# Start production server
+npm start
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) to view the application.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Usage
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Dot Grid Calibration
 
-## Learn More
+1. Navigate to the EQ tab
+2. Click on dots to activate them (cycles through volume levels)
+3. Press Play to start the calibration sequence
+4. Adjust settings in the control panel:
+   - **Hits per Volume Level**: How many times each dot plays at each volume
+   - **Interleave Dots**: Toggle between sequential and interleaved playback
+   - **Hit Rate**: Playback speed
+   - **Hit Decay**: Volume range for the progression
 
-To learn more about Next.js, take a look at the following resources:
+### Music Library
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Navigate to the Library tab
+2. Drag and drop audio files or click to import
+3. Click on a track to play
+4. Use the player bar at the bottom for playback controls

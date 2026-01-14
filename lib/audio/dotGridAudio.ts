@@ -28,19 +28,10 @@ const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of Slope
 // New constant for attenuation based on slope deviation from pink noise
 const ATTENUATION_PER_DB_OCT_DEVIATION_DB = 3.8; // dB reduction per dB/octave deviation from -3dB/oct
 
-// Constants for sequential playback with click prevention
-// const DOT_DURATION_S = 1.0; // Each dot plays for this duration - REMOVING, duration now controlled by GLOBAL_STAGGER_RELEASE_S
-// const CLICK_PREVENTION_ENVELOPE_TIME = 0.005; // REMOVING - Replaced by ADSR for sub-hits
-
-// Constants for sub-hit ADSR playback - REMOVING, replaced by global stagger
-// const NUM_SUB_HITS = 4;
-// const SUB_HIT_INTERVAL_S = DOT_DURATION_S / NUM_SUB_HITS; // Approx 0.125s if DOT_DURATION_S is 0.5s
-
-// New constants for Global Staggered Mode (when subHitPlaybackEnabled is true)
+// Constants for Global Staggered Mode (when subHitPlaybackEnabled is true)
 const DEFAULT_GLOBAL_STAGGER_ATTACK_S = 0.5; // Attack duration (500ms) - gentle fade in
 const DEFAULT_GLOBAL_STAGGER_SUSTAIN_S = 0.5; // Sustain/hold duration (500ms)
 const DEFAULT_GLOBAL_STAGGER_RELEASE_S = 0.5; // Release duration (500ms) - gentle fade out
-// const ALL_DOTS_STAGGER_INTERVAL_S = 0.5; // Stagger between each dot in the global sequence
 
 // New constants for dot repetition
 const DOT_REPETITION_INTERVAL_S = 0.5; // Interval between hits - 500ms per hit (4 hits = 2 seconds per dot)
@@ -61,9 +52,6 @@ const SINE_TONE_OUTPUT_GAIN_SCALAR = 0.15; // Output gain for sine tones
 const FFT_SIZE = 2048; // FFT resolution (must be power of 2)
 const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
 
-// Volume pattern settings -- REMOVING
-// const VOLUME_PATTERN = [0, -12, -6, -12]; // The fixed pattern in dB: 0dB, -12dB, -6dB, -12dB
-
 // Enum for sound generation modes
 enum SoundMode {
   SlopedNoise = 'sloped',
@@ -78,7 +66,10 @@ interface Voice {
 }
 
 // Number of voices per dot for polyphonic playback
-const VOICE_POOL_SIZE = 8; // Allow up to 8 overlapping sounds per dot
+const VOICE_POOL_SIZE = 32; // Allow up to 32 overlapping sounds per dot (supports up to 32x hits)
+
+// Number of discrete volume levels per dot (quiet to loud progression)
+const VOLUME_STEPS = 4; // 4 volume levels: e.g., -36dB, -24dB, -12dB, 0dB
 
 // Interface for nodes managed by PositionedAudioService
 interface PointAudioNodes {
@@ -157,12 +148,12 @@ class PositionedAudioService {
   private loopSequencerPlayTogether: boolean = false; // Whether all dots play together (true) or cycle through dots (false)
 
   // Hit mode settings for loop sequencer
-  private hitModeRate: number = 80; // Hits per second (default: 80 dots/sec)
+  private hitModeRate: number = 24; // Hits per second (default: 24/sec)
   private hitModeAttack: number = 0.010; // Attack time in seconds (default: 10ms - quick but smooth attack)
-  private hitModeRelease: number = 0.6; // Release time in seconds (default: 600ms - long release for overlap)
-  private numberOfHits: number = 4; // Number of hits per dot (default: 4)
-  private hitDecayDb: number = 12; // Decay in dB from first to last hit (default: 12dB)
-  private volumeLevelRangeDb: number = 20; // Range in dB between quietest (level 1) and loudest (level 3) dot volume
+  private hitModeRelease: number = 0.1; // Release time in seconds (default: 100ms)
+  private numberOfHits: number = 16; // Hits per volume level (default: 16) - valid values: 1, 2, 4, 8, 16, 32
+  private hitDecayDb: number = 40; // Decay in dB from first to last hit (default: 40dB)
+  private interleavedHits: boolean = false; // If true, cycle through all dots at each volume level instead of completing one dot first
 
   // Auto volume cycle settings
   private autoVolumeCycleEnabled: boolean = false; // Whether auto volume cycle is enabled
@@ -504,7 +495,7 @@ class PositionedAudioService {
   }
 
   public setNumberOfHits(count: number): void {
-    this.numberOfHits = Math.max(1, Math.min(10, Math.round(count))); // Clamp 1-10
+    this.numberOfHits = Math.max(1, Math.min(32, Math.round(count))); // Clamp 1-32
   }
 
   public getNumberOfHits(): number {
@@ -512,24 +503,19 @@ class PositionedAudioService {
   }
 
   public setHitDecay(decayDb: number): void {
-    this.hitDecayDb = Math.max(0, Math.min(48, decayDb)); // Clamp 0-48 dB
+    this.hitDecayDb = Math.max(0, Math.min(80, decayDb)); // Clamp 0-80 dB
   }
 
   public getHitDecay(): number {
     return this.hitDecayDb;
   }
 
-  public setVolumeLevelRangeDb(rangeDb: number): void {
-    this.volumeLevelRangeDb = Math.max(1, Math.min(48, rangeDb)); // Clamp 1-48 dB
-    // Update all existing points with the new gain calculation
-    this.audioPoints.forEach((point) => {
-      const gain = this.calculateVolumeLevelGain(point.volumeLevel);
-      point.volumeLevelGain.gain.setValueAtTime(gain, this.ctx.currentTime);
-    });
+  public setInterleavedHits(enabled: boolean): void {
+    this.interleavedHits = enabled;
   }
 
-  public getVolumeLevelRangeDb(): number {
-    return this.volumeLevelRangeDb;
+  public getInterleavedHits(): boolean {
+    return this.interleavedHits;
   }
 
   // Auto volume cycle methods
@@ -1311,16 +1297,28 @@ class PositionedAudioService {
     this.audioPoints.forEach((_, id) => this.deactivatePoint(id));
   }
 
+  /**
+   * Silence only the legacy envelopes without affecting voice pool releases.
+   * Used when starting loop sequencer to allow voice pool to control envelope
+   * while not cutting off ongoing release tails.
+   */
+  public silenceLegacyEnvelopes(): void {
+    const now = this.ctx.currentTime;
+    this.audioPoints.forEach((point) => {
+      // Only silence the legacy envelope, leave voice pool envelopes alone
+      point.envelopeGain.gain.cancelScheduledValues(now);
+      point.envelopeGain.gain.setValueAtTime(0, now);
+    });
+  }
+
   public dispose(): void {
     this.stopAlwaysPlayingOscillation();
-    this.audioPoints.forEach((point, id) => { // Iterate over point object too
+    this.audioPoints.forEach((point, id) => {
         if (point.subHitTimerId !== null) {
             clearTimeout(point.subHitTimerId);
-            // point.subHitTimerId = null; // removePoint will handle the map deletion
         }
         this.removePoint(id);
     });
-    // this.audioPoints.forEach((_, id) => this.removePoint(id)); // Original line
     this.outputGain.disconnect();
   }
 
@@ -1504,12 +1502,7 @@ class DotGridAudioPlayer {
   private redDots: Map<string, { playN: number, ofM: number }> = new Map();
   private currentCycleNumber: number = 0; // Tracks which cycle we're on (0-indexed)
 
-  // Properties for sequential playback (now row-by-row) - REMOVING
-  // private orderedRowsToPlay: Array<{ rowIndex: number, dotKeys: string[] }> = [];
-  // private currentRowIndex: number = 0;
-  // private lastSwitchTime: number = 0;
-  // private currentRowStaggerTimeouts: number[] = [];
-  private loopTimeoutId: number | null = null; // New: For the main sequence loop
+  private loopTimeoutId: number | null = null; // For the main sequence loop
   private rowLoopTimeoutIds: Map<number, number> = new Map(); // For independent row timing loops
 
   private gridSize: number = 3;
@@ -1522,7 +1515,6 @@ class DotGridAudioPlayer {
   private stopbandCurrentIndex: number = 0; // Current index of silent dot
   private stopbandOnTimeoutId: number | null = null; // Timeout to turn the silent dot back on
   private stopbandCurrentFlash: number = 0; // Current flash number (0-based) for the current dot
-  // private animationFrameId: number | null = null; // REMOVING, rAF not used for global stagger
 
   // Loop sequencer mode state
   private loopSequencerTimeoutId: number | null = null; // For loop sequencer iteration timeout
@@ -1555,7 +1547,6 @@ class DotGridAudioPlayer {
 
     if (columns !== undefined) {
       this.columnCount = columns;
-      // this.updateAllDotPanning(); // updateAllDotPanning relies on dot re-addition
     }
     
     // Update playback if playing
@@ -1567,27 +1558,11 @@ class DotGridAudioPlayer {
 
   /**
    * Update panning for all dots based on current column count
+   * Note: Panning updates now occur when dots are re-added via updateDots after grid size change.
    */
   private updateAllDotPanning(): void {
-    // This method is tricky with the new service model.
     // Panning is set when a point is added to PositionedAudioService.
-    // If columnCount changes, existing points in the service won't automatically update their pan.
-    // The current setGridSize -> updateDots flow (which removes/re-adds points) handles this.
-    // Thus, this specific method might be redundant or needs to trigger a re-add of all points.
-    // For now, let's rely on the setGridSize -> updateDots flow.
-    // If direct pan updates are needed without re-adding, PositionedAudioService would need a method like:
-    // updatePointPanning(id: string, newPanPosition: number)
-    // and DotGridAudioPlayer would iterate its activeDotKeys and call it.
-
-    // Old logic that accessed service internals (incorrect):
-    // this.audioService.audioPoints.forEach((nodes, dotKey) => {
-    //   const x = dotKey.split(',').map(Number)[0];
-    //   const panPosition = this.columnCount <= 1 ? 0 : (2 * (x / (this.columnCount - 1)) - 1);
-    //   if (nodes.panner) {
-    //      nodes.panner.pan.value = panPosition;
-    //   }
-    // });
-    console.warn("updateAllDotPanning called; panning updates now primarily occur when dots are re-added via updateDots after grid size change.")
+    // The setGridSize -> updateDots flow (which removes/re-adds points) handles panning updates.
   }
 
   /**
@@ -2055,8 +2030,7 @@ class DotGridAudioPlayer {
       return;
     }
 
-    // Ensure all dots are silent before scheduling envelopes
-    // This sets envelope gains to 0 without stopping the audio sources
+    // Deactivate all points before scheduling new envelopes
     this.audioService.deactivateAllPoints();
 
     // Sort dots by reading order (horizontal/vertical snake pattern)
@@ -2067,8 +2041,8 @@ class DotGridAudioPlayer {
     const hitRate = this.audioService.getHitModeRate(); // hits per second
     const attackTime = this.audioService.getHitModeAttack();
     const releaseTime = this.audioService.getHitModeRelease();
-    const numberOfHits = this.audioService.getNumberOfHits(); // Number of hits per dot
-    const hitDecayDb = this.audioService.getHitDecay(); // Decay in dB from first to last hit
+    const hitsPerVolumeLevel = this.audioService.getNumberOfHits(); // Number of hits at EACH volume level
+    const hitDecayDb = this.audioService.getHitDecay(); // Total dB range from quietest to loudest
 
     // Get per-cycle volume multiplier (advances after this cycle completes)
     const perCycleVolumeMultiplier = this.audioService.getCurrentPerCycleVolumeMultiplier();
@@ -2081,30 +2055,27 @@ class DotGridAudioPlayer {
     // Check if per-dot volume wave is enabled
     const perDotWaveEnabled = this.audioService.isPerDotVolumeWaveEnabled();
 
-    // Get hold count (number of times each dot plays before moving to next)
-    const holdCount = this.audioService.getHoldCount();
+    // Total hits per dot = VOLUME_STEPS × hitsPerVolumeLevel
+    const totalHitsPerDot = VOLUME_STEPS * hitsPerVolumeLevel;
 
-    // Helper function to calculate volume for a specific hit in the multi-hit sequence
-    // First hit (hitIndex=0) is quietest, last hit is loudest (full volume)
-    const calculateHitVolume = (baseVolume: number, hitIndex: number): number => {
-      if (numberOfHits <= 1) {
-        return baseVolume; // Single hit at full volume
+    // Helper function to calculate volume for a specific volume step
+    // volumeStep 0 = quietest (-hitDecayDb), volumeStep VOLUME_STEPS-1 = loudest (0dB)
+    const calculateStepVolume = (baseVolume: number, volumeStep: number): number => {
+      if (VOLUME_STEPS <= 1) {
+        return baseVolume; // Single step at full volume
       }
-      // Linear interpolation in dB: first hit at -hitDecayDb, last hit at 0
-      const hitVolumeDb = -hitDecayDb * (1 - hitIndex / (numberOfHits - 1));
-      const hitVolumeMultiplier = Math.pow(10, hitVolumeDb / 20);
-      return baseVolume * hitVolumeMultiplier;
+      // Linear interpolation in dB: first step at -hitDecayDb, last step at 0
+      const stepVolumeDb = -hitDecayDb * (1 - volumeStep / (VOLUME_STEPS - 1));
+      const stepVolumeMultiplier = Math.pow(10, stepVolumeDb / 20);
+      return baseVolume * stepVolumeMultiplier;
     };
-
-    // Total hits per dot = holdCount * numberOfHits
-    const totalHitsPerDot = holdCount * numberOfHits;
 
     // Schedule hits for all dots in this loop cycle
     if (this.audioService.getLoopSequencerPlayTogether()) {
-      // Play all dots together mode: all dots hit simultaneously, repeated holdCount times
-      // Each hold gets numberOfHits sub-hits with decay
-      for (let hold = 0; hold < holdCount; hold++) {
-        for (let subHit = 0; subHit < numberOfHits; subHit++) {
+      // Play all dots together mode: all dots hit simultaneously at each volume level
+      // For each volume step, hit all dots hitsPerVolumeLevel times
+      for (let volumeStep = 0; volumeStep < VOLUME_STEPS; volumeStep++) {
+        for (let hit = 0; hit < hitsPerVolumeLevel; hit++) {
           sortedDotKeys.forEach((dotKey, index) => {
             // Skip red dots that shouldn't play on this cycle
             if (!this.shouldRedDotPlay(dotKey)) {
@@ -2119,15 +2090,42 @@ class DotGridAudioPlayer {
             const perDotMultiplier = perDotWaveEnabled
               ? this.audioService.getPerDotVolumeWaveMultiplier(index, dotCount)
               : 1.0;
-            const peakVolume = calculateHitVolume(basePeakVolume * perDotMultiplier, subHit);
-            const dotHitTime = currentTime + ((hold * numberOfHits + subHit) * hitInterval);
-            this.audioService.schedulePointHit(dotKey, dotHitTime, attackTime, releaseTime, peakVolume);
+            const peakVolume = calculateStepVolume(basePeakVolume * perDotMultiplier, volumeStep);
+            const hitTime = currentTime + (volumeStep * hitsPerVolumeLevel + hit) * hitInterval;
+            this.audioService.schedulePointHit(dotKey, hitTime, attackTime, releaseTime, peakVolume);
           });
         }
       }
+    } else if (this.audioService.getInterleavedHits()) {
+      // Interleaved mode: at each volume level, cycle through all dots for each hit
+      // Pattern: D1@V1, D2@V1, D1@V1, D2@V1... (hitsPerVolumeLevel cycles), then V2, etc.
+      const playableDots = sortedDotKeys.filter(dotKey => this.shouldRedDotPlay(dotKey));
+      const playableDotCount = playableDots.length;
+
+      if (playableDotCount > 0) {
+        for (let volumeStep = 0; volumeStep < VOLUME_STEPS; volumeStep++) {
+          for (let hitCycle = 0; hitCycle < hitsPerVolumeLevel; hitCycle++) {
+            playableDots.forEach((dotKey, dotIndex) => {
+              // Check if this dot is red
+              const isRedDot = this.redDots.has(dotKey);
+              // Apply per-cycle volume only to red dots if that option is enabled
+              const effectivePerCycleMultiplier = (perCycleVolumeRedDotsOnly && !isRedDot) ? 1.0 : perCycleVolumeMultiplier;
+              const basePeakVolume = effectivePerCycleMultiplier;
+              // Apply per-dot volume wave if enabled
+              const perDotMultiplier = perDotWaveEnabled
+                ? this.audioService.getPerDotVolumeWaveMultiplier(dotIndex, playableDotCount)
+                : 1.0;
+              const peakVolume = calculateStepVolume(basePeakVolume * perDotMultiplier, volumeStep);
+              // Position: volumeStep * (hitsPerVolumeLevel * dotCount) + hitCycle * dotCount + dotIndex
+              const hitTime = currentTime + (volumeStep * hitsPerVolumeLevel * playableDotCount + hitCycle * playableDotCount + dotIndex) * hitInterval;
+              this.audioService.schedulePointHit(dotKey, hitTime, attackTime, releaseTime, peakVolume);
+            });
+          }
+        }
+      }
     } else {
-      // Cycle through dots mode: each dot gets holdCount * numberOfHits hits at evenly spaced intervals
-      sortedDotKeys.forEach((dotKey, index) => {
+      // Non-interleaved mode: each dot completes ALL its hits before moving to the next dot
+      sortedDotKeys.forEach((dotKey, dotIndex) => {
         // Skip red dots that shouldn't play on this cycle
         if (!this.shouldRedDotPlay(dotKey)) {
           return;
@@ -2139,14 +2137,16 @@ class DotGridAudioPlayer {
         const basePeakVolume = effectivePerCycleMultiplier;
         // Apply per-dot volume wave if enabled
         const perDotMultiplier = perDotWaveEnabled
-          ? this.audioService.getPerDotVolumeWaveMultiplier(index, dotCount)
+          ? this.audioService.getPerDotVolumeWaveMultiplier(dotIndex, dotCount)
           : 1.0;
-        // Schedule holdCount * numberOfHits hits for this dot
-        for (let hold = 0; hold < holdCount; hold++) {
-          for (let subHit = 0; subHit < numberOfHits; subHit++) {
-            const peakVolume = calculateHitVolume(basePeakVolume * perDotMultiplier, subHit);
-            const dotHitTime = currentTime + ((index * totalHitsPerDot + hold * numberOfHits + subHit) * hitInterval);
-            this.audioService.schedulePointHit(dotKey, dotHitTime, attackTime, releaseTime, peakVolume);
+
+        // Schedule all hits for this dot: for each volume step, hit hitsPerVolumeLevel times
+        for (let volumeStep = 0; volumeStep < VOLUME_STEPS; volumeStep++) {
+          const peakVolume = calculateStepVolume(basePeakVolume * perDotMultiplier, volumeStep);
+          for (let hit = 0; hit < hitsPerVolumeLevel; hit++) {
+            // Position in sequence: dotIndex * totalHitsPerDot + volumeStep * hitsPerVolumeLevel + hit
+            const hitTime = currentTime + (dotIndex * totalHitsPerDot + volumeStep * hitsPerVolumeLevel + hit) * hitInterval;
+            this.audioService.schedulePointHit(dotKey, hitTime, attackTime, releaseTime, peakVolume);
           }
         }
       });
@@ -2161,10 +2161,21 @@ class DotGridAudioPlayer {
     // Advance cycle counter for red dot scheduling
     this.advanceCycleCounter();
 
-    // Calculate loop duration based on hit rate, dot count, hold count, and numberOfHits
-    const loopDuration = this.audioService.getLoopSequencerPlayTogether()
-      ? hitInterval * holdCount * numberOfHits // If playing together, holdCount * numberOfHits hit intervals per loop
-      : dotCount * holdCount * numberOfHits * hitInterval; // If cycling, holdCount * numberOfHits hits per dot
+    // Calculate loop duration based on hit rate, dot count, and total hits per dot
+    // For interleaved mode, we need to count playable dots
+    const playableDotCount = sortedDotKeys.filter(dotKey => this.shouldRedDotPlay(dotKey)).length;
+    const effectiveDotCount = playableDotCount > 0 ? playableDotCount : 1;
+
+    let loopDuration: number;
+    if (this.audioService.getLoopSequencerPlayTogether()) {
+      loopDuration = hitInterval * totalHitsPerDot; // All dots together
+    } else if (this.audioService.getInterleavedHits()) {
+      // Interleaved: totalHitsPerDot * dotCount total hits (dots cycle within each volume level)
+      loopDuration = totalHitsPerDot * effectiveDotCount * hitInterval;
+    } else {
+      // Non-interleaved: same total, but organized differently
+      loopDuration = effectiveDotCount * totalHitsPerDot * hitInterval;
+    }
 
     const loopDelayMs = loopDuration * 1000;
     this.loopSequencerTimeoutId = window.setTimeout(() => {
@@ -2529,20 +2540,6 @@ class DotGridAudioPlayer {
 
     // Clear all independent row timeouts
     this.clearRowTimeouts();
-
-    // if (this.animationFrameId !== null) { // REMOVING rAF
-    //   cancelAnimationFrame(this.animationFrameId);
-    //   this.animationFrameId = null;
-    // }
-    // this.clearCurrentRowStaggerTimeouts(); // REMOVING row-based staggers
-    
-    // For the new global stagger, if activatePoint uses setTimeout for non-WebAudio things that need clearing,
-    // we would manage those timeouts (e.g., in this.globalStaggerTimeouts) and clear them here.
-    // However, _schedulePointActivationSound uses Web Audio's native scheduling which is managed via GainNode.cancelScheduledValues().
-    // DeactivateAllPoints should implicitly cancel these when it ramps gains down.
-    // If we were using setTimeout to trigger activatePoint itself, we'd clear them:
-    // this.globalStaggerTimeouts.forEach(clearTimeout); // REMOVING this array
-    // this.globalStaggerTimeouts = []; // REMOVING this array
   }
   
   /**
@@ -2567,13 +2564,7 @@ class DotGridAudioPlayer {
   public dispose(): void {
     this.setPlaying(false);
     this.stopAllRhythms();
-    
-    // Ensure animation frames are cancelled - REMOVING rAF
-    // if (this.animationFrameId !== null) {
-    //   cancelAnimationFrame(this.animationFrameId);
-    //   this.animationFrameId = null;
-    // }
-    
+
     // Clean up analyzer nodes
     if (this.preEQGain) {
       this.preEQGain.disconnect();
@@ -3033,12 +3024,16 @@ class DotGridAudioPlayer {
     return this.audioService.getHitDecay();
   }
 
-  public setVolumeLevelRangeDb(rangeDb: number): void {
-    this.audioService.setVolumeLevelRangeDb(rangeDb);
+  public setInterleavedHits(enabled: boolean): void {
+    this.audioService.setInterleavedHits(enabled);
+    // Restart loop sequencer if playing to apply new setting
+    if (this.isPlaying && this.isLoopSequencerMode()) {
+      this.startLoopSequencer();
+    }
   }
 
-  public getVolumeLevelRangeDb(): number {
-    return this.audioService.getVolumeLevelRangeDb();
+  public getInterleavedHits(): boolean {
+    return this.audioService.getInterleavedHits();
   }
 
   // Auto volume cycle methods
@@ -4087,7 +4082,7 @@ export function getHitModeRelease(): number {
 
 /**
  * Set the number of hits per dot
- * @param count Number of hits (range: 1-10, default: 1)
+ * @param count Number of hits (valid values: 1, 2, 4, 8, 16, 32; default: 8)
  */
 export function setNumberOfHits(count: number): void {
   const player = DotGridAudioPlayer.getInstance();
@@ -4120,20 +4115,21 @@ export function getHitDecay(): number {
 }
 
 /**
- * Set the volume level range in dB (spread between quietest and loudest dot volume levels)
- * @param rangeDb Range in dB (range: 1-48, default: 20)
+ * Enable or disable interleaved hits mode
+ * When enabled, cycles through all dots at each volume level instead of completing one dot first
+ * @param enabled Whether interleaved hits mode is enabled
  */
-export function setVolumeLevelRangeDb(rangeDb: number): void {
+export function setInterleavedHits(enabled: boolean): void {
   const player = DotGridAudioPlayer.getInstance();
-  player.setVolumeLevelRangeDb(rangeDb);
+  player.setInterleavedHits(enabled);
 }
 
 /**
- * Get the volume level range in dB
+ * Get whether interleaved hits mode is enabled
  */
-export function getVolumeLevelRangeDb(): number {
+export function getInterleavedHits(): boolean {
   const player = DotGridAudioPlayer.getInstance();
-  return player.getVolumeLevelRangeDb();
+  return player.getInterleavedHits();
 }
 
 /**

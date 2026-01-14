@@ -525,12 +525,12 @@ export function DotCalibration({
   const [loopSequencerPlayTogether, setLoopSequencerPlayTogether] = useState(false); // Default: cycle through dots individually
 
   // Hit mode settings for loop sequencer
-  const [hitModeRate, setHitModeRate] = useState(50); // Default: 50 hits per second
+  const [hitModeRate, setHitModeRate] = useState(24); // Default: 24 hits per second
   const [hitModeAttack, setHitModeAttack] = useState(0.01); // Default: 10ms attack
   const [hitModeRelease, setHitModeRelease] = useState(0.1); // Default: 100ms release
-  const [numberOfHits, setNumberOfHits] = useState(4); // Default: 4 hits per dot
-  const [hitDecay, setHitDecay] = useState(12); // Default: 12dB decay
-  const [volumeLevelRangeDb, setVolumeLevelRangeDb] = useState(20); // Default: 20dB range between volume levels
+  const [numberOfHits, setNumberOfHits] = useState(16); // Default: 16 hits per volume level (valid: 1, 2, 4, 8, 16, 32)
+  const [hitDecay, setHitDecay] = useState(40); // Default: 40dB decay
+  const [interleavedHits, setInterleavedHits] = useState(false); // Default: complete one dot before next
 
   // Auto volume cycle state
   const [autoVolumeCycleEnabled, setAutoVolumeCycleEnabled] = useState(false); // Default: disabled
@@ -1149,8 +1149,8 @@ export function DotCalibration({
   }, [hitDecay]);
 
   useEffect(() => {
-    dotGridAudio.setVolumeLevelRangeDb(volumeLevelRangeDb);
-  }, [volumeLevelRangeDb]);
+    dotGridAudio.setInterleavedHits(interleavedHits);
+  }, [interleavedHits]);
 
   // Automatically calculate loop duration based on number of active dots (1.5 seconds per dot: 500ms quiet + 500ms medium + 500ms loud)
   useEffect(() => {
@@ -1665,24 +1665,42 @@ export function DotCalibration({
                 />
               </div>
 
-              {/* Number of Hits */}
+              {/* Number of Hits - Segmented selector */}
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium">Number of Hits</span>
-                  <span className="text-xs text-muted-foreground">{numberOfHits}</span>
+                  <span className="text-xs font-medium">Hits per Volume Level</span>
                 </div>
-                <input
-                  type="range"
-                  min="1"
-                  max="10"
-                  step="1"
-                  value={numberOfHits}
-                  onChange={(e) => setNumberOfHits(Number(e.target.value))}
-                  disabled={disabled}
-                  className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
-                    disabled ? 'opacity-50 cursor-not-allowed' : ''
-                  } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary`}
-                />
+                <div className="flex gap-1">
+                  {[1, 2, 4, 8, 16, 32].map((value) => (
+                    <button
+                      key={value}
+                      onClick={() => setNumberOfHits(value)}
+                      disabled={disabled}
+                      className={`flex-1 px-1 py-1 text-xs rounded border transition-colors ${
+                        numberOfHits === value
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'hover:bg-muted border-border'
+                      } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      {value}x
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Interleaved Hits Toggle */}
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium">Interleave Dots</span>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={interleavedHits}
+                    onChange={(e) => setInterleavedHits(e.target.checked)}
+                    disabled={disabled}
+                    className="sr-only peer"
+                  />
+                  <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+                </label>
               </div>
 
               {/* Hit Decay */}
@@ -1694,7 +1712,7 @@ export function DotCalibration({
                 <input
                   type="range"
                   min="0"
-                  max="48"
+                  max="80"
                   step="1"
                   value={hitDecay}
                   onChange={(e) => setHitDecay(Number(e.target.value))}
@@ -1962,9 +1980,9 @@ export function DotCalibration({
           />
         </div>
 
-        {/* Repeat Count Control - renamed to "Hits" */}
+        {/* Repeat Count Control */}
         <div className="flex items-center justify-between">
-          <span className="text-xs font-medium">Hits per Dot</span>
+          <span className="text-xs font-medium">Repeat Count</span>
           <div className="flex items-center space-x-1">
             <button
               className={`h-6 w-6 rounded flex items-center justify-center border ${
