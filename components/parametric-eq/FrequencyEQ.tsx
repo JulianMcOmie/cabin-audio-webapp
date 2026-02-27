@@ -1,7 +1,7 @@
 "use client"
 
 import { useRef, useEffect, useState, useCallback } from "react"
-// import { useTheme } from "@/components/theme-provider"
+import { useDarkMode } from "@/lib/hooks/useDarkMode"
 import { EQBandWithUI } from "./types"
 import { EQBandRenderer } from "./EQBandRenderer"
 import { EQCurveRenderer } from "./EQCurveRenderer"
@@ -69,7 +69,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
   const backgroundContextRef = useRef<CanvasRenderingContext2D | null>(null)
   const backgroundDrawnRef = useRef<boolean>(false)
   
-  const [isDarkMode, setIsDarkMode] = useState(false)
+  const isDarkMode = useDarkMode()
   const [selectedBandId, setSelectedBandId] = useState<string | null>(null)
   
   // Volume control state
@@ -257,8 +257,6 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     const bandIndex = profile.bands.findIndex(b => b.id === id)
     if (bandIndex === -1) return
 
-    console.log("updates", updates)
-
     // Create updated profile bands
     const updatedBands = [...profile.bands]
     updatedBands[bandIndex] = { 
@@ -444,29 +442,10 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     }
   }, [draggingBandId, hoveredBandId, isDraggingVolume, isHoveringVolume, isShiftPressed, onInstructionChange]);
 
-  // Set up observer to detect theme changes
+  // Redraw background when theme changes
   useEffect(() => {
-    // Initial check
-    setIsDarkMode(document.documentElement.classList.contains("dark"))
-
-    // Set up mutation observer to watch for class changes on html element
-    const observer = new MutationObserver((mutations) => {
-      mutations.forEach((mutation) => {
-        if (mutation.attributeName === "class") {
-          const newIsDarkMode = document.documentElement.classList.contains("dark")
-          setIsDarkMode(newIsDarkMode)
-          // When theme changes, we need to redraw the background
-          backgroundDrawnRef.current = false;
-        }
-      })
-    })
-
-    observer.observe(document.documentElement, { attributes: true })
-
-    return () => {
-      observer.disconnect()
-    }
-  }, [])
+    backgroundDrawnRef.current = false;
+  }, [isDarkMode])
 
   // Draw static background elements
   const renderBackgroundCanvas = useCallback(() => {
@@ -767,83 +746,52 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     renderBackgroundCanvas
   ]);
 
-  // Initialize canvases and start animation loop
-  useEffect(() => {
+  // Set up both canvases with DPI scaling and store their contexts
+  const setupCanvases = useCallback(() => {
     const canvas = canvasRef.current;
     const backgroundCanvas = backgroundCanvasRef.current;
-    if (!canvas || !backgroundCanvas) return;
+    if (!canvas || !backgroundCanvas) return false;
 
-    // Set canvas dimensions
     const dpr = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
-    
+
     canvas.width = rect.width * dpr;
     canvas.height = rect.height * dpr;
-    
     backgroundCanvas.width = rect.width * dpr;
     backgroundCanvas.height = rect.height * dpr;
-    
+
     const ctx = canvas.getContext("2d");
     const bgCtx = backgroundCanvas.getContext("2d");
-    
-    if (!ctx || !bgCtx) return;
-    
+    if (!ctx || !bgCtx) return false;
+
     ctx.scale(dpr, dpr);
     bgCtx.scale(dpr, dpr);
-    
+
     canvasContextRef.current = ctx;
     backgroundContextRef.current = bgCtx;
-    
-    // Mark background as needing to be redrawn
     backgroundDrawnRef.current = false;
-    
-    // Start the animation loop
+    return true;
+  }, []);
+
+  // Initialize canvases and start animation loop
+  useEffect(() => {
+    if (!setupCanvases()) return;
+
     animationFrameRef.current = requestAnimationFrame(renderCanvas);
-    
-    // Clean up animation frame on unmount
+
     return () => {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [renderCanvas]);
+  }, [renderCanvas, setupCanvases]);
 
   // Handle window resize
   useEffect(() => {
-    const handleResize = () => {
-      const canvas = canvasRef.current;
-      const backgroundCanvas = backgroundCanvasRef.current;
-      if (!canvas || !backgroundCanvas) return;
-      
-      // Update canvas dimensions
-      const dpr = window.devicePixelRatio || 1;
-      const rect = canvas.getBoundingClientRect();
-      
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
-      
-      backgroundCanvas.width = rect.width * dpr;
-      backgroundCanvas.height = rect.height * dpr;
-      
-      // Reset context scale
-      const ctx = canvas.getContext("2d");
-      const bgCtx = backgroundCanvas.getContext("2d");
-      
-      if (ctx && bgCtx) {
-        ctx.scale(dpr, dpr);
-        bgCtx.scale(dpr, dpr);
-        
-        canvasContextRef.current = ctx;
-        backgroundContextRef.current = bgCtx;
-        
-        // Mark background as needing to be redrawn
-        backgroundDrawnRef.current = false;
-      }
-    };
-    
+    const handleResize = () => { setupCanvases(); };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, []);
+  }, [setupCanvases]);
 
   return (
     <div

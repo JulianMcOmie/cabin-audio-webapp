@@ -11,17 +11,6 @@ import { cn } from "@/lib/utils"
 import * as fileStorage from "@/lib/storage/fileStorage"
 import Image from "next/image"
 
-// // Dummy track interface
-// interface Track {
-//   id: string
-//   title: string
-//   artist: string
-//   album: string
-//   duration: number
-//   coverUrl: string
-//   currentTime?: number
-// }
-
 // Custom EQ icon component
 const EQIcon = ({ className }: { className?: string }) => (
   <svg 
@@ -91,7 +80,6 @@ export function PlayerBar() {
 
   // Update loading state when loadingState changes
   useEffect(() => {
-    console.log(`[PlayerBar] loadingState: ${loadingState}`)
     setIsTrackLoading(loadingState === 'loading' || loadingState === 'decoding')
   }, [loadingState])
 
@@ -156,12 +144,10 @@ export function PlayerBar() {
   }, [currentTrack, getArtistById, getAlbumById])
 
   const handlePlay = () => {
-    console.log(`[PlayerBar] playingState: ${isPlaying}`)
     setIsPlaying(true)
   }
 
   const handlePause = () => {
-    console.log(`[PlayerBar] pausing`)
     setIsPlaying(false)
   }
 
@@ -239,8 +225,6 @@ export function PlayerBar() {
   // Called when the user releases the slider
   const handleProgressCommit = (value: number[]) => {
     if (currentTrackId && duration > 0) {
-      console.log(`[PlayerBar] Seeking to ${value[0]} seconds`);
-      
       // Reset seeking state first to prevent state conflicts
       setIsSeeking(false);
       
@@ -251,7 +235,6 @@ export function PlayerBar() {
       if (wasPlayingRef.current) {
         // Use a longer delay to ensure the seek operation completes fully
         setTimeout(() => {
-          console.log(`[PlayerBar] Resuming playback after seek`);
           setIsPlaying(true);
         }, 100); // Increased delay to 100ms for better reliability
       }

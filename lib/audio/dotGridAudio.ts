@@ -2,6 +2,7 @@ import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
 // import { getAudioPlayer } from './audioPlayer';
 import { useEQProfileStore } from '../stores';
+import { dbToGain, clamp } from '../utils/audioMath';
 
 // Constants
 const COLUMNS = 5; // Always 5 panning positions - match the value in dot-grid.tsx (odd number ensures a middle column)
@@ -68,8 +69,8 @@ interface Voice {
 // Number of voices per dot for polyphonic playback
 const VOICE_POOL_SIZE = 32; // Allow up to 32 overlapping sounds per dot (supports up to 32x hits)
 
-// Number of discrete volume levels per dot (quiet to loud progression)
-const VOLUME_STEPS = 4; // 4 volume levels: e.g., -36dB, -24dB, -12dB, 0dB
+// Default number of discrete volume levels per dot (quiet to loud progression)
+const DEFAULT_VOLUME_STEPS = 4; // 4 volume levels: e.g., -36dB, -24dB, -12dB, 0dB
 
 // Interface for nodes managed by PositionedAudioService
 interface PointAudioNodes {
@@ -153,7 +154,9 @@ class PositionedAudioService {
   private hitModeRelease: number = 0.1; // Release time in seconds (default: 100ms)
   private numberOfHits: number = 16; // Hits per volume level (default: 16) - valid values: 1, 2, 4, 8, 16, 32
   private hitDecayDb: number = 40; // Decay in dB from first to last hit (default: 40dB)
-  private interleavedHits: boolean = false; // If true, cycle through all dots at each volume level instead of completing one dot first
+  private volumeLevelRangeDb: number = 12; // Range in dB between volume levels (default: 12dB)
+  private interleavedHits: boolean = true; // If true, cycle through all dots at each volume level instead of completing one dot first
+  private volumeSteps: number = DEFAULT_VOLUME_STEPS; // Number of volume levels (default: 4)
 
   // Auto volume cycle settings
   private autoVolumeCycleEnabled: boolean = false; // Whether auto volume cycle is enabled
@@ -224,11 +227,13 @@ class PositionedAudioService {
 
   // More methods (addPoint, removePoint, activatePoint, etc.) will be added here later
   public setDistortion(gain: number): void {
-    this.currentDistortionGain = Math.max(0, Math.min(1, gain));
+    this.currentDistortionGain = clamp(gain, 0, 1);
+    this.refreshAllPointGains();
   }
 
   public setBaseVolumeDb(db: number): void {
     this.currentBaseDbLevel = db;
+    this.refreshAllPointGains();
   }
 
   public setSubHitAdsrMode(enabled: boolean): void { // Renamed from setEnvelopeMode
@@ -268,7 +273,7 @@ class PositionedAudioService {
   }
 
   public setBaseDb(db: number): void {
-    this.baseDb = Math.max(-60, Math.min(0, db)); // Clamp between -60dB and 0dB
+    this.baseDb = clamp(db, -60, 0); // Clamp between -60dB and 0dB
   }
 
   public getBaseDb(): number {
@@ -276,7 +281,7 @@ class PositionedAudioService {
   }
 
   public setAttackDuration(seconds: number): void {
-    this.attackDuration = Math.max(0.001, Math.min(2, seconds)); // Clamp between 1ms and 2s
+    this.attackDuration = clamp(seconds, 0.001, 2); // Clamp between 1ms and 2s
   }
 
   public getAttackDuration(): number {
@@ -284,7 +289,7 @@ class PositionedAudioService {
   }
 
   public setSustainDuration(seconds: number): void {
-    this.sustainDuration = Math.max(0.001, Math.min(5, seconds)); // Clamp between 1ms and 5s
+    this.sustainDuration = clamp(seconds, 0.001, 5); // Clamp between 1ms and 5s
   }
 
   public getSustainDuration(): number {
@@ -292,7 +297,7 @@ class PositionedAudioService {
   }
 
   public setReleaseDuration(seconds: number): void {
-    this.releaseDuration = Math.max(0.001, Math.min(2, seconds)); // Clamp between 1ms and 2s
+    this.releaseDuration = clamp(seconds, 0.001, 2); // Clamp between 1ms and 2s
   }
 
   public getReleaseDuration(): number {
@@ -300,7 +305,7 @@ class PositionedAudioService {
   }
 
   public setSpeed(speed: number): void {
-    this.speed = Math.max(0.1, Math.min(10, speed)); // Clamp between 0.1x and 10x
+    this.speed = clamp(speed, 0.1, 10); // Clamp between 0.1x and 10x
   }
 
   public getSpeed(): number {
@@ -348,7 +353,7 @@ class PositionedAudioService {
   }
 
   public setPositionVolumeMinDb(minDb: number): void {
-    this.positionVolumeMinDb = Math.max(-60, Math.min(0, minDb)); // Clamp between -60dB and 0dB
+    this.positionVolumeMinDb = clamp(minDb, -60, 0); // Clamp between -60dB and 0dB
   }
 
   public getPositionVolumeMinDb(): number {
@@ -367,7 +372,7 @@ class PositionedAudioService {
   public setAlwaysPlayingSpeed(speed: number): void {
     // Speed is in Hz (cycles per second)
     // Clamp between 0.1 Hz (1 cycle per 10 seconds) and 10 Hz (10 cycles per second)
-    this.alwaysPlayingSpeed = Math.max(0.1, Math.min(10, speed));
+    this.alwaysPlayingSpeed = clamp(speed, 0.1, 10);
   }
 
   public getAlwaysPlayingSpeed(): number {
@@ -376,7 +381,7 @@ class PositionedAudioService {
 
   public setAlwaysPlayingStaggerIntensity(intensity: number): void {
     // Clamp between 0 (no stagger) and 1 (max stagger)
-    this.alwaysPlayingStaggerIntensity = Math.max(0, Math.min(1, intensity));
+    this.alwaysPlayingStaggerIntensity = clamp(intensity, 0, 1);
   }
 
   public getAlwaysPlayingStaggerIntensity(): number {
@@ -394,7 +399,7 @@ class PositionedAudioService {
 
   public setStopbandIterationTime(timeMs: number): void {
     // Clamp between 100ms and 5000ms (5 seconds)
-    this.stopbandIterationTimeMs = Math.max(100, Math.min(5000, timeMs));
+    this.stopbandIterationTimeMs = clamp(timeMs, 100, 5000);
   }
 
   public getStopbandIterationTime(): number {
@@ -403,7 +408,7 @@ class PositionedAudioService {
 
   public setStopbandOffDuration(durationMs: number): void {
     // Clamp between 50ms and 2000ms
-    this.stopbandOffDurationMs = Math.max(50, Math.min(2000, durationMs));
+    this.stopbandOffDurationMs = clamp(durationMs, 50, 2000);
   }
 
   public getStopbandOffDuration(): number {
@@ -412,7 +417,7 @@ class PositionedAudioService {
 
   public setStopbandFlashCount(count: number): void {
     // Clamp between 1 and 10
-    this.stopbandFlashCount = Math.max(1, Math.min(10, Math.floor(count)));
+    this.stopbandFlashCount = clamp(Math.floor(count), 1, 10);
   }
 
   public getStopbandFlashCount(): number {
@@ -421,7 +426,7 @@ class PositionedAudioService {
 
   public setStopbandDbReductionPerFlash(db: number): void {
     // Clamp between 0 and 24dB
-    this.stopbandDbReductionPerFlash = Math.max(0, Math.min(24, db));
+    this.stopbandDbReductionPerFlash = clamp(db, 0, 24);
   }
 
   public getStopbandDbReductionPerFlash(): number {
@@ -454,7 +459,7 @@ class PositionedAudioService {
   }
 
   public setLoopDuration(seconds: number): void {
-    this.loopDuration = Math.max(0.5, Math.min(60, seconds)); // Clamp 0.5-60 seconds
+    this.loopDuration = clamp(seconds, 0.5, 60); // Clamp 0.5-60 seconds
   }
 
   public getLoopDuration(): number {
@@ -471,7 +476,7 @@ class PositionedAudioService {
 
   // Hit mode methods for loop sequencer
   public setHitModeRate(rate: number): void {
-    this.hitModeRate = Math.max(0.1, Math.min(200, rate)); // Clamp 0.1-200 hits/sec
+    this.hitModeRate = clamp(rate, 0.1, 200); // Clamp 0.1-200 hits/sec
   }
 
   public getHitModeRate(): number {
@@ -479,7 +484,7 @@ class PositionedAudioService {
   }
 
   public setHitModeAttack(time: number): void {
-    this.hitModeAttack = Math.max(0.001, Math.min(2, time)); // Clamp 1ms-2s
+    this.hitModeAttack = clamp(time, 0.001, 2); // Clamp 1ms-2s
   }
 
   public getHitModeAttack(): number {
@@ -487,7 +492,7 @@ class PositionedAudioService {
   }
 
   public setHitModeRelease(time: number): void {
-    this.hitModeRelease = Math.max(0.001, Math.min(5, time)); // Clamp 1ms-5s
+    this.hitModeRelease = clamp(time, 0.001, 5); // Clamp 1ms-5s
   }
 
   public getHitModeRelease(): number {
@@ -495,7 +500,7 @@ class PositionedAudioService {
   }
 
   public setNumberOfHits(count: number): void {
-    this.numberOfHits = Math.max(1, Math.min(32, Math.round(count))); // Clamp 1-32
+    this.numberOfHits = clamp(Math.round(count), 1, 32); // Clamp 1-32
   }
 
   public getNumberOfHits(): number {
@@ -503,11 +508,27 @@ class PositionedAudioService {
   }
 
   public setHitDecay(decayDb: number): void {
-    this.hitDecayDb = Math.max(0, Math.min(80, decayDb)); // Clamp 0-80 dB
+    this.hitDecayDb = clamp(decayDb, 0, 80); // Clamp 0-80 dB
   }
 
   public getHitDecay(): number {
     return this.hitDecayDb;
+  }
+
+  public setVolumeLevelRangeDb(rangeDb: number): void {
+    this.volumeLevelRangeDb = clamp(rangeDb, 1, 48); // Clamp 1-48 dB
+  }
+
+  public getVolumeLevelRangeDb(): number {
+    return this.volumeLevelRangeDb;
+  }
+
+  public setVolumeSteps(steps: number): void {
+    this.volumeSteps = clamp(steps, 1, 8); // Clamp 1-8 steps
+  }
+
+  public getVolumeSteps(): number {
+    return this.volumeSteps;
   }
 
   public setInterleavedHits(enabled: boolean): void {
@@ -528,7 +549,7 @@ class PositionedAudioService {
   }
 
   public setAutoVolumeCycleSpeed(speed: number): void {
-    this.autoVolumeCycleSpeed = Math.max(0.5, Math.min(10, speed)); // Clamp 0.5-10 seconds
+    this.autoVolumeCycleSpeed = clamp(speed, 0.5, 10); // Clamp 0.5-10 seconds
   }
 
   public getAutoVolumeCycleSpeed(): number {
@@ -536,7 +557,7 @@ class PositionedAudioService {
   }
 
   public setAutoVolumeCycleMinDb(db: number): void {
-    this.autoVolumeCycleMinDb = Math.max(-60, Math.min(0, db)); // Clamp -60 to 0 dB
+    this.autoVolumeCycleMinDb = clamp(db, -60, 0); // Clamp -60 to 0 dB
   }
 
   public getAutoVolumeCycleMinDb(): number {
@@ -544,7 +565,7 @@ class PositionedAudioService {
   }
 
   public setAutoVolumeCycleMaxDb(db: number): void {
-    this.autoVolumeCycleMaxDb = Math.max(-60, Math.min(0, db)); // Clamp -60 to 0 dB
+    this.autoVolumeCycleMaxDb = clamp(db, -60, 0); // Clamp -60 to 0 dB
   }
 
   public getAutoVolumeCycleMaxDb(): number {
@@ -552,7 +573,7 @@ class PositionedAudioService {
   }
 
   public setAutoVolumeCycleSteps(steps: number): void {
-    this.autoVolumeCycleSteps = Math.max(2, Math.min(10, Math.floor(steps))); // Clamp 2-10 steps
+    this.autoVolumeCycleSteps = clamp(Math.floor(steps), 2, 10); // Clamp 2-10 steps
   }
 
   public getAutoVolumeCycleSteps(): number {
@@ -574,7 +595,7 @@ class PositionedAudioService {
   }
 
   public setPerCycleVolumeSteps(steps: number): void {
-    this.perCycleVolumeSteps = Math.max(2, Math.min(20, Math.floor(steps))); // Clamp 2-20 steps
+    this.perCycleVolumeSteps = clamp(Math.floor(steps), 2, 20); // Clamp 2-20 steps
   }
 
   public getPerCycleVolumeSteps(): number {
@@ -582,7 +603,7 @@ class PositionedAudioService {
   }
 
   public setPerCycleVolumeMinDb(db: number): void {
-    this.perCycleVolumeMinDb = Math.max(-60, Math.min(0, db)); // Clamp -60 to 0 dB
+    this.perCycleVolumeMinDb = clamp(db, -60, 0); // Clamp -60 to 0 dB
   }
 
   public getPerCycleVolumeMinDb(): number {
@@ -590,7 +611,7 @@ class PositionedAudioService {
   }
 
   public setPerCycleVolumeMaxDb(db: number): void {
-    this.perCycleVolumeMaxDb = Math.max(-60, Math.min(0, db)); // Clamp -60 to 0 dB
+    this.perCycleVolumeMaxDb = clamp(db, -60, 0); // Clamp -60 to 0 dB
   }
 
   public getPerCycleVolumeMaxDb(): number {
@@ -620,7 +641,7 @@ class PositionedAudioService {
   }
 
   public setPerDotVolumeWaveCycles(cycles: number): void {
-    this.perDotVolumeWaveCycles = Math.max(0.1, Math.min(10, cycles)); // Clamp 0.1-10 cycles
+    this.perDotVolumeWaveCycles = clamp(cycles, 0.1, 10); // Clamp 0.1-10 cycles
   }
 
   public getPerDotVolumeWaveCycles(): number {
@@ -628,7 +649,7 @@ class PositionedAudioService {
   }
 
   public setPerDotVolumeWaveMinDb(db: number): void {
-    this.perDotVolumeWaveMinDb = Math.max(-60, Math.min(0, db)); // Clamp -60 to 0 dB
+    this.perDotVolumeWaveMinDb = clamp(db, -60, 0); // Clamp -60 to 0 dB
   }
 
   public getPerDotVolumeWaveMinDb(): number {
@@ -636,7 +657,7 @@ class PositionedAudioService {
   }
 
   public setPerDotVolumeWaveMaxDb(db: number): void {
-    this.perDotVolumeWaveMaxDb = Math.max(-60, Math.min(0, db)); // Clamp -60 to 0 dB
+    this.perDotVolumeWaveMaxDb = clamp(db, -60, 0); // Clamp -60 to 0 dB
   }
 
   public getPerDotVolumeWaveMaxDb(): number {
@@ -661,7 +682,7 @@ class PositionedAudioService {
     const currentDb = minDb + (this.perCycleVolumeCurrentStep * stepSize);
 
     // Convert dB to linear gain
-    const volumeMultiplier = Math.pow(10, currentDb / 20);
+    const volumeMultiplier = dbToGain(currentDb);
 
     // Advance to next step with direction change at boundaries
     this.perCycleVolumeCurrentStep += this.perCycleVolumeDirection;
@@ -693,7 +714,7 @@ class PositionedAudioService {
     const stepSize = this.perCycleVolumeSteps > 1 ? dbRange / (this.perCycleVolumeSteps - 1) : 0;
     const currentDb = minDb + (this.perCycleVolumeCurrentStep * stepSize);
 
-    return Math.pow(10, currentDb / 20);
+    return dbToGain(currentDb);
   }
 
   /**
@@ -722,7 +743,7 @@ class PositionedAudioService {
     const maxDb = this.perDotVolumeWaveMaxDb;
     const currentDb = minDb + oscillation * (maxDb - minDb);
 
-    return Math.pow(10, currentDb / 20);
+    return dbToGain(currentDb);
   }
 
   /**
@@ -743,7 +764,7 @@ class PositionedAudioService {
   }
 
   public setPerDotVolumeWavePhaseShift(shift: number): void {
-    this.perDotVolumeWavePhaseShift = Math.max(0, Math.min(1, shift)); // Clamp 0-1
+    this.perDotVolumeWavePhaseShift = clamp(shift, 0, 1); // Clamp 0-1
   }
 
   public getPerDotVolumeWavePhaseShift(): number {
@@ -791,7 +812,7 @@ class PositionedAudioService {
     const currentDb = minDb + (currentStep * stepSize);
 
     // Convert dB to linear gain
-    const volumeMultiplier = Math.pow(10, currentDb / 20);
+    const volumeMultiplier = dbToGain(currentDb);
 
     // Apply volume to all active points via their volumeLevelGain node
     this.audioPoints.forEach((point) => {
@@ -817,7 +838,7 @@ class PositionedAudioService {
     // Level 3 = 0dB (gain 1.0), Level 1 = -volumeLevelRangeDb dB
     // Spread levels 1, 2, 3 evenly across the range
     const dbFromMax = -this.volumeLevelRangeDb * (3 - level) / 2;
-    return Math.pow(10, dbFromMax / 20);
+    return dbToGain(dbFromMax);
   }
 
   public updatePointVolumeLevel(id: string, volumeLevel: number): void {
@@ -894,7 +915,7 @@ class PositionedAudioService {
         // Use logarithmic (dB-based) scaling for perceptually linear volume changes
         // Map t (0 to 1) to a dB range (-60dB to 0dB), then convert to linear gain
         const dbValue = MIN_DB * (1 - t); // Goes from -60dB (when t=0) to 0dB (when t=1)
-        const volumeMultiplier = Math.pow(10, dbValue / 20);
+        const volumeMultiplier = dbToGain(dbValue);
 
         // Set the envelope gain to the oscillating volume
         point.envelopeGain.gain.setValueAtTime(
@@ -948,7 +969,7 @@ class PositionedAudioService {
   }
 
   public setRowTempoVariance(variance: number): void {
-    this.rowTempoVariance = Math.max(5, Math.min(20, variance));
+    this.rowTempoVariance = clamp(variance, 5, 20);
   }
 
   public getRowTempoVariance(): number {
@@ -956,7 +977,7 @@ class PositionedAudioService {
   }
 
   public setRowStartOffset(offsetSeconds: number): void {
-    this.rowStartOffsetSeconds = Math.max(0.05, Math.min(0.5, offsetSeconds));
+    this.rowStartOffsetSeconds = clamp(offsetSeconds, 0.05, 0.5);
   }
 
   public getRowStartOffset(): number {
@@ -1029,15 +1050,6 @@ class PositionedAudioService {
       }
     }
     return oldestVoice;
-  }
-
-  // Legacy methods for backwards compatibility
-  public setBandpassedNoiseMode(enabled: boolean): void {
-    this.currentSoundMode = enabled ? SoundMode.BandpassedNoise : SoundMode.SlopedNoise;
-  }
-
-  public isBandpassedNoiseMode(): boolean {
-    return this.currentSoundMode === SoundMode.BandpassedNoise;
   }
 
   private _schedulePointActivationSound(pointNode: PointAudioNodes, scheduledTime: number, gainMultiplier: number = 1.0, smoothTransition: boolean = false): void {
@@ -1385,7 +1397,7 @@ class PositionedAudioService {
       let loudnessCompensationDb = 0;
 
       // Clamp center freq for compensation calculation ONLY
-      const compensationFreq = Math.max(20, Math.min(20000, bandpassCenterFreq));
+      const compensationFreq = clamp(bandpassCenterFreq, 20, 20000);
 
       if (compensationFreq < refFreq) {
         // Low frequencies: gentle boost for equal loudness
@@ -1438,9 +1450,20 @@ class PositionedAudioService {
       finalVolumeDb += positionAttenuationDb;
     }
 
-    const gainRatio = Math.pow(10, finalVolumeDb / 20);
+    const gainRatio = dbToGain(finalVolumeDb);
     const effectiveMasterGain = MASTER_GAIN * this.currentDistortionGain * gainRatio;
     point.mainGain.gain.setValueAtTime(effectiveMasterGain, this.ctx.currentTime);
+  }
+
+  /**
+   * Recompute and apply gain/slope for all active points.
+   * This makes volume/distortion changes react immediately instead of waiting
+   * for the next dot trigger event.
+   */
+  private refreshAllPointGains(): void {
+    this.audioPoints.forEach((point) => {
+      this.setMainGainAndSlope(point);
+    });
   }
 
   public setSubHitAdsrEnabled(enabled: boolean): void { // Renamed from setEnvelopeEnabled
@@ -1461,7 +1484,7 @@ class PositionedAudioService {
 
   public setFrequencyExtensionRange(octaves: number): void {
     // Store the current extension range setting
-    this.frequencyExtensionRange = Math.max(0, Math.min(5, octaves));
+    this.frequencyExtensionRange = clamp(octaves, 0, 5);
 
     // Recalculate bandpass frequencies for all active points with the new extension range
     this.audioPoints.forEach((point) => {
@@ -1476,18 +1499,9 @@ class PositionedAudioService {
     return this.frequencyExtensionRange;
   }
 
-  // Legacy method for backward compatibility
-  public setBandpassQ(qValue: number): void {
-    this.audioPoints.forEach((point) => {
-      if (point.bandpassedNoiseGenerator) {
-        point.bandpassedNoiseGenerator.setBandpassQ(qValue);
-      }
-    });
-  }
-
   // Add method to handle distortion gain -- Now delegates to service
   private setDistortionGain(gain: number): void {
-    this.currentDistortionGain = Math.max(0, Math.min(1, gain));
+    this.currentDistortionGain = clamp(gain, 0, 1);
   }
 }
 
@@ -1891,7 +1905,7 @@ class DotGridAudioPlayer {
     // Flash 3: -36dB
     const dbReductionPerFlash = this.audioService.getStopbandDbReductionPerFlash();
     const totalDbReduction = this.stopbandCurrentFlash * dbReductionPerFlash;
-    const volumeMultiplier = Math.pow(10, -totalDbReduction / 20);
+    const volumeMultiplier = dbToGain(-totalDbReduction);
     const targetGain = volumeMultiplier < 0.01 ? 0.001 : 0.8 * volumeMultiplier;
 
     // Turn all dots on first at full volume
@@ -2043,6 +2057,7 @@ class DotGridAudioPlayer {
     const releaseTime = this.audioService.getHitModeRelease();
     const hitsPerVolumeLevel = this.audioService.getNumberOfHits(); // Number of hits at EACH volume level
     const hitDecayDb = this.audioService.getHitDecay(); // Total dB range from quietest to loudest
+    const volumeSteps = this.audioService.getVolumeSteps(); // Number of volume levels
 
     // Get per-cycle volume multiplier (advances after this cycle completes)
     const perCycleVolumeMultiplier = this.audioService.getCurrentPerCycleVolumeMultiplier();
@@ -2055,18 +2070,18 @@ class DotGridAudioPlayer {
     // Check if per-dot volume wave is enabled
     const perDotWaveEnabled = this.audioService.isPerDotVolumeWaveEnabled();
 
-    // Total hits per dot = VOLUME_STEPS × hitsPerVolumeLevel
-    const totalHitsPerDot = VOLUME_STEPS * hitsPerVolumeLevel;
+    // Total hits per dot = volumeSteps × hitsPerVolumeLevel
+    const totalHitsPerDot = volumeSteps * hitsPerVolumeLevel;
 
     // Helper function to calculate volume for a specific volume step
-    // volumeStep 0 = quietest (-hitDecayDb), volumeStep VOLUME_STEPS-1 = loudest (0dB)
+    // volumeStep 0 = quietest (-hitDecayDb), volumeStep volumeSteps-1 = loudest (0dB)
     const calculateStepVolume = (baseVolume: number, volumeStep: number): number => {
-      if (VOLUME_STEPS <= 1) {
+      if (volumeSteps <= 1) {
         return baseVolume; // Single step at full volume
       }
       // Linear interpolation in dB: first step at -hitDecayDb, last step at 0
-      const stepVolumeDb = -hitDecayDb * (1 - volumeStep / (VOLUME_STEPS - 1));
-      const stepVolumeMultiplier = Math.pow(10, stepVolumeDb / 20);
+      const stepVolumeDb = -hitDecayDb * (1 - volumeStep / (volumeSteps - 1));
+      const stepVolumeMultiplier = dbToGain(stepVolumeDb);
       return baseVolume * stepVolumeMultiplier;
     };
 
@@ -2074,7 +2089,7 @@ class DotGridAudioPlayer {
     if (this.audioService.getLoopSequencerPlayTogether()) {
       // Play all dots together mode: all dots hit simultaneously at each volume level
       // For each volume step, hit all dots hitsPerVolumeLevel times
-      for (let volumeStep = 0; volumeStep < VOLUME_STEPS; volumeStep++) {
+      for (let volumeStep = 0; volumeStep < volumeSteps; volumeStep++) {
         for (let hit = 0; hit < hitsPerVolumeLevel; hit++) {
           sortedDotKeys.forEach((dotKey, index) => {
             // Skip red dots that shouldn't play on this cycle
@@ -2097,13 +2112,13 @@ class DotGridAudioPlayer {
         }
       }
     } else if (this.audioService.getInterleavedHits()) {
-      // Interleaved mode: at each volume level, cycle through all dots for each hit
+      // Interleaved mode: at each volume level, alternate between dots on each hit
       // Pattern: D1@V1, D2@V1, D1@V1, D2@V1... (hitsPerVolumeLevel cycles), then V2, etc.
       const playableDots = sortedDotKeys.filter(dotKey => this.shouldRedDotPlay(dotKey));
       const playableDotCount = playableDots.length;
 
       if (playableDotCount > 0) {
-        for (let volumeStep = 0; volumeStep < VOLUME_STEPS; volumeStep++) {
+        for (let volumeStep = 0; volumeStep < volumeSteps; volumeStep++) {
           for (let hitCycle = 0; hitCycle < hitsPerVolumeLevel; hitCycle++) {
             playableDots.forEach((dotKey, dotIndex) => {
               // Check if this dot is red
@@ -2141,7 +2156,7 @@ class DotGridAudioPlayer {
           : 1.0;
 
         // Schedule all hits for this dot: for each volume step, hit hitsPerVolumeLevel times
-        for (let volumeStep = 0; volumeStep < VOLUME_STEPS; volumeStep++) {
+        for (let volumeStep = 0; volumeStep < volumeSteps; volumeStep++) {
           const peakVolume = calculateStepVolume(basePeakVolume * perDotMultiplier, volumeStep);
           for (let hit = 0; hit < hitsPerVolumeLevel; hit++) {
             // Position in sequence: dotIndex * totalHitsPerDot + volumeStep * hitsPerVolumeLevel + hit
@@ -2373,7 +2388,7 @@ class DotGridAudioPlayer {
         // Start at baseDb (e.g., -48dB) and increase by dbIncreasePerRepeat each time
         const dbIncrease = repetition * dbIncreasePerRepeat;
         const totalDb = baseDb + dbIncrease; // e.g., -48, -36, -24, -12
-        const gainMultiplier = Math.pow(10, totalDb / 20); // Convert dB to linear gain
+        const gainMultiplier = dbToGain(totalDb); // Convert dB to linear gain
 
         // For each repeat, schedule holdCount activations at the same volume
         for (let hold = 0; hold < holdCount; hold++) {
@@ -2492,7 +2507,7 @@ class DotGridAudioPlayer {
         const baseDb = this.audioService.getBaseDb();
         const dbIncrease = repetition * this.audioService.getDbIncreasePerRepeat();
         const totalDb = baseDb + dbIncrease;
-        const gainMultiplier = Math.pow(10, totalDb / 20);
+        const gainMultiplier = dbToGain(totalDb);
 
         for (let hold = 0; hold < this.audioService.getHoldCount(); hold++) {
           const activationTime = startTime + staggerOffset +
@@ -2612,21 +2627,6 @@ class DotGridAudioPlayer {
     return this.audioService.getSoundMode();
   }
 
-  // Legacy methods for backwards compatibility
-  public setBandpassedNoiseMode(enabled: boolean): void {
-    this.audioService.setBandpassedNoiseMode(enabled);
-    
-    // If playing, need to recreate all audio points with new generator type
-    if (this.isPlaying && this.activeDotKeys.size > 0) {
-      const currentDots = new Set(this.activeDotKeys);
-      this.updateDots(currentDots, this.gridSize, this.columnCount);
-    }
-  }
-
-  public isBandpassedNoiseMode(): boolean {
-    return this.audioService.isBandpassedNoiseMode();
-  }
-
   // Add method to handle distortion gain -- Now delegates to service
   private setDistortionGain(gain: number): void {
     this.audioService.setDistortion(gain); 
@@ -2643,11 +2643,6 @@ class DotGridAudioPlayer {
 
   public setBandpassBandwidth(bandwidthOctaves: number): void {
     this.audioService.setBandpassBandwidth(bandwidthOctaves);
-  }
-
-  // Legacy method for backward compatibility
-  public setBandpassQ(qValue: number): void {
-    this.audioService.setBandpassQ(qValue);
   }
 
   public setRepeatCount(count: number): void {
@@ -3024,6 +3019,26 @@ class DotGridAudioPlayer {
     return this.audioService.getHitDecay();
   }
 
+  public setVolumeLevelRangeDb(rangeDb: number): void {
+    this.audioService.setVolumeLevelRangeDb(rangeDb);
+  }
+
+  public getVolumeLevelRangeDb(): number {
+    return this.audioService.getVolumeLevelRangeDb();
+  }
+
+  public setVolumeSteps(steps: number): void {
+    this.audioService.setVolumeSteps(steps);
+    // Restart loop sequencer if playing to apply new setting
+    if (this.isPlaying && this.isLoopSequencerMode()) {
+      this.startLoopSequencer();
+    }
+  }
+
+  public getVolumeSteps(): number {
+    return this.audioService.getVolumeSteps();
+  }
+
   public setInterleavedHits(enabled: boolean): void {
     this.audioService.setInterleavedHits(enabled);
     // Restart loop sequencer if playing to apply new setting
@@ -3200,7 +3215,7 @@ class SineToneGenerator {
   }
 
   public setFrequency(frequency: number): void {
-    this.oscillator.frequency.value = Math.max(20, Math.min(20000, frequency));
+    this.oscillator.frequency.value = clamp(frequency, 20, 20000);
   }
 
   public dispose(): void {
@@ -3279,7 +3294,7 @@ class BandpassedNoiseGenerator {
     // This keeps filters from extending too far outside the intended passband
     const sharperQ = baseQ * 15;
 
-    return Math.max(0.7, Math.min(100, sharperQ));
+    return clamp(sharperQ, 0.7, 100);
   }
 
   private disconnectFilterChain(): void {
@@ -3340,8 +3355,8 @@ class BandpassedNoiseGenerator {
     this.updateFilterChain(lowerEdge, upperEdge);
 
     // Set filter frequencies (clamped to safe Web Audio API values)
-    this.highpassFilter.frequency.value = Math.max(20, Math.min(20000, lowerEdge));
-    this.lowpassFilter.frequency.value = Math.max(20, Math.min(20000, upperEdge));
+    this.highpassFilter.frequency.value = clamp(lowerEdge, 20, 20000);
+    this.lowpassFilter.frequency.value = clamp(upperEdge, 20, 20000);
 
     // Calculate and set Q value based on desired bandwidth
     const qValue = this.calculateQFromBandwidth(this.currentBandwidthOctaves);
@@ -3351,7 +3366,7 @@ class BandpassedNoiseGenerator {
 
   public setBandpassBandwidth(bandwidthOctaves: number): void {
     // Store new bandwidth
-    this.currentBandwidthOctaves = Math.max(0.1, Math.min(10, bandwidthOctaves));
+    this.currentBandwidthOctaves = clamp(bandwidthOctaves, 0.1, 10);
 
     // Recalculate frequencies with new bandwidth
     this.setBandpassFrequency(this.currentCenterFrequency);
@@ -3359,7 +3374,7 @@ class BandpassedNoiseGenerator {
 
   public setBandpassQ(q: number): void {
     // Convert Q to approximate bandwidth for backward compatibility
-    const qClamped = Math.max(0.1, Math.min(30, q));
+    const qClamped = clamp(q, 0.1, 30);
     // Approximate inverse: bandwidth ≈ 2 * asinh(sqrt(2) / (2 * q)) / ln(2)
     const approximateBandwidth = 2 * Math.asinh(Math.sqrt(2) / (2 * qClamped)) / Math.log(2);
     this.setBandpassBandwidth(approximateBandwidth);
@@ -3429,7 +3444,7 @@ class SlopedPinkNoiseGenerator {
     for (let i = 0; i < NUM_BANDS; i++) {
       const fc = this.centerFrequencies[i];
       const gainDb = shapingSlope * Math.log2(fc / SLOPE_REF_FREQUENCY);
-      const linearGain = Math.pow(10, gainDb / 20);
+      const linearGain = dbToGain(gainDb);
       this.bandGains[i].gain.value = linearGain;
     }
   }
@@ -3457,990 +3472,6 @@ export function getDotGridAudioPlayer(): DotGridAudioPlayer {
 export function cleanupDotGridAudioPlayer(): void {
   const player = DotGridAudioPlayer.getInstance();
   player.dispose();
-}
-
-/**
- * Set sound mode (sloped, bandpassed, or sine)
- */
-export function setSoundMode(mode: SoundMode): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setSoundMode(mode);
-}
-
-/**
- * Get current sound mode
- */
-export function getSoundMode(): SoundMode {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getSoundMode();
-}
-
-/**
- * Set bandpassed noise mode (true for bandpassed noise, false for sloped noise)
- * @deprecated Use setSoundMode instead
- */
-export function setBandpassedNoiseMode(enabled: boolean): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setBandpassedNoiseMode(enabled);
-}
-
-/**
- * Check if bandpassed noise mode is enabled
- * @deprecated Use getSoundMode instead
- */
-export function isBandpassedNoiseMode(): boolean {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.isBandpassedNoiseMode();
-}
-
-/**
- * Set the bandwidth (in octaves) for bandpassed noise
- * @param bandwidthOctaves Bandwidth in octaves (default 5.0, range 0.1-10.0)
- */
-export function setBandpassBandwidth(bandwidthOctaves: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setBandpassBandwidth(bandwidthOctaves);
-}
-
-/**
- * Set the bandwidth using Q value (legacy method)
- * @deprecated Use setBandpassBandwidth with octaves instead
- */
-export function setBandpassQ(qValue: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setBandpassQ(qValue);
-}
-
-/**
- * Set the number of repeats for each dot
- * @param count Number of repeats (minimum 1)
- */
-export function setRepeatCount(count: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setRepeatCount(count);
-}
-
-/**
- * Get the current repeat count
- */
-export function getRepeatCount(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getRepeatCount();
-}
-
-/**
- * Set the dB increase per repeat
- * @param db dB increase per repeat (minimum 0)
- */
-export function setDbIncreasePerRepeat(db: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setDbIncreasePerRepeat(db);
-}
-
-/**
- * Get the current dB increase per repeat
- */
-export function getDbIncreasePerRepeat(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getDbIncreasePerRepeat();
-}
-
-/**
- * Set the base dB level (starting volume for first hit)
- * @param db Base dB level (clamped between -60dB and 0dB)
- */
-export function setBaseDb(db: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setBaseDb(db);
-}
-
-/**
- * Get the current base dB level
- */
-export function getBaseDb(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getBaseDb();
-}
-
-/**
- * Set the attack duration in seconds
- * @param seconds Attack duration (clamped between 0.001s and 2s)
- */
-export function setAttackDuration(seconds: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setAttackDuration(seconds);
-}
-
-/**
- * Get the current attack duration
- */
-export function getAttackDuration(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getAttackDuration();
-}
-
-/**
- * Set the sustain duration in seconds
- * @param seconds Sustain duration (clamped between 0.001s and 5s)
- */
-export function setSustainDuration(seconds: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setSustainDuration(seconds);
-}
-
-/**
- * Get the current sustain duration
- */
-export function getSustainDuration(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getSustainDuration();
-}
-
-/**
- * Set the release duration in seconds
- * @param seconds Release duration (clamped between 0.001s and 2s)
- */
-export function setReleaseDuration(seconds: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setReleaseDuration(seconds);
-}
-
-/**
- * Get the current release duration
- */
-export function getReleaseDuration(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getReleaseDuration();
-}
-
-/**
- * Set the playback speed
- * @param speed Speed multiplier (1.0 = normal, 2.0 = 2x speed, 0.5 = half speed)
- */
-export function setSpeed(speed: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setSpeed(speed);
-}
-
-/**
- * Get the current playback speed
- */
-export function getSpeed(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getSpeed();
-}
-
-/**
- * Set the reading direction for the dot grid
- * @param direction 'horizontal' for left-to-right reading, 'vertical' for top-to-bottom columns
- */
-export function setReadingDirection(direction: 'horizontal' | 'vertical'): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setReadingDirection(direction);
-}
-
-/**
- * Get the current reading direction
- */
-export function getReadingDirection(): 'horizontal' | 'vertical' {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getReadingDirection();
-}
-
-/**
- * Set the hold count (number of times each dot plays at same volume)
- * @param count Hold count (minimum 1)
- */
-export function setHoldCount(count: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setHoldCount(count);
-}
-
-/**
- * Get the current hold count
- */
-export function getHoldCount(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getHoldCount();
-}
-
-/**
- * Enable or disable position-based volume mode
- * @param enabled Whether position-based volume is enabled
- */
-export function setPositionVolumeEnabled(enabled: boolean): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setPositionVolumeEnabled(enabled);
-}
-
-/**
- * Get whether position-based volume mode is enabled
- */
-export function getPositionVolumeEnabled(): boolean {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getPositionVolumeEnabled();
-}
-
-/**
- * Set which axis controls the volume in position-based volume mode
- * @param axis 'vertical' for up/down volume gradient, 'horizontal' for left/right
- */
-export function setPositionVolumeAxis(axis: 'horizontal' | 'vertical'): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setPositionVolumeAxis(axis);
-}
-
-/**
- * Get the current position volume axis
- */
-export function getPositionVolumeAxis(): 'horizontal' | 'vertical' {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getPositionVolumeAxis();
-}
-
-/**
- * Set whether to reverse the volume gradient direction
- * @param reversed If true, swaps which side has full volume
- */
-export function setPositionVolumeReversed(reversed: boolean): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setPositionVolumeReversed(reversed);
-}
-
-/**
- * Get whether the volume gradient is reversed
- */
-export function getPositionVolumeReversed(): boolean {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getPositionVolumeReversed();
-}
-
-/**
- * Set the minimum volume in dB on the quieter side
- * @param minDb Minimum volume in dB (range: -60 to 0)
- */
-export function setPositionVolumeMinDb(minDb: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setPositionVolumeMinDb(minDb);
-}
-
-/**
- * Get the current minimum volume in dB
- */
-export function getPositionVolumeMinDb(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getPositionVolumeMinDb();
-}
-
-/**
- * Enable or disable independent rows mode
- * @param enabled Whether independent rows mode is enabled
- */
-export function setIndependentRowsEnabled(enabled: boolean): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setIndependentRowsEnabled(enabled);
-}
-
-/**
- * Get whether independent rows mode is enabled
- */
-export function getIndependentRowsEnabled(): boolean {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getIndependentRowsEnabled();
-}
-
-/**
- * Set the tempo variance percentage for independent rows
- * @param variance Tempo variance percentage (range: 5-20, default: 10)
- */
-export function setRowTempoVariance(variance: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setRowTempoVariance(variance);
-}
-
-/**
- * Get the current tempo variance percentage
- */
-export function getRowTempoVariance(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getRowTempoVariance();
-}
-
-/**
- * Set the row start offset in milliseconds
- * @param offsetMs Sequential offset between row starts in milliseconds (range: 50-500, default: 200)
- */
-export function setRowStartOffset(offsetMs: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setRowStartOffset(offsetMs);
-}
-
-/**
- * Get the current row start offset in milliseconds
- */
-export function getRowStartOffset(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getRowStartOffset();
-}
-
-/**
- * Regenerate random tempo variances for all rows
- */
-export function regenerateRowTempos(): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.regenerateRowTempos();
-}
-
-/**
- * Set how far beyond the audible range the bandpass can extend before filters are disabled
- * @param octaves Extension range in octaves (0 = no extension, both filters always active; higher = allow more extension)
- */
-export function setFrequencyExtensionRange(octaves: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setFrequencyExtensionRange(octaves);
-}
-
-/**
- * Get the current frequency extension range in octaves
- */
-export function getFrequencyExtensionRange(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getFrequencyExtensionRange();
-}
-
-/**
- * Enable or disable always playing mode
- * @param enabled Whether always playing mode is enabled
- */
-export function setAlwaysPlayingEnabled(enabled: boolean): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setAlwaysPlayingEnabled(enabled);
-}
-
-/**
- * Get whether always playing mode is enabled
- */
-export function getAlwaysPlayingEnabled(): boolean {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getAlwaysPlayingEnabled();
-}
-
-/**
- * Set the speed of the always playing oscillation
- * @param speed Speed in Hz (cycles per second), range 0.1 to 10
- */
-export function setAlwaysPlayingSpeed(speed: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setAlwaysPlayingSpeed(speed);
-}
-
-/**
- * Get the current always playing speed in Hz
- */
-export function getAlwaysPlayingSpeed(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getAlwaysPlayingSpeed();
-}
-
-/**
- * Set the stagger intensity for always playing mode
- * @param intensity Stagger intensity (0 = no stagger, 1 = max stagger)
- */
-export function setAlwaysPlayingStaggerIntensity(intensity: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setAlwaysPlayingStaggerIntensity(intensity);
-}
-
-/**
- * Get the current always playing stagger intensity
- */
-export function getAlwaysPlayingStaggerIntensity(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getAlwaysPlayingStaggerIntensity();
-}
-
-/**
- * Enable or disable stopband mode (inverse sequential - all play except one)
- * @param enabled Whether stopband mode is enabled
- */
-export function setStopbandModeEnabled(enabled: boolean): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setStopbandModeEnabled(enabled);
-}
-
-/**
- * Get whether stopband mode is enabled
- */
-export function getStopbandModeEnabled(): boolean {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getStopbandModeEnabled();
-}
-
-/**
- * Set the iteration time for stopband mode (how long each dot is silent)
- * @param timeMs Iteration time in milliseconds (range: 100-5000, default: 750)
- */
-export function setStopbandIterationTime(timeMs: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setStopbandIterationTime(timeMs);
-}
-
-/**
- * Get the current stopband iteration time in milliseconds
- */
-export function getStopbandIterationTime(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getStopbandIterationTime();
-}
-
-/**
- * Set the off duration for stopband mode (how long each dot is silent)
- * @param durationMs Off duration in milliseconds (range: 50-2000, default: 500)
- */
-export function setStopbandOffDuration(durationMs: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setStopbandOffDuration(durationMs);
-}
-
-/**
- * Get the current stopband off duration in milliseconds
- */
-export function getStopbandOffDuration(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getStopbandOffDuration();
-}
-
-/**
- * Set the number of flashes per dot in stopband mode
- * @param count Number of flashes (range: 1-10, default: 4)
- */
-export function setStopbandFlashCount(count: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setStopbandFlashCount(count);
-}
-
-/**
- * Get the current stopband flash count
- */
-export function getStopbandFlashCount(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getStopbandFlashCount();
-}
-
-/**
- * Set the dB reduction per flash in stopband mode
- * @param db dB reduction per flash (range: 0-24, default: 12)
- */
-export function setStopbandDbReductionPerFlash(db: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setStopbandDbReductionPerFlash(db);
-}
-
-/**
- * Get the current stopband dB reduction per flash
- */
-export function getStopbandDbReductionPerFlash(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getStopbandDbReductionPerFlash();
-}
-
-/**
- * Enable or disable manual mode for stopband (true = manually select dot, false = auto-cycle)
- * @param enabled Whether manual mode is enabled
- */
-export function setStopbandManualMode(enabled: boolean): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setStopbandManualMode(enabled);
-}
-
-/**
- * Get whether stopband manual mode is enabled
- */
-export function getStopbandManualMode(): boolean {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getStopbandManualMode();
-}
-
-/**
- * Set the manually selected dot index for stopband mode
- * @param index 0-based index of the dot to flash (will be clamped to valid range)
- */
-export function setStopbandManualIndex(index: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setStopbandManualIndex(index);
-}
-
-/**
- * Get the current manually selected dot index
- */
-export function getStopbandManualIndex(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getStopbandManualIndex();
-}
-
-/**
- * Enable or disable loop sequencer mode
- * @param enabled Whether loop sequencer mode is enabled
- */
-export function setLoopSequencerEnabled(enabled: boolean): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setLoopSequencerEnabled(enabled);
-}
-
-/**
- * Get whether loop sequencer mode is enabled
- */
-export function getLoopSequencerEnabled(): boolean {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getLoopSequencerEnabled();
-}
-
-/**
- * Set the loop duration for loop sequencer mode
- * @param seconds Total loop duration in seconds (range: 0.5-60, default: 4)
- */
-export function setLoopDuration(seconds: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setLoopDuration(seconds);
-}
-
-/**
- * Get the current loop duration in seconds
- */
-export function getLoopDuration(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getLoopDuration();
-}
-
-/**
- * Set whether loop sequencer plays all dots together or cycles through them
- * @param playTogether Whether all dots play together (true) or cycle through dots (false)
- */
-export function setLoopSequencerPlayTogether(playTogether: boolean): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setLoopSequencerPlayTogether(playTogether);
-}
-
-/**
- * Get whether loop sequencer plays all dots together
- */
-export function getLoopSequencerPlayTogether(): boolean {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getLoopSequencerPlayTogether();
-}
-
-/**
- * Set the hit rate for loop sequencer hit mode
- * @param rate Hits per second (range: 0.1-100, default: 10)
- */
-export function setHitModeRate(rate: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setHitModeRate(rate);
-}
-
-/**
- * Get the hit rate for loop sequencer hit mode
- */
-export function getHitModeRate(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getHitModeRate();
-}
-
-/**
- * Set the attack time for loop sequencer hit mode
- * @param time Attack time in seconds (range: 0.001-2, default: 0.01)
- */
-export function setHitModeAttack(time: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setHitModeAttack(time);
-}
-
-/**
- * Get the attack time for loop sequencer hit mode
- */
-export function getHitModeAttack(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getHitModeAttack();
-}
-
-/**
- * Set the release time for loop sequencer hit mode
- * @param time Release time in seconds (range: 0.001-5, default: 0.05)
- */
-export function setHitModeRelease(time: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setHitModeRelease(time);
-}
-
-/**
- * Get the release time for loop sequencer hit mode
- */
-export function getHitModeRelease(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getHitModeRelease();
-}
-
-/**
- * Set the number of hits per dot
- * @param count Number of hits (valid values: 1, 2, 4, 8, 16, 32; default: 8)
- */
-export function setNumberOfHits(count: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setNumberOfHits(count);
-}
-
-/**
- * Get the number of hits per dot
- */
-export function getNumberOfHits(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getNumberOfHits();
-}
-
-/**
- * Set the hit decay in dB (volume difference between first and last hit)
- * @param decayDb Decay in dB (range: 0-48, default: 12)
- */
-export function setHitDecay(decayDb: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setHitDecay(decayDb);
-}
-
-/**
- * Get the hit decay in dB
- */
-export function getHitDecay(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getHitDecay();
-}
-
-/**
- * Enable or disable interleaved hits mode
- * When enabled, cycles through all dots at each volume level instead of completing one dot first
- * @param enabled Whether interleaved hits mode is enabled
- */
-export function setInterleavedHits(enabled: boolean): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setInterleavedHits(enabled);
-}
-
-/**
- * Get whether interleaved hits mode is enabled
- */
-export function getInterleavedHits(): boolean {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getInterleavedHits();
-}
-
-/**
- * Enable or disable auto volume cycle
- * @param enabled Whether auto volume cycle is enabled
- */
-export function setAutoVolumeCycleEnabled(enabled: boolean): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setAutoVolumeCycleEnabled(enabled);
-}
-
-/**
- * Get whether auto volume cycle is enabled
- */
-export function getAutoVolumeCycleEnabled(): boolean {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getAutoVolumeCycleEnabled();
-}
-
-/**
- * Set the speed of the auto volume cycle
- * @param speed Cycle duration in seconds (0.5 to 10)
- */
-export function setAutoVolumeCycleSpeed(speed: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setAutoVolumeCycleSpeed(speed);
-}
-
-/**
- * Get the current auto volume cycle speed in seconds
- */
-export function getAutoVolumeCycleSpeed(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getAutoVolumeCycleSpeed();
-}
-
-/**
- * Set the minimum volume in dB for auto volume cycle
- * @param db Minimum volume in dB (-60 to 0)
- */
-export function setAutoVolumeCycleMinDb(db: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setAutoVolumeCycleMinDb(db);
-}
-
-/**
- * Get the current auto volume cycle minimum dB
- */
-export function getAutoVolumeCycleMinDb(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getAutoVolumeCycleMinDb();
-}
-
-/**
- * Set the maximum volume in dB for auto volume cycle
- * @param db Maximum volume in dB (-60 to 0)
- */
-export function setAutoVolumeCycleMaxDb(db: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setAutoVolumeCycleMaxDb(db);
-}
-
-/**
- * Get the current auto volume cycle maximum dB
- */
-export function getAutoVolumeCycleMaxDb(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getAutoVolumeCycleMaxDb();
-}
-
-/**
- * Set the number of steps for auto volume cycle
- * @param steps Number of discrete volume steps (2 to 10)
- */
-export function setAutoVolumeCycleSteps(steps: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setAutoVolumeCycleSteps(steps);
-}
-
-/**
- * Get the current auto volume cycle steps
- */
-export function getAutoVolumeCycleSteps(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getAutoVolumeCycleSteps();
-}
-
-/**
- * Update volume level for a specific dot
- * @param dotKey The dot key (e.g., "2,3")
- * @param volumeLevel The volume level (0-3): 0 = silent, 1 = -36dB, 2 = -18dB, 3 = 0dB
- */
-export function updateDotVolumeLevel(dotKey: string, volumeLevel: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.updateDotVolumeLevel(dotKey, volumeLevel);
-}
-
-/**
- * Get volume level for a specific dot
- * @param dotKey The dot key (e.g., "2,3")
- * @returns The volume level (0-3)
- */
-export function getDotVolumeLevel(dotKey: string): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getDotVolumeLevel(dotKey);
-}
-
-/**
- * Enable or disable per-cycle volume oscillation
- * Volume changes each time all dots have completed a cycle
- * @param enabled Whether per-cycle volume oscillation is enabled
- */
-export function setPerCycleVolumeEnabled(enabled: boolean): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setPerCycleVolumeEnabled(enabled);
-}
-
-/**
- * Get whether per-cycle volume oscillation is enabled
- */
-export function getPerCycleVolumeEnabled(): boolean {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getPerCycleVolumeEnabled();
-}
-
-/**
- * Set the number of steps for per-cycle volume oscillation
- * @param steps Number of cycles to go from min to max volume (2 to 20)
- */
-export function setPerCycleVolumeSteps(steps: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setPerCycleVolumeSteps(steps);
-}
-
-/**
- * Get the current per-cycle volume steps
- */
-export function getPerCycleVolumeSteps(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getPerCycleVolumeSteps();
-}
-
-/**
- * Set the minimum volume in dB for per-cycle volume oscillation
- * @param db Minimum volume in dB (-60 to 0)
- */
-export function setPerCycleVolumeMinDb(db: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setPerCycleVolumeMinDb(db);
-}
-
-/**
- * Get the current per-cycle volume minimum dB
- */
-export function getPerCycleVolumeMinDb(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getPerCycleVolumeMinDb();
-}
-
-/**
- * Set the maximum volume in dB for per-cycle volume oscillation
- * @param db Maximum volume in dB (-60 to 0)
- */
-export function setPerCycleVolumeMaxDb(db: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setPerCycleVolumeMaxDb(db);
-}
-
-/**
- * Get the current per-cycle volume maximum dB
- */
-export function getPerCycleVolumeMaxDb(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getPerCycleVolumeMaxDb();
-}
-
-/**
- * Reset per-cycle volume to initial state (step 0, ascending)
- */
-export function resetPerCycleVolume(): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.resetPerCycleVolume();
-}
-
-/**
- * Set whether per-cycle volume should only apply to red dots
- * @param redDotsOnly If true, only red dots get the volume cycle modulation
- */
-export function setPerCycleVolumeRedDotsOnly(redDotsOnly: boolean): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setPerCycleVolumeRedDotsOnly(redDotsOnly);
-}
-
-/**
- * Get whether per-cycle volume only applies to red dots
- */
-export function getPerCycleVolumeRedDotsOnly(): boolean {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getPerCycleVolumeRedDotsOnly();
-}
-
-/**
- * Enable or disable per-dot volume wave
- * Volume oscillates based on dot reading order position
- * @param enabled Whether per-dot volume wave is enabled
- */
-export function setPerDotVolumeWaveEnabled(enabled: boolean): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setPerDotVolumeWaveEnabled(enabled);
-}
-
-/**
- * Get whether per-dot volume wave is enabled
- */
-export function getPerDotVolumeWaveEnabled(): boolean {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getPerDotVolumeWaveEnabled();
-}
-
-/**
- * Set the number of volume cycles per full image traversal
- * @param cycles Number of cycles (0.1 to 10)
- */
-export function setPerDotVolumeWaveCycles(cycles: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setPerDotVolumeWaveCycles(cycles);
-}
-
-/**
- * Get the current per-dot volume wave cycles
- */
-export function getPerDotVolumeWaveCycles(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getPerDotVolumeWaveCycles();
-}
-
-/**
- * Set the minimum volume in dB for per-dot volume wave
- * @param db Minimum volume in dB (-60 to 0)
- */
-export function setPerDotVolumeWaveMinDb(db: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setPerDotVolumeWaveMinDb(db);
-}
-
-/**
- * Get the current per-dot volume wave minimum dB
- */
-export function getPerDotVolumeWaveMinDb(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getPerDotVolumeWaveMinDb();
-}
-
-/**
- * Set the maximum volume in dB for per-dot volume wave
- * @param db Maximum volume in dB (-60 to 0)
- */
-export function setPerDotVolumeWaveMaxDb(db: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setPerDotVolumeWaveMaxDb(db);
-}
-
-/**
- * Get the current per-dot volume wave maximum dB
- */
-export function getPerDotVolumeWaveMaxDb(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getPerDotVolumeWaveMaxDb();
-}
-
-/**
- * Set the phase shift per cycle for per-dot volume wave
- * Controls how much the wave "moves" each cycle
- * @param shift Phase shift as fraction of full cycle (0 to 1)
- */
-export function setPerDotVolumeWavePhaseShift(shift: number): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.setPerDotVolumeWavePhaseShift(shift);
-}
-
-/**
- * Get the current per-dot volume wave phase shift
- */
-export function getPerDotVolumeWavePhaseShift(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getPerDotVolumeWavePhaseShift();
-}
-
-/**
- * Reset the per-dot volume wave phase to initial state
- */
-export function resetPerDotVolumeWavePhase(): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.resetPerDotVolumeWavePhase();
-}
-
-/**
- * Update red dots configuration
- * Red dots play less frequently (N of M cycles)
- */
-export function updateRedDots(redDots: Map<string, { playN: number, ofM: number }>): void {
-  const player = DotGridAudioPlayer.getInstance();
-  player.updateRedDots(redDots);
-}
-
-/**
- * Get current cycle number for red dot scheduling
- */
-export function getCurrentCycleNumber(): number {
-  const player = DotGridAudioPlayer.getInstance();
-  return player.getCurrentCycleNumber();
 }
 
 // Export the SoundMode enum for use in UI

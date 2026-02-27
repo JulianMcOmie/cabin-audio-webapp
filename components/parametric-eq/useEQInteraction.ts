@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, RefObject, useRef } from 'react';
 import { throttle } from 'lodash';
-// import { v4 as uuidv4 } from 'uuid';
 import { EQBandWithUI } from './types';
 import { EQCoordinateUtils } from './EQCoordinateUtils';
 import { getReferenceCalibrationAudio } from '@/lib/audio/referenceCalibrationAudio';
@@ -42,7 +41,6 @@ export function useEQInteraction({
   const [isShiftPressed, setIsShiftPressed] = useState(false);
   const [hoveredBandId, setHoveredBandId] = useState<string | null>(null);
   const [shiftOffset, setShiftOffset] = useState<ShiftOffset>({ x: 0, y: 0 });
-//   const [qOffset, setQOffset] = useState(0);
   const [ghostNode, setGhostNode] = useState<{ x: number; y: number; visible: boolean }>({
     x: 0,
     y: 0,

@@ -1,7 +1,7 @@
 import * as audioContext from './audioContext';
 import { EQProfile } from '../models/EQProfile';
-// import { EQBand } from '../models/EQBand';
 import { useEQProfileStore } from '../stores';
+import { dbToGain } from '../utils/audioMath';
 
 // Class to manage EQ processing
 class EQProcessor {
@@ -142,8 +142,8 @@ class EQProcessor {
       const TRANSITION_TIME = 0.05; // 50ms
       
       // Convert from dB to linear gain if needed
-      const volumeGain = this.isEnabled && profile.volume ? 
-        Math.pow(10, profile.volume / 20) : 1.0;
+      const volumeGain = this.isEnabled && profile.volume ?
+        dbToGain(profile.volume) : 1.0;
       
       // Smoothly transition to new volume
       this.volumeNode.gain.linearRampToValueAtTime(
@@ -183,8 +183,8 @@ class EQProcessor {
       
       // Also smoothly transition volume if needed
       if (this.volumeNode && this.currentProfile.volume) {
-        const volumeGain = enabled ? 
-          Math.pow(10, this.currentProfile.volume / 20) : 1.0;
+        const volumeGain = enabled ?
+          dbToGain(this.currentProfile.volume) : 1.0;
         
         this.volumeNode.gain.linearRampToValueAtTime(
           volumeGain, 
@@ -336,8 +336,8 @@ class EQProcessor {
       const TRANSITION_TIME = 0.05; // 50ms
       
       // Convert from dB to linear gain
-      const volumeGain = this.isEnabled ? 
-        Math.pow(10, volume / 20) : 1.0;
+      const volumeGain = this.isEnabled ?
+        dbToGain(volume) : 1.0;
       
       // Smoothly transition to new volume
       this.volumeNode.gain.linearRampToValueAtTime(

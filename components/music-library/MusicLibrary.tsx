@@ -5,6 +5,7 @@ import { Upload } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/common/ToastManager"
 import { useFileImport } from "@/lib/hooks/useFileImport"
+import { useMobile } from "@/lib/hooks/useMobile"
 import { FileImportOverlay } from "@/components/import/FileImportOverlay"
 import { useTrackStore, usePlayerStore, useEQProfileStore, useArtistStore, useAlbumStore } from "@/lib/stores"
 import { Track as TrackModel } from "@/lib/models/Track"
@@ -33,11 +34,10 @@ interface Track {
 
 interface MusicLibraryProps {
   eqEnabled: boolean
-  setActiveTab: (tab: "eq" | "library" | "export" | "desktop" | "mobile" | "profile") => void
-  onSignupClick: () => void
+  setActiveTab: (tab: "eq" | "library") => void
 }
 
-export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupClick }: MusicLibraryProps) {
+export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab }: MusicLibraryProps) {
   const { showToast } = useToast()
   // Connect to trackStore
   const { getTracks, addTrack, deleteTrack, isLoading: isTrackStoreLoading } = useTrackStore()
@@ -56,30 +56,11 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
   const [tracks, setTracks] = useState<Track[]>([])
   // Store cover image URLs to avoid recreating them on every render
   const [coverImageUrls, setCoverImageUrls] = useState<Record<string, string>>({})
-  // Add state to track if device is mobile
-  const [isMobile, setIsMobile] = useState(false)
-
-  // Detect mobile devices on mount
-  useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768)
-    }
-    
-    // Check initially
-    checkMobile()
-    
-    // Set up listener for resize
-    window.addEventListener('resize', checkMobile)
-    
-    // Cleanup
-    return () => window.removeEventListener('resize', checkMobile)
-  }, [])
+  const isMobile = useMobile()
 
   // Convert store tracks to UI tracks
   const convertStoreTracksToUI = useCallback(() => {
-    console.log(`[convertStoreTracksToUI] Getting tracks from store`);
     const storeTracks = getTracks();
-    console.log(`[convertStoreTracksToUI] Retrieved ${storeTracks.length} tracks from store`);
     
     // First collect all needed cover art keys
     const coverKeys = storeTracks
@@ -94,8 +75,7 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
           try {
             const url = await fileStorage.getImageFileUrl(key);
             return { key, url };
-          } catch (error) {
-            console.error(`Error loading cover art for key ${key}:`, error);
+          } catch {
             return { key, url: "/placeholder.svg?height=48&width=48" };
           }
         })
@@ -142,7 +122,6 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
       };
     });
     
-    console.log(`[convertStoreTracksToUI] Converted ${uiTracks.length} tracks to UI format`);
     return uiTracks;
   }, [getTracks, coverImageUrls, getArtistById, getAlbumById])
 
@@ -160,7 +139,6 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
     cancelImport,
   } = useFileImport({
     onComplete: (files) => {
-      console.log(`[MusicLibrary] Import complete callback with ${files.length} files`);
       showToast({
         message: `Successfully imported ${files.length} files`,
         variant: 'success'
@@ -169,13 +147,9 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
       // Explicitly update tracks state after import completes
       // This ensures we don't rely solely on the subscription
       const updatedTracks = convertStoreTracksToUI();
-      console.log(`[MusicLibrary] Explicitly updating tracks after import: ${updatedTracks.length} tracks`);
       setTracks(updatedTracks);
-      
-      console.log(`[MusicLibrary] Updated tracks state after import: ${updatedTracks.length} tracks`);
     },
     onError: (error) => {
-      console.error(`[MusicLibrary] Import error:`, error);
       showToast({
         message: error,
         variant: 'error'
@@ -185,23 +159,17 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
 
   // Load tracks from store or add sample data
   useEffect(() => {
-    console.log(`[MusicLibrary] useEffect for track loading triggered`);
-    
     const loadTracks = async () => {
-      console.log(`[MusicLibrary] Starting to load tracks`);
-      
       try {
         // If store is empty and not loading, populate with sample data if URL param is present
         const storeTracksCount = getTracks().length;
         const isStoreEmpty = storeTracksCount === 0 && !isTrackStoreLoading;
-        console.log(`[MusicLibrary] Current track count in store: ${storeTracksCount}, isStoreEmpty: ${isStoreEmpty}, isTrackStoreLoading: ${isTrackStoreLoading}`);
         
         if (isStoreEmpty) {
           const urlParams = new URLSearchParams(window.location.search)
           const showData = urlParams.get("data") === "true"
 
           if (showData) {
-            console.log(`[MusicLibrary] Adding sample data to empty store`);
             // Add sample data to the store
             const sampleTracks: TrackModel[] = [
               {
@@ -263,7 +231,6 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
             
             // Add each track to the store
             sampleTracks.forEach(track => {
-              console.log(`[MusicLibrary] Adding sample track to store: ${track.title}`);
               addTrack(track);
             });
           }
@@ -274,8 +241,7 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
           const uiTracks = convertStoreTracksToUI();
           setTracks(uiTracks);
         }
-      } catch (error) {
-        console.error(`[MusicLibrary] Error loading tracks:`, error);
+      } catch {
         showToast({
           message: "Failed to load tracks",
           variant: 'error'
@@ -284,25 +250,18 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
     }
 
     loadTracks()
-    
+
     // Subscribe to track store changes to update UI when tracks are added
-    console.log(`[MusicLibrary] Setting up subscription to track store changes`);
     const unsubscribe = useTrackStore.subscribe((state) => {
-      console.log(`[MusicLibrary] Track store changed, subscription triggered, isLoading: ${state.isLoading}`);
       // Only update tracks if we're not in the loading state
       if (!state.isLoading) {
-        console.log(`[MusicLibrary] Not in loading state, updating tracks from store`);
         const uiTracks = convertStoreTracksToUI();
-        console.log(`[MusicLibrary] Setting tracks state with ${uiTracks.length} tracks from subscription`);
         setTracks(uiTracks);
-      } else {
-        console.log(`[MusicLibrary] Still loading, skipping track update from subscription`);
       }
     });
     
     // Clean up subscription on component unmount
     return () => {
-      console.log(`[MusicLibrary] Cleaning up track store subscription`);
       if (unsubscribe) {
         unsubscribe();
       }
@@ -311,16 +270,12 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
 
   // Add a new effect to listen for EQ status changes
   useEffect(() => {
-    console.log(`[MusicLibrary] Setting up subscription to EQ status changes`);
-    
     // Subscribe to EQ profile store to detect when EQ is enabled/disabled
-    const unsubscribeEQ = useEQProfileStore.subscribe((state) => {
-      console.log(`[MusicLibrary] EQ enabled state: ${state.isEQEnabled}`);
+    const unsubscribeEQ = useEQProfileStore.subscribe(() => {
       // The component will re-render automatically when isEQEnabled changes
     });
-    
+
     return () => {
-      console.log(`[MusicLibrary] Cleaning up EQ store subscription`);
       if (unsubscribeEQ) {
         unsubscribeEQ();
       }
@@ -328,21 +283,16 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
   }, []);
 
   const handleTrackSelect = (track: Track) => {
-    console.log(`[MusicLibrary] Track selected: ${track.id}, currentTrackId: ${currentTrackId}, isPlaying: ${isPlaying}`);
-    
     if (currentTrackId === track.id) {
       // If the same track is clicked, explicitly set play/pause state
       if (isPlaying) {
-        console.log(`[MusicLibrary] Pausing current track: ${track.id}`);
         setIsPlaying(false); // Pause if currently playing
       } else {
-        console.log(`[MusicLibrary] Resuming current track: ${track.id}`);
         setIsPlaying(true); // Play if currently paused
       }
     } else {
       // If a different track is clicked, select it
       // The PlayerStore will automatically start playback once the track is loaded
-      console.log(`[MusicLibrary] Setting new track: ${track.id} (will auto-play when ready)`);
       setCurrentTrack(track.id);
       
       // No need to call setIsPlaying here as that will happen automatically
@@ -360,13 +310,9 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
   }
 
   const handleImportButtonClick = () => {
-    console.log(`[MusicLibrary] Import button clicked`);
     const fileInput = document.getElementById("file-upload") as HTMLInputElement
     if (fileInput) {
-      console.log(`[MusicLibrary] Triggering file input click`);
       fileInput.click()
-    } else {
-      console.error(`[MusicLibrary] File input element not found`);
     }
   }
 
@@ -391,7 +337,6 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
 
   // Show loading skeleton only when IndexedDB is loading track data
   if (isTrackStoreLoading) {
-    console.log(`[MusicLibrary] Rendering loading skeleton because isTrackStoreLoading: ${isTrackStoreLoading}`);
     return (
       <DragDropArea
         dragActive={dragActive}
@@ -438,7 +383,6 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
 
   // Show empty state if no tracks (only after loading completes)
   if (tracks.length === 0) {
-    console.log(`[MusicLibrary] Rendering empty library state (no tracks)`);
     return (
       <EmptyLibrary
         eqEnabled={eqEnabled}
@@ -455,7 +399,6 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
         onDrop={handleDrop}
         onFileSelect={handleFileSelect}
         className="pb-24"
-        onSignupClick={onSignupClick}
       />
     )
   }
@@ -520,19 +463,6 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab, onSignupC
       </div>
 
       <ImportArea onImportClick={handleImportButtonClick} />
-
-      {false && <div className="text-center py-4">
-        <p className="text-sm text-muted-foreground">
-          <Button 
-            variant="link" 
-            className="text-purple hover:text-purple/80 font-medium p-0 h-auto"
-            onClick={onSignupClick}
-          >
-            Sign up
-          </Button>{" "}
-          to save your music (so that it won&apos;t disappear when you refresh), create playlists, and listen on any device.
-        </p>
-      </div>}
 
       <FileImportOverlay
         isVisible={isImporting}

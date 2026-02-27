@@ -21,7 +21,6 @@ interface EmptyLibraryProps {
   onDrop: DragEventHandler
   onFileSelect: (files: FileList) => void
   className?: string
-  onSignupClick: () => void
 }
 
 export function EmptyLibrary({
@@ -38,8 +37,7 @@ export function EmptyLibrary({
   onDragOver,
   onDrop,
   onFileSelect,
-  className = "",
-  onSignupClick
+  className = ""
 }: EmptyLibraryProps) {
   return (
     <div 
@@ -84,19 +82,6 @@ export function EmptyLibrary({
           />
         </div>
       </div>
-
-      {false &&<div className="text-center py-4">
-        <p className="text-sm text-muted-foreground">
-          <Button 
-            variant="link" 
-            className="text-purple hover:text-purple/80 font-medium p-0 h-auto"
-            onClick={onSignupClick}
-          >
-            Sign up
-          </Button>{" "}
-          to save your music (so that it won&apos;t disappear when you refresh), create playlists, and listen on any device.
-        </p>
-      </div>}
 
       {/* Import overlay */}
       <FileImportOverlay

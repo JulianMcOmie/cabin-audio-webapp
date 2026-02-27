@@ -2,6 +2,7 @@ import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
 import * as fileStorage from '../storage/fileStorage';
 import { useEQProfileStore } from '../stores';
+import { clamp } from '../utils/audioMath';
 
 // Define callback types
 type ProgressCallback = (progress: number) => void;
@@ -71,8 +72,7 @@ class AudioPlayer {
       return;
     }
     
-    // Clamp gain between 0 and 1
-    const clampedGain = Math.max(0, Math.min(1, gain));
+    const clampedGain = clamp(gain, 0, 1);
     
     // Apply gain with a smooth transition
     const audioCtx = audioContext.getAudioContext();
@@ -279,8 +279,7 @@ class AudioPlayer {
       return;
     }
     
-    // Ensure time is within bounds
-    const clampedTime = Math.max(0, Math.min(time, this.audioBuffer.duration));
+    const clampedTime = clamp(time, 0, this.audioBuffer.duration);
 
     // If playing, stop and restart at new position
     const wasPlaying = this.isPlaying;
@@ -326,8 +325,7 @@ class AudioPlayer {
       return;
     }
     
-    // Clamp volume between 0 and 1
-    const clampedVolume = Math.max(0, Math.min(1, volume));
+    const clampedVolume = clamp(volume, 0, 1);
     
     // Apply volume
     this.gainNode.gain.value = clampedVolume;

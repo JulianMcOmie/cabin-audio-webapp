@@ -1,6 +1,7 @@
 import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
 import { useEQProfileStore } from '../stores';
+import { clamp } from '../utils/audioMath';
 
 // Constants
 const MIN_FREQ = 20; // Hz
@@ -181,7 +182,7 @@ class ReferenceCalibrationAudio {
     console.log(`🔊 Setting calibration frequency to ${frequency}Hz`);
 
     // Ensure frequency is in valid range accounting for bandwidth
-    const validFreq = Math.max(EFFECTIVE_MIN_FREQ, Math.min(EFFECTIVE_MAX_FREQ, frequency));
+    const validFreq = clamp(frequency, EFFECTIVE_MIN_FREQ, EFFECTIVE_MAX_FREQ);
     
     if (validFreq !== frequency) {
       console.log(`🔊 Adjusted frequency from ${frequency.toFixed(1)}Hz to ${validFreq.toFixed(1)}Hz to account for bandwidth`);
@@ -298,8 +299,7 @@ class ReferenceCalibrationAudio {
    * Uses logarithmic scale for perceptual accuracy
    */
   public positionToFrequency(position: number): number {
-    // Ensure position is in 0-1 range
-    const normalizedPosition = Math.max(0, Math.min(1, position));
+    const normalizedPosition = clamp(position, 0, 1);
     
     // Convert to logarithmic frequency scale
     const logMinFreq = Math.log2(MIN_FREQ);
@@ -313,8 +313,7 @@ class ReferenceCalibrationAudio {
    * Convert frequency (Hz) to normalized position (0-1)
    */
   public frequencyToPosition(frequency: number): number {
-    // Ensure frequency is in valid range
-    const validFreq = Math.max(MIN_FREQ, Math.min(MAX_FREQ, frequency));
+    const validFreq = clamp(frequency, MIN_FREQ, MAX_FREQ);
     
     // Convert from logarithmic frequency scale to linear position
     const logMinFreq = Math.log2(MIN_FREQ);
@@ -640,8 +639,7 @@ class ReferenceCalibrationAudio {
 
   // Add method to update distortion gain
   private setDistortionGain(gain: number): void {
-    // Clamp gain between 0 and 1
-    this.distortionGain = Math.max(0, Math.min(1, gain));
+    this.distortionGain = clamp(gain, 0, 1);
     console.log(`🔊 Reference calibration distortion gain set to ${this.distortionGain.toFixed(2)}`);
   }
 }

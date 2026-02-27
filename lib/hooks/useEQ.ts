@@ -7,6 +7,8 @@ import { EQProfile } from '../models/EQProfile';
 import { EQBand } from '../models/EQBand';
 import * as syncManager from '../sync/syncManager';
 
+const queueSync = () => syncManager.getSyncManager().queueSync();
+
 // Hook for EQ controls
 export const useEQ = () => {
   const {
@@ -83,7 +85,7 @@ export const useEQ = () => {
     );
     
     // Queue sync
-    syncManager.getSyncManager().queueSync();
+    queueSync();
     
     return newProfile;
   }, [addProfile]);
@@ -115,7 +117,7 @@ export const useEQ = () => {
     );
     
     // Queue sync
-    syncManager.getSyncManager().queueSync();
+    queueSync();
     
     return newProfile;
   }, [getProfileById, addProfile]);
@@ -143,7 +145,7 @@ export const useEQ = () => {
     );
     
     // Queue sync
-    syncManager.getSyncManager().queueSync();
+    queueSync();
   }, [updateProfile, getProfileById]);
   
   // Delete a profile
@@ -191,7 +193,7 @@ export const useEQ = () => {
     );
     
     // Queue sync
-    syncManager.getSyncManager().queueSync();
+    queueSync();
   }, [activeProfileId, getProfiles, setActiveProfile, addProfile, deleteProfile]);
   
   // Select a profile
@@ -210,7 +212,7 @@ export const useEQ = () => {
     processor.applyProfile(profile);
     
     // Queue sync of active profile
-    syncManager.getSyncManager().queueSync();
+    queueSync();
   }, [getProfileById, setActiveProfile]);
   
   // Update a band in the current profile
@@ -247,7 +249,7 @@ export const useEQ = () => {
     );
     
     // Queue sync
-    syncManager.getSyncManager().queueSync();
+    queueSync();
   }, [getActiveProfile, updateProfile]);
   
   // Update volume offset in the current profile
@@ -277,7 +279,7 @@ export const useEQ = () => {
     );
     
     // Queue sync
-    syncManager.getSyncManager().queueSync();
+    queueSync();
   }, [getActiveProfile, updateProfile]);
   
   return {
