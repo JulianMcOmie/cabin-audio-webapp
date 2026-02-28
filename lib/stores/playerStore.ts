@@ -4,6 +4,19 @@ import { getAudioPlayer } from '../audio/initAudio';
 
 // We don't import audioPlayer here as it already imports and subscribes to this store
 // This prevents circular dependencies
+const LAST_PLAYED_TRACK_STORAGE_KEY = 'cabin:lastPlayedTrackId';
+
+const persistLastPlayedTrackId = (trackId: string | null) => {
+  if (typeof window === 'undefined') return;
+
+  try {
+    if (trackId) {
+      window.localStorage.setItem(LAST_PLAYED_TRACK_STORAGE_KEY, trackId);
+    }
+  } catch (error) {
+    console.error('🔊 Failed to persist last played track ID:', error);
+  }
+};
 
 interface PlayerState {
   currentTrackId: string | null;
@@ -17,7 +30,7 @@ interface PlayerState {
   error: string | null;
   
   // Actions
-  setCurrentTrack: (trackId: string | null) => void;
+  setCurrentTrack: (trackId: string | null, autoPlay?: boolean) => void;
   setIsPlaying: (isPlaying: boolean) => void;
   setCurrentTime: (time: number) => void;
   setDuration: (duration: number) => void;
@@ -41,11 +54,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   loadingProgress: 0,
   error: null,
   
-  setCurrentTrack: (trackId: string | null) => {
-    console.log('🔊 playerStore.setCurrentTrack called with:', trackId);
-    
-    // Store whether we should autoplay this track
-    const shouldAutoPlay = true; // Always autoplay when a track is selected
+  setCurrentTrack: (trackId: string | null, autoPlay = true) => {
+    console.log('🔊 playerStore.setCurrentTrack called with:', trackId, 'autoPlay:', autoPlay);
+    persistLastPlayedTrackId(trackId);
+
+    const shouldAutoPlay = autoPlay;
     
     // Update state first (immediate UI feedback)
     set({ 
@@ -236,41 +249,46 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   
   setVolume: (volume: number) => {
     console.log('🔊 playerStore.setVolume called with:', volume);
-    
+
     // Ensure volume is between 0 and 1
     const clampedVolume = Math.max(0, Math.min(1, volume));
-    
-    // Update state first
+
+    // Update state first (store the linear slider value)
     set({ volume: clampedVolume });
-    
-    // Then control audio player
+
+    // Linear dB scale: 100% = 0 dB, ~0% = -60 dB, 0% = silence
+    // Convert dB to amplitude for the gain node
+    const gain = clampedVolume === 0 ? 0 : Math.pow(10, (-60 + clampedVolume * 60) / 20);
+
+    // Then control audio player with the gain
     try {
       const audioPlayer = getAudioPlayer();
-      console.log('🔊 Calling audioPlayer.setVolume()');
-      audioPlayer.setVolume(clampedVolume);
+      console.log('🔊 Calling audioPlayer.setVolume() with gain:', gain);
+      audioPlayer.setVolume(gain);
     } catch (error) {
       console.error('🔊 Error setting volume:', error);
     }
-    
+
     console.log('🔊 New volume state:', get().volume);
   },
   
   setIsMuted: (isMuted: boolean) => {
     console.log('🔊 playerStore.setIsMuted called with:', isMuted);
-    
+
     // Update state first
     set({ isMuted });
-    
-    // Then control audio player
+
+    // Then control audio player (apply same dB-to-gain curve for unmute restore)
     try {
       const audioPlayer = getAudioPlayer();
       const currentVolume = get().volume;
-      console.log('🔊 Calling audioPlayer.setMute() with current volume:', currentVolume);
-      audioPlayer.setMute(isMuted, currentVolume);
+      const gain = currentVolume === 0 ? 0 : Math.pow(10, (-60 + currentVolume * 60) / 20);
+      console.log('🔊 Calling audioPlayer.setMute() with gain:', gain);
+      audioPlayer.setMute(isMuted, gain);
     } catch (error) {
       console.error('🔊 Error setting mute state:', error);
     }
-    
+
     console.log('🔊 New isMuted state:', get().isMuted);
   },
   

@@ -1,67 +1,137 @@
 "use client"
 
-import { useState } from "react"
-import { TopBar } from "@/components/top-bar"
-import { EQView } from "@/components/eq-view"
-import { MusicLibrary } from "@/components/music-library/MusicLibrary"
-import { PlayerBar } from "@/components/player-bar"
-import { EQToolDock } from "@/components/eq-tool-dock"
-import { Sidebar } from "@/components/sidebar"
+import { useState, useEffect, useCallback } from "react"
+import { MainView } from "@/components/main-view"
+import { TopOverlay } from "@/components/top-overlay"
+import { ControlPanel } from "@/components/control-panel"
+import { EQOverlay } from "@/components/eq-overlay"
+import { LibraryPanel } from "@/components/library-panel"
+import { usePlayerStore, useTrackStore } from "@/lib/stores"
+import type { QualityLevel } from "@/components/unified-particle-scene"
+import type { HighlightTarget } from "@/components/top-overlay"
 
-type TabType = "eq" | "library"
-type TabHistory = Array<TabType>
+const LAST_PLAYED_TRACK_STORAGE_KEY = "cabin:lastPlayedTrackId"
+
+function getSavedLastPlayedTrackId(): string | null {
+  if (typeof window === "undefined") return null
+  try {
+    return window.localStorage.getItem(LAST_PLAYED_TRACK_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function loadSetting<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback
+  try {
+    const raw = localStorage.getItem(key)
+    if (raw === null) return fallback
+    return JSON.parse(raw) as T
+  } catch {
+    return fallback
+  }
+}
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<TabType>("eq")
-  const [eqEnabled, setEqEnabled] = useState(false)
+  const [showEQOverlay, setShowEQOverlay] = useState(false)
+  const [showLibrary, setShowLibrary] = useState(false)
+  const [quality, setQuality] = useState<QualityLevel>(() => loadSetting("cabin:quality", "low" as QualityLevel))
+  const [highlightTarget, setHighlightTarget] = useState<HighlightTarget>(null)
 
-  const [history, setHistory] = useState<TabHistory>(["eq"])
-  const [currentIndex, setCurrentIndex] = useState(0)
+  const isPlaying = usePlayerStore(s => s.isPlaying)
 
-  const pushToHistory = (tab: TabType) => {
-    if (currentIndex < history.length - 1) {
-      setHistory((prev) => prev.slice(0, currentIndex + 1))
+  // Persist quality setting
+  useEffect(() => {
+    try { localStorage.setItem("cabin:quality", JSON.stringify(quality)) } catch { /* ignore */ }
+  }, [quality])
+
+  // Auto-select startup track once tracks finish loading:
+  // 1) last played track saved in localStorage (if still present)
+  // 2) first track in library (trackStore default)
+  const currentTrackId = usePlayerStore(s => s.currentTrackId)
+  const setCurrentTrack = usePlayerStore(s => s.setCurrentTrack)
+
+  useEffect(() => {
+    // If player already has a track, skip
+    if (currentTrackId) return
+
+    const unsub = useTrackStore.subscribe((state) => {
+      if (!state.isLoading && !usePlayerStore.getState().currentTrackId) {
+        const savedTrackId = getSavedLastPlayedTrackId()
+        const startupTrackId =
+          savedTrackId && state.tracks[savedTrackId]
+            ? savedTrackId
+            : state.currentTrackId
+
+        if (startupTrackId) {
+          setCurrentTrack(startupTrackId, false)
+          unsub()
+        }
+      }
+    })
+
+    // Also check immediately in case store already loaded
+    const state = useTrackStore.getState()
+    if (!state.isLoading && state.currentTrackId) {
+      const savedTrackId = getSavedLastPlayedTrackId()
+      const startupTrackId =
+        savedTrackId && state.tracks[savedTrackId]
+          ? savedTrackId
+          : state.currentTrackId
+
+      if (startupTrackId) {
+        setCurrentTrack(startupTrackId, false)
+      }
+      unsub()
     }
 
-    if (history[currentIndex] !== tab) {
-      setHistory((prev) => [...prev, tab])
-      setCurrentIndex((prev) => prev + 1)
+    return unsub
+  }, [currentTrackId, setCurrentTrack])
+
+  const toggleEQOverlay = useCallback(() => {
+    setShowEQOverlay((v) => !v)
+  }, [])
+
+  const toggleLibrary = useCallback(() => {
+    setShowLibrary((v) => !v)
+  }, [])
+
+  // Escape key dismisses overlays
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (showEQOverlay) setShowEQOverlay(false)
+        else if (showLibrary) setShowLibrary(false)
+      }
     }
-
-    setActiveTab(tab)
-  }
-
-  const updateActiveTab = (tab: TabType) => {
-    setActiveTab(tab)
-  }
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [showEQOverlay, showLibrary])
 
   return (
-    <div className="flex flex-col h-screen bg-background">
-      <div className="flex flex-1 min-h-0 overflow-hidden">
-        <Sidebar activeTab={activeTab} setActiveTab={updateActiveTab} pushToHistory={pushToHistory} />
-
-        <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-          <TopBar setActiveTab={updateActiveTab} history={history} currentIndex={currentIndex} setCurrentIndex={setCurrentIndex} />
-
-          {activeTab === "eq" ? (
-            <div className="flex-1 min-h-0 overflow-hidden relative">
-              <EQView setEqEnabled={setEqEnabled} />
-            </div>
-          ) : (
-            <div className="flex-1 pr-4 bg-main-section rounded-lg overflow-auto mb-2 pb-36">
-              <main className="h-full p-6 pb-0 md:pt-6 pt-12">
-                <MusicLibrary eqEnabled={eqEnabled} setActiveTab={pushToHistory} />
-              </main>
-            </div>
-          )}
-        </div>
+    <div className="relative w-screen h-screen overflow-hidden">
+      {/* Main view fills entire viewport */}
+      <div className="absolute inset-0 z-0">
+        <MainView quality={quality} highlightTarget={highlightTarget} isPlaying={isPlaying} />
       </div>
 
-      {/* Global bottom bar — always visible, all tabs */}
-      <div className="fixed inset-x-0 bottom-0 z-50 flex flex-col">
-        <EQToolDock />
-        <PlayerBar />
-      </div>
+      {/* Top overlay: logo + how to use + quality */}
+      <TopOverlay quality={quality} onQualityChange={setQuality} onHighlightTarget={setHighlightTarget} />
+
+      {/* EQ Overlay */}
+      <EQOverlay isOpen={showEQOverlay} onClose={() => setShowEQOverlay(false)} />
+
+      {/* Library Panel — sits directly above control bar */}
+      <LibraryPanel isOpen={showLibrary} onClose={() => setShowLibrary(false)} />
+
+      {/* Control Panel: always visible */}
+      <ControlPanel
+        showEQOverlay={showEQOverlay}
+        onToggleEQOverlay={toggleEQOverlay}
+        onToggleLibrary={toggleLibrary}
+        highlightTarget={highlightTarget}
+        quality={quality}
+      />
     </div>
   )
 }

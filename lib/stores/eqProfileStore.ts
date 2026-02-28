@@ -3,6 +3,68 @@ import { EQProfile } from '../models/EQProfile';
 import { SyncStatus } from '../models/SyncStatus';
 import * as indexedDBManager from '../storage/indexedDBManager';
 
+export const PROFILE_IDS = ['profile-1', 'profile-2', 'profile-3'] as const;
+
+// Per-profile accent colors along the blue → cyan → green gradient
+export const PROFILE_COLORS = {
+  'profile-1': {
+    // Electric blue (#5577ff)
+    text: 'text-blue-400',
+    textBright: 'text-blue-300',
+    bg: 'bg-blue-400/30',
+    bgSubtle: 'bg-blue-400/10',
+    ring: 'ring-blue-400/40',
+    border: 'border-blue-400/50',
+    bgPanel: 'dark:bg-blue-400/10 bg-blue-500/10',
+    ringPanel: 'dark:ring-blue-400/20 ring-blue-500/20',
+    label: 'dark:text-blue-400 text-blue-600',
+    hoverText: 'hover:text-blue-300',
+    // Play button / transport accent
+    playText: 'dark:text-blue-300 text-blue-600',
+    playBg: 'dark:bg-blue-400/10 bg-blue-500/10',
+    playGlow: 'dark:bg-blue-400/30 bg-blue-500/25',
+    // Slider accent
+    sliderRange: 'bg-blue-400',
+    sliderThumbBorder: 'border-blue-400/50',
+  },
+  'profile-2': {
+    // Cyan (#00ffff)
+    text: 'text-cyan-400',
+    textBright: 'text-cyan-300',
+    bg: 'bg-cyan-400/30',
+    bgSubtle: 'bg-cyan-400/10',
+    ring: 'ring-cyan-400/40',
+    border: 'border-cyan-400/50',
+    bgPanel: 'dark:bg-cyan-400/10 bg-cyan-500/10',
+    ringPanel: 'dark:ring-cyan-400/20 ring-cyan-500/20',
+    label: 'dark:text-cyan-400 text-cyan-600',
+    hoverText: 'hover:text-cyan-300',
+    playText: 'dark:text-cyan-300 text-cyan-600',
+    playBg: 'dark:bg-cyan-400/10 bg-cyan-500/10',
+    playGlow: 'dark:bg-cyan-400/30 bg-cyan-500/25',
+    sliderRange: 'bg-cyan-400',
+    sliderThumbBorder: 'border-cyan-400/50',
+  },
+  'profile-3': {
+    // Emerald-green (#55ffaa)
+    text: 'text-emerald-400',
+    textBright: 'text-emerald-300',
+    bg: 'bg-emerald-400/30',
+    bgSubtle: 'bg-emerald-400/10',
+    ring: 'ring-emerald-400/40',
+    border: 'border-emerald-400/50',
+    bgPanel: 'dark:bg-emerald-400/10 bg-emerald-500/10',
+    ringPanel: 'dark:ring-emerald-400/20 ring-emerald-500/20',
+    label: 'dark:text-emerald-400 text-emerald-600',
+    hoverText: 'hover:text-emerald-300',
+    playText: 'dark:text-emerald-300 text-emerald-600',
+    playBg: 'dark:bg-emerald-400/10 bg-emerald-500/10',
+    playGlow: 'dark:bg-emerald-400/30 bg-emerald-500/25',
+    sliderRange: 'bg-emerald-400',
+    sliderThumbBorder: 'border-emerald-400/50',
+  },
+} as const;
+
 // Extend EQProfile for our internal use, adding isDefault property
 interface EQProfileWithDefault extends EQProfile {
   isDefault?: boolean;
@@ -95,71 +157,73 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
       loadDistortionGainState(),
       loadActiveProfileId()
     ])
-      .then(([loadedProfiles, isEQEnabled, distortionGain, savedActiveProfileId]) => {
-        // Create default flat profile ONLY if no profiles exist at all
-        if (Object.keys(loadedProfiles).length === 0) {
-          const defaultProfile: EQProfileWithDefault = {
-            id: 'default-flat',
+      .then(async ([loadedProfiles, isEQEnabled, distortionGain, savedActiveProfileId]) => {
+        const now = Date.now();
+        let activeId = savedActiveProfileId;
+
+        // --- Migration: rename old 'default-flat' → 'profile-1' ---
+        if (loadedProfiles['default-flat']) {
+          const old = loadedProfiles['default-flat'];
+          const migrated: EQProfileWithDefault = {
+            ...old,
+            id: 'profile-1',
             name: 'Profile 1',
-            bands: [],
-            volume: 0,
             isDefault: true,
-            lastModified: Date.now(),
-            dateCreated: Date.now(),
-            syncStatus: 'modified'
+            lastModified: now,
+            syncStatus: 'modified',
           };
-          
-          loadedProfiles[defaultProfile.id] = defaultProfile;
-          
-          // Save default profile to IndexedDB
-          indexedDBManager.addItem(indexedDBManager.STORES.EQ_PROFILES, defaultProfile)
-            .catch(error => console.error('Failed to save default EQ profile:', error));
-            
-          // Set initial state
-          set({ 
-            profiles: loadedProfiles, 
-            activeProfileId: defaultProfile.id,
-            isEQEnabled,
-            distortionGain,
-            isLoading: false 
+          delete loadedProfiles['default-flat'];
+          loadedProfiles['profile-1'] = migrated;
+
+          // Persist: delete old, save new
+          await indexedDBManager.deleteItem(indexedDBManager.STORES.EQ_PROFILES, 'default-flat').catch(() => {});
+          await indexedDBManager.addItem(indexedDBManager.STORES.EQ_PROFILES, migrated).catch(() => {
+            indexedDBManager.updateItem(indexedDBManager.STORES.EQ_PROFILES, migrated).catch(() => {});
           });
-          
-          // Explicitly set the active profile to ensure it's properly persisted
-          setTimeout(() => {
-            const store = get();
-            if (store.setActiveProfile) {
-              store.setActiveProfile(defaultProfile.id);
-            }
-          }, 0);
-        } else {
-          // Profiles exist - find default or use first available
-          const defaultProfile = Object.values(loadedProfiles).find(p => p.isDefault);
-          const firstProfile = Object.values(loadedProfiles)[0];
-          
-          // Use savedActiveProfileId if it exists and corresponds to an actual profile
-          const activeId = savedActiveProfileId && loadedProfiles[savedActiveProfileId] 
-            ? savedActiveProfileId 
-            : (defaultProfile?.id || firstProfile?.id || null);
-          
-          // Set initial state
-          set({ 
-            profiles: loadedProfiles, 
-            activeProfileId: activeId,
-            isEQEnabled,
-            distortionGain,
-            isLoading: false 
-          });
-          
-          // Explicitly set the active profile to ensure it's properly persisted
-          if (activeId) {
-            setTimeout(() => {
-              const store = get();
-              if (store.setActiveProfile) {
-                store.setActiveProfile(activeId!);
-              }
-            }, 0);
+
+          // Fix active pointer
+          if (activeId === 'default-flat') activeId = 'profile-1';
+        }
+
+        // --- Ensure all 3 profiles exist ---
+        for (const pid of PROFILE_IDS) {
+          if (!loadedProfiles[pid]) {
+            const profile: EQProfileWithDefault = {
+              id: pid,
+              name: `Profile ${pid.split('-')[1]}`,
+              bands: [],
+              volume: 0,
+              isDefault: pid === 'profile-1',
+              lastModified: now,
+              dateCreated: now,
+              syncStatus: 'modified',
+            };
+            loadedProfiles[pid] = profile;
+            indexedDBManager.addItem(indexedDBManager.STORES.EQ_PROFILES, profile).catch(() => {});
           }
         }
+
+        // Resolve active profile
+        if (!activeId || !loadedProfiles[activeId]) {
+          activeId = 'profile-1';
+        }
+
+        // Set initial state
+        set({
+          profiles: loadedProfiles,
+          activeProfileId: activeId,
+          isEQEnabled,
+          distortionGain,
+          isLoading: false,
+        });
+
+        // Persist active profile id
+        setTimeout(() => {
+          const store = get();
+          if (store.setActiveProfile) {
+            store.setActiveProfile(activeId!);
+          }
+        }, 0);
         
         initialized = true;
       })

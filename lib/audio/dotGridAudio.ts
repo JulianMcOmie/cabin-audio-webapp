@@ -1110,7 +1110,7 @@ class PositionedAudioService {
       return;
     }
 
-    const normalizedY = totalRows <= 1 ? 0.5 : 1 - (y / (totalRows - 1));
+    const normalizedY = totalRows <= 1 ? 0.5 : (y / (totalRows - 1));
     const normalizedX = totalCols <= 1 ? 0.5 : (x / (totalCols - 1));
     const panPosition = totalCols <= 1 ? 0 : (2 * normalizedX - 1);
 
@@ -1532,6 +1532,15 @@ class DotGridAudioPlayer {
 
   // Loop sequencer mode state
   private loopSequencerTimeoutId: number | null = null; // For loop sequencer iteration timeout
+  private loopSequencerVisualDotKeys: string[] = [];
+  private loopSequencerVisualCycleStartTime: number = 0;
+  private loopSequencerVisualHitInterval: number = 0;
+  private loopSequencerVisualTotalHitsPerDot: number = 1;
+  private loopSequencerVisualCycleHits: number = 0;
+  private loopSequencerVisualBeatBase: number = 0;
+  private loopSequencerVisualNextBeatBase: number = 0;
+  private loopSequencerVisualInterleaved: boolean = true;
+  private loopSequencerVisualPlayTogether: boolean = false;
 
   private constructor() {
     this.audioService = new PositionedAudioService(audioContext.getAudioContext());
@@ -1577,6 +1586,49 @@ class DotGridAudioPlayer {
   private updateAllDotPanning(): void {
     // Panning is set when a point is added to PositionedAudioService.
     // The setGridSize -> updateDots flow (which removes/re-adds points) handles panning updates.
+  }
+
+  public getLoopSequencerVisualState(): { playingDotKey: string | null; beatIndex: number } {
+    if (!this.isPlaying || !this.isLoopSequencerMode() || this.loopSequencerVisualDotKeys.length === 0) {
+      return { playingDotKey: null, beatIndex: 0 };
+    }
+
+    if (this.loopSequencerVisualHitInterval <= 0 || this.loopSequencerVisualCycleHits <= 0) {
+      return { playingDotKey: null, beatIndex: 0 };
+    }
+
+    const now = audioContext.getAudioContext().currentTime;
+    const elapsed = Math.max(0, now - this.loopSequencerVisualCycleStartTime);
+    const rawStep = Math.floor(elapsed / this.loopSequencerVisualHitInterval);
+    const clampedStep = Math.min(this.loopSequencerVisualCycleHits - 1, rawStep);
+    const beatIndex = this.loopSequencerVisualBeatBase + clampedStep;
+
+    let dotIndex = 0;
+    if (this.loopSequencerVisualPlayTogether || this.loopSequencerVisualInterleaved) {
+      dotIndex = clampedStep % this.loopSequencerVisualDotKeys.length;
+    } else {
+      dotIndex = Math.min(
+        this.loopSequencerVisualDotKeys.length - 1,
+        Math.floor(clampedStep / this.loopSequencerVisualTotalHitsPerDot)
+      );
+    }
+
+    return {
+      playingDotKey: this.loopSequencerVisualDotKeys[dotIndex] ?? null,
+      beatIndex,
+    };
+  }
+
+  private resetLoopSequencerVisualState(): void {
+    this.loopSequencerVisualDotKeys = [];
+    this.loopSequencerVisualCycleStartTime = 0;
+    this.loopSequencerVisualHitInterval = 0;
+    this.loopSequencerVisualTotalHitsPerDot = 1;
+    this.loopSequencerVisualCycleHits = 0;
+    this.loopSequencerVisualBeatBase = 0;
+    this.loopSequencerVisualNextBeatBase = 0;
+    this.loopSequencerVisualInterleaved = true;
+    this.loopSequencerVisualPlayTogether = false;
   }
 
   /**
@@ -1942,21 +1994,20 @@ class DotGridAudioPlayer {
     let sortedDotKeys: string[];
 
     if (readingDirection === 'horizontal') {
-      // Horizontal reading with snake pattern
+      // Horizontal reading order: left-to-right, top-to-bottom (row 0 = bottom, so descending)
       const rowGroups = new Map<number, typeof parsedDots>();
       parsedDots.forEach(dot => {
         if (!rowGroups.has(dot.y)) rowGroups.set(dot.y, []);
         rowGroups.get(dot.y)!.push(dot);
       });
 
-      const sortedRows = Array.from(rowGroups.entries()).sort((a, b) => a[0] - b[0]);
-      sortedDotKeys = sortedRows.flatMap(([, dots], rowIndex) => {
+      const sortedRows = Array.from(rowGroups.entries()).sort((a, b) => b[0] - a[0]);
+      sortedDotKeys = sortedRows.flatMap(([, dots]) => {
         const sortedDots = dots.sort((a, b) => a.x - b.x);
-        if (rowIndex % 2 === 1) sortedDots.reverse();
         return sortedDots.map(d => d.key);
       });
     } else {
-      // Vertical reading with snake pattern
+      // Vertical reading order: top-to-bottom, left-to-right (descending Y within each column)
       const colGroups = new Map<number, typeof parsedDots>();
       parsedDots.forEach(dot => {
         if (!colGroups.has(dot.x)) colGroups.set(dot.x, []);
@@ -1964,9 +2015,8 @@ class DotGridAudioPlayer {
       });
 
       const sortedCols = Array.from(colGroups.entries()).sort((a, b) => a[0] - b[0]);
-      sortedDotKeys = sortedCols.flatMap(([, dots], colIndex) => {
-        const sortedDots = dots.sort((a, b) => a.y - b.y);
-        if (colIndex % 2 === 1) sortedDots.reverse();
+      sortedDotKeys = sortedCols.flatMap(([, dots]) => {
+        const sortedDots = dots.sort((a, b) => b.y - a.y);
         return sortedDots.map(d => d.key);
       });
     }
@@ -1986,6 +2036,7 @@ class DotGridAudioPlayer {
     if (playing) {
       // Reset cycle counter when starting playback
       this.resetCycleCounter();
+      this.resetLoopSequencerVisualState();
 
       // NEW: Check loop sequencer mode first
       if (this.isLoopSequencerMode()) {
@@ -2031,6 +2082,7 @@ class DotGridAudioPlayer {
       this.stopStopbandCycling();
       this.stopLoopSequencer(); // NEW
       this.stopAllRhythms();
+      this.resetLoopSequencerVisualState();
     }
   }
 
@@ -2041,15 +2093,17 @@ class DotGridAudioPlayer {
     this.stopLoopSequencerInternalCleanup();
 
     if (!this.isPlaying || this.activeDotKeys.size === 0) {
+      this.resetLoopSequencerVisualState();
       return;
     }
 
     // Deactivate all points before scheduling new envelopes
     this.audioService.deactivateAllPoints();
 
-    // Sort dots by reading order (horizontal/vertical snake pattern)
+    // Sort dots by reading order
     const sortedDotKeys = this.sortDotsByReadingOrder();
     const dotCount = sortedDotKeys.length;
+    const playableDots = sortedDotKeys.filter(dotKey => this.shouldRedDotPlay(dotKey));
 
     // Get hit mode parameters
     const hitRate = this.audioService.getHitModeRate(); // hits per second
@@ -2114,7 +2168,6 @@ class DotGridAudioPlayer {
     } else if (this.audioService.getInterleavedHits()) {
       // Interleaved mode: at each volume level, alternate between dots on each hit
       // Pattern: D1@V1, D2@V1, D1@V1, D2@V1... (hitsPerVolumeLevel cycles), then V2, etc.
-      const playableDots = sortedDotKeys.filter(dotKey => this.shouldRedDotPlay(dotKey));
       const playableDotCount = playableDots.length;
 
       if (playableDotCount > 0) {
@@ -2193,6 +2246,16 @@ class DotGridAudioPlayer {
     }
 
     const loopDelayMs = loopDuration * 1000;
+    this.loopSequencerVisualDotKeys = playableDots;
+    this.loopSequencerVisualCycleStartTime = currentTime;
+    this.loopSequencerVisualHitInterval = hitInterval;
+    this.loopSequencerVisualTotalHitsPerDot = totalHitsPerDot;
+    this.loopSequencerVisualCycleHits = Math.max(1, Math.round(loopDuration / hitInterval));
+    this.loopSequencerVisualBeatBase = this.loopSequencerVisualNextBeatBase;
+    this.loopSequencerVisualNextBeatBase = this.loopSequencerVisualBeatBase + this.loopSequencerVisualCycleHits;
+    this.loopSequencerVisualInterleaved = this.audioService.getInterleavedHits();
+    this.loopSequencerVisualPlayTogether = this.audioService.getLoopSequencerPlayTogether();
+
     this.loopSequencerTimeoutId = window.setTimeout(() => {
       if (this.isPlaying && this.isLoopSequencerMode()) {
         this.startLoopSequencer(); // Recursive loop
@@ -2205,6 +2268,7 @@ class DotGridAudioPlayer {
    */
   private stopLoopSequencer(): void {
     this.stopLoopSequencerInternalCleanup();
+    this.resetLoopSequencerVisualState();
     // Keep dots active in continuous mode (no deactivation)
   }
 
@@ -2219,7 +2283,7 @@ class DotGridAudioPlayer {
   }
 
   /**
-   * Sort dots by reading order (horizontal/vertical snake pattern)
+   * Sort dots by reading order
    * Returns array of dot keys in play order
    */
   private sortDotsByReadingOrder(): string[] {
@@ -2235,26 +2299,20 @@ class DotGridAudioPlayer {
       };
     });
 
-    // Sort by reading direction (copy logic from startAllRhythms)
+    // Sort by reading direction (row 0 = bottom of grid, so descending Y = top-to-bottom)
     if (readingDirection === 'horizontal') {
-      // Horizontal reading: group by row, snake pattern (reverse every other row)
+      // Horizontal reading order: left-to-right, top-to-bottom
       parsedDots.sort((a, b) => {
-        const rowDiff = a.y - b.y;
+        const rowDiff = b.y - a.y;
         if (rowDiff !== 0) return rowDiff;
-
-        // Within same row: alternate direction (snake pattern)
-        const shouldReverse = a.y % 2 === 1; // Reverse on odd rows
-        return shouldReverse ? b.x - a.x : a.x - b.x;
+        return a.x - b.x;
       });
     } else {
-      // Vertical reading: group by column, snake pattern (reverse every other column)
+      // Vertical reading order: top-to-bottom, left-to-right
       parsedDots.sort((a, b) => {
         const colDiff = a.x - b.x;
         if (colDiff !== 0) return colDiff;
-
-        // Within same column: alternate direction (snake pattern)
-        const shouldReverse = a.x % 2 === 1; // Reverse on odd columns
-        return shouldReverse ? b.y - a.y : a.y - b.y;
+        return b.y - a.y;
       });
     }
 
@@ -2286,73 +2344,7 @@ class DotGridAudioPlayer {
       return;
     }
 
-    const readingDirection = this.audioService.getReadingDirection();
-
-    // Parse all dot keys into structured data
-    const parsedDots = Array.from(this.activeDotKeys).map(dotKey => {
-      const [xStr, yStr] = dotKey.split(',');
-      return {
-        key: dotKey,
-        x: parseInt(xStr, 10),
-        y: parseInt(yStr, 10)
-      };
-    });
-
-    let sortedDotKeys: string[];
-
-    if (readingDirection === 'horizontal') {
-      // Horizontal reading with snake pattern (alternating left-to-right and right-to-left)
-      // Group dots by row
-      const rowGroups = new Map<number, typeof parsedDots>();
-      parsedDots.forEach(dot => {
-        if (!rowGroups.has(dot.y)) {
-          rowGroups.set(dot.y, []);
-        }
-        rowGroups.get(dot.y)!.push(dot);
-      });
-
-      // Sort rows by y coordinate (top to bottom)
-      const sortedRows = Array.from(rowGroups.entries()).sort((a, b) => a[0] - b[0]);
-
-      // For each row, sort left-to-right or right-to-left based on row index
-      sortedDotKeys = sortedRows.flatMap(([, dots], rowIndex) => {
-        // Sort dots in this row by x coordinate
-        const sortedDots = dots.sort((a, b) => a.x - b.x);
-
-        // Reverse every other row to create snake pattern
-        if (rowIndex % 2 === 1) {
-          sortedDots.reverse();
-        }
-
-        return sortedDots.map(d => d.key);
-      });
-    } else {
-      // Vertical reading with snake pattern (alternating top-to-bottom and bottom-to-top)
-      // Group dots by column
-      const colGroups = new Map<number, typeof parsedDots>();
-      parsedDots.forEach(dot => {
-        if (!colGroups.has(dot.x)) {
-          colGroups.set(dot.x, []);
-        }
-        colGroups.get(dot.x)!.push(dot);
-      });
-
-      // Sort columns by x coordinate (left to right)
-      const sortedCols = Array.from(colGroups.entries()).sort((a, b) => a[0] - b[0]);
-
-      // For each column, sort top-to-bottom or bottom-to-top based on column index
-      sortedDotKeys = sortedCols.flatMap(([, dots], colIndex) => {
-        // Sort dots in this column by y coordinate
-        const sortedDots = dots.sort((a, b) => a.y - b.y);
-
-        // Reverse every other column to create snake pattern
-        if (colIndex % 2 === 1) {
-          sortedDots.reverse();
-        }
-
-        return sortedDots.map(d => d.key);
-      });
-    }
+    const sortedDotKeys = this.sortDotsByReadingOrder();
 
     const currentTime = audioContext.getAudioContext().currentTime;
 
@@ -2434,11 +2426,10 @@ class DotGridAudioPlayer {
         rowGroups.get(dot.y)!.push(dot);
       });
 
-      // Sort and apply snake pattern
-      const sortedRows = Array.from(rowGroups.entries()).sort((a, b) => a[0] - b[0]);
+      // Sort rows top-to-bottom (descending Y), dots left-to-right within each row
+      const sortedRows = Array.from(rowGroups.entries()).sort((a, b) => b[0] - a[0]);
       sortedRows.forEach(([, dots], rowIndex) => {
         const sortedDots = dots.sort((a, b) => a.x - b.x);
-        if (rowIndex % 2 === 1) sortedDots.reverse();
         result.set(rowIndex, sortedDots.map(d => d.key));
       });
     } else {
@@ -2449,11 +2440,10 @@ class DotGridAudioPlayer {
         colGroups.get(dot.x)!.push(dot);
       });
 
-      // Sort and apply snake pattern
+      // Sort columns left-to-right, dots top-to-bottom (descending Y) within each column
       const sortedCols = Array.from(colGroups.entries()).sort((a, b) => a[0] - b[0]);
       sortedCols.forEach(([, dots], colIndex) => {
-        const sortedDots = dots.sort((a, b) => a.y - b.y);
-        if (colIndex % 2 === 1) sortedDots.reverse();
+        const sortedDots = dots.sort((a, b) => b.y - a.y);
         result.set(colIndex, sortedDots.map(d => d.key));
       });
     }

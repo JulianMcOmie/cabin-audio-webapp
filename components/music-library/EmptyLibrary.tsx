@@ -4,7 +4,6 @@ import { DragEventHandler } from "react"
 import { Music, Upload, FileMusic } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { FileImportOverlay } from "@/components/import/FileImportOverlay"
-import { EQStatusAlert } from "./EQStatusAlert"
 
 interface EmptyLibraryProps {
   eqEnabled: boolean
@@ -14,7 +13,7 @@ interface EmptyLibraryProps {
   currentFile?: string
   onImportClick: () => void
   onCancel: () => void
-  onEQSettingsClick: () => void
+  onEQSettingsClick?: () => void
   onDragEnter: DragEventHandler
   onDragLeave: DragEventHandler
   onDragOver: DragEventHandler
@@ -24,14 +23,12 @@ interface EmptyLibraryProps {
 }
 
 export function EmptyLibrary({
-  eqEnabled,
   dragActive,
   isImporting,
   importProgress,
   currentFile,
   onImportClick,
   onCancel,
-  onEQSettingsClick,
   onDragEnter,
   onDragLeave,
   onDragOver,
@@ -40,33 +37,23 @@ export function EmptyLibrary({
   className = ""
 }: EmptyLibraryProps) {
   return (
-    <div 
-      className={`mx-auto space-y-8 pb-24 ${dragActive ? "drag-active" : ""} ${className}`}
+    <div
+      className={`mx-auto space-y-6 ${dragActive ? "drag-active" : ""} ${className}`}
       onDragEnter={onDragEnter}
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
       onDrop={onDrop}
     >
-      <EQStatusAlert isEnabled={eqEnabled} onSettingsClick={onEQSettingsClick} />
-
-      <div className="flex justify-between items-center mb-2">
-        <div>
-          <h2 className="text-2xl font-semibold">Music Library</h2>
-          <p className="text-sm text-muted-foreground">Your local files & royalty-free music.</p>
-        </div>
-      </div>
-
-      <div className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-12 text-center">
+      <div className="rounded-lg py-8 text-center">
         <div className="mx-auto flex max-w-[420px] flex-col items-center justify-center text-center">
-          <div className="flex h-20 w-20 items-center justify-center rounded-full bg-muted">
-            <Music className="h-10 w-10 text-muted-foreground" />
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
+            <Music className="h-7 w-7 text-muted-foreground" />
           </div>
-          <h3 className="mt-4 text-lg font-semibold">No music found</h3>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Import your music files to get started. We support MP3, WAV, and FLAC formats.
+          <p className="mt-3 text-sm text-muted-foreground">
+            MP3, WAV, and FLAC supported
           </p>
-          <Button 
-            className="mt-4 bg-purple hover:bg-purple/90 text-white" 
+          <Button
+            className="mt-3 bg-purple hover:bg-purple/90 text-white"
             onClick={onImportClick}
           >
             <Upload className="mr-2 h-4 w-4" />

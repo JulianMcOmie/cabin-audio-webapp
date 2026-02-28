@@ -10,7 +10,6 @@ import {
   DropdownMenuTrigger 
 } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
-import { useTheme } from "@/components/theme-provider"
 import Image from "next/image"
 
 interface Track {
@@ -42,13 +41,9 @@ export function TrackItem({
   isLastItem = false
 }: TrackItemProps) {
   const [isHovered, setIsHovered] = useState(false);
-  const { theme } = useTheme();
-  
-  // Get the default cover image based on theme
+
   const getDefaultCoverImage = () => {
-    const timestamp = Date.now(); // Add timestamp to prevent caching
-    const basePath = theme === 'dark' ? '/default_img_dark.jpg' : '/default_img_light.jpg';
-    return `${basePath}?t=${timestamp}`;
+    return `/default_img_dark.jpg?t=${Date.now()}`;
   };
   
   const formatDuration = (seconds: number) => {
@@ -73,15 +68,15 @@ export function TrackItem({
   return (
     <div>
       <div
-        className={`flex items-center py-3 px-2 hover:bg-muted/50 rounded-md cursor-pointer ${
+        className={`flex items-center py-1.5 px-2 hover:bg-muted/50 rounded-md cursor-pointer ${
           isCurrentTrack ? "bg-muted/30" : ""
         }`}
         onClick={() => onPlay(track)}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >
-        <div className="flex-shrink-0 mr-4 relative group">
-          <div className="h-12 w-12 rounded-md overflow-hidden relative">
+        <div className="flex-shrink-0 mr-3 relative group">
+          <div className="h-9 w-9 rounded-md overflow-hidden relative">
             <Image
               src={track.coverUrl || getDefaultCoverImage()}
               alt={`${track.album} cover`}
@@ -122,7 +117,7 @@ export function TrackItem({
                 )}
               </div>
               <div className="hidden group-hover:block">
-                {isPlaying ? <Pause className="h-6 w-6 text-white" /> : <Play className="h-6 w-6 text-white" />}
+                {isPlaying ? <Pause className="h-4 w-4 text-white" /> : <Play className="h-4 w-4 text-white" />}
               </div>
             </div>
           ) : (
@@ -133,14 +128,14 @@ export function TrackItem({
                 onPlay(track)
               }}
             >
-              <Play className="h-6 w-6 text-white" />
+              <Play className="h-4 w-4 text-white" />
             </div>
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium truncate">{track.title}</p>
-          <p className="text-xs text-muted-foreground truncate">
-            {track.artist} • {track.album}
+          <p className="text-[13px] font-medium truncate leading-tight">{track.title}</p>
+          <p className="text-[11px] text-muted-foreground truncate leading-tight">
+            {track.artist}
           </p>
         </div>
         <div className="flex-shrink-0 text-xs text-muted-foreground mr-2">

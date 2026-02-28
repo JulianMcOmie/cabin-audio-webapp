@@ -77,10 +77,18 @@ const createDefaultContent = async (): Promise<{track: Track, artistId: string, 
 // Helper function to load tracks from IndexedDB
 const loadTracksFromStorage = async (): Promise<{tracks: Record<string, Track>, defaultTrackId?: string}> => {
   try {
+    // Load artists and albums from IndexedDB into their stores
+    const [storedArtists, storedAlbums] = await Promise.all([
+      indexedDBManager.getAllItems<Artist>(indexedDBManager.STORES.ARTISTS),
+      indexedDBManager.getAllItems<Album>(indexedDBManager.STORES.ALBUMS),
+    ]);
+    storedArtists.forEach(artist => useArtistStore.getState().addArtist(artist));
+    storedAlbums.forEach(album => useAlbumStore.getState().addAlbum(album));
+
     const tracks = await indexedDBManager.getAllItems<Track>(indexedDBManager.STORES.TRACKS);
     const tracksMap: Record<string, Track> = {};
     let defaultTrackId: string | undefined;
-    
+
     tracks.forEach(track => {
       tracksMap[track.id] = track;
     });
@@ -121,6 +129,15 @@ const loadTracksFromStorage = async (): Promise<{tracks: Record<string, Track>, 
       } catch (error) {
         console.error('Error loading default track assets:', error);
       }
+    }
+    
+    if (!defaultTrackId && Object.keys(tracksMap).length > 0) {
+      const firstTrack = Object.values(tracksMap).sort((a, b) => {
+        const aDate = a.dateCreated || a.lastModified;
+        const bDate = b.dateCreated || b.lastModified;
+        return aDate - bDate;
+      })[0];
+      defaultTrackId = firstTrack?.id;
     }
     
     return { tracks: tracksMap, defaultTrackId };

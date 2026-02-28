@@ -2,23 +2,19 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { Upload } from "lucide-react"
-import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/common/ToastManager"
 import { useFileImport } from "@/lib/hooks/useFileImport"
-import { useMobile } from "@/lib/hooks/useMobile"
 import { FileImportOverlay } from "@/components/import/FileImportOverlay"
 import { useTrackStore, usePlayerStore, useEQProfileStore, useArtistStore, useAlbumStore } from "@/lib/stores"
 import { Track as TrackModel } from "@/lib/models/Track"
 import * as fileStorage from "@/lib/storage/fileStorage"
 
 // Import the extracted components
-import { EQStatusAlert } from "./EQStatusAlert"
 import { TrackItem } from "./TrackItem"
 import { EmptyLibrary } from "./EmptyLibrary"
 import { LoadingSkeleton } from "./ui/LoadingSkeleton"
 import { DragDropArea } from "./ui/DragDropArea"
 import { DragOverlay } from "./ui/DragOverlay"
-import { ImportArea } from "./ImportArea"
 
 // Import animations
 import "@/styles/animations.css"
@@ -32,12 +28,7 @@ interface Track {
   coverUrl: string
 }
 
-interface MusicLibraryProps {
-  eqEnabled: boolean
-  setActiveTab: (tab: "eq" | "library") => void
-}
-
-export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab }: MusicLibraryProps) {
+export function MusicLibrary() {
   const { showToast } = useToast()
   // Connect to trackStore
   const { getTracks, addTrack, deleteTrack, isLoading: isTrackStoreLoading } = useTrackStore()
@@ -50,13 +41,9 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab }: MusicLi
   // Connect to albumStore
   const getAlbumById = useAlbumStore(state => state.getAlbumById)
   
-  // Use the state from the store, falling back to the prop for backward compatibility
-  const eqEnabled = isEQEnabled !== undefined ? isEQEnabled : eqEnabledProp
-  
   const [tracks, setTracks] = useState<Track[]>([])
   // Store cover image URLs to avoid recreating them on every render
   const [coverImageUrls, setCoverImageUrls] = useState<Record<string, string>>({})
-  const isMobile = useMobile()
 
   // Convert store tracks to UI tracks
   const convertStoreTracksToUI = useCallback(() => {
@@ -316,17 +303,6 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab }: MusicLi
     }
   }
 
-  const handleEQSettingsClick = () => {
-    // Navigate directly to EQ tab using the setActiveTab prop
-    setActiveTab("eq")
-    
-    // If EQ is currently disabled, we could optionally enable it when user clicks to adjust settings
-    // This makes for a smoother user experience
-    if (!isEQEnabled) {
-      useEQProfileStore.getState().setEQEnabled(true);
-    }
-  }
-
   const handleTogglePlayback = () => {
     if (isPlaying) {
       setIsPlaying(false); // Pause if currently playing
@@ -344,38 +320,12 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab }: MusicLi
         onDragLeave={handleDragLeave}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
-        className="mx-auto space-y-8 relative pb-24"
+        className="mx-auto space-y-4 relative"
       >
-        <EQStatusAlert isEnabled={eqEnabled} onSettingsClick={handleEQSettingsClick} />
-        
-        <div className="flex justify-between items-center mb-2">
-          <div>
-            <h2 className="text-2xl font-semibold">Music Library</h2>
-            <p className="text-sm text-muted-foreground">Your local files & royalty-free music.</p>
-          </div>
-          <Button 
-            variant="outline"
-            onClick={handleImportButtonClick}
-          >
-            <Upload className="mr-2 h-4 w-4" />
-            Import Music
-          </Button>
-          <input
-            type="file"
-            id="file-upload"
-            className="hidden"
-            accept="audio/*,.mp3,.wav,.flac"
-            onChange={(e) => e.target.files && handleFileSelect(e.target.files)}
-            multiple
-          />
-        </div>
-
-        <div className="rounded-md border p-4">
+        <div className="rounded-md dark:border-white/10 border-black/10 border p-4">
           <LoadingSkeleton itemCount={5} />
         </div>
 
-        <ImportArea onImportClick={handleImportButtonClick} />
-        
         <DragOverlay isVisible={dragActive} />
       </DragDropArea>
     )
@@ -385,20 +335,18 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab }: MusicLi
   if (tracks.length === 0) {
     return (
       <EmptyLibrary
-        eqEnabled={eqEnabled}
+        eqEnabled={isEQEnabled}
         dragActive={dragActive}
         isImporting={isImporting}
         importProgress={importProgress}
         currentFile={currentFile || undefined}
         onImportClick={handleImportButtonClick}
         onCancel={cancelImport}
-        onEQSettingsClick={handleEQSettingsClick}
         onDragEnter={handleDragEnter}
         onDragLeave={handleDragLeave}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
         onFileSelect={handleFileSelect}
-        className="pb-24"
       />
     )
   }
@@ -411,42 +359,19 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab }: MusicLi
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
-      className="mx-auto space-y-8 relative pb-24"
+      className="mx-auto space-y-4 relative"
     >
-      <EQStatusAlert isEnabled={eqEnabled} onSettingsClick={handleEQSettingsClick} />
-      
-      <div className="flex justify-between items-center mb-2">
-        <div>
-          <h2 className="text-2xl font-semibold">Music Library</h2>
-          <p className="text-sm text-muted-foreground">Your local files & royalty-free music.</p>
-        </div>
-        <Button 
-          variant="outline"
-          onClick={handleImportButtonClick}
-        >
-          <Upload className="mr-2 h-4 w-4" />
-          Import Music
-        </Button>
-        <input
-          type="file"
-          id="file-upload"
-          className="hidden"
-          accept="audio/*,.mp3,.wav,.flac"
-          onChange={(e) => e.target.files && handleFileSelect(e.target.files)}
-          multiple
-        />
-      </div>
-
-      {isMobile && (
-        <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md">
-          <p className="text-sm text-amber-800 dark:text-amber-300">
-            <strong>💻 Pro tip:</strong> For the best experience with our music library and EQ features, we recommend using Cabin Audio on a desktop computer.
-          </p>
-        </div>
-      )}
+      <input
+        type="file"
+        id="file-upload"
+        className="hidden"
+        accept="audio/*,.mp3,.wav,.flac"
+        onChange={(e) => e.target.files && handleFileSelect(e.target.files)}
+        multiple
+      />
 
       <div>
-        <div className="rounded-md border p-4">
+        <div className="rounded-md dark:border-white/10 border-black/10 border">
           {tracks.map((track, index) => (
             <TrackItem
               key={track.id}
@@ -462,7 +387,13 @@ export function MusicLibrary({ eqEnabled: eqEnabledProp, setActiveTab }: MusicLi
         </div>
       </div>
 
-      <ImportArea onImportClick={handleImportButtonClick} />
+      <button
+        onClick={handleImportButtonClick}
+        className="w-full py-2 text-xs dark:text-white/30 text-black/30 dark:hover:text-white/60 hover:text-black/60 transition-colors flex items-center justify-center gap-1.5"
+      >
+        <Upload className="h-3 w-3" />
+        Import music
+      </button>
 
       <FileImportOverlay
         isVisible={isImporting}

@@ -52,31 +52,44 @@ export class EQCoordinateUtils {
 
   /**
    * Get color for a band based on its frequency
+   * Matches the app's particle visualizer gradient:
+   *   Bass (low) → blue (#5577ff)
+   *   Mid         → cyan (#00ffff)
+   *   Treble (high) → teal-green (#55ffaa)
    */
   static getBandColor(
-    frequency: number, 
+    frequency: number,
     alpha: number = 1,
     isDarkMode: boolean = false
   ): string {
-    // Map frequency to hue (teal for low, pink for high)
     const minFreq = Math.log10(20);
     const maxFreq = Math.log10(20000);
-    const normalizedFreq = (Math.log10(frequency) - minFreq) / (maxFreq - minFreq);
-    
-    // Use HSL color space for a teal-pink gradient
-    // Using a direct teal-to-pink transition without going through dark blue/violet
-    const hue = normalizedFreq < 0.5 
-      ? 180 - normalizedFreq * 60 // Teal to cyan/light blue (180 to 120)
-      : 120 + (normalizedFreq - 0.5) * 400; // Light blue to pink (120 to 320)
-    
-    // Increase saturation and lightness for more vibrant colors
-    const saturation = 85;
-    // Adjust lightness based on position in spectrum to ensure even brightness perception
-    const baseLightness = isDarkMode ? 60 : 20;
-    // Slightly boost lightness in the middle range to avoid dark spots
-    const lightnessAdjust = Math.sin(normalizedFreq * Math.PI) * 10;
-    const lightness = baseLightness + lightnessAdjust;
-    
-    return `hsla(${hue}, ${saturation}%, ${lightness}%, ${alpha})`;
+    const t = (Math.log10(frequency) - minFreq) / (maxFreq - minFreq);
+
+    // Three-stop gradient matching the visualizer:
+    //   t=0  → hue 225 (blue)     sat 80  light 67  (#5577ff)
+    //   t=0.5 → hue 180 (cyan)    sat 100 light 50  (#00ffff)
+    //   t=1  → hue 153 (teal-green) sat 80 light 67 (#55ffaa)
+    let hue: number, saturation: number, lightness: number;
+
+    if (t < 0.5) {
+      const s = t / 0.5; // 0→1 across the bass-to-mid range
+      hue = 225 - s * 45;          // 225 → 180
+      saturation = 80 + s * 20;    // 80 → 100
+      lightness = 67 - s * 17;     // 67 → 50
+    } else {
+      const s = (t - 0.5) / 0.5;   // 0→1 across mid-to-treble range
+      hue = 180 - s * 27;          // 180 → 153
+      saturation = 100 - s * 20;   // 100 → 80
+      lightness = 50 + s * 17;     // 50 → 67
+    }
+
+    // In light mode, darken colors for contrast on light backgrounds
+    if (!isDarkMode) {
+      lightness = lightness * 0.55;
+      saturation = Math.min(100, saturation * 1.1);
+    }
+
+    return `hsla(${Math.round(hue)}, ${Math.round(saturation)}%, ${Math.round(lightness)}%, ${alpha})`;
   }
 } 

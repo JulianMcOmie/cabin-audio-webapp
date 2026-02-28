@@ -4,46 +4,6 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
-
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
-
-    --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-
-    --primary: 175 80% 40%;
-    --primary-foreground: 0 0% 98%;
-
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 175 80% 40%;
-
-    /* Custom theme colors */
-    --electric-blue: 175 80% 40%;
-    --electric-blue-light: 175 80% 90%;
-    --purple: 175 80% 40%;
-    --purple-light: 175 80% 90%;
-    --red: 175 80% 40%;
-    --red-light: 175 80% 90%;
-
-    --radius: 0.5rem;
-  }
-
-  .dark {
     --background: 240 10% 8%;
     --foreground: 0 0% 98%;
 
@@ -72,13 +32,15 @@
     --input: 240 3.7% 20%;
     --ring: 175 70% 50%;
 
-    /* Custom theme colors - dark mode */
+    /* Custom theme colors */
     --electric-blue: 175 70% 50%;
     --electric-blue-light: 175 70% 20%;
     --purple: 175 70% 50%;
     --purple-light: 175 70% 20%;
     --red: 175 70% 50%;
     --red-light: 175 70% 20%;
+
+    --radius: 0.5rem;
   }
 }
 
@@ -91,15 +53,22 @@
   }
 }
 
-/* Glassy player bar styles */
-.player-bar {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  border-top: 1px solid hsl(var(--border));
-  background-color: hsl(var(--background));
-  z-index: 50;
+/* Soundstage background variable */
+:root {
+  --soundstage-bg: #0a0a0f;
+}
+
+/* Glass panel - frosted glass effect */
+.glass-panel {
+  background: rgba(10, 10, 20, 0.6);
+  backdrop-filter: blur(24px) saturate(1.5);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Neon glow accent */
+.neon-glow {
+  box-shadow: 0 0 20px rgba(0, 255, 255, 0.2), 0 0 40px rgba(0, 255, 255, 0.08);
 }
 
 /* Theme utility classes */
@@ -253,14 +222,10 @@
   background-color: hsl(var(--background) / 0.9);
   padding: 8px;
   border-radius: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.dark .eq-toggle-container {
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
 }
 
 /* Player slider hover effects with gradients */
@@ -276,13 +241,32 @@
   background-size: 100% 100%;
 }
 
-/* Dark mode adjustments for frequency graph */
-.dark .frequency-graph {
-  background-color: hsl(var(--card));
-  border-color: hsl(var(--border));
+/* EQ highlight — gentle scale breathing, constant glow */
+@keyframes highlight-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+}
+.animate-highlight-breathe {
+  animation: highlight-breathe 1.2s ease-in-out infinite;
 }
 
-.dark .frequency-graph canvas {
-  filter: invert(0.1);
+/* Grid highlight — scale breathing on the glow overlay */
+@keyframes grid-glow-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.01); }
+}
+
+/* Grid highlight — dot size breathing for low-mode dots */
+@keyframes dot-highlight-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+}
+
+/* Frequency graph - frosted glass effect */
+.frequency-graph {
+  background: rgba(8, 10, 16, 0.45);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  border-color: rgba(255, 255, 255, 0.06);
 }
 

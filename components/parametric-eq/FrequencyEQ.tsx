@@ -61,6 +61,7 @@ export function updateAudio(
 const freqRange = { min: 20, max: 20000 }
 
 export function FrequencyEQ({ profileId, disabled = false, className, onInstructionChange, onRequestEnable }: FrequencyEQProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<CanvasWithMargin>(null)
   const backgroundCanvasRef = useRef<CanvasWithMargin>(null)
   // Add refs for animation frame and canvas context
@@ -463,27 +464,23 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     // Get canvas dimensions
     const rect = canvas.getBoundingClientRect();
 
-    // Define equal margins for all sides (increased for more compact visualization)
-    const margin = 40; // Increased from 30 to 40px
+    // Scale the inner padding with container size so internals stay proportional while resizing.
+    const margin = Math.max(28, Math.min(44, Math.round(Math.min(rect.width, rect.height) * 0.1)));
     
     // Store margins in a ref to access in other functions
     if (!canvasRef.current) return;
     (canvasRef.current as CanvasWithMargin).margin = margin;
 
-    // Clear canvas
+    // Clear canvas (fully transparent — glass panel backdrop-blur handles the frosted effect)
     ctx.clearRect(0, 0, rect.width, rect.height);
 
-    // Add semi-transparent background with even darker opacity
-    ctx.fillStyle = isDarkMode ? "rgba(5, 5, 8, 0.95)" : "rgba(230, 230, 230, 0.7)";
-    ctx.fillRect(0, 0, rect.width, rect.height);
-    
     // Draw a subtle border around the content area
-    ctx.strokeStyle = isDarkMode ? "rgba(80, 80, 100, 0.3)" : "rgba(200, 200, 200, 0.5)";
+    ctx.strokeStyle = isDarkMode ? "rgba(70, 75, 85, 0.3)" : "rgba(200, 200, 200, 0.5)";
     ctx.lineWidth = 1;
     ctx.strokeRect(margin, margin, rect.width - margin * 2, rect.height - margin * 2);
 
-    // Draw background grid (more faint)
-    ctx.strokeStyle = isDarkMode ? "rgba(63, 63, 92, 0.4)" : "rgba(226, 232, 240, 0.5)";
+    // Draw background grid (faint on transparent bg)
+    ctx.strokeStyle = isDarkMode ? "rgba(55, 60, 72, 0.22)" : "rgba(100, 100, 120, 0.2)";
     ctx.lineWidth = 1;
 
     // Define frequency points for logarithmic grid (in Hz)
@@ -537,8 +534,8 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     // Draw frequency labels
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    ctx.font = "10px sans-serif";
-    ctx.fillStyle = isDarkMode ? "#a1a1aa" : "#64748b";
+    ctx.font = "10px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+    ctx.fillStyle = isDarkMode ? "#9ca3af" : "#64748b";
     
     // Show more frequency labels for better reference
     const freqLabels = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
@@ -547,22 +544,11 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     for (const freq of freqLabels) {
       const x = margin + EQCoordinateUtils.freqToX(freq, rect.width - margin * 2, freqRange);
       const label = freq >= 1000 ? `${freq/1000}k` : `${freq}`;
-      
-      // Calculate text dimensions for background
-      const textWidth = ctx.measureText(label).width;
-      const textHeight = 12;
-      
-      // Draw label background
-      ctx.fillStyle = isDarkMode ? "rgba(15, 15, 25, 0.9)" : "rgba(245, 245, 245, 0.9)";
-      ctx.fillRect(
-        x - textWidth/2 - 2, 
-        labelY - 2, 
-        textWidth + 4, 
-        textHeight + 4
-      );
-      
-      // Draw label text
-      ctx.fillStyle = isDarkMode ? "#a1a1aa" : "#64748b";
+
+      // Draw label text with shadow for readability on transparent bg
+      ctx.fillStyle = isDarkMode ? "rgba(0, 0, 0, 0.6)" : "rgba(255, 255, 255, 0.6)";
+      ctx.fillText(label, x + 0.5, labelY + 0.5);
+      ctx.fillStyle = isDarkMode ? "#9ca3af" : "#64748b";
       ctx.fillText(label, x, labelY);
     }
 
@@ -574,24 +560,14 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       // Only show every 4dB label
       if (db % 4 === 0) {
         const y = margin + EQCoordinateUtils.gainToY(db, rect.height - margin * 2);
-        const label = `${db > 0 ? '+' : ''}${db}`; // Removed the "dB" suffix
-        
-        // Calculate text dimensions
-        const textWidth = ctx.measureText(label).width;
-        const textHeight = 12;
-        
-        // Draw label background
-        ctx.fillStyle = isDarkMode ? "rgba(15, 15, 25, 0.9)" : "rgba(245, 245, 245, 0.9)";
-        ctx.fillRect(
-          rect.width - margin + 5, 
-          y - textHeight/2 - 2, 
-          textWidth + 4, 
-          textHeight + 4
-        );
-        
-        // Draw label text
-        ctx.fillStyle = isDarkMode ? "#a1a1aa" : "#64748b";
-        ctx.fillText(label, rect.width - margin + 7, y);
+        const label = `${db > 0 ? '+' : ''}${db}`;
+        const labelX = rect.width - margin + 7;
+
+        // Draw label text with shadow for readability on transparent bg
+        ctx.fillStyle = isDarkMode ? "rgba(0, 0, 0, 0.6)" : "rgba(255, 255, 255, 0.6)";
+        ctx.fillText(label, labelX + 0.5, y + 0.5);
+        ctx.fillStyle = isDarkMode ? "#9ca3af" : "#64748b";
+        ctx.fillText(label, labelX, y);
       }
     }
 
@@ -793,9 +769,36 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     return () => window.removeEventListener('resize', handleResize);
   }, [setupCanvases]);
 
+  // Handle container resize (e.g., EQ overlay drag-resize) so internals track size continuously.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || typeof ResizeObserver === "undefined") return;
+
+    let rafId = 0;
+    const scheduleSetup = () => {
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        setupCanvases();
+      });
+    };
+
+    const observer = new ResizeObserver(() => {
+      scheduleSetup();
+    });
+    observer.observe(container);
+    scheduleSetup();
+
+    return () => {
+      observer.disconnect();
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [setupCanvases]);
+
   return (
     <div
-      className={`w-full aspect-[2/1] frequency-graph rounded-lg border dark:border-gray-700 overflow-hidden opacity-80 ${className || ""} relative`}
+      ref={containerRef}
+      className={`w-full h-full frequency-graph rounded-lg border overflow-hidden ${className || ""} relative`}
     >
       <canvas 
         ref={backgroundCanvasRef}
