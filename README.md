@@ -101,3 +101,4 @@ Open [http://localhost:3000](http://localhost:3000) to view the application.
 2. Drag and drop audio files or click to import
 3. Click on a track to play
 4. Use the player bar at the bottom for playback controls
+
