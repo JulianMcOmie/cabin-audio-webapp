@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { EQProfile } from '../models/EQProfile';
 import { SyncStatus } from '../models/SyncStatus';
 import * as indexedDBManager from '../storage/indexedDBManager';
+import { calculateAutoGainDb, dbToGain } from '../utils/audioMath';
 
 export const PROFILE_IDS = ['profile-1', 'profile-2', 'profile-3'] as const;
 
@@ -77,14 +78,16 @@ interface EQProfileState {
   isLoading: boolean;
   isEQEnabled: boolean;
   distortionGain: number;
-  
+  autoGainDb: number;
+  isAutoGainEnabled: boolean;
+
   // Actions
   addProfile: (profile: EQProfileWithDefault) => void;
   updateProfile: (profileId: string, updates: Partial<EQProfileWithDefault>) => void;
   deleteProfile: (profileId: string) => void;
   setActiveProfile: (profileId: string | null) => void;
   setEQEnabled: (enabled: boolean) => void;
-  setDistortionGain: (gain: number) => void;
+  setAutoGainEnabled: (enabled: boolean) => void;
   getProfiles: () => EQProfileWithDefault[];
   getProfileById: (profileId: string) => EQProfileWithDefault | undefined;
   getActiveProfile: () => EQProfileWithDefault | null;
@@ -116,17 +119,6 @@ const loadEQEnabledState = async (): Promise<boolean> => {
   }
 };
 
-// Helper to load distortion gain state from storage
-const loadDistortionGainState = async (): Promise<number> => {
-  try {
-    const state = await indexedDBManager.getItem<{gain: number}>(indexedDBManager.STORES.SYNC_STATE, 'distortionGain');
-    return state?.gain ?? 0.3; // Default to 0.3 (30%) if not found
-  } catch (error) {
-    console.error('Error loading distortion gain state:', error);
-    return 0.3; // Default to 0.3 on error
-  }
-};
-
 // Helper to load active profile ID from storage
 const loadActiveProfileId = async (): Promise<string | null> => {
   try {
@@ -138,26 +130,45 @@ const loadActiveProfileId = async (): Promise<string | null> => {
   }
 };
 
+// Cached OfflineAudioContext to avoid creating one per recalculateAutoGain call
+let _cachedOfflineCtx: OfflineAudioContext | null = null;
+function getOfflineAudioContext(): OfflineAudioContext {
+  if (!_cachedOfflineCtx) {
+    _cachedOfflineCtx = new OfflineAudioContext(1, 1, 44100);
+  }
+  return _cachedOfflineCtx;
+}
+
 export const useEQProfileStore = create<EQProfileState>((set, get) => {
   // Track initialization state
   let initialized = false;
   let initialLoadPromise: Promise<void> | null = null;
-  
+
+  // Recalculate auto-gain from the active profile's bands
+  const recalculateAutoGain = (bands: import('../models/EQBand').EQBand[]) => {
+    if (!get().isAutoGainEnabled) {
+      set({ autoGainDb: 0, distortionGain: 1.0 });
+      return;
+    }
+    if (typeof window === 'undefined' || typeof OfflineAudioContext === 'undefined') return;
+    const autoGainDb = calculateAutoGainDb(bands, getOfflineAudioContext());
+    set({ autoGainDb, distortionGain: dbToGain(autoGainDb) });
+  };
+
   // Define internal initialization function
   const initialize = () => {
     if (initialized || initialLoadPromise) return initialLoadPromise;
-    
+
     // Set loading state
     set({ isLoading: true });
-    
+
     // Load profiles from storage
     initialLoadPromise = Promise.all([
       loadProfilesFromStorage(),
       loadEQEnabledState(),
-      loadDistortionGainState(),
       loadActiveProfileId()
     ])
-      .then(async ([loadedProfiles, isEQEnabled, distortionGain, savedActiveProfileId]) => {
+      .then(async ([loadedProfiles, isEQEnabled, savedActiveProfileId]) => {
         const now = Date.now();
         let activeId = savedActiveProfileId;
 
@@ -213,9 +224,14 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
           profiles: loadedProfiles,
           activeProfileId: activeId,
           isEQEnabled,
-          distortionGain,
           isLoading: false,
         });
+
+        // Recalculate auto-gain for the active profile
+        const activeProfile = loadedProfiles[activeId!];
+        if (activeProfile) {
+          recalculateAutoGain(activeProfile.bands ?? []);
+        }
 
         // Persist active profile id
         setTimeout(() => {
@@ -243,7 +259,9 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
     activeProfileId: null,
     isLoading: true, // Initially loading
     isEQEnabled: false, // Default to disabled
-    distortionGain: 0.3, // Default to 30% volume reduction
+    distortionGain: 1.0, // No reduction when flat (derived from autoGainDb)
+    autoGainDb: 0, // No compensation when flat
+    isAutoGainEnabled: true,
     
     addProfile: (profile: EQProfileWithDefault) => {
       // Ensure dateCreated is set
@@ -284,31 +302,33 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
     },
     
     updateProfile: (profileId: string, updates: Partial<EQProfileWithDefault>) => {
-      set((state) => {
-        const profile = state.profiles[profileId];
-        if (!profile) return state;
-        
-        const updatedProfile = {
-          ...profile,
-          ...updates,
-          lastModified: Date.now(),
-          syncStatus: 'modified' as SyncStatus
-        };
-        
-        // Update local state
-        const newState = {
-          profiles: {
-            ...state.profiles,
-            [profileId]: updatedProfile
-          }
-        };
-        
-        // Persist to IndexedDB
-        indexedDBManager.updateItem(indexedDBManager.STORES.EQ_PROFILES, updatedProfile)
-          .catch(error => console.error('Failed to update EQ profile:', error));
-        
-        return newState;
+      const state = get();
+      const profile = state.profiles[profileId];
+      if (!profile) return;
+
+      const updatedProfile = {
+        ...profile,
+        ...updates,
+        lastModified: Date.now(),
+        syncStatus: 'modified' as SyncStatus
+      };
+
+      // Update local state
+      set({
+        profiles: {
+          ...state.profiles,
+          [profileId]: updatedProfile
+        }
       });
+
+      // Persist to IndexedDB
+      indexedDBManager.updateItem(indexedDBManager.STORES.EQ_PROFILES, updatedProfile)
+        .catch(error => console.error('Failed to update EQ profile:', error));
+
+      // Recalculate auto-gain if this is the active profile and bands changed
+      if (profileId === state.activeProfileId && 'bands' in updates) {
+        recalculateAutoGain(updatedProfile.bands ?? []);
+      }
     },
     
     deleteProfile: (profileId: string) => {
@@ -341,7 +361,11 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
     
     setActiveProfile: (profileId: string | null) => {
       set({ activeProfileId: profileId });
-      
+
+      // Recalculate auto-gain for the new active profile
+      const profile = profileId ? get().profiles[profileId] : null;
+      recalculateAutoGain(profile?.bands ?? []);
+
       // Always persist to IndexedDB, even if null (to clear previous value)
       indexedDBManager.updateItem(indexedDBManager.STORES.SYNC_STATE, {
         id: 'activeProfileId',
@@ -358,17 +382,14 @@ export const useEQProfileStore = create<EQProfileState>((set, get) => {
         enabled
       }).catch(error => console.error('Failed to save EQ enabled state:', error));
     },
-    
-    setDistortionGain: (gain: number) => {
-      set({ distortionGain: gain });
-      
-      // Persist to IndexedDB
-      indexedDBManager.updateItem(indexedDBManager.STORES.SYNC_STATE, {
-        id: 'distortionGain',
-        gain
-      }).catch(error => console.error('Failed to save distortion gain state:', error));
+
+    setAutoGainEnabled: (enabled: boolean) => {
+      set({ isAutoGainEnabled: enabled });
+      const { activeProfileId, profiles } = get();
+      const profile = activeProfileId ? profiles[activeProfileId] : null;
+      recalculateAutoGain(profile?.bands ?? []);
     },
-    
+
     getProfiles: () => {
       // Ensure profiles are loaded before returning
       if (!initialized && !initialLoadPromise) {

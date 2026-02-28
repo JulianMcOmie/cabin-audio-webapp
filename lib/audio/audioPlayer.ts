@@ -39,24 +39,22 @@ class AudioPlayer {
       // Get the EQ processor and connect through it
       const eq = eqProcessor.getEQProcessor();
       
-      // Connect nodes: gainNode -> distortionGainNode -> EQ -> destination
+      // Connect nodes: gainNode -> distortionGainNode -> EQ
+      // (EQ output → analyser → headroom → destination is handled by audioRouting)
       this.gainNode.connect(this.distortionGainNode!);
       this.distortionGainNode!.connect(eq.getInputNode());
-      
-      // Connect EQ output to destination
-      eq.getOutputNode().connect(audioContext.getAudioContext().destination);
       
       // Set up progress tracking
       this.setupProgressTracking();
       
-      // Apply initial distortion gain from store
-      const distortionGain = useEQProfileStore.getState().distortionGain;
-      this.setDistortionGain(distortionGain);
-      
-      // Subscribe to distortion gain changes
+      // Apply initial distortion gain from store (only when EQ is on)
+      const { distortionGain, isEQEnabled } = useEQProfileStore.getState();
+      this.setDistortionGain(isEQEnabled ? distortionGain : 1.0);
+
+      // Subscribe to distortion gain / EQ enabled changes
       useEQProfileStore.subscribe(
         (state) => {
-          this.setDistortionGain(state.distortionGain);
+          this.setDistortionGain(state.isEQEnabled ? state.distortionGain : 1.0);
         }
       );
       

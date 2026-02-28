@@ -11,6 +11,7 @@ import { getAudioRouting } from "@/lib/audio/audioRouting"
 import { cn } from "@/lib/utils"
 import * as fileStorage from "@/lib/storage/fileStorage"
 import Image from "next/image"
+import Link from "next/link"
 import type { HighlightTarget } from "@/components/top-overlay"
 import type { QualityLevel } from "@/components/unified-particle-scene"
 import { EQProfilePills } from "@/components/eq-profile-pills"
@@ -206,7 +207,7 @@ export function ControlPanel({ showEQOverlay, onToggleEQOverlay, onToggleLibrary
   const defaultCover = "/default_img_dark.jpg"
   const [coverImageUrl, setCoverImageUrl] = useState<string | null>(null)
   const [artistNameText, setArtistNameText] = useState<string>("Unknown Artist")
-  const bassDataRef = useBassReactive()
+  const { dataRef: bassDataRef, update: bassUpdate } = useBassReactive(isPlaying && quality !== "low")
   const playbarMotionRef = useRef<HTMLDivElement | null>(null)
   const shakePatternCacheRef = useRef<Map<number, MicroJerkPattern>>(new Map())
   const eqFftStrokePathRef = useRef<SVGPathElement | null>(null)
@@ -239,6 +240,7 @@ export function ControlPanel({ showEQOverlay, onToggleEQOverlay, onToggleLibrary
     const patternCache = shakePatternCacheRef.current
 
     const tick = () => {
+      bassUpdate()
       const bass = bassDataRef.current
       const magnitude = clamp01(Number.isFinite(bass.magnitude) ? bass.magnitude : 0)
       const transient = clamp01(Number.isFinite(bass.transient) ? bass.transient : 0)
@@ -283,7 +285,7 @@ export function ControlPanel({ showEQOverlay, onToggleEQOverlay, onToggleLibrary
         motionEl.style.transform = ""
       }
     }
-  }, [bassDataRef, isPlaying])
+  }, [bassDataRef, bassUpdate, isPlaying])
 
   useEffect(() => {
     if (error) showToast({ message: `Playback error: ${error}`, variant: "error" })
@@ -524,7 +526,7 @@ export function ControlPanel({ showEQOverlay, onToggleEQOverlay, onToggleLibrary
                     ? "dark:text-cyan-300 text-cyan-600 dark:bg-cyan-400/10 bg-cyan-500/10"
                     : "dark:text-white/80 text-black/70 dark:hover:bg-white/[0.08] hover:bg-black/[0.08]",
                   (!currentTrackId && !isTrackLoading) && "opacity-30 pointer-events-none",
-                  highlightTarget === "grid" && isPlaying && "animate-highlight-breathe dark:bg-cyan-400/30 bg-cyan-500/25 shadow-[0_0_16px_rgba(34,211,238,0.5),0_0_32px_rgba(34,211,238,0.25)]"
+                  highlightTarget === "grid" && isPlaying && "dark:bg-cyan-400/30 bg-cyan-500/25 dark:text-cyan-300 text-cyan-600 shadow-[0_0_16px_rgba(34,211,238,0.5)] animate-pause-highlight-breathe"
                 )}
                 onClick={isPlaying ? handlePause : handlePlay}
               >
@@ -642,6 +644,13 @@ export function ControlPanel({ showEQOverlay, onToggleEQOverlay, onToggleLibrary
                   EQ
                 </span>
               </button>
+              <div className="w-px h-4 dark:bg-white/10 bg-black/10 mx-0.5" />
+              <Link
+                href="/export"
+                className="text-[10px] font-medium dark:text-white/35 text-black/35 dark:hover:text-white/60 hover:text-black/60 hover:dark:bg-white/[0.05] hover:bg-black/[0.04] px-2 py-1 rounded-md transition-colors"
+              >
+                Export EQ
+              </Link>
             </div>
 
             {/* Volume */}

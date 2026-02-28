@@ -1,11 +1,51 @@
 "use client"
 
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useMemo } from "react"
 import { useDarkMode } from "@/lib/hooks/useDarkMode"
 import { getEQProcessor } from "@/lib/audio/eqProcessor"
 import { getAudioContext } from "@/lib/audio/audioContext"
 
 const BAR_COUNT = 64
+
+// Pre-compute per-bar color strings (dark + light) so we never allocate in the draw loop.
+function buildBarColors(isDarkMode: boolean) {
+  const full: string[] = []
+  const mid: string[] = []
+  const faint: string[] = []
+  for (let i = 0; i < BAR_COUNT; i++) {
+    const ft = i / (BAR_COUNT - 1)
+    let bh: number, bs: number, bl: number
+    if (isDarkMode) {
+      if (ft < 0.5) {
+        const u = ft * 2
+        bh = 227 + (180 - 227) * u
+        bs = 100
+        bl = 73 + (50 - 73) * u
+      } else {
+        const u = (ft - 0.5) * 2
+        bh = 180 + (150 - 180) * u
+        bs = 100
+        bl = 50 + (67 - 50) * u
+      }
+    } else {
+      if (ft < 0.5) {
+        const u = ft * 2
+        bh = 224 + (180 - 224) * u
+        bs = 50 + (100 - 50) * u
+        bl = 40 + (23 - 40) * u
+      } else {
+        const u = (ft - 0.5) * 2
+        bh = 180 + (152 - 180) * u
+        bs = 100 + (40 - 100) * u
+        bl = 23 + (33 - 23) * u
+      }
+    }
+    full.push(`hsla(${bh}, ${bs}%, ${bl}%, 0.9)`)
+    mid.push(`hsla(${bh}, ${bs}%, ${bl}%, 0.45)`)
+    faint.push(`hsla(${bh}, ${bs}%, ${bl}%, 0.08)`)
+  }
+  return { full, mid, faint }
+}
 
 export function SimpleFFT() {
   const isDarkMode = useDarkMode()
@@ -13,6 +53,9 @@ export function SimpleFFT() {
   const analyserRef = useRef<AnalyserNode | null>(null)
   const bufferRef = useRef<Float32Array | null>(null)
   const rafRef = useRef(0)
+
+  // Pre-compute color strings once when dark mode changes (not per frame)
+  const barColors = useMemo(() => buildBarColors(isDarkMode), [isDarkMode])
 
   // Create and connect a dedicated analyser node
   useEffect(() => {
@@ -63,6 +106,8 @@ export function SimpleFFT() {
     const canvas = canvasRef.current
     if (!canvas) return
 
+    const colors = barColors
+
     const draw = () => {
       const ctx = canvas.getContext("2d")
       if (!ctx) { rafRef.current = requestAnimationFrame(draw); return }
@@ -104,39 +149,11 @@ export function SimpleFFT() {
         const x = i * barW + gap / 2
         const y = h - barH
 
-        // Frequency-based color (bass=blue, mid=cyan, treble=green)
-        const ft = i / (BAR_COUNT - 1)
-        let bh: number, bs: number, bl: number
-        if (isDarkMode) {
-          if (ft < 0.5) {
-            const u = ft * 2
-            bh = 227 + (180 - 227) * u
-            bs = 100
-            bl = 73 + (50 - 73) * u
-          } else {
-            const u = (ft - 0.5) * 2
-            bh = 180 + (150 - 180) * u
-            bs = 100
-            bl = 50 + (67 - 50) * u
-          }
-        } else {
-          if (ft < 0.5) {
-            const u = ft * 2
-            bh = 224 + (180 - 224) * u
-            bs = 50 + (100 - 50) * u
-            bl = 40 + (23 - 40) * u
-          } else {
-            const u = (ft - 0.5) * 2
-            bh = 180 + (152 - 180) * u
-            bs = 100 + (40 - 100) * u
-            bl = 23 + (33 - 23) * u
-          }
-        }
-
+        // Use a gradient with pre-computed color strings (avoids per-frame allocation)
         const grad = ctx.createLinearGradient(x, h, x, y)
-        grad.addColorStop(0, `hsla(${bh}, ${bs}%, ${bl}%, 0.9)`)
-        grad.addColorStop(0.5, `hsla(${bh}, ${bs}%, ${bl}%, 0.45)`)
-        grad.addColorStop(1, `hsla(${bh}, ${bs}%, ${bl}%, 0.08)`)
+        grad.addColorStop(0, colors.full[i])
+        grad.addColorStop(0.5, colors.mid[i])
+        grad.addColorStop(1, colors.faint[i])
 
         ctx.fillStyle = grad
         ctx.beginPath()
@@ -150,7 +167,7 @@ export function SimpleFFT() {
 
     rafRef.current = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(rafRef.current)
-  }, [isDarkMode])
+  }, [barColors])
 
   return (
     <canvas

@@ -70,14 +70,14 @@ class ReferenceCalibrationAudio {
     // Initialize noise buffer
     this.generateNoiseBuffer();
     
-    // Apply initial distortion gain from store
-    const distortionGain = useEQProfileStore.getState().distortionGain;
-    this.setDistortionGain(distortionGain);
-    
-    // Subscribe to distortion gain changes from the store
+    // Apply initial distortion gain from store (only when EQ is on)
+    const { distortionGain, isEQEnabled } = useEQProfileStore.getState();
+    this.setDistortionGain(isEQEnabled ? distortionGain : 1.0);
+
+    // Subscribe to distortion gain / EQ enabled changes
     useEQProfileStore.subscribe(
       (state) => {
-        this.setDistortionGain(state.distortionGain);
+        this.setDistortionGain(state.isEQEnabled ? state.distortionGain : 1.0);
       }
     );
   }

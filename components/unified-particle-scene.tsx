@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useMemo, useCallback, useEffect } from "react"
+import { useRef, useMemo, useCallback, useEffect, useState } from "react"
 import { Canvas, useFrame, useThree, ThreeEvent } from "@react-three/fiber"
 import { EffectComposer, Bloom } from "@react-three/postprocessing"
 import * as THREE from "three"
@@ -142,6 +142,22 @@ const SOUNDSTAGE_VIZ_FIELD_TR_CUTOFF = 0.45
 const GRID_SPACING_MAX = 4.6
 const GRID_SPACING_SPAN = 24.0
 
+// ---------------------------------------------------------------------------
+// Cursor dot attraction constants
+// ---------------------------------------------------------------------------
+
+const CURSOR_ATTRACT_RADIUS = 3.5
+const CURSOR_ATTRACT_RADIUS_SQ = CURSOR_ATTRACT_RADIUS * CURSOR_ATTRACT_RADIUS
+const CURSOR_ATTRACT_FORCE = 280.0
+const CURSOR_ORBIT_FORCE = 12.0
+const CURSOR_RADIAL_OSCILLATION = 0.06
+const CURSOR_BREATH_FREQ = 2.5
+const CURSOR_ACTIVATION_RATE = 8.0
+const CURSOR_DEACTIVATION_RATE = 4.0
+const CURSOR_SPHERE_PARTICLE_COUNT = 300
+const CURSOR_SPHERE_RADIUS = 1.2
+const CURSOR_FALLBACK_FORCE = 40.0
+
 const TRANSITION_RATE_TO_VISUALIZER = 3.0
 const TRANSITION_RATE_TO_SOUNDSTAGE = 9.5
 
@@ -243,6 +259,10 @@ export interface UnifiedParticleSceneProps {
   onHoverDot: (key: string | null) => void
   quality?: QualityLevel
   highlightTarget?: HighlightTarget
+  onDragStateChange?: (isDragging: boolean) => void
+  cursorDotPosition?: { normalizedX: number; normalizedY: number } | null
+  onCursorDotMove?: (normalizedX: number, normalizedY: number) => void
+  onCursorDotEnd?: () => void
 }
 
 // ---------------------------------------------------------------------------
@@ -665,6 +685,68 @@ function buildHomePositions(
 }
 
 // ---------------------------------------------------------------------------
+// Cursor sphere template — Fibonacci lattice with tangent bases
+// ---------------------------------------------------------------------------
+
+interface CursorSphereTemplate {
+  normalX: Float32Array
+  normalY: Float32Array
+  normalZ: Float32Array
+  tangentAX: Float32Array
+  tangentAY: Float32Array
+  tangentAZ: Float32Array
+  tangentBX: Float32Array
+  tangentBY: Float32Array
+  tangentBZ: Float32Array
+}
+
+function buildCursorSphereTemplate(): CursorSphereTemplate {
+  const n = CURSOR_SPHERE_PARTICLE_COUNT
+  const normalX = new Float32Array(n)
+  const normalY = new Float32Array(n)
+  const normalZ = new Float32Array(n)
+  const tangentAX = new Float32Array(n)
+  const tangentAY = new Float32Array(n)
+  const tangentAZ = new Float32Array(n)
+  const tangentBX = new Float32Array(n)
+  const tangentBY = new Float32Array(n)
+  const tangentBZ = new Float32Array(n)
+
+  for (let i = 0; i < n; i++) {
+    const u = (i + 0.5) / n
+    const nz = 1 - 2 * u
+    const radial = Math.sqrt(Math.max(0, 1 - nz * nz))
+    const theta = i * GOLDEN_ANGLE
+    const nx = Math.cos(theta) * radial
+    const ny = Math.sin(theta) * radial
+    normalX[i] = nx
+    normalY[i] = ny
+    normalZ[i] = nz
+
+    // Tangent basis (same algorithm as buildHomePositions)
+    const refX = Math.abs(nz) > 0.96 ? 0 : 0
+    const refY = Math.abs(nz) > 0.96 ? 1 : 0
+    const refZ = Math.abs(nz) > 0.96 ? 0 : 1
+    let tax = refY * nz - refZ * ny
+    let tay = refZ * nx - refX * nz
+    let taz = refX * ny - refY * nx
+    const tLen = Math.hypot(tax, tay, taz) || 1
+    tax /= tLen
+    tay /= tLen
+    taz /= tLen
+    tangentAX[i] = tax
+    tangentAY[i] = tay
+    tangentAZ[i] = taz
+
+    tangentBX[i] = ny * taz - nz * tay
+    tangentBY[i] = nz * tax - nx * taz
+    tangentBZ[i] = nx * tay - ny * tax
+  }
+
+  return { normalX, normalY, normalZ, tangentAX, tangentAY, tangentAZ, tangentBX, tangentBY, tangentBZ }
+}
+
+// ---------------------------------------------------------------------------
 // InteractionPlane — adapted for XY plane with perspective camera
 // ---------------------------------------------------------------------------
 
@@ -677,6 +759,7 @@ function InteractionPlane({
   onDotDeselect,
   onHoverDot,
   disabled,
+  onDragStateChange,
 }: {
   gridRows: number
   gridCols: number
@@ -686,6 +769,7 @@ function InteractionPlane({
   onDotDeselect: (x: number, y: number) => void
   onHoverDot: (key: string | null) => void
   disabled: boolean
+  onDragStateChange?: (isDragging: boolean) => void
 }) {
   const planeWidth = (gridCols + 1) * gridSpacing
   const planeHeight = (gridRows + 1) * gridSpacing
@@ -729,8 +813,9 @@ function InteractionPlane({
       dragMode.current = selectedDots.has(key) ? "deselect" : "select"
       visited.current = new Set()
       applyToHit(hit.col, hit.row)
+      onDragStateChange?.(true)
     },
-    [resolveGrid, selectedDots, applyToHit, disabled]
+    [resolveGrid, selectedDots, applyToHit, disabled, onDragStateChange]
   )
 
   const handlePointerMove = useCallback(
@@ -751,13 +836,15 @@ function InteractionPlane({
   const handlePointerUp = useCallback(() => {
     dragMode.current = null
     visited.current.clear()
-  }, [])
+    onDragStateChange?.(false)
+  }, [onDragStateChange])
 
   const handlePointerLeave = useCallback(() => {
     dragMode.current = null
     visited.current.clear()
     onHoverDot(null)
-  }, [onHoverDot])
+    onDragStateChange?.(false)
+  }, [onHoverDot, onDragStateChange])
 
   return (
     <mesh
@@ -789,6 +876,8 @@ function UnifiedSceneContent({
   onHoverDot,
   isDarkMode,
   highlightTarget,
+  onDragStateChange,
+  cursorDotPosition,
 }: UnifiedParticleSceneProps & { isDarkMode: boolean }) {
   // Subscribe to isPlaying from the player store
   const isPlaying = usePlayerStore((s) => s.isPlaying)
@@ -821,9 +910,16 @@ function UnifiedSceneContent({
   const { tick: envelopeTick, getEnvelope } = useEnvelopeTracker(selectedDots, playingDotKey, beatIndex)
   const clockRef = useRef(0)
 
-  // FFT hooks — always enabled so we get data when playing starts
-  const { dataRef: fftDataRef, update: fftUpdate } = useStereoFFT(true)
-  const bassDataRef = useBassReactive()
+  // Cursor dot tracking
+  const cursorWorldRef = useRef({ x: 0, y: 0, active: false })
+  const cursorActivationRef = useRef(0)
+  const cursorSphereTemplate = useMemo(() => buildCursorSphereTemplate(), [])
+  const cursorSphereFlags = useMemo(() => new Uint8Array(TOTAL_PARTICLES), [])
+
+  // FFT hooks — only enabled when playing (or transitioning) to avoid idle overhead
+  const fftEnabled = isPlaying || transitionRef.current > 0.01
+  const { dataRef: fftDataRef, update: fftUpdate } = useStereoFFT(fftEnabled)
+  const { dataRef: bassDataRef, update: bassUpdate } = useBassReactive(fftEnabled)
 
   const timeRef = useRef(0)
   const smoothPan = useRef(new Float32Array(DISPLAY_BINS))
@@ -938,7 +1034,7 @@ function UnifiedSceneContent({
     material.needsUpdate = true
   }, [isDarkMode, material])
 
-  const { gl } = useThree()
+  const { gl, size } = useThree()
   useEffect(() => {
     gl.setClearColor(isDarkMode ? "#0a0a0f" : "#f0f0f5")
   }, [isDarkMode, gl])
@@ -1001,8 +1097,9 @@ function UnifiedSceneContent({
     clockRef.current += dt * 1000
     envelopeTick(clockRef.current)
 
-    // FFT update
+    // FFT + bass update
     fftUpdate()
+    bassUpdate()
     const fft = fftDataRef.current
 
     // Blending mode
@@ -1279,8 +1376,39 @@ function UnifiedSceneContent({
     }
 
     // ---------------------------------------------------------------------------
+    // Cursor dot → world position conversion
+    // ---------------------------------------------------------------------------
+    const cursorPos = cursorDotPosition
+    if (cursorPos) {
+      // Camera: fov=50, z=20 → halfH = tan(25°) * 20
+      const halfH = Math.tan(25 * Math.PI / 180) * 20 // ≈ 9.326
+      const aspect = size.width / size.height
+      cursorWorldRef.current.x = (cursorPos.normalizedX * 2 - 1) * halfH * aspect
+      cursorWorldRef.current.y = (cursorPos.normalizedY * 2 - 1) * halfH
+      cursorWorldRef.current.active = true
+    } else {
+      cursorWorldRef.current.active = false
+    }
+
+    // Smooth cursor activation
+    const cursorTarget = cursorWorldRef.current.active ? 1 : 0
+    const cursorRate = cursorTarget > cursorActivationRef.current
+      ? CURSOR_ACTIVATION_RATE
+      : CURSOR_DEACTIVATION_RATE
+    cursorActivationRef.current += (cursorTarget - cursorActivationRef.current) * (1 - Math.exp(-cursorRate * dt))
+    if (Math.abs(cursorActivationRef.current - cursorTarget) < 0.001) {
+      cursorActivationRef.current = cursorTarget
+    }
+    const cursorActivation = cursorActivationRef.current
+    const cursorWX = cursorWorldRef.current.x
+    const cursorWY = cursorWorldRef.current.y
+
+    // ---------------------------------------------------------------------------
     // Per-particle update
     // ---------------------------------------------------------------------------
+
+    let cursorSphereSlot = 0
+    cursorSphereFlags.fill(0)
 
     for (let i = 0; i < TOTAL_PARTICLES; i++) {
       const i3 = i * 3
@@ -1347,7 +1475,14 @@ function UnifiedSceneContent({
           // Hover amplifies breathing/orbit for both selected and unselected dots
           const hoverMult = isDotHovered ? 1.6 : 1
 
-          const radius = homeRadius[i] * (isPlaying ? 1 : soundstageDeploy)
+          let radius = homeRadius[i] * (isPlaying ? 1 : soundstageDeploy)
+
+          // Grid highlight: oscillate sphere radius with 1.2s ease-in-out cycle
+          // matching the low-graphics-mode dot-highlight-breathe animation
+          if (highlightTarget === "grid" && !isPlaying) {
+            const breathe = 0.5 + 0.5 * Math.sin(t * Math.PI * 2 / 1.2 - Math.PI / 2)
+            radius *= 1.0 + 2.5 * breathe
+          }
           const radialPulse = 1 + GRID_HOVER_RADIAL_BREATH * hoverMult * Math.sin(t * GRID_HOVER_BREATH_FREQ * hoverMult + ph * 1.37)
           const orbitPhase = t * GRID_HOVER_ORBIT_SPEED * hoverMult + ph
           const tangentSway = radius * GRID_HOVER_TANGENT_SWAY * hoverMult * (isPlaying ? 1 : soundstageDeploy)
@@ -1391,9 +1526,65 @@ function UnifiedSceneContent({
         const homeDist = Math.sqrt(dx * dx + dy * dy + dz * dz)
         gridCoalesceBoost = clamp01((homeDist - GRID_COALESCE_DEADZONE) / GRID_COALESCE_BOOST_DISTANCE)
         const springK = (GRID_SPRING_K + GRID_COALESCE_SPRING_BOOST * gridCoalesceBoost) * soundstageSettleMult
-        vx += dx * springK * gridWeight * dt
-        vy += dy * springK * gridWeight * dt
-        vz += dz * springK * gridWeight * dt
+        // Weaken grid spring for particles claimed by cursor sphere (previous frame flag)
+        const cursorGridScale = cursorSphereFlags[i] === 1 ? (1 - cursorActivation) : 1
+        vx += dx * springK * gridWeight * cursorGridScale * dt
+        vy += dy * springK * gridWeight * cursorGridScale * dt
+        vz += dz * springK * gridWeight * cursorGridScale * dt
+      }
+
+      // -----------------------------------------------------------------------
+      // CURSOR SPHERE FORMATION — particles form 3D Fibonacci sphere at cursor
+      // -----------------------------------------------------------------------
+      if (cursorActivation > 0.001 && !isPlaying) {
+        const cdx = x - cursorWX
+        const cdy = y - cursorWY
+        const cdistSq = cdx * cdx + cdy * cdy
+
+        if (cdistSq < CURSOR_ATTRACT_RADIUS_SQ) {
+          if (cursorSphereSlot < CURSOR_SPHERE_PARTICLE_COUNT) {
+            // Assign this particle a slot on the Fibonacci sphere
+            const slot = cursorSphereSlot++
+            cursorSphereFlags[i] = 1
+
+            const tmpl = cursorSphereTemplate
+            const breathScale = 1 + CURSOR_RADIAL_OSCILLATION * Math.sin(t * CURSOR_BREATH_FREQ + ph * 3.7)
+            const r = CURSOR_SPHERE_RADIUS * breathScale
+
+            // Target position on sphere centered at cursor
+            const tx = cursorWX + tmpl.normalX[slot] * r
+            const ty = cursorWY + tmpl.normalY[slot] * r
+            const tz = tmpl.normalZ[slot] * r
+
+            // Spring force toward sphere slot
+            const sdx = tx - x
+            const sdy = ty - y
+            const sdz = tz - z
+            const springF = CURSOR_ATTRACT_FORCE * cursorActivation * dt
+            vx += sdx * springF
+            vy += sdy * springF
+            vz += sdz * springF
+
+            // Orbital sway — tangential motion for living feel
+            const orbitPhase = t * GRID_HOVER_ORBIT_SPEED * 1.3 + ph
+            const swayS = Math.sin(orbitPhase)
+            const swayC = Math.cos(orbitPhase * 1.13)
+            const swayStrength = CURSOR_ORBIT_FORCE * cursorActivation * dt
+            vx += (tmpl.tangentAX[slot] * swayS + tmpl.tangentBX[slot] * swayC) * swayStrength
+            vy += (tmpl.tangentAY[slot] * swayS + tmpl.tangentBY[slot] * swayC) * swayStrength
+            vz += (tmpl.tangentAZ[slot] * swayS + tmpl.tangentBZ[slot] * swayC) * swayStrength
+          } else {
+            // Beyond sphere capacity: gentle fallback attraction
+            const cdist = Math.sqrt(cdistSq)
+            const invDist = cdist > 0.001 ? 1 / cdist : 0
+            const falloffT = cdist / CURSOR_ATTRACT_RADIUS
+            const influence = (1 - falloffT * falloffT) * cursorActivation
+            const pullF = CURSOR_FALLBACK_FORCE * influence * dt
+            vx += -cdx * invDist * pullF
+            vy += -cdy * invDist * pullF
+            vz += -z * 4.0 * influence * dt
+          }
+        }
       }
 
       // -----------------------------------------------------------------------
@@ -1789,21 +1980,54 @@ function UnifiedSceneContent({
         ssSize = 0.09
       }
 
-      // Grid highlight: boost size + brightness + spread positions when hovering "grid tool"
+      // Grid highlight: boost size + brightness when hovering "grid tool"
+      // (position oscillation is handled in the grid spring section above)
       if (highlightTarget === "grid" && !isPlaying) {
         const sinVal = 0.5 + 0.5 * Math.sin(t * Math.PI * 2 / 1.2)
         const sizeBreathe = 1.0 + 0.6 * sinVal
-        const posBreathe = 1.0 + 2.0 * sinVal // 1x–3x position spread
         ssSize *= sizeBreathe
         ssOpacity = Math.min(1, ssOpacity * 1.4)
         // Push colors toward bright frequency colors
         ssR = ssR + (brightR - ssR) * 0.35
         ssG = ssG + (brightG - ssG) * 0.35
         ssB = ssB + (brightB - ssB) * 0.35
-        // Scale positions outward from center
-        positions[i3] *= posBreathe
-        positions[i3 + 1] *= posBreathe
-        positions[i3 + 2] *= posBreathe
+      }
+
+      // Cursor dot: blend color, boost size + opacity for nearby particles
+      if (cursorActivation > 0.001 && !isPlaying) {
+        const cdx = x - cursorWX
+        const cdy = y - cursorWY
+        const cdistSq = cdx * cdx + cdy * cdy
+
+        if (cdistSq < CURSOR_ATTRACT_RADIUS_SQ) {
+          const falloffT = cdistSq / CURSOR_ATTRACT_RADIUS_SQ
+          const cursorInfluence = (1 - falloffT) * cursorActivation
+
+          // Frequency-based cursor color (same palette as visualizer)
+          const cursorNY = clamp01((cursorWY - Y_MIN) / WORLD_H)
+          let curR: number, curG: number, curB: number
+          if (cursorNY < 0.5) {
+            const u = cursorNY * 2
+            curR = bass.r + (mid.r - bass.r) * u
+            curG = bass.g + (mid.g - bass.g) * u
+            curB = bass.b + (mid.b - bass.b) * u
+          } else {
+            const u = (cursorNY - 0.5) * 2
+            curR = mid.r + (treble.r - mid.r) * u
+            curG = mid.g + (treble.g - mid.g) * u
+            curB = mid.b + (treble.b - mid.b) * u
+          }
+
+          // Blend toward cursor color
+          const colorBlend = cursorInfluence * 0.85
+          ssR = ssR + (curR - ssR) * colorBlend
+          ssG = ssG + (curG - ssG) * colorBlend
+          ssB = ssB + (curB - ssB) * colorBlend
+
+          // Boost size and opacity
+          ssSize *= 1 + cursorInfluence * 1.8
+          ssOpacity = Math.min(1, ssOpacity + cursorInfluence * 0.55)
+        }
       }
 
       // Lerp between soundstage and visualizer
@@ -1836,6 +2060,7 @@ function UnifiedSceneContent({
         onDotDeselect={onDotDeselect}
         onHoverDot={onHoverDot}
         disabled={isPlaying}
+        onDragStateChange={onDragStateChange}
       />
     </>
   )
@@ -1844,6 +2069,63 @@ function UnifiedSceneContent({
 // ---------------------------------------------------------------------------
 // Main export
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Cursor dot overlay — event capture only (visual handled by particle system)
+// ---------------------------------------------------------------------------
+function CursorDotOverlay({
+  onCursorDotMove,
+  onCursorDotEnd,
+}: {
+  onCursorDotMove?: (normalizedX: number, normalizedY: number) => void
+  onCursorDotEnd?: () => void
+}) {
+  const [metaHeld, setMetaHeld] = useState(false)
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Meta") setMetaHeld(true)
+    }
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === "Meta") setMetaHeld(false)
+    }
+    const handleBlur = () => setMetaHeld(false)
+    window.addEventListener("keydown", handleKeyDown)
+    window.addEventListener("keyup", handleKeyUp)
+    window.addEventListener("blur", handleBlur)
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown)
+      window.removeEventListener("keyup", handleKeyUp)
+      window.removeEventListener("blur", handleBlur)
+    }
+  }, [])
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!onCursorDotMove) return
+      const rect = e.currentTarget.getBoundingClientRect()
+      const normalizedX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+      const normalizedY = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top) / rect.height))
+      onCursorDotMove(normalizedX, normalizedY)
+    },
+    [onCursorDotMove],
+  )
+
+  const handlePointerLeave = useCallback(() => {
+    onCursorDotEnd?.()
+  }, [onCursorDotEnd])
+
+  if (!metaHeld) return null
+
+  return (
+    <div
+      className="absolute inset-0"
+      style={{ pointerEvents: "auto", zIndex: 50 }}
+      onPointerMove={handlePointerMove}
+      onPointerLeave={handlePointerLeave}
+    />
+  )
+}
 
 export function UnifiedParticleScene(props: UnifiedParticleSceneProps) {
   const isDarkMode = useDarkMode()
@@ -1863,6 +2145,10 @@ export function UnifiedParticleScene(props: UnifiedParticleSceneProps) {
         hoveredDot={props.hoveredDot}
         onHoverDot={props.onHoverDot}
         highlightGrid={props.highlightTarget === "grid"}
+        onDragStateChange={props.onDragStateChange}
+        cursorDotPosition={props.cursorDotPosition}
+        onCursorDotMove={props.onCursorDotMove}
+        onCursorDotEnd={props.onCursorDotEnd}
       />
     )
   }
@@ -1896,6 +2182,8 @@ export function UnifiedParticleScene(props: UnifiedParticleSceneProps) {
           onHoverDot={props.onHoverDot}
           isDarkMode={isDarkMode}
           highlightTarget={props.highlightTarget}
+          onDragStateChange={props.onDragStateChange}
+          cursorDotPosition={props.cursorDotPosition}
         />
         <EffectComposer>
           <Bloom
@@ -1906,6 +2194,10 @@ export function UnifiedParticleScene(props: UnifiedParticleSceneProps) {
           />
         </EffectComposer>
       </Canvas>
+      <CursorDotOverlay
+        onCursorDotMove={props.onCursorDotMove}
+        onCursorDotEnd={props.onCursorDotEnd}
+      />
     </div>
   )
 }

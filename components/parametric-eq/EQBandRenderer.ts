@@ -266,6 +266,48 @@ export class EQBandRenderer {
   }
 
   /**
+   * Draw a dashed selection ring around a selected band handle
+   */
+  static drawSelectionRing(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    isDarkMode: boolean
+  ): void {
+    const radius = 12;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = isDarkMode ? 'rgba(255, 255, 255, 0.7)' : 'rgba(0, 0, 0, 0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  /**
+   * Draw a marquee selection rectangle
+   */
+  static drawMarqueeRect(
+    ctx: CanvasRenderingContext2D,
+    rect: { x: number; y: number; width: number; height: number },
+    isDarkMode: boolean
+  ): void {
+    ctx.save();
+    // Semi-transparent fill
+    ctx.fillStyle = isDarkMode ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)';
+    ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+    // Dashed border
+    ctx.strokeStyle = isDarkMode ? 'rgba(255, 255, 255, 0.4)' : 'rgba(0, 0, 0, 0.35)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5, 4]);
+    ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  /**
    * Check if point is inside the volume control dot
    */
   static isInVolumeControl(x: number, y: number, width: number, height: number, volume: number, xOffset: number = 0, yOffset: number = 0): boolean {

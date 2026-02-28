@@ -1204,6 +1204,95 @@ class PositionedAudioService {
     });
   }
 
+  public addPointNormalized(id: string, normalizedX: number, normalizedY: number, volumeLevel: number = 3): void {
+    if (this.audioPoints.has(id)) {
+      console.warn(`Audio point with id ${id} already exists.`);
+      return;
+    }
+
+    const panPosition = 2 * normalizedX - 1;
+
+    const mainGain = this.ctx.createGain();
+    const volumeLevelGain = this.ctx.createGain();
+    volumeLevelGain.gain.value = this.calculateVolumeLevelGain(volumeLevel);
+    const envelopeGain = this.ctx.createGain();
+    envelopeGain.gain.value = ENVELOPE_MAX_GAIN * 0.8;
+    const panner = this.ctx.createStereoPanner();
+    panner.pan.value = panPosition;
+
+    let slopedNoiseGenerator: SlopedPinkNoiseGenerator | null = null;
+    let bandpassedNoiseGenerator: BandpassedNoiseGenerator | null = null;
+    let sineToneGenerator: SineToneGenerator | null = null;
+    const pinkNoiseBuffer: AudioBuffer = this._generateSinglePinkNoiseBuffer();
+
+    const source = this.ctx.createBufferSource();
+    source.buffer = pinkNoiseBuffer;
+
+    if (this.currentSoundMode === SoundMode.BandpassedNoise) {
+      source.loop = true;
+      bandpassedNoiseGenerator = new BandpassedNoiseGenerator(this.ctx);
+      bandpassedNoiseGenerator.setBandpassBandwidth(this.currentBandwidth);
+      source.connect(bandpassedNoiseGenerator.getInputNode());
+      bandpassedNoiseGenerator.getOutputNode().connect(mainGain);
+      source.start();
+    } else if (this.currentSoundMode === SoundMode.SineTone) {
+      sineToneGenerator = new SineToneGenerator(this.ctx);
+      sineToneGenerator.getOutputNode().connect(mainGain);
+    } else {
+      source.loop = true;
+      slopedNoiseGenerator = new SlopedPinkNoiseGenerator(this.ctx);
+      source.connect(slopedNoiseGenerator.getInputNode());
+      slopedNoiseGenerator.getOutputNode().connect(mainGain);
+      source.start();
+    }
+
+    mainGain.connect(volumeLevelGain);
+
+    const voicePool: Voice[] = [];
+    for (let i = 0; i < VOICE_POOL_SIZE; i++) {
+      const voiceEnvelope = this.ctx.createGain();
+      voiceEnvelope.gain.value = 0;
+      volumeLevelGain.connect(voiceEnvelope);
+      voiceEnvelope.connect(panner);
+      voicePool.push({
+        envelopeGain: voiceEnvelope,
+        releaseEndTime: 0
+      });
+    }
+
+    volumeLevelGain.connect(envelopeGain);
+    envelopeGain.connect(panner);
+    panner.connect(this.outputGain);
+
+    this.audioPoints.set(id, {
+      source,
+      mainGain,
+      volumeLevelGain,
+      envelopeGain,
+      panner,
+      slopedNoiseGenerator,
+      bandpassedNoiseGenerator,
+      sineToneGenerator,
+      pinkNoiseBuffer,
+      normalizedYPos: normalizedY,
+      normalizedXPos: normalizedX,
+      subHitCount: 0,
+      subHitTimerId: null,
+      volumeLevel,
+      voicePool,
+    });
+  }
+
+  public updatePointPosition(id: string, normalizedX: number, normalizedY: number): void {
+    const point = this.audioPoints.get(id);
+    if (!point) return;
+
+    point.normalizedXPos = normalizedX;
+    point.normalizedYPos = normalizedY;
+    point.panner.pan.setValueAtTime(2 * normalizedX - 1, this.ctx.currentTime);
+    this.setMainGainAndSlope(point);
+  }
+
   public removePoint(id: string): void {
     const point = this.audioPoints.get(id);
     if (!point) return;
@@ -1530,6 +1619,12 @@ class DotGridAudioPlayer {
   private stopbandOnTimeoutId: number | null = null; // Timeout to turn the silent dot back on
   private stopbandCurrentFlash: number = 0; // Current flash number (0-based) for the current dot
 
+  // Cursor play state
+  private cursorPlayActive: boolean = false;
+  private cursorPlayPointId: string = '__cursor__';
+  private cursorPlayTimeoutId: number | null = null;
+  private wasPlayingBeforeCursor: boolean = false;
+
   // Loop sequencer mode state
   private loopSequencerTimeoutId: number | null = null; // For loop sequencer iteration timeout
   private loopSequencerVisualDotKeys: string[] = [];
@@ -1545,12 +1640,12 @@ class DotGridAudioPlayer {
   private constructor() {
     this.audioService = new PositionedAudioService(audioContext.getAudioContext());
     
-    const initialDistortionGain = useEQProfileStore.getState().distortionGain;
-    this.audioService.setDistortion(initialDistortionGain);
-    
+    const { distortionGain: initialDistortionGain, isEQEnabled: initialEQEnabled } = useEQProfileStore.getState();
+    this.audioService.setDistortion(initialEQEnabled ? initialDistortionGain : 1.0);
+
     useEQProfileStore.subscribe(
       (state) => {
-        this.audioService.setDistortion(state.distortionGain);
+        this.audioService.setDistortion(state.isEQEnabled ? state.distortionGain : 1.0);
       }
     );
   }
@@ -2280,6 +2375,77 @@ class DotGridAudioPlayer {
       clearTimeout(this.loopSequencerTimeoutId);
       this.loopSequencerTimeoutId = null;
     }
+  }
+
+  /**
+   * Start cursor play mode — creates an audio point at the cursor position
+   * and begins a hit loop. Pauses normal sequencer playback.
+   */
+  public startCursorPlay(normalizedX: number, normalizedY: number): void {
+    if (this.cursorPlayActive) return;
+
+    this.wasPlayingBeforeCursor = this.isPlaying;
+
+    // Pause normal sequencer without deactivating — we just stop scheduling new hits
+    this.stopLoopSequencerInternalCleanup();
+    this.audioService.deactivateAllPoints();
+
+    // Create cursor audio point
+    this.audioService.addPointNormalized(this.cursorPlayPointId, normalizedX, normalizedY);
+    this.cursorPlayActive = true;
+
+    // Start the cursor hit loop
+    this.scheduleCursorHit();
+  }
+
+  /**
+   * Update cursor position during cursor play
+   */
+  public updateCursorPosition(normalizedX: number, normalizedY: number): void {
+    if (!this.cursorPlayActive) return;
+    this.audioService.updatePointPosition(this.cursorPlayPointId, normalizedX, normalizedY);
+  }
+
+  /**
+   * Stop cursor play mode — removes cursor audio point and resumes normal playback
+   */
+  public stopCursorPlay(): void {
+    if (!this.cursorPlayActive) return;
+
+    // Clear cursor hit timeout
+    if (this.cursorPlayTimeoutId !== null) {
+      clearTimeout(this.cursorPlayTimeoutId);
+      this.cursorPlayTimeoutId = null;
+    }
+
+    this.cursorPlayActive = false;
+
+    // Remove cursor audio point
+    this.audioService.removePoint(this.cursorPlayPointId);
+
+    // Resume normal playback if it was playing before and there are active dots
+    if (this.wasPlayingBeforeCursor && this.activeDotKeys.size > 0 && this.isLoopSequencerMode()) {
+      this.startLoopSequencer();
+    }
+  }
+
+  /**
+   * Schedule a single cursor hit and recurse
+   */
+  private scheduleCursorHit(): void {
+    if (!this.cursorPlayActive) return;
+
+    const hitRate = this.audioService.getHitModeRate();
+    const attackTime = this.audioService.getHitModeAttack();
+    const releaseTime = this.audioService.getHitModeRelease();
+    const hitInterval = 1 / hitRate;
+
+    const currentTime = audioContext.getAudioContext().currentTime;
+    this.audioService.schedulePointHit(this.cursorPlayPointId, currentTime, attackTime, releaseTime, 1.0);
+
+    this.cursorPlayTimeoutId = window.setTimeout(() => {
+      this.scheduleCursorHit();
+    }, hitInterval * 1000);
   }
 
   /**

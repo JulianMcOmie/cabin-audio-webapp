@@ -72,7 +72,7 @@ export function TopOverlay({ quality, onQualityChange, onHighlightTarget }: TopO
   const [learnMoreOpen, setLearnMoreOpen] = useState(false)
 
   return (
-    <div className="absolute top-0 left-0 right-0 z-20 pointer-events-none">
+    <div className="absolute top-0 left-0 right-0 z-[60] pointer-events-none">
       <div className="flex items-center justify-between px-5 py-4">
         <h1 className="text-lg font-semibold text-white/90 drop-shadow-sm select-none pointer-events-none">
           Cabin Audio
@@ -189,13 +189,16 @@ export function TopOverlay({ quality, onQualityChange, onHighlightTarget }: TopO
                 >
                   <div className="space-y-3 text-xs leading-relaxed text-white/50">
                     <p>
-                      <span className="text-white/70 font-medium">Soundstage</span> is how spread out and spatially defined different instruments sound during a song. The grid simulates this &mdash; each position is like an instrument at a different spot in space.
+                      <span className="text-white/70 font-medium">Soundstage</span> is a property of your sound system &mdash; the range and clarity of spatial positions it can render. Instruments in a song each sit at different positions within that space. The grid simulates this &mdash; each position plays a sound at a different spot in that space.
                     </p>
                     <p>
                       Your results depend on your headphones/speakers and the shape of your ears (called <span className="text-white/70 font-medium">HRTF</span>). There&apos;s no single &ldquo;right&rdquo; EQ &mdash; experiment to find what sounds most defined to you.
                     </p>
                     <p>
                       Try a large bass boost, a large high-end boost, an upper midrange dip, and sharp narrow peaks and dips in the ultra high end. These can correspond to HRTF cues for spatial positioning and elevation. Select a single position to hear exactly how your changes affect it.
+                    </p>
+                    <p>
+                      Changing your soundstage can improve clarity, impact, speed, and musicality &mdash; but can come at the cost of timbre. I hope this tool helps people hear and improve their soundstage if they want, and I&apos;m curious whether people enjoy the tradeoff. I also hope someone finds the best way to use it.
                     </p>
                   </div>
                 </div>

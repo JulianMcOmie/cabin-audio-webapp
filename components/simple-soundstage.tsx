@@ -64,6 +64,10 @@ interface SimpleSoundstageProps {
   hoveredDot: string | null
   onHoverDot: (key: string | null) => void
   highlightGrid?: boolean
+  onDragStateChange?: (isDragging: boolean) => void
+  cursorDotPosition?: { normalizedX: number; normalizedY: number } | null
+  onCursorDotMove?: (normalizedX: number, normalizedY: number) => void
+  onCursorDotEnd?: () => void
 }
 
 const FADE_MS = 500
@@ -78,6 +82,10 @@ export function SimpleSoundstage({
   hoveredDot,
   onHoverDot,
   highlightGrid,
+  onDragStateChange,
+  cursorDotPosition,
+  onCursorDotMove,
+  onCursorDotEnd,
 }: SimpleSoundstageProps) {
   const isDarkMode = useDarkMode()
   const isSongPlaying = usePlayerStore((s) => s.isPlaying)
@@ -180,13 +188,29 @@ export function SimpleSoundstage({
       dragMode.current = selectedDots.has(key) ? "deselect" : "select"
       visited.current = new Set()
       applyToHit(hit.col, hit.row)
+      onDragStateChange?.(true)
       ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     },
-    [resolveGrid, selectedDots, applyToHit, interactionDisabled]
+    [resolveGrid, selectedDots, applyToHit, interactionDisabled, onDragStateChange]
   )
 
   const handlePointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      // Command-key cursor dot mode
+      if (e.metaKey && onCursorDotMove) {
+        const rect = e.currentTarget.getBoundingClientRect()
+        const pad = 32 // 2rem padding
+        const innerW = rect.width - pad * 2
+        const innerH = rect.height - pad * 2
+        const x = e.clientX - rect.left - pad
+        const y = e.clientY - rect.top - pad
+        const normalizedX = Math.max(0, Math.min(1, x / innerW))
+        // Invert Y: top of container = high frequency (normalizedY=1)
+        const normalizedY = Math.max(0, Math.min(1, 1 - y / innerH))
+        onCursorDotMove(normalizedX, normalizedY)
+        return
+      }
+
       const hit = resolveGrid(e)
       if (interactionDisabled) {
         onHoverDot(null)
@@ -197,19 +221,22 @@ export function SimpleSoundstage({
         applyToHit(hit.col, hit.row)
       }
     },
-    [resolveGrid, onHoverDot, applyToHit, interactionDisabled]
+    [resolveGrid, onHoverDot, applyToHit, interactionDisabled, onCursorDotMove]
   )
 
   const handlePointerUp = useCallback(() => {
     dragMode.current = null
     visited.current.clear()
-  }, [])
+    onDragStateChange?.(false)
+  }, [onDragStateChange])
 
   const handlePointerLeave = useCallback(() => {
     dragMode.current = null
     visited.current.clear()
     onHoverDot(null)
-  }, [onHoverDot])
+    onDragStateChange?.(false)
+    onCursorDotEnd?.()
+  }, [onHoverDot, onDragStateChange, onCursorDotEnd])
 
   // ---- Measure container to compute cell-relative dot sizes ----
   const containerRef = useRef<HTMLDivElement>(null)
@@ -331,6 +358,41 @@ export function SimpleSoundstage({
       >
         <SimpleFFT />
       </div>
+
+      {/* Cursor dot overlay — rendered above everything, even during FFT transition */}
+      {cursorDotPosition && containerRef.current && (() => {
+        const rect = containerRef.current!.getBoundingClientRect()
+        const pad = 32
+        const innerW = rect.width - pad * 2
+        const innerH = rect.height - pad * 2
+        // Convert normalized position to pixel position within the padded area
+        const pixelX = pad + cursorDotPosition.normalizedX * innerW
+        // Invert Y back: normalizedY=1 is top of container
+        const pixelY = pad + (1 - cursorDotPosition.normalizedY) * innerH
+
+        // Color based on Y position (use continuous value, not grid-snapped)
+        const { hsl, glowHsl } = getDotColor(
+          cursorDotPosition.normalizedY * (gridRows - 1),
+          gridRows,
+          isDarkMode
+        )
+
+        return (
+          <div
+            className="absolute pointer-events-none z-30"
+            style={{
+              left: pixelX,
+              top: pixelY,
+              width: dotSize,
+              height: dotSize,
+              transform: "translate(-50%, -50%)",
+              borderRadius: "50%",
+              backgroundColor: hsl,
+              boxShadow: `0 0 18px ${glowHsl}, 0 0 36px ${glowHsl}`,
+            }}
+          />
+        )
+      })()}
     </div>
   )
 }

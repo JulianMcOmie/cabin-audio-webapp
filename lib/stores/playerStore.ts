@@ -13,8 +13,8 @@ const persistLastPlayedTrackId = (trackId: string | null) => {
     if (trackId) {
       window.localStorage.setItem(LAST_PLAYED_TRACK_STORAGE_KEY, trackId);
     }
-  } catch (error) {
-    console.error('🔊 Failed to persist last played track ID:', error);
+  } catch {
+    // ignore storage errors
   }
 };
 
@@ -28,7 +28,7 @@ interface PlayerState {
   loadingState: 'idle' | 'loading' | 'decoding' | 'ready' | 'error';
   loadingProgress: number; // 0-100 percentage for tracking file loading
   error: string | null;
-  
+
   // Actions
   setCurrentTrack: (trackId: string | null, autoPlay?: boolean) => void;
   setIsPlaying: (isPlaying: boolean) => void;
@@ -53,100 +53,87 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   loadingState: 'idle',
   loadingProgress: 0,
   error: null,
-  
+
   setCurrentTrack: (trackId: string | null, autoPlay = true) => {
-    console.log('🔊 playerStore.setCurrentTrack called with:', trackId, 'autoPlay:', autoPlay);
     persistLastPlayedTrackId(trackId);
 
     const shouldAutoPlay = autoPlay;
-    
+
     // Update state first (immediate UI feedback)
-    set({ 
+    set({
       currentTrackId: trackId,
       currentTime: 0, // Reset position when changing tracks
       loadingState: trackId ? 'loading' : 'idle',
       loadingProgress: 0,
       error: null
     });
-    
+
     if (trackId) {
       // Get track from track store
       const track = useTrackStore.getState().getTrackById(trackId);
-      console.log('🔊 Track from store:', track);
-      
+
       if (!track) {
-        console.log('🔊 Track not found in trackStore');
         set({
           loadingState: 'error',
           error: `Track with ID ${trackId} not found`
         });
         return;
       }
-      
+
       // We have a valid track, get audioPlayer and load the track
       try {
         const audioPlayer = getAudioPlayer();
-        
+
         // Set up time update callback to keep the store in sync with actual playback
-        console.log('🔊 Setting time update callback on audioPlayer');
         audioPlayer.setTimeUpdateCallback((time) => {
           set({ currentTime: time });
         });
-        
+
         // Set up track end callback
         audioPlayer.setTrackEndCallback(() => {
-          console.log('🔊 Track end callback triggered from audioPlayer');
-          
           // Track finished playing naturally
-          set({ 
+          set({
             isPlaying: false,
             currentTime: 0 // Reset position on natural track end
           });
         });
-        
+
         // Update loading state
         set({ loadingState: 'loading', loadingProgress: 0 });
-        
-        // Start loading the track - will handle states
-        console.log('🔊 Loading track with storage key:', track.storageKey);
-        
+
         // Set up loading progress handler
         const progressHandler = (progress: number) => {
-          console.log('🔊 Track loading progress:', progress);
           set({ loadingProgress: progress });
         };
-        
+
         // Set up completion handler
         const completionHandler = (success: boolean, duration?: number, error?: string) => {
           if (success && duration) {
-            console.log('🔊 Track loaded successfully, duration:', duration);
-            set({ 
-              loadingState: 'ready', 
+            set({
+              loadingState: 'ready',
               loadingProgress: 100,
               duration: duration,
               error: null
             });
-            
+
             // Auto-play once track is loaded and ready
             if (shouldAutoPlay) {
-              console.log('🔊 Auto-playing track after successful load');
               set({ isPlaying: true });
               audioPlayer.play(0); // Start from the beginning with new track
             }
           } else {
-            console.log('🔊 Track loading failed:', error);
-            set({ 
+            set({
               loadingState: 'error',
               error: error || 'Unknown error loading track'
             });
           }
         };
-        
+
         // Load the track
         audioPlayer.loadTrack(track.storageKey, progressHandler, completionHandler);
       } catch (error) {
-        console.error('🔊 Error accessing audio player:', error);
-        set({ 
+        console.error('Error accessing audio player:', error);
+        set({
           loadingState: 'error',
           error: 'Failed to access audio system. Try refreshing the page.'
         });
@@ -156,100 +143,85 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       try {
         const audioPlayer = getAudioPlayer();
         audioPlayer.stop();
-      } catch (error) {
-        console.error('🔊 Error stopping playback:', error);
+      } catch {
+        // ignore
       }
     }
   },
-  
+
   setIsPlaying: (isPlaying: boolean) => {
-    console.log('🔊 playerStore.setIsPlaying called with:', isPlaying);
-    
     // Validate we can change state
     if (isPlaying && !get().currentTrackId) {
-      console.log('🔊 Cannot play: No track selected');
       return;
     }
-    
+
     if (get().loadingState !== 'ready' && isPlaying) {
-      console.log('🔊 Cannot play: Track not ready, state:', get().loadingState);
       return;
     }
-    
+
     // If already in the desired state, do nothing
     if (get().isPlaying === isPlaying) {
-      console.log('🔊 Already in the requested play state:', isPlaying);
       return;
     }
-    
+
     // Get the current position and duration before making any state changes
     const currentPosition = get().currentTime;
     const duration = get().duration;
-    console.log('🔊 Current position before state change:', currentPosition, 'duration:', duration);
-    
+
     // Check if track is at the end when trying to play
     if (isPlaying && duration > 0 && currentPosition >= duration - 0.5) {
-      console.log('🔊 Trying to play a completed track, resetting position to beginning');
       // If trying to play a completed track, reset to beginning
       set({ currentTime: 0 });
-      
+
       // Update state first - but only the isPlaying flag
       set({ isPlaying });
-      
+
       // Then control audio player
       try {
         const audioPlayer = getAudioPlayer();
-        console.log('🔊 Calling audioPlayer.play() from beginning');
         audioPlayer.play(0); // Play from beginning
       } catch (error) {
-        console.error('🔊 Error controlling playback:', error);
-        set({ 
+        console.error('Error controlling playback:', error);
+        set({
           isPlaying: false,
           error: 'Playback control failed. Try refreshing the page.'
         });
       }
-      
+
       return;
     }
-    
-    // Update state first - but only the isPlaying flag, 
+
+    // Update state first - but only the isPlaying flag,
     // don't touch the currentTime to preserve position
     set({ isPlaying });
-    
+
     // Then control audio player
     try {
       const audioPlayer = getAudioPlayer();
       if (isPlaying) {
-        console.log('🔊 Calling audioPlayer.play() to resume from:', currentPosition);
-        
         // Always explicitly provide the position to play from
         audioPlayer.play(currentPosition);
       } else {
-        console.log('🔊 Calling audioPlayer.pause() at position:', currentPosition);
         audioPlayer.pause();
       }
     } catch (error) {
-      console.error('🔊 Error controlling playback:', error);
-      set({ 
+      console.error('Error controlling playback:', error);
+      set({
         isPlaying: false,
         error: 'Playback control failed. Try refreshing the page.'
       });
     }
   },
-  
+
   setCurrentTime: (time: number) => {
-    console.log('🔊 playerStore.setCurrentTime called with:', time);
     set({ currentTime: time });
   },
-  
+
   setDuration: (duration: number) => {
-    console.log('🔊 playerStore.setDuration called with:', duration);
     set({ duration });
   },
-  
-  setVolume: (volume: number) => {
-    console.log('🔊 playerStore.setVolume called with:', volume);
 
+  setVolume: (volume: number) => {
     // Ensure volume is between 0 and 1
     const clampedVolume = Math.max(0, Math.min(1, volume));
 
@@ -263,18 +235,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     // Then control audio player with the gain
     try {
       const audioPlayer = getAudioPlayer();
-      console.log('🔊 Calling audioPlayer.setVolume() with gain:', gain);
       audioPlayer.setVolume(gain);
-    } catch (error) {
-      console.error('🔊 Error setting volume:', error);
+    } catch {
+      // ignore
     }
-
-    console.log('🔊 New volume state:', get().volume);
   },
-  
-  setIsMuted: (isMuted: boolean) => {
-    console.log('🔊 playerStore.setIsMuted called with:', isMuted);
 
+  setIsMuted: (isMuted: boolean) => {
     // Update state first
     set({ isMuted });
 
@@ -283,38 +250,28 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       const audioPlayer = getAudioPlayer();
       const currentVolume = get().volume;
       const gain = currentVolume === 0 ? 0 : Math.pow(10, (-60 + currentVolume * 60) / 20);
-      console.log('🔊 Calling audioPlayer.setMute() with gain:', gain);
       audioPlayer.setMute(isMuted, gain);
-    } catch (error) {
-      console.error('🔊 Error setting mute state:', error);
+    } catch {
+      // ignore
     }
+  },
 
-    console.log('🔊 New isMuted state:', get().isMuted);
-  },
-  
   setLoadingState: (state) => {
-    console.log('🔊 playerStore.setLoadingState called with:', state);
     set({ loadingState: state });
-    console.log('🔊 New loadingState:', get().loadingState);
   },
-  
+
   setLoadingProgress: (progress: number) => {
-    console.log('🔊 playerStore.setLoadingProgress called with:', progress);
     set({ loadingProgress: progress });
   },
-  
+
   setError: (error: string | null) => {
-    console.log('🔊 playerStore.setError called with:', error);
-    set({ 
+    set({
       error,
       loadingState: error ? 'error' : 'idle'
     });
-    console.log('🔊 New error state:', get().error, 'loadingState:', get().loadingState);
   },
-  
+
   resetPlayer: () => {
-    console.log('🔊 playerStore.resetPlayer called');
-    
     // Reset state
     set({
       currentTrackId: null,
@@ -325,38 +282,31 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       loadingProgress: 0,
       error: null
     });
-    
+
     // Stop playback
     try {
       const audioPlayer = getAudioPlayer();
-      console.log('🔊 Calling audioPlayer.stop()');
       audioPlayer.stop();
-    } catch (error) {
-      console.error('🔊 Error stopping playback:', error);
+    } catch {
+      // ignore
     }
-    
-    console.log('🔊 Player reset complete');
   },
-  
+
   seekTo: (time: number) => {
-    console.log('🔊 playerStore.seekTo called with:', time);
-    
     // Validate we can seek
     if (get().loadingState !== 'ready') {
-      console.log('🔊 Cannot seek: Track not ready, current state:', get().loadingState);
       return;
     }
-    
+
     // Update state first (for immediate UI feedback)
     set({ currentTime: time });
-    
+
     // Then control audio player
     try {
       const audioPlayer = getAudioPlayer();
-      console.log('🔊 Calling audioPlayer.seek()');
       audioPlayer.seek(time);
-    } catch (error) {
-      console.error('🔊 Error seeking:', error);
+    } catch {
+      // ignore
     }
   }
-})); 
+}));

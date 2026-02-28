@@ -293,20 +293,68 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
   
   const handleBandRemove = useCallback((id: string) => {
     if (!profile) return
-    
+
     // Find and remove the band from profile
     const updatedBands = profile.bands.filter(band => band.id !== id)
     updateProfile(profile.id, { bands: updatedBands })
   }, [profile, updateProfile])
-  
+
+  // Multi-band batch update callback
+  const handleMultiBandUpdate = useCallback((updates: Array<{ id: string; changes: Partial<EQBandWithUI> }>) => {
+    if (!profile) return
+
+    // Apply all updates to profile bands in a single write
+    const updatedProfileBands = [...profile.bands]
+    for (const { id, changes } of updates) {
+      const idx = updatedProfileBands.findIndex(b => b.id === id)
+      if (idx !== -1) {
+        updatedProfileBands[idx] = {
+          ...updatedProfileBands[idx],
+          ...(changes.frequency !== undefined ? { frequency: changes.frequency } : {}),
+          ...(changes.gain !== undefined ? { gain: changes.gain } : {}),
+          ...(changes.q !== undefined ? { q: changes.q } : {}),
+          ...(changes.type !== undefined ? { type: changes.type } : {}),
+        }
+      }
+    }
+    updateProfile(profile.id, { bands: updatedProfileBands })
+
+    // Also update renderable bands for responsive UI
+    setRenderableBands(prev => {
+      const newBands = [...prev]
+      for (const { id, changes } of updates) {
+        const idx = newBands.findIndex(b => b.id === id)
+        if (idx !== -1) {
+          const updatedBand = { ...newBands[idx], ...changes }
+          if (changes.frequency !== undefined || changes.gain !== undefined || changes.q !== undefined || changes.type !== undefined) {
+            updatedBand.frequencyResponse = calculateBandResponse(updatedBand)
+          }
+          newBands[idx] = updatedBand
+        }
+      }
+      return newBands
+    })
+  }, [profile, updateProfile])
+
+  // Multi-band batch remove callback
+  const handleMultiBandRemove = useCallback((ids: string[]) => {
+    if (!profile) return
+    const idSet = new Set(ids)
+    const updatedBands = profile.bands.filter(band => !idSet.has(band.id))
+    updateProfile(profile.id, { bands: updatedBands })
+  }, [profile, updateProfile])
+
   // Use EQ interaction
-  const { 
-    handleMouseMove: handleBandMouseMove, 
-    handleMouseDown: handleBandMouseDown, 
+  const {
+    handleMouseMove: handleBandMouseMove,
+    handleMouseDown: handleBandMouseDown,
     isShiftPressed,
     ghostNode,
     draggingBand: draggingBandId,
-    hoveredBandId
+    hoveredBandId,
+    selectedBandIds,
+    isMarqueeActive,
+    marqueeRect,
   } = useEQInteraction({
     canvasRef,
     bands: renderableBands,
@@ -315,6 +363,8 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     onBandUpdate: handleBandUpdate,
     onBandRemove: handleBandRemove,
     onBandSelect: setSelectedBandId,
+    onMultiBandUpdate: handleMultiBandUpdate,
+    onMultiBandRemove: handleMultiBandRemove,
   })
   
   // Custom mouse handlers to support volume control
@@ -424,24 +474,38 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     }
   }, [handleBandMouseDown, profile, updateProfile, isModifierKeyPressed, updateCalibrationFromMousePosition]);
   
-  // Update instruction text based on interaction state
+  // Update instruction text based on interaction state (priority chain)
   useEffect(() => {
     if (!onInstructionChange) return;
-    
+
+    const multiCount = selectedBandIds.size;
+
     if (isDraggingVolume) {
       onInstructionChange("Drag up/down to adjust volume");
     } else if (isHoveringVolume) {
       onInstructionChange("Click and drag to adjust volume");
+    } else if (isMarqueeActive && isShiftPressed) {
+      onInstructionChange("Release to add to selection");
+    } else if (isMarqueeActive) {
+      onInstructionChange("Release to select enclosed bands");
+    } else if (draggingBandId && multiCount > 1 && isShiftPressed) {
+      onInstructionChange(`Adjusting Q for ${multiCount} bands`);
+    } else if (draggingBandId && multiCount > 1) {
+      onInstructionChange(`Moving ${multiCount} bands`);
     } else if (draggingBandId) {
-      // Always show the shift+drag instruction for better discoverability, 
-      // even when not currently pressing shift
       onInstructionChange("Shift + drag to change bandwidth (Q)");
+    } else if (multiCount > 1) {
+      onInstructionChange(`${multiCount} bands selected \u2014 drag to move, right-click to delete`);
+    } else if (hoveredBandId && isShiftPressed) {
+      onInstructionChange("Click to add to selection");
     } else if (hoveredBandId) {
       onInstructionChange("Right click to delete band");
+    } else if (isShiftPressed) {
+      onInstructionChange("Click a band to add to selection");
     } else {
       onInstructionChange("Click + drag on the center line to add a band");
     }
-  }, [draggingBandId, hoveredBandId, isDraggingVolume, isHoveringVolume, isShiftPressed, onInstructionChange]);
+  }, [draggingBandId, hoveredBandId, isDraggingVolume, isHoveringVolume, isShiftPressed, isMarqueeActive, selectedBandIds, onInstructionChange]);
 
   // Redraw background when theme changes
   useEffect(() => {
@@ -603,40 +667,50 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     // Set isEnabled based on disabled prop
     const isEnabled = !disabled;
 
+    // Inner dimensions for coordinate calculations
+    const innerWidth = rect.width - margin * 2;
+    const innerHeight = rect.height - margin * 2;
+
     // Draw individual band responses
     renderableBands.forEach((band) => {
-      // Consider a band "hovered" if it's the selected band, if it's being dragged,
-      // or if it's already marked as hovered
-      const isHovered = band.id === hoveredBandId || band.id === draggingBandId;
-      const isDragging = band.id === draggingBandId;
-      
-      // Add margin to rendering
+      // Consider a band "hovered" if it's the hovered band, dragged band, or in multi-selection
+      const isSelected = selectedBandIds.has(band.id);
+      const isHovered = band.id === hoveredBandId || band.id === draggingBandId || isSelected;
+      const isBandDragging = band.id === draggingBandId;
+
       EQBandRenderer.drawBand(
         ctx,
         band,
-        rect.width - margin * 2, // Adjust width for margins
-        rect.height - margin * 2, // Adjust height for margins
+        innerWidth,
+        innerHeight,
         freqRange,
         isDarkMode,
         isHovered,
-        isDragging,
+        isBandDragging,
         isEnabled,
-        margin, // Pass margin for coordinate adjustments
-        margin  // Pass margin for coordinate adjustments
+        margin,
+        margin
       );
-      
+
+      // Draw selection ring for multi-selected bands
+      if (isSelected) {
+        const bandX = margin + EQCoordinateUtils.freqToX(band.frequency, innerWidth, freqRange);
+        const bandY = margin + EQCoordinateUtils.gainToY(band.gain, innerHeight);
+        EQBandRenderer.drawSelectionRing(ctx, bandX, bandY, isDarkMode);
+      }
+
       // Draw Q indicator if shift is pressed and band is selected, hovered, or being dragged
-      if (isShiftPressed && (band.id === selectedBandId || band.isHovered || band.id === draggingBandId)) {
+      if (isShiftPressed && (isSelected || band.id === selectedBandId || band.isHovered || band.id === draggingBandId)) {
         EQBandRenderer.drawQIndicator(
           ctx,
           band,
-          rect.width - margin * 2, // Adjust width for margins
-          rect.height - margin * 2, // Adjust height for margins
+          innerWidth,
+          innerHeight,
           freqRange,
           isDarkMode,
           isEnabled,
-          margin, // Pass margin for x coordinate adjustment
-          margin  // Pass margin for y coordinate adjustment
+          margin,
+          margin
         );
       }
     });
@@ -693,33 +767,50 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       EQBandRenderer.drawVolumeControl(
         ctx,
         profile.volume || 0,
-        rect.width - margin * 2, // Adjust width for margins
-        rect.height - margin * 2, // Adjust height for margins
+        innerWidth,
+        innerHeight,
         isDarkMode,
         isEnabled,
         isDraggingVolume,
         isHoveringVolume,
-        margin, // Pass margin for x coordinate adjustment
-        margin  // Pass margin for y coordinate adjustment
+        margin,
+        margin
+      );
+    }
+
+    // Draw marquee rectangle
+    if (isMarqueeActive && marqueeRect) {
+      EQBandRenderer.drawMarqueeRect(
+        ctx,
+        {
+          x: margin + marqueeRect.x,
+          y: margin + marqueeRect.y,
+          width: marqueeRect.width,
+          height: marqueeRect.height,
+        },
+        isDarkMode
       );
     }
 
     // Continue the animation loop
     animationFrameRef.current = requestAnimationFrame(renderCanvas);
   }, [
-    renderableBands, 
-    frequencyResponse, 
-    disabled, 
-    isDarkMode, 
-    selectedBandId, 
-    isShiftPressed, 
-    ghostNode, 
-    draggingBandId, 
-    hoveredBandId, 
+    renderableBands,
+    frequencyResponse,
+    disabled,
+    isDarkMode,
+    selectedBandId,
+    isShiftPressed,
+    ghostNode,
+    draggingBandId,
+    hoveredBandId,
     profile,
     isDraggingVolume,
     isHoveringVolume,
-    renderBackgroundCanvas
+    renderBackgroundCanvas,
+    selectedBandIds,
+    isMarqueeActive,
+    marqueeRect,
   ]);
 
   // Set up both canvases with DPI scaling and store their contexts

@@ -250,6 +250,15 @@
   animation: highlight-breathe 1.2s ease-in-out infinite;
 }
 
+/* Pause button highlight — larger scale breathing, no glow, brighter */
+@keyframes highlight-breathe-large {
+  0%, 100% { transform: scale(1); filter: brightness(1) saturate(1); }
+  50% { transform: scale(1.22); filter: brightness(1.3) saturate(1.4); }
+}
+.animate-highlight-breathe-large {
+  animation: highlight-breathe-large 1.2s ease-in-out infinite;
+}
+
 /* Grid highlight — scale breathing on the glow overlay */
 @keyframes grid-glow-breathe {
   0%, 100% { transform: scale(1); }
@@ -261,6 +270,34 @@
   0%, 100% { transform: scale(1); }
   50% { transform: scale(1.15); }
 }
+
+/* Pause button breathing when grid is hovered */
+@keyframes pause-highlight-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.4); }
+}
+.animate-pause-highlight-breathe {
+  animation: pause-highlight-breathe 1.2s ease-in-out infinite;
+}
+
+/* Page entrance animation */
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-page-enter {
+  animation: page-enter 400ms ease-out both;
+}
+
+/* Page exit animation (reverse of entrance) */
+@keyframes page-exit {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(12px); }
+}
+.animate-page-exit {
+  animation: page-exit 300ms ease-in both;
+}
+
 
 /* Frequency graph - frosted glass effect */
 .frequency-graph {

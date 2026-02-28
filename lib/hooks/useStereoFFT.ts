@@ -81,10 +81,11 @@ export function useStereoFFT(enabled: boolean) {
       dataRef.current.transient.fill(0);
     }
 
+    const data = dataRef.current;
     return () => {
       analyser.disconnect();
-      dataRef.current.active = false;
-      dataRef.current.transient.fill(0);
+      data.active = false;
+      data.transient.fill(0);
     };
   }, [enabled]);
 

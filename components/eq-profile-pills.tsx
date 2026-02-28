@@ -9,7 +9,6 @@ interface EQProfilePillsProps {
 
 export function EQProfilePills({ size = "md" }: EQProfilePillsProps) {
   const activeProfileId = useEQProfileStore((s) => s.activeProfileId)
-  const isEQEnabled = useEQProfileStore((s) => s.isEQEnabled)
   const setActiveProfile = useEQProfileStore((s) => s.setActiveProfile)
 
   const dim = size === "sm" ? "h-5 w-5 text-[10px]" : "h-6 w-6 text-[11px]"

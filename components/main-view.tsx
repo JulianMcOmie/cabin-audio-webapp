@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import dynamic from "next/dynamic"
 import { SettingsPanel } from "@/components/settings-panel"
 import * as dotGridAudio from "@/lib/audio/dotGridAudio"
@@ -16,9 +16,9 @@ const UnifiedParticleScene = dynamic(
 )
 
 const MIN_ROWS = 3
-const MAX_ROWS = 12
+const MAX_ROWS = 6
 const MIN_COLS = 3
-const MAX_COLS = 14
+const MAX_COLS = 8
 
 function loadSetting<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback
@@ -37,14 +37,37 @@ function saveSetting<T>(key: string, value: T) {
   } catch { /* quota errors etc */ }
 }
 
-export function MainView({ quality, highlightTarget, isPlaying }: { quality: QualityLevel; highlightTarget: HighlightTarget; isPlaying: boolean }) {
+// Default values used for SSR — must match the fallbacks below
+const DEFAULTS = {
+  gridRows: 3,
+  gridCols: 5,
+  speed: 1.5,
+  volumePercent: 90,
+  release: 2,
+  bandwidth: 6,
+  settingsCollapsed: true,
+} as const
+
+export function MainView({ quality, highlightTarget, isPlaying, onDragStateChange }: { quality: QualityLevel; highlightTarget: HighlightTarget; isPlaying: boolean; onDragStateChange?: (isDragging: boolean) => void }) {
   const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set())
-  const [gridRows, setGridRows] = useState(() => loadSetting("cabin:gridRows", 3))
-  const [gridCols, setGridCols] = useState(() => loadSetting("cabin:gridCols", 5))
-  const [speed, setSpeed] = useState(() => loadSetting("cabin:speed", 2))
-  const [volumePercent, setVolumePercent] = useState(() => loadSetting("cabin:volumePercent", 80))
-  const [release, setRelease] = useState(() => loadSetting("cabin:release", 1.2))
-  const [settingsCollapsed, setSettingsCollapsed] = useState(() => loadSetting("cabin:settingsCollapsed", false))
+  const [gridRows, setGridRows] = useState<number>(DEFAULTS.gridRows)
+  const [gridCols, setGridCols] = useState<number>(DEFAULTS.gridCols)
+  const [speed, setSpeed] = useState<number>(DEFAULTS.speed)
+  const [volumePercent, setVolumePercent] = useState<number>(DEFAULTS.volumePercent)
+  const [release, setRelease] = useState<number>(DEFAULTS.release)
+  const [bandwidth, setBandwidth] = useState<number>(DEFAULTS.bandwidth)
+  const [settingsCollapsed, setSettingsCollapsed] = useState<boolean>(DEFAULTS.settingsCollapsed)
+
+  // Hydrate from localStorage after mount to avoid SSR mismatch
+  useEffect(() => {
+    setGridRows(loadSetting("cabin:gridRows", DEFAULTS.gridRows))
+    setGridCols(loadSetting("cabin:gridCols", DEFAULTS.gridCols))
+    setSpeed(loadSetting("cabin:speed", DEFAULTS.speed))
+    setVolumePercent(loadSetting("cabin:volumePercent", DEFAULTS.volumePercent))
+    setRelease(loadSetting("cabin:release", DEFAULTS.release))
+    setBandwidth(loadSetting("cabin:bandwidth", DEFAULTS.bandwidth))
+    setSettingsCollapsed(loadSetting("cabin:settingsCollapsed", DEFAULTS.settingsCollapsed))
+  }, [])
   const [hoveredDot, setHoveredDot] = useState<string | null>(null)
   const [sequencerVisual, setSequencerVisual] = useState<{ playingDotKey: string | null; beatIndex: number }>({
     playingDotKey: null,
@@ -61,6 +84,7 @@ export function MainView({ quality, highlightTarget, isPlaying }: { quality: Qua
   useEffect(() => { saveSetting("cabin:volumePercent", volumePercent) }, [volumePercent])
   useEffect(() => { saveSetting("cabin:settingsCollapsed", settingsCollapsed) }, [settingsCollapsed])
   useEffect(() => { saveSetting("cabin:release", release) }, [release])
+  useEffect(() => { saveSetting("cabin:bandwidth", bandwidth) }, [bandwidth])
 
   useEffect(() => {
     const player = dotGridAudio.getDotGridAudioPlayer()
@@ -149,6 +173,10 @@ export function MainView({ quality, highlightTarget, isPlaying }: { quality: Qua
   }, [release])
 
   useEffect(() => {
+    dotGridAudio.getDotGridAudioPlayer().setBandpassBandwidth(bandwidth)
+  }, [bandwidth])
+
+  useEffect(() => {
     if (volumePercent === 0) {
       dotGridAudio.getDotGridAudioPlayer().setVolumeDb(-Infinity)
     } else {
@@ -208,6 +236,47 @@ export function MainView({ quality, highlightTarget, isPlaying }: { quality: Qua
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [gridRows, gridCols])
 
+  // ---- Cursor dot (Command-key) state ----
+  const [cursorDotPosition, setCursorDotPosition] = useState<{ normalizedX: number; normalizedY: number } | null>(null)
+  const cursorPlayActiveRef = useRef(false)
+
+  const handleCursorDotMove = useCallback((normalizedX: number, normalizedY: number) => {
+    void resumeAudioContext()
+    const player = dotGridAudio.getDotGridAudioPlayer()
+    if (!cursorPlayActiveRef.current) {
+      cursorPlayActiveRef.current = true
+      player.startCursorPlay(normalizedX, normalizedY)
+    } else {
+      player.updateCursorPosition(normalizedX, normalizedY)
+    }
+    setCursorDotPosition({ normalizedX, normalizedY })
+  }, [])
+
+  const handleCursorDotEnd = useCallback(() => {
+    if (!cursorPlayActiveRef.current) return
+    cursorPlayActiveRef.current = false
+    dotGridAudio.getDotGridAudioPlayer().stopCursorPlay()
+    setCursorDotPosition(null)
+  }, [])
+
+  // Clean up cursor play on Meta key release or window blur
+  useEffect(() => {
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === "Meta") {
+        handleCursorDotEnd()
+      }
+    }
+    const handleBlur = () => {
+      handleCursorDotEnd()
+    }
+    window.addEventListener("keyup", handleKeyUp)
+    window.addEventListener("blur", handleBlur)
+    return () => {
+      window.removeEventListener("keyup", handleKeyUp)
+      window.removeEventListener("blur", handleBlur)
+    }
+  }, [handleCursorDotEnd])
+
   const { playingDotKey, beatIndex } = sequencerVisual
 
   const handleDotSelect = useCallback((x: number, y: number) => {
@@ -266,6 +335,10 @@ export function MainView({ quality, highlightTarget, isPlaying }: { quality: Qua
         onHoverDot={setHoveredDot}
         quality={quality}
         highlightTarget={highlightTarget}
+        onDragStateChange={onDragStateChange}
+        cursorDotPosition={cursorDotPosition}
+        onCursorDotMove={handleCursorDotMove}
+        onCursorDotEnd={handleCursorDotEnd}
       />
       <SettingsPanel
         collapsed={settingsCollapsed}
@@ -283,6 +356,8 @@ export function MainView({ quality, highlightTarget, isPlaying }: { quality: Qua
         onVolumeChange={setVolumePercent}
         release={release}
         onReleaseChange={setRelease}
+        bandwidth={bandwidth}
+        onBandwidthChange={setBandwidth}
         isPlaying={isPlaying}
       />
     </div>

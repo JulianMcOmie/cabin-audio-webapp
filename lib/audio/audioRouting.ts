@@ -1,11 +1,17 @@
 import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
 
+// -6 dB headroom to guard against auto-gain miscalculations
+const HEADROOM_GAIN = Math.pow(10, -6 / 20); // ≈ 0.5012
+
 // Class to manage audio routing
 class AudioRouting {
   private destinationNode: AudioNode | null = null;
   private analyserNode: AnalyserNode | null = null;
+  private headroomNode: GainNode | null = null;
   private isConnected: boolean = false;
+  private frequencyBuffer: Uint8Array | null = null;
+  private timeDomainBuffer: Uint8Array | null = null;
   
   constructor() {
     this.initialize();
@@ -19,12 +25,15 @@ class AudioRouting {
     // Create an analyser node for visualizations
     this.analyserNode = audioContext.createAnalyser();
     this.analyserNode.fftSize = 2048;
-    
-    // Connect EQ processor output to analyser
+
+    // Create a headroom gain node to guard against clipping
+    this.headroomNode = audioContext.createGain();
+    this.headroomNode.gain.value = HEADROOM_GAIN;
+
+    // Connect: EQ output → analyser → headroom → destination
     eqProcessor.getEQProcessor().getOutputNode().connect(this.analyserNode);
-    
-    // Connect analyser to destination
-    this.analyserNode.connect(this.destinationNode);
+    this.analyserNode.connect(this.headroomNode);
+    this.headroomNode.connect(this.destinationNode);
     
     this.isConnected = true;
   }
@@ -38,16 +47,18 @@ class AudioRouting {
   public disconnect(): void {
     if (this.isConnected && this.analyserNode) {
       this.analyserNode.disconnect();
+      this.headroomNode?.disconnect();
       eqProcessor.getEQProcessor().getOutputNode().disconnect();
       this.isConnected = false;
     }
   }
-  
+
   // Reconnect audio nodes
   public reconnect(): void {
-    if (!this.isConnected && this.analyserNode && this.destinationNode) {
+    if (!this.isConnected && this.analyserNode && this.headroomNode && this.destinationNode) {
       eqProcessor.getEQProcessor().getOutputNode().connect(this.analyserNode);
-      this.analyserNode.connect(this.destinationNode);
+      this.analyserNode.connect(this.headroomNode);
+      this.headroomNode.connect(this.destinationNode);
       this.isConnected = true;
     }
   }
@@ -84,26 +95,32 @@ class AudioRouting {
     }
   }
   
-  // Get frequency data for visualizations
+  // Get frequency data for visualizations (pre-allocated buffer, no GC pressure)
   public getFrequencyData(): Uint8Array | null {
     if (!this.analyserNode) {
       return null;
     }
-    
-    const dataArray = new Uint8Array(this.analyserNode.frequencyBinCount);
-    this.analyserNode.getByteFrequencyData(dataArray);
-    return dataArray;
+
+    const binCount = this.analyserNode.frequencyBinCount;
+    if (!this.frequencyBuffer || this.frequencyBuffer.length !== binCount) {
+      this.frequencyBuffer = new Uint8Array(binCount);
+    }
+    this.analyserNode.getByteFrequencyData(this.frequencyBuffer);
+    return this.frequencyBuffer;
   }
-  
-  // Get time domain data for visualizations
+
+  // Get time domain data for visualizations (pre-allocated buffer, no GC pressure)
   public getTimeDomainData(): Uint8Array | null {
     if (!this.analyserNode) {
       return null;
     }
-    
-    const dataArray = new Uint8Array(this.analyserNode.frequencyBinCount);
-    this.analyserNode.getByteTimeDomainData(dataArray);
-    return dataArray;
+
+    const binCount = this.analyserNode.frequencyBinCount;
+    if (!this.timeDomainBuffer || this.timeDomainBuffer.length !== binCount) {
+      this.timeDomainBuffer = new Uint8Array(binCount);
+    }
+    this.analyserNode.getByteTimeDomainData(this.timeDomainBuffer);
+    return this.timeDomainBuffer;
   }
 }
 
