@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { MainView } from "@/components/main-view"
 import { TopOverlay } from "@/components/top-overlay"
 import { ControlPanel } from "@/components/control-panel"
@@ -9,6 +9,7 @@ import { LibraryPanel } from "@/components/library-panel"
 import { usePlayerStore, useTrackStore } from "@/lib/stores"
 import type { QualityLevel } from "@/components/unified-particle-scene"
 import type { HighlightTarget } from "@/components/top-overlay"
+import type { ActiveBand } from "@/components/main-view"
 
 const LAST_PLAYED_TRACK_STORAGE_KEY = "cabin:lastPlayedTrackId"
 
@@ -39,8 +40,20 @@ export default function Home() {
   const [highlightTarget, setHighlightTarget] = useState<HighlightTarget>(null)
   const [isDraggingGrid, setIsDraggingGrid] = useState(false)
   const [metaHeld, setMetaHeld] = useState(false)
+  const [activeBand, setActiveBand] = useState<ActiveBand | null>(null)
 
   const isPlaying = usePlayerStore(s => s.isPlaying)
+
+  // Stable callback for active band changes from EQ — avoid re-rendering EQ overlay
+  const activeBandRef = useRef<ActiveBand | null>(null)
+  const handleActiveBandChange = useCallback((band: ActiveBand | null) => {
+    // Only update state if the band actually changed
+    const prev = activeBandRef.current
+    if (band === null && prev === null) return
+    if (band && prev && band.frequency === prev.frequency && band.gain === prev.gain && band.q === prev.q) return
+    activeBandRef.current = band
+    setActiveBand(band)
+  }, [])
 
   // Hydrate quality from localStorage after mount
   useEffect(() => {
@@ -138,14 +151,14 @@ export default function Home() {
     <div className="relative w-screen h-screen overflow-hidden">
       {/* Main view fills entire viewport */}
       <div className="absolute inset-0 z-0">
-        <MainView quality={quality} highlightTarget={highlightTarget} isPlaying={isPlaying} onDragStateChange={setIsDraggingGrid} />
+        <MainView quality={quality} highlightTarget={highlightTarget} isPlaying={isPlaying} onDragStateChange={setIsDraggingGrid} activeBand={activeBand} />
       </div>
 
       {/* Top overlay: logo + how to use + quality */}
       <TopOverlay quality={quality} onQualityChange={setQuality} onHighlightTarget={setHighlightTarget} />
 
       {/* EQ Overlay */}
-      <EQOverlay isOpen={showEQOverlay} onClose={() => setShowEQOverlay(false)} />
+      <EQOverlay isOpen={showEQOverlay} onClose={() => setShowEQOverlay(false)} onActiveBandChange={handleActiveBandChange} />
 
       {/* Library Panel — sits directly above control bar */}
       <LibraryPanel isOpen={showLibrary} onClose={() => setShowLibrary(false)} />

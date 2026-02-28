@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils"
 interface EQOverlayProps {
   isOpen: boolean
   onClose: () => void
+  onActiveBandChange?: (band: { frequency: number; gain: number; q: number } | null) => void
 }
 
 interface WindowRect {
@@ -62,7 +63,7 @@ const calcCenteredRect = (): WindowRect => {
   return getViewportConstrainedRect(rect)
 }
 
-export function EQOverlay({ isOpen, onClose }: EQOverlayProps) {
+export function EQOverlay({ isOpen, onClose, onActiveBandChange }: EQOverlayProps) {
   const [instruction, setInstruction] = useState("Click + drag on the center line to add a band")
   const [windowRect, setWindowRect] = useState<WindowRect>(SSR_FALLBACK_RECT)
   const [isDragging, setIsDragging] = useState(false)
@@ -247,6 +248,7 @@ export function EQOverlay({ isOpen, onClose }: EQOverlayProps) {
             disabled={false}
             onInstructionChange={setInstruction}
             onRequestEnable={() => setEQEnabled(true)}
+            onActiveBandChange={onActiveBandChange}
           />
         </div>
         <button

@@ -18,6 +18,7 @@ interface FrequencyEQProps {
   className?: string
   onInstructionChange?: (instruction: string) => void
   onRequestEnable?: () => void
+  onActiveBandChange?: (band: { frequency: number; gain: number; q: number } | null) => void
 }
 
 // Define a type for the audio processor
@@ -60,7 +61,7 @@ export function updateAudio(
   // Fixed frequency range outside component to be stable
 const freqRange = { min: 20, max: 20000 }
 
-export function FrequencyEQ({ profileId, disabled = false, className, onInstructionChange, onRequestEnable }: FrequencyEQProps) {
+export function FrequencyEQ({ profileId, disabled = false, className, onInstructionChange, onRequestEnable, onActiveBandChange }: FrequencyEQProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<CanvasWithMargin>(null)
   const backgroundCanvasRef = useRef<CanvasWithMargin>(null)
@@ -506,6 +507,22 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       onInstructionChange("Click + drag on the center line to add a band");
     }
   }, [draggingBandId, hoveredBandId, isDraggingVolume, isHoveringVolume, isShiftPressed, isMarqueeActive, selectedBandIds, onInstructionChange]);
+
+  // Fire onActiveBandChange when a band is being dragged or hovered
+  useEffect(() => {
+    if (!onActiveBandChange) return
+    const activeBandId = draggingBandId ?? hoveredBandId
+    if (!activeBandId) {
+      onActiveBandChange(null)
+      return
+    }
+    const band = renderableBands.find(b => b.id === activeBandId)
+    if (band) {
+      onActiveBandChange({ frequency: band.frequency, gain: band.gain, q: band.q })
+    } else {
+      onActiveBandChange(null)
+    }
+  }, [draggingBandId, hoveredBandId, renderableBands, onActiveBandChange])
 
   // Redraw background when theme changes
   useEffect(() => {

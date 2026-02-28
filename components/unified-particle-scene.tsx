@@ -263,6 +263,8 @@ export interface UnifiedParticleSceneProps {
   cursorDotPosition?: { normalizedX: number; normalizedY: number } | null
   onCursorDotMove?: (normalizedX: number, normalizedY: number) => void
   onCursorDotEnd?: () => void
+  inviteDotKey?: string | null
+  eqHighlights?: Map<string, number> | null
 }
 
 // ---------------------------------------------------------------------------
@@ -878,6 +880,8 @@ function UnifiedSceneContent({
   highlightTarget,
   onDragStateChange,
   cursorDotPosition,
+  inviteDotKey,
+  eqHighlights,
 }: UnifiedParticleSceneProps & { isDarkMode: boolean }) {
   // Subscribe to isPlaying from the player store
   const isPlaying = usePlayerStore((s) => s.isPlaying)
@@ -1483,6 +1487,12 @@ function UnifiedSceneContent({
             const breathe = 0.5 + 0.5 * Math.sin(t * Math.PI * 2 / 1.2 - Math.PI / 2)
             radius *= 1.0 + 2.5 * breathe
           }
+
+          // Invite dot: gentle sphere radius breathing for first-visit center dot
+          if (inviteDotKey && !isPlaying && dotKey === inviteDotKey && !isDotActive) {
+            const breathe = 0.5 + 0.5 * Math.sin(t * Math.PI / 1.0)
+            radius *= 1.0 + 1.0 * breathe
+          }
           const radialPulse = 1 + GRID_HOVER_RADIAL_BREATH * hoverMult * Math.sin(t * GRID_HOVER_BREATH_FREQ * hoverMult + ph * 1.37)
           const orbitPhase = t * GRID_HOVER_ORBIT_SPEED * hoverMult + ph
           const tangentSway = radius * GRID_HOVER_TANGENT_SWAY * hoverMult * (isPlaying ? 1 : soundstageDeploy)
@@ -2030,6 +2040,34 @@ function UnifiedSceneContent({
         }
       }
 
+      // Invite dot: gentle breathing for first-visit center dot
+      if (inviteDotKey && !isPlaying && dotIdx >= 0 && dotIdx < dotIdxToKey.length) {
+        const dotKey = dotIdxToKey[dotIdx]
+        if (dotKey === inviteDotKey && !selectedDots.has(dotKey)) {
+          const breathe = 0.5 + 0.5 * Math.sin(t * Math.PI / 1.0)
+          ssR = ssR + (brightR - ssR) * 0.5 * breathe
+          ssG = ssG + (brightG - ssG) * 0.5 * breathe
+          ssB = ssB + (brightB - ssB) * 0.5 * breathe
+          ssSize *= 1.0 + 0.5 * breathe
+          ssOpacity = Math.min(1, ssOpacity + 0.3 * breathe)
+        }
+      }
+
+      // EQ-reactive highlight: glow dots whose frequency overlaps the active EQ band
+      if (eqHighlights && !isPlaying && dotIdx >= 0 && dotIdx < dotIdxToKey.length) {
+        const dotKey = dotIdxToKey[dotIdx]
+        const eqI = eqHighlights.get(dotKey) ?? 0
+        if (eqI > 0.01) {
+          const pulse = 0.5 + 0.5 * Math.sin(t * 4)
+          const intensity = eqI * (0.85 + 0.15 * pulse)
+          ssR = ssR + (brightR - ssR) * intensity * 0.7
+          ssG = ssG + (brightG - ssG) * intensity * 0.7
+          ssB = ssB + (brightB - ssB) * intensity * 0.7
+          ssSize *= 1 + intensity * 0.8
+          ssOpacity = Math.min(1, ssOpacity + intensity * 0.4)
+        }
+      }
+
       // Lerp between soundstage and visualizer
       colors[i3] = ssR + (vizR - ssR) * tr
       colors[i3 + 1] = ssG + (vizG - ssG) * tr
@@ -2149,6 +2187,8 @@ export function UnifiedParticleScene(props: UnifiedParticleSceneProps) {
         cursorDotPosition={props.cursorDotPosition}
         onCursorDotMove={props.onCursorDotMove}
         onCursorDotEnd={props.onCursorDotEnd}
+        inviteDotKey={props.inviteDotKey}
+        eqHighlights={props.eqHighlights}
       />
     )
   }
@@ -2184,6 +2224,8 @@ export function UnifiedParticleScene(props: UnifiedParticleSceneProps) {
           highlightTarget={props.highlightTarget}
           onDragStateChange={props.onDragStateChange}
           cursorDotPosition={props.cursorDotPosition}
+          inviteDotKey={props.inviteDotKey}
+          eqHighlights={props.eqHighlights}
         />
         <EffectComposer>
           <Bloom

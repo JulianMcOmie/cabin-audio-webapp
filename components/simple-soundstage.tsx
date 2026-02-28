@@ -68,6 +68,8 @@ interface SimpleSoundstageProps {
   cursorDotPosition?: { normalizedX: number; normalizedY: number } | null
   onCursorDotMove?: (normalizedX: number, normalizedY: number) => void
   onCursorDotEnd?: () => void
+  inviteDotKey?: string | null
+  eqHighlights?: Map<string, number> | null
 }
 
 const FADE_MS = 500
@@ -86,6 +88,8 @@ export function SimpleSoundstage({
   cursorDotPosition,
   onCursorDotMove,
   onCursorDotEnd,
+  inviteDotKey,
+  eqHighlights,
 }: SimpleSoundstageProps) {
   const isDarkMode = useDarkMode()
   const isSongPlaying = usePlayerStore((s) => s.isPlaying)
@@ -277,6 +281,8 @@ export function SimpleSoundstage({
       const isHovered = hoveredDot === key
 
       const { hsl, glowHsl } = getDotColor(row, gridRows, isDarkMode)
+      const isInviteDot = inviteDotKey === key
+      const eqIntensity = eqHighlights?.get(key) ?? 0
 
       let bgColor: string
       let shadow: string
@@ -291,6 +297,15 @@ export function SimpleSoundstage({
       } else if (isSelected) {
         bgColor = hsl
         shadow = `0 0 14px ${glowHsl}`
+      } else if (eqIntensity > 0.01) {
+        // EQ-reactive highlight: blend toward frequency color by intensity
+        bgColor = hsl
+        const glowSize = Math.round(12 + eqIntensity * 20)
+        shadow = `0 0 ${glowSize}px ${glowHsl}`
+      } else if (isInviteDot) {
+        // First-visit invite dot: glow in frequency color
+        bgColor = hsl
+        shadow = `0 0 14px ${glowHsl}`
       } else if (isHovered) {
         bgColor = isDarkMode ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.22)"
         shadow = "none"
@@ -300,6 +315,16 @@ export function SimpleSoundstage({
       }
 
       const highlightActive = highlightGrid && !isSongPlaying
+
+      let animation: string | undefined
+      if (highlightActive) {
+        animation = "dot-highlight-breathe 1.2s ease-in-out infinite"
+      } else if (isInviteDot && !isSelected) {
+        animation = "dot-invite-breathe 2s ease-in-out infinite"
+      }
+
+      // EQ highlight opacity boost
+      const opacityStyle = eqIntensity > 0.01 ? Math.min(1, 0.3 + eqIntensity * 0.7) : undefined
 
       cells.push(
         <div
@@ -314,7 +339,8 @@ export function SimpleSoundstage({
               height: dotSize,
               backgroundColor: bgColor,
               boxShadow: shadow,
-              animation: highlightActive ? "dot-highlight-breathe 1.2s ease-in-out infinite" : undefined,
+              animation,
+              opacity: opacityStyle,
             }}
           />
         </div>

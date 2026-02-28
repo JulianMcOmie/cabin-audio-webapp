@@ -271,6 +271,12 @@
   50% { transform: scale(1.15); }
 }
 
+/* Invite dot — noticeable size + opacity pulse to draw attention */
+@keyframes dot-invite-breathe {
+  0%, 100% { transform: scale(0.7); opacity: 0.35; }
+  50% { transform: scale(1.7); opacity: 1; }
+}
+
 /* Pause button breathing when grid is hovered */
 @keyframes pause-highlight-breathe {
   0%, 100% { transform: scale(1); }

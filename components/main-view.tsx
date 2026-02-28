@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import dynamic from "next/dynamic"
 import { SettingsPanel } from "@/components/settings-panel"
 import * as dotGridAudio from "@/lib/audio/dotGridAudio"
@@ -48,7 +48,13 @@ const DEFAULTS = {
   settingsCollapsed: true,
 } as const
 
-export function MainView({ quality, highlightTarget, isPlaying, onDragStateChange }: { quality: QualityLevel; highlightTarget: HighlightTarget; isPlaying: boolean; onDragStateChange?: (isDragging: boolean) => void }) {
+export interface ActiveBand {
+  frequency: number
+  gain: number
+  q: number
+}
+
+export function MainView({ quality, highlightTarget, isPlaying, onDragStateChange, activeBand }: { quality: QualityLevel; highlightTarget: HighlightTarget; isPlaying: boolean; onDragStateChange?: (isDragging: boolean) => void; activeBand?: ActiveBand | null }) {
   const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set())
   const [gridRows, setGridRows] = useState<number>(DEFAULTS.gridRows)
   const [gridCols, setGridCols] = useState<number>(DEFAULTS.gridCols)
@@ -76,6 +82,44 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   const { setEQEnabled } = useEQProfileStore()
 
   const hasSelectedDots = selectedDots.size > 0
+
+  // Pulsing invite dot — center of grid, shown until user taps a dot this session
+  const hasEverSelected = useRef(false)
+  if (hasSelectedDots) hasEverSelected.current = true
+  const inviteDotKey = !hasEverSelected.current
+    ? `${Math.floor(gridCols / 2)},${Math.floor(gridRows / 2)}`
+    : null
+
+  // Compute EQ highlight intensities per dot row
+  const eqHighlights = useMemo(() => {
+    if (!activeBand || activeBand.gain === 0) return null
+    const highlights = new Map<string, number>()
+    const band = activeBand
+    for (let row = 0; row < gridRows; row++) {
+      const normalizedY = gridRows <= 1 ? 0.5 : row / (gridRows - 1)
+      // Match dotGridAudio frequency mapping (default: no extension, bandwidth from state)
+      const MIN_AUDIBLE = 20
+      const MAX_AUDIBLE = 20000
+      const topUpperEdge = MAX_AUDIBLE
+      const topLowerEdge = topUpperEdge / Math.pow(2, bandwidth)
+      const bottomLowerEdge = MIN_AUDIBLE
+      const lowerEdge = bottomLowerEdge * Math.pow(topLowerEdge / bottomLowerEdge, normalizedY)
+      const upperEdge = lowerEdge * Math.pow(2, bandwidth)
+      const centerFreq = Math.sqrt(lowerEdge * upperEdge)
+
+      // Gaussian-like falloff in log-frequency space
+      const octaveDistance = Math.abs(Math.log2(centerFreq / band.frequency))
+      const halfBandwidth = 1 / band.q
+      const intensity = Math.exp(-Math.pow(octaveDistance / halfBandwidth, 2)) * Math.min(1, Math.abs(band.gain) / 12)
+
+      if (intensity > 0.01) {
+        for (let col = 0; col < gridCols; col++) {
+          highlights.set(`${col},${row}`, intensity)
+        }
+      }
+    }
+    return highlights.size > 0 ? highlights : null
+  }, [activeBand, gridRows, gridCols, bandwidth])
 
   // Persist settings to localStorage
   useEffect(() => { saveSetting("cabin:gridRows", gridRows) }, [gridRows])
@@ -339,6 +383,8 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
         cursorDotPosition={cursorDotPosition}
         onCursorDotMove={handleCursorDotMove}
         onCursorDotEnd={handleCursorDotEnd}
+        inviteDotKey={inviteDotKey}
+        eqHighlights={eqHighlights}
       />
       <SettingsPanel
         collapsed={settingsCollapsed}
