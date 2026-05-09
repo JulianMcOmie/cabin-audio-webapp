@@ -45,6 +45,9 @@ const DEFAULT_BASE_DB = -48; // Default starting dB level for first hit
 const BANDPASS_NOISE_SLOPE_DB_PER_OCT = -4.5; // Fixed slope for bandpassed noise
 const BANDPASS_BANDWIDTH_OCTAVES = 6.0; // Default bandwidth: 6 octaves
 const BANDPASS_NOISE_OUTPUT_GAIN_SCALAR = 0.25; // Much louder output for bandpassed noise
+const BANDPASS_FILTER_Q = 1.5; // Keep Q fixed, but gentle enough that narrow bandwidth does not get overly peaky
+const ADDITIVE_PARTIAL_COUNT = 96;
+const ADDITIVE_PARTIAL_OUTPUT_GAIN_SCALAR = 0.08;
 
 // Constants for sine tone generator
 const SINE_TONE_OUTPUT_GAIN_SCALAR = 0.15; // Output gain for sine tones
@@ -57,6 +60,7 @@ const SMOOTHING = 0.8; // Analyzer smoothing factor (0-1)
 enum SoundMode {
   SlopedNoise = 'sloped',
   BandpassedNoise = 'bandpassed',
+  AdditivePartials = 'additive-partials',
   SineTone = 'sine'
 }
 
@@ -70,7 +74,8 @@ interface Voice {
 const VOICE_POOL_SIZE = 32; // Allow up to 32 overlapping sounds per dot (supports up to 32x hits)
 
 // Default number of discrete volume levels per dot (quiet to loud progression)
-const DEFAULT_VOLUME_STEPS = 4; // 4 volume levels: e.g., -36dB, -24dB, -12dB, 0dB
+const DEFAULT_VOLUME_STEPS = 1; // 1 volume level (single hit at full volume)
+const CONSTANT_DOT_ID_PREFIX = '__constant__:';
 
 // Interface for nodes managed by PositionedAudioService
 interface PointAudioNodes {
@@ -81,6 +86,7 @@ interface PointAudioNodes {
     panner: StereoPannerNode;
   slopedNoiseGenerator: SlopedPinkNoiseGenerator | null;
   bandpassedNoiseGenerator: BandpassedNoiseGenerator | null;
+  additivePartialGenerator: AdditivePartialGenerator | null;
   sineToneGenerator: SineToneGenerator | null;
   pinkNoiseBuffer: AudioBuffer;
   normalizedYPos: number; // To recalculate slope without re-passing y, totalRows
@@ -112,6 +118,9 @@ class PositionedAudioService {
   private sustainDuration: number = DEFAULT_GLOBAL_STAGGER_SUSTAIN_S; // Sustain/hold duration in seconds
   private releaseDuration: number = DEFAULT_GLOBAL_STAGGER_RELEASE_S; // Release duration in seconds
   private currentBandwidth: number = BANDPASS_BANDWIDTH_OCTAVES; // Current bandwidth in octaves for bandpassed noise
+  private currentBandpassSlope: number = BANDPASS_NOISE_SLOPE_DB_PER_OCT; // dB/oct slope for bandpassed noise
+  private bandwidthOscillationEnabled: boolean = false;
+  private bandwidthOscillationStepIndex: number = 0;
   private frequencyExtensionRange: number = 0; // How far beyond audible range to allow (0 = no extension, both filters always active)
   private readingDirection: 'horizontal' | 'vertical' = 'horizontal'; // Reading direction: horizontal (left-to-right) or vertical (top-to-bottom columns)
 
@@ -149,7 +158,8 @@ class PositionedAudioService {
   private loopSequencerPlayTogether: boolean = false; // Whether all dots play together (true) or cycle through dots (false)
 
   // Hit mode settings for loop sequencer
-  private hitModeRate: number = 24; // Hits per second (default: 24/sec)
+  private hitModeRate: number = 24; // Hits per second — controls wave rate (how often each wave of hits happens)
+  private hitModeStagger: number = 0.01; // Stagger between dots within a wave in seconds (default: 10ms)
   private hitModeAttack: number = 0.010; // Attack time in seconds (default: 10ms - quick but smooth attack)
   private hitModeRelease: number = 0.1; // Release time in seconds (default: 100ms)
   private numberOfHits: number = 16; // Hits per volume level (default: 16) - valid values: 1, 2, 4, 8, 16, 32
@@ -157,6 +167,7 @@ class PositionedAudioService {
   private volumeLevelRangeDb: number = 12; // Range in dB between volume levels (default: 12dB)
   private interleavedHits: boolean = true; // If true, cycle through all dots at each volume level instead of completing one dot first
   private volumeSteps: number = DEFAULT_VOLUME_STEPS; // Number of volume levels (default: 4)
+  private hiHatModeEnabled: boolean = false; // One-dot accent pattern: loud-quiet-quiet-quiet-quiet-quiet-quiet-quiet
 
   // Auto volume cycle settings
   private autoVolumeCycleEnabled: boolean = false; // Whether auto volume cycle is enabled
@@ -483,6 +494,14 @@ class PositionedAudioService {
     return this.hitModeRate;
   }
 
+  public setHitModeStagger(stagger: number): void {
+    this.hitModeStagger = clamp(stagger, 0.001, 0.5); // Clamp 1ms-500ms
+  }
+
+  public getHitModeStagger(): number {
+    return this.hitModeStagger;
+  }
+
   public setHitModeAttack(time: number): void {
     this.hitModeAttack = clamp(time, 0.001, 2); // Clamp 1ms-2s
   }
@@ -508,7 +527,7 @@ class PositionedAudioService {
   }
 
   public setHitDecay(decayDb: number): void {
-    this.hitDecayDb = clamp(decayDb, 0, 80); // Clamp 0-80 dB
+    this.hitDecayDb = clamp(decayDb, 0, 160); // Clamp wide enough for larger per-layer depth gaps
   }
 
   public getHitDecay(): number {
@@ -537,6 +556,14 @@ class PositionedAudioService {
 
   public getInterleavedHits(): boolean {
     return this.interleavedHits;
+  }
+
+  public setHiHatModeEnabled(enabled: boolean): void {
+    this.hiHatModeEnabled = enabled;
+  }
+
+  public getHiHatModeEnabled(): boolean {
+    return this.hiHatModeEnabled;
   }
 
   // Auto volume cycle methods
@@ -1003,12 +1030,20 @@ class PositionedAudioService {
    * Schedule a simple hit with custom attack/release times
    * Uses voice pool for polyphonic playback - allows overlapping sounds
    */
-  public schedulePointHit(pointId: string, scheduledTime: number, attackTime: number, releaseTime: number, peakVolume: number): void {
+  public schedulePointHit(
+    pointId: string,
+    scheduledTime: number,
+    attackTime: number,
+    releaseTime: number,
+    peakVolume: number,
+    bandwidthOctaves?: number | null
+  ): void {
     const point = this.audioPoints.get(pointId);
     if (!point) return;
 
-    // Set frequency characteristics based on dot position
-    this.setMainGainAndSlope(point);
+    // Set frequency characteristics based on dot position. Bandwidth-sequenced
+    // hits schedule the matching filter edges on the same audio-clock time.
+    this.setMainGainAndSlope(point, bandwidthOctaves, scheduledTime);
 
     // Find an available voice from the pool (or steal the oldest one)
     const voice = this.allocateVoice(point.voicePool, scheduledTime);
@@ -1124,6 +1159,7 @@ class PositionedAudioService {
 
     let slopedNoiseGenerator: SlopedPinkNoiseGenerator | null = null;
     let bandpassedNoiseGenerator: BandpassedNoiseGenerator | null = null;
+    let additivePartialGenerator: AdditivePartialGenerator | null = null;
     let sineToneGenerator: SineToneGenerator | null = null;
     const pinkNoiseBuffer: AudioBuffer = this._generateSinglePinkNoiseBuffer();
 
@@ -1131,26 +1167,32 @@ class PositionedAudioService {
     const source = this.ctx.createBufferSource();
     source.buffer = pinkNoiseBuffer;
 
-    if (this.currentSoundMode === SoundMode.BandpassedNoise) {
+    if (this.currentSoundMode === SoundMode.BandpassedNoise || this.currentSoundMode === SoundMode.AdditivePartials) {
       // Use bandpassed noise generator
-      source.loop = true;
       bandpassedNoiseGenerator = new BandpassedNoiseGenerator(this.ctx);
 
-      // Apply current bandwidth setting to the new generator
+      // Apply current bandwidth and slope settings to the new generator
       bandpassedNoiseGenerator.setBandpassBandwidth(this.currentBandwidth);
+      bandpassedNoiseGenerator.setBandpassSlope(this.currentBandpassSlope);
+
+      if (this.currentSoundMode === SoundMode.AdditivePartials) {
+        additivePartialGenerator = new AdditivePartialGenerator(this.ctx);
+        additivePartialGenerator.getOutputNode().connect(bandpassedNoiseGenerator.getInputNode());
+      } else {
+        source.loop = true;
+        source.connect(bandpassedNoiseGenerator.getInputNode());
+        source.start(); // Start source immediately, loop, control with envelopeGain
+      }
 
       // Connect chain: source -> bandpassedGen -> mainGain -> envelopeGain -> panner -> serviceOutput
-      source.connect(bandpassedNoiseGenerator.getInputNode());
       bandpassedNoiseGenerator.getOutputNode().connect(mainGain);
-
-      source.start(); // Start source immediately, loop, control with envelopeGain
     } else if (this.currentSoundMode === SoundMode.SineTone) {
       // Use sine tone generator
       sineToneGenerator = new SineToneGenerator(this.ctx);
-      
+
       // Connect chain: sineGen -> mainGain -> envelopeGain -> panner -> serviceOutput
       sineToneGenerator.getOutputNode().connect(mainGain);
-      
+
       // Don't start the buffer source for sine tone mode
     } else {
       // Use sloped pink noise generator (default)
@@ -1192,6 +1234,7 @@ class PositionedAudioService {
       panner,
       slopedNoiseGenerator,
       bandpassedNoiseGenerator,
+      additivePartialGenerator,
       sineToneGenerator,
       pinkNoiseBuffer,
       normalizedYPos: normalizedY,
@@ -1222,19 +1265,26 @@ class PositionedAudioService {
 
     let slopedNoiseGenerator: SlopedPinkNoiseGenerator | null = null;
     let bandpassedNoiseGenerator: BandpassedNoiseGenerator | null = null;
+    let additivePartialGenerator: AdditivePartialGenerator | null = null;
     let sineToneGenerator: SineToneGenerator | null = null;
     const pinkNoiseBuffer: AudioBuffer = this._generateSinglePinkNoiseBuffer();
 
     const source = this.ctx.createBufferSource();
     source.buffer = pinkNoiseBuffer;
 
-    if (this.currentSoundMode === SoundMode.BandpassedNoise) {
-      source.loop = true;
+    if (this.currentSoundMode === SoundMode.BandpassedNoise || this.currentSoundMode === SoundMode.AdditivePartials) {
       bandpassedNoiseGenerator = new BandpassedNoiseGenerator(this.ctx);
       bandpassedNoiseGenerator.setBandpassBandwidth(this.currentBandwidth);
-      source.connect(bandpassedNoiseGenerator.getInputNode());
+      bandpassedNoiseGenerator.setBandpassSlope(this.currentBandpassSlope);
+      if (this.currentSoundMode === SoundMode.AdditivePartials) {
+        additivePartialGenerator = new AdditivePartialGenerator(this.ctx);
+        additivePartialGenerator.getOutputNode().connect(bandpassedNoiseGenerator.getInputNode());
+      } else {
+        source.loop = true;
+        source.connect(bandpassedNoiseGenerator.getInputNode());
+        source.start();
+      }
       bandpassedNoiseGenerator.getOutputNode().connect(mainGain);
-      source.start();
     } else if (this.currentSoundMode === SoundMode.SineTone) {
       sineToneGenerator = new SineToneGenerator(this.ctx);
       sineToneGenerator.getOutputNode().connect(mainGain);
@@ -1272,6 +1322,7 @@ class PositionedAudioService {
       panner,
       slopedNoiseGenerator,
       bandpassedNoiseGenerator,
+      additivePartialGenerator,
       sineToneGenerator,
       pinkNoiseBuffer,
       normalizedYPos: normalizedY,
@@ -1317,6 +1368,9 @@ class PositionedAudioService {
     }
     if (point.bandpassedNoiseGenerator) {
       point.bandpassedNoiseGenerator.dispose();
+    }
+    if (point.additivePartialGenerator) {
+      point.additivePartialGenerator.dispose();
     }
     if (point.sineToneGenerator) {
       point.sineToneGenerator.dispose();
@@ -1394,8 +1448,11 @@ class PositionedAudioService {
     }
   }
   
-  public deactivateAllPoints(): void {
-    this.audioPoints.forEach((_, id) => this.deactivatePoint(id));
+  public deactivateAllPoints(includeConstantPoints: boolean = false): void {
+    this.audioPoints.forEach((_, id) => {
+      if (!includeConstantPoints && id.startsWith(CONSTANT_DOT_ID_PREFIX)) return;
+      this.deactivatePoint(id);
+    });
   }
 
   /**
@@ -1423,8 +1480,24 @@ class PositionedAudioService {
     this.outputGain.disconnect();
   }
 
+  private getBandpassCenterFrequency(normalizedYPos: number, bandwidthOctaves: number): number {
+    const MIN_AUDIBLE = 20; // Hz
+    const MAX_AUDIBLE = 20000; // Hz
+    const extensionMultiplier = Math.pow(2, this.frequencyExtensionRange);
+    const bottomLowerEdge = MIN_AUDIBLE / extensionMultiplier;
+    const topUpperEdge = MAX_AUDIBLE * extensionMultiplier;
+    const topLowerEdge = topUpperEdge / Math.pow(2, bandwidthOctaves);
+    const lowerEdge = bottomLowerEdge * Math.pow(topLowerEdge / bottomLowerEdge, normalizedYPos);
+    const upperEdge = lowerEdge * Math.pow(2, bandwidthOctaves);
+    return Math.sqrt(lowerEdge * upperEdge);
+  }
+
   // Helper method to set main gain and slope (used in activatePoint)
-  private setMainGainAndSlope(point: PointAudioNodes): void {
+  private setMainGainAndSlope(
+    point: PointAudioNodes,
+    scheduledBandwidthOctaves?: number | null,
+    scheduledTime?: number
+  ): void {
     let targetOverallSlopeDbPerOctave;
     if (point.normalizedYPos < 0.5) {
       const t = point.normalizedYPos * 2;
@@ -1441,29 +1514,18 @@ class PositionedAudioService {
     // Bandpassed noise uses fixed slope, bandpass position based on Y
     let bandpassCenterFreq = 0; // Used for volume compensation later
     if (point.bandpassedNoiseGenerator) {
-      const bandwidthOctaves = this.currentBandwidth;
-      const MIN_AUDIBLE = 20; // Hz
-      const MAX_AUDIBLE = 20000; // Hz
-
-      // Calculate edge frequencies based on extension range
-      // With 0 extension: edges stay at audible boundaries (20-20000 Hz)
-      // With higher extension: edges can extend beyond audible range
-      const extensionMultiplier = Math.pow(2, this.frequencyExtensionRange);
-
-      // Y=0 (bottom dot): lower edge at MIN_AUDIBLE / extensionMultiplier
-      const bottomLowerEdge = MIN_AUDIBLE / extensionMultiplier;
-
-      // Y=1 (top dot): upper edge at MAX_AUDIBLE * extensionMultiplier
-      const topUpperEdge = MAX_AUDIBLE * extensionMultiplier;
-      const topLowerEdge = topUpperEdge / Math.pow(2, bandwidthOctaves);
-
-      // Logarithmically interpolate lower edge based on Y position
-      const lowerEdge = bottomLowerEdge * Math.pow(topLowerEdge / bottomLowerEdge, point.normalizedYPos);
-      const upperEdge = lowerEdge * Math.pow(2, bandwidthOctaves);
-
-      // Calculate center frequency (geometric mean) for filter positioning
-      bandpassCenterFreq = Math.sqrt(lowerEdge * upperEdge);
-      point.bandpassedNoiseGenerator.setBandpassFrequency(bandpassCenterFreq);
+      const bandwidthOctaves = scheduledBandwidthOctaves ?? this.currentBandwidth;
+      bandpassCenterFreq = this.getBandpassCenterFrequency(point.normalizedYPos, bandwidthOctaves);
+      if (scheduledBandwidthOctaves !== undefined && scheduledBandwidthOctaves !== null && scheduledTime !== undefined) {
+        point.bandpassedNoiseGenerator.scheduleBandpassFrequencyAndBandwidth(
+          bandpassCenterFreq,
+          bandwidthOctaves,
+          scheduledTime
+        );
+      } else {
+        point.bandpassedNoiseGenerator.setBandpassBandwidth(bandwidthOctaves);
+        point.bandpassedNoiseGenerator.setBandpassFrequency(bandpassCenterFreq);
+      }
     }
     // Sine tone uses the same frequency mapping as bandpassed noise
     if (point.sineToneGenerator) {
@@ -1571,6 +1633,50 @@ class PositionedAudioService {
     });
   }
 
+  public setBandwidthOscillationEnabled(enabled: boolean): void {
+    this.bandwidthOscillationEnabled = enabled;
+    if (enabled) {
+      this.resetBandwidthOscillationSequence();
+      this.setBandpassBandwidth(6);
+    }
+  }
+
+  public getBandwidthOscillationEnabled(): boolean {
+    return this.bandwidthOscillationEnabled;
+  }
+
+  public setBandwidthOscillationStep(stepOctaves: number): void {
+    // Kept for compatibility with the existing UI contract; this mode now uses
+    // fixed 2/4/6-octave steps so the hi-hat-style pattern stays discrete.
+    void stepOctaves;
+  }
+
+  public getBandwidthOscillationStep(): number {
+    return 2;
+  }
+
+  public resetBandwidthOscillationSequence(): void {
+    this.bandwidthOscillationStepIndex = 0;
+  }
+
+  public getNextBandwidthOscillationValue(): number | null {
+    if (!this.bandwidthOscillationEnabled) return null;
+    const hiHatBandwidthPattern = [6, 2, 2, 2, 4, 2, 2, 2];
+    const bandwidth = hiHatBandwidthPattern[this.bandwidthOscillationStepIndex % hiHatBandwidthPattern.length] ?? 2;
+    this.bandwidthOscillationStepIndex++;
+    return bandwidth;
+  }
+
+  public setBandpassSlope(slopeDbPerOct: number): void {
+    this.currentBandpassSlope = slopeDbPerOct;
+
+    this.audioPoints.forEach((point) => {
+      if (point.bandpassedNoiseGenerator) {
+        point.bandpassedNoiseGenerator.setBandpassSlope(slopeDbPerOct);
+      }
+    });
+  }
+
   public setFrequencyExtensionRange(octaves: number): void {
     // Store the current extension range setting
     this.frequencyExtensionRange = clamp(octaves, 0, 5);
@@ -1636,6 +1742,25 @@ class DotGridAudioPlayer {
   private loopSequencerVisualNextBeatBase: number = 0;
   private loopSequencerVisualInterleaved: boolean = true;
   private loopSequencerVisualPlayTogether: boolean = false;
+  private loopSequencerVisualHitDotKeys: string[] | null = null;
+  private referenceDotKey: string | null = null;
+  private referenceVolumeBalance: number = 1;
+  private referenceVolumeOffsetDb: number = 0;
+  private referenceVolumeOscillationEnabled: boolean = false;
+  private referenceVolumeOscillationCurrentDb: number = -10;
+  private referenceVolumeOscillationDirection: 1 | -1 = 1;
+  private allVolumeOscillationEnabled: boolean = false;
+  private allVolumeOscillationStepIndex: number = 0;
+  private allVolumeOscillationCycleCount: number = 0;
+  private referenceVolumeMultiplyCount: number = 1;
+  private hiHatQuietDropDb: number = 20;
+  private hiHatLoudReleaseBoostMs: number = 200;
+  private patternModeEnabled: boolean = false;
+  private patternVolumeDiffDb: number = 0;
+  private reverbModeEnabled: boolean = false;
+  private reverbVolumeSpreadDb: number = 12;
+  private reverbQuietOscillationIndex: number = 0;
+  private constantDotKeys: Set<string> = new Set();
 
   private constructor() {
     this.audioService = new PositionedAudioService(audioContext.getAudioContext());
@@ -1698,20 +1823,242 @@ class DotGridAudioPlayer {
     const clampedStep = Math.min(this.loopSequencerVisualCycleHits - 1, rawStep);
     const beatIndex = this.loopSequencerVisualBeatBase + clampedStep;
 
-    let dotIndex = 0;
-    if (this.loopSequencerVisualPlayTogether || this.loopSequencerVisualInterleaved) {
-      dotIndex = clampedStep % this.loopSequencerVisualDotKeys.length;
+    let playingDotKey: string | null = null;
+    if (this.loopSequencerVisualHitDotKeys) {
+      playingDotKey = this.loopSequencerVisualHitDotKeys[clampedStep] ?? null;
+    } else if (this.loopSequencerVisualPlayTogether || this.loopSequencerVisualInterleaved) {
+      const dotIndex = clampedStep % this.loopSequencerVisualDotKeys.length;
+      playingDotKey = this.loopSequencerVisualDotKeys[dotIndex] ?? null;
     } else {
-      dotIndex = Math.min(
+      const dotIndex = Math.min(
         this.loopSequencerVisualDotKeys.length - 1,
         Math.floor(clampedStep / this.loopSequencerVisualTotalHitsPerDot)
       );
+      playingDotKey = this.loopSequencerVisualDotKeys[dotIndex] ?? null;
     }
 
     return {
-      playingDotKey: this.loopSequencerVisualDotKeys[dotIndex] ?? null,
+      playingDotKey,
       beatIndex,
     };
+  }
+
+  private getReferenceInterleavedHitSequence(sortedDotKeys: string[]): string[] | null {
+    if (!this.referenceDotKey || !sortedDotKeys.includes(this.referenceDotKey)) return null;
+
+    const otherDotKeys = sortedDotKeys.filter(dotKey => dotKey !== this.referenceDotKey && this.shouldRedDotPlay(dotKey));
+    if (otherDotKeys.length === 0) return [this.referenceDotKey];
+
+    const sequence: string[] = [];
+    otherDotKeys.forEach((dotKey) => {
+      sequence.push(dotKey, this.referenceDotKey!);
+    });
+    return sequence;
+  }
+
+  private getReferenceHiHatHitSequence(sortedDotKeys: string[]): string[] | null {
+    if (!this.audioService.getHiHatModeEnabled()) return null;
+    if (!this.referenceDotKey || !sortedDotKeys.includes(this.referenceDotKey)) return null;
+
+    const otherDotKeys = sortedDotKeys.filter(dotKey => dotKey !== this.referenceDotKey && this.shouldRedDotPlay(dotKey));
+    if (otherDotKeys.length === 0) {
+      return [this.referenceDotKey, this.referenceDotKey, this.referenceDotKey];
+    }
+
+    const sequence: string[] = [];
+    otherDotKeys.forEach((dotKey) => {
+      sequence.push(dotKey, this.referenceDotKey!, this.referenceDotKey!, this.referenceDotKey!);
+    });
+    return sequence;
+  }
+
+  private getReferenceBalancedVolumeSequence(sortedDotKeys: string[]): Array<{ dotKey: string; balanceSign: -1 | 0 | 1 }> | null {
+    if (!this.referenceDotKey || !sortedDotKeys.includes(this.referenceDotKey)) return null;
+    if (sortedDotKeys.length !== 3) return null;
+
+    const otherDotKeys = sortedDotKeys.filter(dotKey => dotKey !== this.referenceDotKey && this.shouldRedDotPlay(dotKey));
+    if (otherDotKeys.length !== 2) return null;
+
+    return [
+      { dotKey: otherDotKeys[0], balanceSign: -1 },
+      { dotKey: this.referenceDotKey, balanceSign: 0 },
+      { dotKey: otherDotKeys[1], balanceSign: 1 },
+      { dotKey: this.referenceDotKey, balanceSign: 0 },
+    ];
+  }
+
+  private getReferenceMultipliedVolumeSequence(sortedDotKeys: string[]): string[] | null {
+    const repeatCount = Math.max(1, Math.round(this.referenceVolumeMultiplyCount));
+    if (repeatCount <= 1 || !this.referenceDotKey || !sortedDotKeys.includes(this.referenceDotKey)) return null;
+
+    const otherDotKeys = sortedDotKeys.filter(dotKey => dotKey !== this.referenceDotKey && this.shouldRedDotPlay(dotKey));
+    if (otherDotKeys.length === 0) return null;
+
+    const sequence: string[] = [];
+    otherDotKeys.forEach((dotKey) => {
+      for (let repeat = 0; repeat < repeatCount; repeat++) {
+        sequence.push(dotKey, this.referenceDotKey!);
+      }
+    });
+    return sequence;
+  }
+
+  public setReferenceDotKey(dotKey: string | null): void {
+    this.referenceDotKey = dotKey;
+    if (this.isPlaying && this.isLoopSequencerMode()) {
+      this.stopLoopSequencer();
+      this.startLoopSequencer();
+    }
+  }
+
+  public getReferenceDotKey(): string | null {
+    return this.referenceDotKey;
+  }
+
+  public setReferenceVolumeBalance(balance: number): void {
+    this.referenceVolumeBalance = clamp(balance, -1, 1);
+    if (this.isPlaying && this.isLoopSequencerMode()) {
+      this.stopLoopSequencer();
+      this.startLoopSequencer();
+    }
+  }
+
+  public getReferenceVolumeBalance(): number {
+    return this.referenceVolumeBalance;
+  }
+
+  public setReferenceVolumeOffsetDb(offsetDb: number): void {
+    this.referenceVolumeOffsetDb = clamp(offsetDb, -24, 24);
+    if (this.isPlaying && this.isLoopSequencerMode()) {
+      this.stopLoopSequencer();
+      this.startLoopSequencer();
+    }
+  }
+
+  public getReferenceVolumeOffsetDb(): number {
+    return this.referenceVolumeOffsetDb;
+  }
+
+  public setReferenceVolumeOscillationEnabled(enabled: boolean): void {
+    this.referenceVolumeOscillationEnabled = enabled;
+    this.resetReferenceVolumeOscillation();
+    if (this.isPlaying && this.isLoopSequencerMode()) {
+      this.stopLoopSequencer();
+      this.startLoopSequencer();
+    }
+  }
+
+  public getReferenceVolumeOscillationEnabled(): boolean {
+    return this.referenceVolumeOscillationEnabled;
+  }
+
+  public setAllVolumeOscillationEnabled(enabled: boolean): void {
+    this.allVolumeOscillationEnabled = enabled;
+    this.resetAllVolumeOscillation();
+    if (this.isPlaying && this.isLoopSequencerMode()) {
+      this.stopLoopSequencer();
+      this.startLoopSequencer();
+    }
+  }
+
+  public getAllVolumeOscillationEnabled(): boolean {
+    return this.allVolumeOscillationEnabled;
+  }
+
+  public setReferenceVolumeMultiplyCount(count: number): void {
+    this.referenceVolumeMultiplyCount = clamp(Math.round(count), 1, 4);
+    if (this.isPlaying && this.isLoopSequencerMode()) {
+      this.stopLoopSequencer();
+      this.startLoopSequencer();
+    }
+  }
+
+  public getReferenceVolumeMultiplyCount(): number {
+    return this.referenceVolumeMultiplyCount;
+  }
+
+  public setHiHatQuietDropDb(quietDropDb: number): void {
+    this.hiHatQuietDropDb = clamp(quietDropDb, 0, 120);
+    if (this.isPlaying && this.isLoopSequencerMode()) {
+      this.stopLoopSequencer();
+      this.startLoopSequencer();
+    }
+  }
+
+  public setHiHatLoudReleaseBoostMs(boostMs: number): void {
+    this.hiHatLoudReleaseBoostMs = clamp(boostMs, 0, 2000);
+    if (this.isPlaying && this.isLoopSequencerMode()) {
+      this.stopLoopSequencer();
+      this.startLoopSequencer();
+    }
+  }
+
+  public setPatternModeEnabled(enabled: boolean): void {
+    this.patternModeEnabled = enabled;
+    if (this.isPlaying && this.isLoopSequencerMode()) {
+      this.stopLoopSequencer();
+      this.startLoopSequencer();
+    }
+  }
+
+  public setPatternVolumeDiffDb(diffDb: number): void {
+    this.patternVolumeDiffDb = clamp(diffDb, -24, 24);
+    if (this.isPlaying && this.isLoopSequencerMode()) {
+      this.stopLoopSequencer();
+      this.startLoopSequencer();
+    }
+  }
+
+  public setReverbModeEnabled(enabled: boolean): void {
+    this.reverbModeEnabled = enabled;
+    this.reverbQuietOscillationIndex = 0;
+    if (this.isPlaying && this.isLoopSequencerMode()) {
+      this.stopLoopSequencer();
+      this.startLoopSequencer();
+    }
+  }
+
+  public setReverbVolumeSpreadDb(spreadDb: number): void {
+    this.reverbVolumeSpreadDb = clamp(spreadDb, 0, 40);
+    if (this.isPlaying && this.isLoopSequencerMode()) {
+      this.stopLoopSequencer();
+      this.startLoopSequencer();
+    }
+  }
+
+  private resetReferenceVolumeOscillation(): void {
+    this.referenceVolumeOscillationCurrentDb = -10;
+    this.referenceVolumeOscillationDirection = 1;
+  }
+
+  private getNextReferenceVolumeOscillationDb(): number {
+    const db = this.referenceVolumeOscillationCurrentDb;
+    if (this.referenceVolumeOscillationDirection === 1 && this.referenceVolumeOscillationCurrentDb >= 10) {
+      this.referenceVolumeOscillationDirection = -1;
+    } else if (this.referenceVolumeOscillationDirection === -1 && this.referenceVolumeOscillationCurrentDb <= -10) {
+      this.referenceVolumeOscillationDirection = 1;
+    }
+    this.referenceVolumeOscillationCurrentDb += this.referenceVolumeOscillationDirection * 2;
+    return db;
+  }
+
+  private resetAllVolumeOscillation(): void {
+    this.allVolumeOscillationStepIndex = 0;
+    this.allVolumeOscillationCycleCount = 0;
+  }
+
+  private getAllVolumeOscillationDb(): number {
+    if (!this.allVolumeOscillationEnabled) return 0;
+    const steps = [-10, 0, 10];
+    return steps[this.allVolumeOscillationStepIndex] ?? -10;
+  }
+
+  private advanceAllVolumeOscillationCycle(): void {
+    if (!this.allVolumeOscillationEnabled) return;
+    this.allVolumeOscillationCycleCount++;
+    if (this.allVolumeOscillationCycleCount < 4) return;
+    this.allVolumeOscillationCycleCount = 0;
+    this.allVolumeOscillationStepIndex = (this.allVolumeOscillationStepIndex + 1) % 3;
   }
 
   private resetLoopSequencerVisualState(): void {
@@ -1724,6 +2071,7 @@ class DotGridAudioPlayer {
     this.loopSequencerVisualNextBeatBase = 0;
     this.loopSequencerVisualInterleaved = true;
     this.loopSequencerVisualPlayTogether = false;
+    this.loopSequencerVisualHitDotKeys = null;
   }
 
   /**
@@ -1890,6 +2238,44 @@ class DotGridAudioPlayer {
       this.startAllRhythms();
       }
     }
+  }
+
+  private getConstantDotAudioId(dotKey: string): string {
+    return `${CONSTANT_DOT_ID_PREFIX}${dotKey}`;
+  }
+
+  public setConstantDotPlaying(dotKey: string, playing: boolean, currentGridSize?: number, currentColumns?: number): void {
+    if (currentGridSize && currentGridSize !== this.gridSize) {
+      this.gridSize = currentGridSize;
+    }
+    if (currentColumns && currentColumns !== this.columnCount) {
+      this.columnCount = currentColumns;
+    }
+
+    const audioId = this.getConstantDotAudioId(dotKey);
+    if (!playing) {
+      this.constantDotKeys.delete(dotKey);
+      this.audioService.removePoint(audioId);
+      return;
+    }
+
+    if (this.constantDotKeys.has(dotKey)) return;
+
+    const [xStr, yStr] = dotKey.split(',');
+    const x = parseInt(xStr, 10);
+    const y = parseInt(yStr, 10);
+    if (isNaN(x) || isNaN(y)) return;
+
+    this.constantDotKeys.add(dotKey);
+    this.audioService.addPoint(audioId, x, y, this.gridSize, this.columnCount, 3);
+    this.audioService.activatePoint(audioId, audioContext.getAudioContext().currentTime, 1.0);
+  }
+
+  public clearConstantDots(): void {
+    this.constantDotKeys.forEach((dotKey) => {
+      this.audioService.removePoint(this.getConstantDotAudioId(dotKey));
+    });
+    this.constantDotKeys.clear();
   }
 
   /**
@@ -2132,6 +2518,8 @@ class DotGridAudioPlayer {
       // Reset cycle counter when starting playback
       this.resetCycleCounter();
       this.resetLoopSequencerVisualState();
+      this.resetReferenceVolumeOscillation();
+      this.resetAllVolumeOscillation();
 
       // NEW: Check loop sequencer mode first
       if (this.isLoopSequencerMode()) {
@@ -2182,9 +2570,11 @@ class DotGridAudioPlayer {
   }
 
   /**
-   * Start loop sequencer mode - evenly spaced dots with envelope triggering
+   * Start loop sequencer mode - evenly spaced dots with envelope triggering.
+   * @param scheduledStartTime If provided, use this as the start time for
+   *   scheduling hits (for seamless looping). Otherwise use currentTime.
    */
-  private startLoopSequencer(): void {
+  private startLoopSequencer(scheduledStartTime?: number): void {
     this.stopLoopSequencerInternalCleanup();
 
     if (!this.isPlaying || this.activeDotKeys.size === 0) {
@@ -2192,13 +2582,20 @@ class DotGridAudioPlayer {
       return;
     }
 
-    // Deactivate all points before scheduling new envelopes
-    this.audioService.deactivateAllPoints();
+    // Only deactivate on the initial start — skip when seamlessly looping
+    // so the last dot's release tail isn't cut off.
+    if (scheduledStartTime === undefined) {
+      this.audioService.deactivateAllPoints();
+      this.audioService.resetBandwidthOscillationSequence();
+      this.reverbQuietOscillationIndex = 0;
+    }
 
     // Sort dots by reading order
     const sortedDotKeys = this.sortDotsByReadingOrder();
     const dotCount = sortedDotKeys.length;
     const playableDots = sortedDotKeys.filter(dotKey => this.shouldRedDotPlay(dotKey));
+    const referenceHiHatHitSequence = this.getReferenceHiHatHitSequence(sortedDotKeys);
+    const referenceHitSequence = referenceHiHatHitSequence ? null : this.getReferenceInterleavedHitSequence(sortedDotKeys);
 
     // Get hit mode parameters
     const hitRate = this.audioService.getHitModeRate(); // hits per second
@@ -2207,109 +2604,312 @@ class DotGridAudioPlayer {
     const hitsPerVolumeLevel = this.audioService.getNumberOfHits(); // Number of hits at EACH volume level
     const hitDecayDb = this.audioService.getHitDecay(); // Total dB range from quietest to loudest
     const volumeSteps = this.audioService.getVolumeSteps(); // Number of volume levels
+    const referenceMultipliedVolumeSequence = referenceHiHatHitSequence ? null : this.getReferenceMultipliedVolumeSequence(sortedDotKeys);
+    const referenceBalancedVolumeSequence =
+      !referenceHiHatHitSequence && !referenceMultipliedVolumeSequence && volumeSteps === 3 ? this.getReferenceBalancedVolumeSequence(sortedDotKeys) : null;
+    const hiHatDepthSequence =
+      !referenceHitSequence && !referenceBalancedVolumeSequence && !referenceMultipliedVolumeSequence &&
+      playableDots.length > 0 && (this.audioService.getHiHatModeEnabled() || (this.patternModeEnabled && playableDots.length === 1)) && !this.reverbModeEnabled
+        ? [2, 0, 0, 0, 0, 0, 0, 0]
+        : null;
+    const reverbDepthSequence =
+      !referenceHitSequence && !referenceBalancedVolumeSequence && !referenceMultipliedVolumeSequence &&
+      playableDots.length > 0 && this.reverbModeEnabled
+        ? [2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]
+        : null;
+    const patternHitSequence =
+      !referenceHitSequence && !referenceBalancedVolumeSequence && !referenceMultipliedVolumeSequence &&
+      !hiHatDepthSequence && !reverbDepthSequence && this.patternModeEnabled
+        ? playableDots.length === 2
+          ? [playableDots[0], playableDots[1], playableDots[1], playableDots[1], playableDots[1], playableDots[1], playableDots[1], playableDots[1]]
+          : playableDots.length === 3
+            ? [playableDots[0], playableDots[1], playableDots[1], playableDots[1], playableDots[2], playableDots[1], playableDots[1], playableDots[1]]
+            : null
+        : null;
+    const singleDotMiddleDepthSequence =
+      !patternHitSequence && !hiHatDepthSequence && !reverbDepthSequence && !referenceHitSequence && !referenceBalancedVolumeSequence && !referenceMultipliedVolumeSequence && playableDots.length === 1 && volumeSteps === 3
+        ? [0, 1, 2, 1]
+        : null;
 
     // Get per-cycle volume multiplier (advances after this cycle completes)
     const perCycleVolumeMultiplier = this.audioService.getCurrentPerCycleVolumeMultiplier();
     const perCycleVolumeRedDotsOnly = this.audioService.getPerCycleVolumeRedDotsOnly();
 
-    // Calculate time between hits
-    const hitInterval = 1 / hitRate; // seconds between hits
-    const currentTime = audioContext.getAudioContext().currentTime;
+    // Wave-based scheduling:
+    // - waveInterval (from speed/hitRate) controls how often each wave of hits happens
+    // - stagger controls the short delay between dots within each wave
+    const waveInterval = 1 / hitRate; // seconds between waves
+    const stagger = this.audioService.getHitModeStagger(); // seconds between dots within a wave
+    const now = audioContext.getAudioContext().currentTime;
+    const currentTime = (scheduledStartTime !== undefined && scheduledStartTime > now) ? scheduledStartTime : now;
 
     // Check if per-dot volume wave is enabled
     const perDotWaveEnabled = this.audioService.isPerDotVolumeWaveEnabled();
+    const allVolumeOscillationDb = this.getAllVolumeOscillationDb();
 
-    // Total hits per dot = volumeSteps × hitsPerVolumeLevel
-    const totalHitsPerDot = volumeSteps * hitsPerVolumeLevel;
+    const scheduleSequencerHit = (dotKey: string, hitTime: number, peakVolume: number, releaseOverride?: number) => {
+      const bandwidth = this.audioService.getNextBandwidthOscillationValue();
+      this.audioService.schedulePointHit(dotKey, hitTime, attackTime, releaseOverride ?? releaseTime, peakVolume, bandwidth);
+    };
+
+    // Total waves = volumeSteps × hitsPerVolumeLevel
+    // Each wave fires all dots (with stagger between them)
+    const totalWaves = volumeSteps * hitsPerVolumeLevel;
 
     // Helper function to calculate volume for a specific volume step
     // volumeStep 0 = quietest (-hitDecayDb), volumeStep volumeSteps-1 = loudest (0dB)
-    const calculateStepVolume = (baseVolume: number, volumeStep: number): number => {
-      if (volumeSteps <= 1) {
+    const calculateStepVolume = (baseVolume: number, volumeStep: number, stepCount = volumeSteps): number => {
+      if (stepCount <= 1) {
         return baseVolume; // Single step at full volume
       }
       // Linear interpolation in dB: first step at -hitDecayDb, last step at 0
-      const stepVolumeDb = -hitDecayDb * (1 - volumeStep / (volumeSteps - 1));
+      const stepVolumeDb = -hitDecayDb * (1 - volumeStep / (stepCount - 1));
       const stepVolumeMultiplier = dbToGain(stepVolumeDb);
       return baseVolume * stepVolumeMultiplier;
     };
 
+    const calculateMiddleAnchoredVolume = (baseVolume: number, balanceSign: -1 | 0 | 1): number => {
+      const middleVolume = baseVolume * dbToGain(-hitDecayDb / 2);
+      return middleVolume * dbToGain(balanceSign * this.referenceVolumeBalance * (hitDecayDb / 2));
+    };
+
+    const applyReferenceVolumeOffset = (dotKey: string, volume: number): number => {
+      if (dotKey !== this.referenceDotKey) return volume;
+      const oscillationDb = this.referenceVolumeOscillationEnabled
+        ? this.getNextReferenceVolumeOscillationDb()
+        : 0;
+      return volume * dbToGain(this.referenceVolumeOffsetDb + oscillationDb);
+    };
+
+    // Helper to get volume info for a dot
+    const getDotVolume = (dotKey: string, dotIndex: number, dotTotal: number, volumeStep: number, stepCount = volumeSteps): number => {
+      const isRedDot = this.redDots.has(dotKey);
+      const effectivePerCycleMultiplier = (perCycleVolumeRedDotsOnly && !isRedDot) ? 1.0 : perCycleVolumeMultiplier;
+      const basePeakVolume = effectivePerCycleMultiplier * dbToGain(allVolumeOscillationDb);
+      const perDotMultiplier = perDotWaveEnabled
+        ? this.audioService.getPerDotVolumeWaveMultiplier(dotIndex, dotTotal)
+        : 1.0;
+      return applyReferenceVolumeOffset(dotKey, calculateStepVolume(basePeakVolume * perDotMultiplier, volumeStep, stepCount));
+    };
+
+    const getHiHatDotVolume = (dotKey: string, dotIndex: number, dotTotal: number, volumeStep: number): number => {
+      const isRedDot = this.redDots.has(dotKey);
+      const effectivePerCycleMultiplier = (perCycleVolumeRedDotsOnly && !isRedDot) ? 1.0 : perCycleVolumeMultiplier;
+      const basePeakVolume = effectivePerCycleMultiplier * dbToGain(allVolumeOscillationDb);
+      const perDotMultiplier = perDotWaveEnabled
+        ? this.audioService.getPerDotVolumeWaveMultiplier(dotIndex, dotTotal)
+        : 1.0;
+      const dropDb = volumeStep >= 2 ? 0 : this.hiHatQuietDropDb;
+      return applyReferenceVolumeOffset(dotKey, basePeakVolume * perDotMultiplier * dbToGain(-dropDb));
+    };
+
+    const getHiHatRelease = (volumeStep: number): number => {
+      return volumeStep >= 2 ? releaseTime + this.hiHatLoudReleaseBoostMs / 1000 : releaseTime;
+    };
+
+    const getReverbDotVolume = (dotKey: string, dotIndex: number, dotTotal: number, volumeStep: number): number => {
+      if (volumeStep >= 2) return getHiHatDotVolume(dotKey, dotIndex, dotTotal, 2);
+      const isRedDot = this.redDots.has(dotKey);
+      const effectivePerCycleMultiplier = (perCycleVolumeRedDotsOnly && !isRedDot) ? 1.0 : perCycleVolumeMultiplier;
+      const basePeakVolume = effectivePerCycleMultiplier * dbToGain(allVolumeOscillationDb);
+      const perDotMultiplier = perDotWaveEnabled
+        ? this.audioService.getPerDotVolumeWaveMultiplier(dotIndex, dotTotal)
+        : 1.0;
+      const dropDb = volumeStep === 1 ? this.reverbVolumeSpreadDb : this.reverbVolumeSpreadDb * 2;
+      return applyReferenceVolumeOffset(dotKey, basePeakVolume * perDotMultiplier * dbToGain(-dropDb));
+    };
+
+    const getPatternDotVolume = (dotKey: string, dotIndex: number): number => {
+      const baseVolume = getDotVolume(dotKey, dotIndex, dotCount, Math.max(0, volumeSteps - 1));
+      if (playableDots.length !== 2 || dotKey !== playableDots[1]) return baseVolume;
+      return baseVolume * dbToGain(this.patternVolumeDiffDb);
+    };
+
     // Schedule hits for all dots in this loop cycle
+    // In all modes, each wave fires all playable dots with stagger, and waves are spaced by waveInterval
     if (this.audioService.getLoopSequencerPlayTogether()) {
-      // Play all dots together mode: all dots hit simultaneously at each volume level
-      // For each volume step, hit all dots hitsPerVolumeLevel times
+      // Play all dots together mode: all dots in each wave, staggered
       for (let volumeStep = 0; volumeStep < volumeSteps; volumeStep++) {
         for (let hit = 0; hit < hitsPerVolumeLevel; hit++) {
+          const waveIndex = volumeStep * hitsPerVolumeLevel + hit;
+          const waveTime = currentTime + waveIndex * waveInterval;
           sortedDotKeys.forEach((dotKey, index) => {
-            // Skip red dots that shouldn't play on this cycle
-            if (!this.shouldRedDotPlay(dotKey)) {
-              return;
-            }
-            // Check if this dot is red
-            const isRedDot = this.redDots.has(dotKey);
-            // Apply per-cycle volume only to red dots if that option is enabled
-            const effectivePerCycleMultiplier = (perCycleVolumeRedDotsOnly && !isRedDot) ? 1.0 : perCycleVolumeMultiplier;
-            const basePeakVolume = effectivePerCycleMultiplier;
-            // Apply per-dot volume wave if enabled
-            const perDotMultiplier = perDotWaveEnabled
-              ? this.audioService.getPerDotVolumeWaveMultiplier(index, dotCount)
-              : 1.0;
-            const peakVolume = calculateStepVolume(basePeakVolume * perDotMultiplier, volumeStep);
-            const hitTime = currentTime + (volumeStep * hitsPerVolumeLevel + hit) * hitInterval;
-            this.audioService.schedulePointHit(dotKey, hitTime, attackTime, releaseTime, peakVolume);
+            if (!this.shouldRedDotPlay(dotKey)) return;
+            const peakVolume = getDotVolume(dotKey, index, dotCount, volumeStep);
+            const hitTime = waveTime + index * stagger;
+            scheduleSequencerHit(dotKey, hitTime, peakVolume);
           });
         }
       }
     } else if (this.audioService.getInterleavedHits()) {
-      // Interleaved mode: at each volume level, alternate between dots on each hit
-      // Pattern: D1@V1, D2@V1, D1@V1, D2@V1... (hitsPerVolumeLevel cycles), then V2, etc.
+      // Interleaved mode: each wave fires all dots with stagger
       const playableDotCount = playableDots.length;
 
       if (playableDotCount > 0) {
         for (let volumeStep = 0; volumeStep < volumeSteps; volumeStep++) {
           for (let hitCycle = 0; hitCycle < hitsPerVolumeLevel; hitCycle++) {
+            const waveIndex = volumeStep * hitsPerVolumeLevel + hitCycle;
+            const waveTime = currentTime + waveIndex * waveInterval;
             playableDots.forEach((dotKey, dotIndex) => {
-              // Check if this dot is red
-              const isRedDot = this.redDots.has(dotKey);
-              // Apply per-cycle volume only to red dots if that option is enabled
-              const effectivePerCycleMultiplier = (perCycleVolumeRedDotsOnly && !isRedDot) ? 1.0 : perCycleVolumeMultiplier;
-              const basePeakVolume = effectivePerCycleMultiplier;
-              // Apply per-dot volume wave if enabled
-              const perDotMultiplier = perDotWaveEnabled
-                ? this.audioService.getPerDotVolumeWaveMultiplier(dotIndex, playableDotCount)
-                : 1.0;
-              const peakVolume = calculateStepVolume(basePeakVolume * perDotMultiplier, volumeStep);
-              // Position: volumeStep * (hitsPerVolumeLevel * dotCount) + hitCycle * dotCount + dotIndex
-              const hitTime = currentTime + (volumeStep * hitsPerVolumeLevel * playableDotCount + hitCycle * playableDotCount + dotIndex) * hitInterval;
-              this.audioService.schedulePointHit(dotKey, hitTime, attackTime, releaseTime, peakVolume);
+              const peakVolume = getDotVolume(dotKey, dotIndex, playableDotCount, volumeStep);
+              const hitTime = waveTime + dotIndex * stagger;
+              scheduleSequencerHit(dotKey, hitTime, peakVolume);
             });
           }
         }
       }
-    } else {
-      // Non-interleaved mode: each dot completes ALL its hits before moving to the next dot
-      sortedDotKeys.forEach((dotKey, dotIndex) => {
-        // Skip red dots that shouldn't play on this cycle
-        if (!this.shouldRedDotPlay(dotKey)) {
-          return;
-        }
-        // Check if this dot is red
-        const isRedDot = this.redDots.has(dotKey);
-        // Apply per-cycle volume only to red dots if that option is enabled
-        const effectivePerCycleMultiplier = (perCycleVolumeRedDotsOnly && !isRedDot) ? 1.0 : perCycleVolumeMultiplier;
-        const basePeakVolume = effectivePerCycleMultiplier;
-        // Apply per-dot volume wave if enabled
-        const perDotMultiplier = perDotWaveEnabled
-          ? this.audioService.getPerDotVolumeWaveMultiplier(dotIndex, dotCount)
-          : 1.0;
+    } else if (referenceMultipliedVolumeSequence) {
+      // Reference multiply mode: each non-gold dot repeats against gold
+      // without changing volume, so the comparison stays purely positional.
+      let hitIndex = 0;
 
-        // Schedule all hits for this dot: for each volume step, hit hitsPerVolumeLevel times
-        for (let volumeStep = 0; volumeStep < volumeSteps; volumeStep++) {
-          const peakVolume = calculateStepVolume(basePeakVolume * perDotMultiplier, volumeStep);
+      referenceMultipliedVolumeSequence.forEach((dotKey) => {
+        const dotIndex = Math.max(0, sortedDotKeys.indexOf(dotKey));
+        for (let hit = 0; hit < hitsPerVolumeLevel; hit++) {
+          const peakVolume = getDotVolume(dotKey, dotIndex, dotCount, Math.max(0, volumeSteps - 1));
+          const hitTime = currentTime + hitIndex * stagger;
+          scheduleSequencerHit(dotKey, hitTime, peakVolume);
+          hitIndex++;
+        }
+      });
+    } else if (referenceBalancedVolumeSequence) {
+      // Three-dot reference-volume mode: the gold dot stays at middle depth,
+      // while the two other positions tilt quieter/louder around it.
+      let hitIndex = 0;
+
+      referenceBalancedVolumeSequence.forEach(({ dotKey, balanceSign }) => {
+        const dotIndex = Math.max(0, sortedDotKeys.indexOf(dotKey));
+        for (let hit = 0; hit < hitsPerVolumeLevel; hit++) {
+          const baseVolume = getDotVolume(dotKey, dotIndex, dotCount, 2);
+          const peakVolume = calculateMiddleAnchoredVolume(baseVolume, balanceSign);
+          const hitTime = currentTime + hitIndex * stagger;
+          scheduleSequencerHit(dotKey, hitTime, peakVolume);
+          hitIndex++;
+        }
+      });
+    } else if (referenceHiHatHitSequence) {
+      // Gold hi-hat mode: play each non-gold once, then the reference dot
+      // three times. Gold-specific volume effects still run in getDotVolume.
+      let hitIndex = 0;
+
+      referenceHiHatHitSequence.forEach((dotKey) => {
+        const dotIndex = Math.max(0, sortedDotKeys.indexOf(dotKey));
+        const loudStep = Math.max(0, volumeSteps - 1);
+        const peakVolume = getDotVolume(dotKey, dotIndex, dotCount, loudStep);
+        const hitTime = currentTime + hitIndex * stagger;
+        const releaseForGoldHatHit = dotKey === this.referenceDotKey ? releaseTime : getHiHatRelease(2);
+        scheduleSequencerHit(dotKey, hitTime, peakVolume, releaseForGoldHatHit);
+        hitIndex++;
+      });
+    } else if (referenceHitSequence) {
+      // Reference-dot mode: each ordinary hit is immediately followed by the
+      // marked reference dot, so the ear always compares against the same place.
+      let hitIndex = 0;
+
+      for (let volumeStep = 0; volumeStep < volumeSteps; volumeStep++) {
+        referenceHitSequence.forEach((dotKey) => {
+          const dotIndex = Math.max(0, sortedDotKeys.indexOf(dotKey));
           for (let hit = 0; hit < hitsPerVolumeLevel; hit++) {
-            // Position in sequence: dotIndex * totalHitsPerDot + volumeStep * hitsPerVolumeLevel + hit
-            const hitTime = currentTime + (dotIndex * totalHitsPerDot + volumeStep * hitsPerVolumeLevel + hit) * hitInterval;
-            this.audioService.schedulePointHit(dotKey, hitTime, attackTime, releaseTime, peakVolume);
+            const peakVolume = getDotVolume(dotKey, dotIndex, dotCount, volumeStep);
+            const hitTime = currentTime + hitIndex * stagger;
+            scheduleSequencerHit(dotKey, hitTime, peakVolume);
+            hitIndex++;
+          }
+        });
+      }
+    } else if (hiHatDepthSequence) {
+      // Hi-hat mode: each playable dot walks through the same 8-step accent
+      // cycle, interleaved one dot per hit. With two dots, the second dot's
+      // accent cycle is offset by two hits so the loud accents answer each
+      // other instead of landing together.
+      let hitIndex = 0;
+
+      if (playableDots.length === 2) {
+        const totalHits = hiHatDepthSequence.length * playableDots.length * hitsPerVolumeLevel;
+        for (let sequenceHit = 0; sequenceHit < totalHits; sequenceHit++) {
+          const dotOrderIndex = sequenceHit % playableDots.length;
+          const dotKey = playableDots[dotOrderIndex];
+          const dotIndex = Math.max(0, sortedDotKeys.indexOf(dotKey));
+          const dotHitIndex = Math.floor(sequenceHit / playableDots.length);
+          const shiftedHitIndex = (dotHitIndex - dotOrderIndex * 2 + hiHatDepthSequence.length) % hiHatDepthSequence.length;
+          const volumeStep = hiHatDepthSequence[shiftedHitIndex] ?? 0;
+          const peakVolume = getHiHatDotVolume(dotKey, dotIndex, dotCount, volumeStep);
+          const hitTime = currentTime + hitIndex * stagger;
+          scheduleSequencerHit(dotKey, hitTime, peakVolume, getHiHatRelease(volumeStep));
+          hitIndex++;
+        }
+      } else {
+        hiHatDepthSequence.forEach((volumeStep) => {
+          playableDots.forEach((dotKey) => {
+            const dotIndex = Math.max(0, sortedDotKeys.indexOf(dotKey));
+            const peakVolume = getHiHatDotVolume(dotKey, dotIndex, dotCount, volumeStep);
+            for (let hit = 0; hit < hitsPerVolumeLevel; hit++) {
+              const hitTime = currentTime + hitIndex * stagger;
+              scheduleSequencerHit(dotKey, hitTime, peakVolume, getHiHatRelease(volumeStep));
+              hitIndex++;
+            }
+          });
+        });
+      }
+    } else if (reverbDepthSequence) {
+      // Reverb mode: loud every 16 hits, medium every 4 hits, quiet between.
+      let hitIndex = 0;
+
+      reverbDepthSequence.forEach((volumeStep) => {
+        playableDots.forEach((dotKey) => {
+          const dotIndex = Math.max(0, sortedDotKeys.indexOf(dotKey));
+          const peakVolume = getReverbDotVolume(dotKey, dotIndex, dotCount, volumeStep);
+          for (let hit = 0; hit < hitsPerVolumeLevel; hit++) {
+            const hitTime = currentTime + hitIndex * stagger;
+            scheduleSequencerHit(dotKey, hitTime, peakVolume, getHiHatRelease(volumeStep));
+            hitIndex++;
+          }
+        });
+      });
+    } else if (patternHitSequence) {
+      // Pattern mode: with two dots, repeat dot 2; with three dots, alternate
+      // dot 1 / dot 3 against dot 2.
+      let hitIndex = 0;
+
+      patternHitSequence.forEach((dotKey, sequenceIndex) => {
+        const dotIndex = Math.max(0, sortedDotKeys.indexOf(dotKey));
+        const peakVolume = getPatternDotVolume(dotKey, dotIndex);
+        const releaseForPatternHit = sequenceIndex === 0 ? getHiHatRelease(2) : releaseTime;
+        for (let hit = 0; hit < hitsPerVolumeLevel; hit++) {
+          const hitTime = currentTime + hitIndex * stagger;
+          scheduleSequencerHit(dotKey, hitTime, peakVolume, releaseForPatternHit);
+          hitIndex++;
+        }
+      });
+    } else if (singleDotMiddleDepthSequence) {
+      // One-dot 3x-depth mode: use the middle volume as the anchor, mirroring
+      // the reference-dot A/B pattern without needing a second spatial dot.
+      const dotKey = playableDots[0];
+      const dotIndex = Math.max(0, sortedDotKeys.indexOf(dotKey));
+      let hitIndex = 0;
+
+      singleDotMiddleDepthSequence.forEach((volumeStep) => {
+        const peakVolume = getDotVolume(dotKey, dotIndex, dotCount, volumeStep);
+        for (let hit = 0; hit < hitsPerVolumeLevel; hit++) {
+          const hitTime = currentTime + hitIndex * stagger;
+          scheduleSequencerHit(dotKey, hitTime, peakVolume);
+          hitIndex++;
+        }
+      });
+    } else {
+      // Non-interleaved mode: each dot completes all its volume steps
+      // before moving to the next dot, one hit at a time.
+      let hitIndex = 0;
+
+      sortedDotKeys.forEach((dotKey, dotIndex) => {
+        if (!this.shouldRedDotPlay(dotKey)) return;
+
+        for (let volumeStep = 0; volumeStep < volumeSteps; volumeStep++) {
+          const peakVolume = getDotVolume(dotKey, dotIndex, dotCount, volumeStep);
+          for (let hit = 0; hit < hitsPerVolumeLevel; hit++) {
+            const hitTime = currentTime + hitIndex * stagger;
+            scheduleSequencerHit(dotKey, hitTime, peakVolume);
+            hitIndex++;
           }
         }
       });
@@ -2323,39 +2923,102 @@ class DotGridAudioPlayer {
 
     // Advance cycle counter for red dot scheduling
     this.advanceCycleCounter();
+    this.advanceAllVolumeOscillationCycle();
 
-    // Calculate loop duration based on hit rate, dot count, and total hits per dot
-    // For interleaved mode, we need to count playable dots
-    const playableDotCount = sortedDotKeys.filter(dotKey => this.shouldRedDotPlay(dotKey)).length;
-    const effectiveDotCount = playableDotCount > 0 ? playableDotCount : 1;
-
-    let loopDuration: number;
-    if (this.audioService.getLoopSequencerPlayTogether()) {
-      loopDuration = hitInterval * totalHitsPerDot; // All dots together
-    } else if (this.audioService.getInterleavedHits()) {
-      // Interleaved: totalHitsPerDot * dotCount total hits (dots cycle within each volume level)
-      loopDuration = totalHitsPerDot * effectiveDotCount * hitInterval;
-    } else {
-      // Non-interleaved: same total, but organized differently
-      loopDuration = effectiveDotCount * totalHitsPerDot * hitInterval;
-    }
+    // Loop duration depends on mode:
+    // - play-together / interleaved: totalWaves * waveInterval
+    // - non-interleaved (sequential): totalHits * stagger (one hit at a time)
+    const isSequentialMode = !this.audioService.getLoopSequencerPlayTogether() && !this.audioService.getInterleavedHits();
+    const hitsPerDot = volumeSteps * hitsPerVolumeLevel;
+    const playableDotCount = playableDots.length;
+    const referenceHiHatHits = referenceHiHatHitSequence
+      ? referenceHiHatHitSequence.length
+      : 0;
+    const referenceSequentialHits = referenceHitSequence
+      ? referenceHitSequence.length * volumeSteps * hitsPerVolumeLevel
+      : 0;
+    const referenceMultipliedVolumeHits = referenceMultipliedVolumeSequence
+      ? referenceMultipliedVolumeSequence.length * hitsPerVolumeLevel
+      : 0;
+    const referenceBalancedVolumeHits = referenceBalancedVolumeSequence
+      ? referenceBalancedVolumeSequence.length * hitsPerVolumeLevel
+      : 0;
+    const hiHatDepthHits = hiHatDepthSequence
+      ? hiHatDepthSequence.length * playableDotCount * hitsPerVolumeLevel
+      : 0;
+    const reverbDepthHits = reverbDepthSequence
+      ? reverbDepthSequence.length * playableDotCount * hitsPerVolumeLevel
+      : 0;
+    const patternHits = patternHitSequence
+      ? patternHitSequence.length * hitsPerVolumeLevel
+      : 0;
+    const singleDotMiddleDepthHits = singleDotMiddleDepthSequence
+      ? singleDotMiddleDepthSequence.length * hitsPerVolumeLevel
+      : 0;
+    const totalSequentialHits = referenceMultipliedVolumeSequence
+      ? referenceMultipliedVolumeHits
+      : referenceBalancedVolumeSequence
+      ? referenceBalancedVolumeHits
+      : referenceHiHatHitSequence
+      ? referenceHiHatHits
+      : referenceHitSequence
+      ? referenceSequentialHits
+      : hiHatDepthSequence
+      ? hiHatDepthHits
+      : reverbDepthSequence
+      ? reverbDepthHits
+      : patternHitSequence
+      ? patternHits
+      : singleDotMiddleDepthSequence
+        ? singleDotMiddleDepthHits
+        : playableDotCount * hitsPerDot;
+    const loopDuration = isSequentialMode
+      ? totalSequentialHits * stagger
+      : totalWaves * waveInterval;
 
     const loopDelayMs = loopDuration * 1000;
-    this.loopSequencerVisualDotKeys = playableDots;
+    this.loopSequencerVisualDotKeys = referenceMultipliedVolumeSequence ?? referenceBalancedVolumeSequence?.map(({ dotKey }) => dotKey) ?? referenceHiHatHitSequence ?? referenceHitSequence ?? patternHitSequence ?? playableDots;
     this.loopSequencerVisualCycleStartTime = currentTime;
-    this.loopSequencerVisualHitInterval = hitInterval;
-    this.loopSequencerVisualTotalHitsPerDot = totalHitsPerDot;
-    this.loopSequencerVisualCycleHits = Math.max(1, Math.round(loopDuration / hitInterval));
+    this.loopSequencerVisualHitInterval = isSequentialMode ? stagger : waveInterval;
+    this.loopSequencerVisualTotalHitsPerDot = hitsPerDot;
+    this.loopSequencerVisualCycleHits = Math.max(1, isSequentialMode ? totalSequentialHits : totalWaves);
     this.loopSequencerVisualBeatBase = this.loopSequencerVisualNextBeatBase;
     this.loopSequencerVisualNextBeatBase = this.loopSequencerVisualBeatBase + this.loopSequencerVisualCycleHits;
     this.loopSequencerVisualInterleaved = this.audioService.getInterleavedHits();
     this.loopSequencerVisualPlayTogether = this.audioService.getLoopSequencerPlayTogether();
+    this.loopSequencerVisualHitDotKeys = isSequentialMode && referenceMultipliedVolumeSequence
+      ? referenceMultipliedVolumeSequence.flatMap((dotKey) => Array.from({ length: hitsPerVolumeLevel }, () => dotKey))
+      : isSequentialMode && referenceBalancedVolumeSequence
+      ? referenceBalancedVolumeSequence.flatMap(({ dotKey }) => Array.from({ length: hitsPerVolumeLevel }, () => dotKey))
+      : isSequentialMode && referenceHiHatHitSequence
+      ? referenceHiHatHitSequence
+      : isSequentialMode && referenceHitSequence
+      ? Array.from({ length: volumeSteps }).flatMap(() =>
+          referenceHitSequence.flatMap((dotKey) => Array.from({ length: hitsPerVolumeLevel }, () => dotKey))
+        )
+      : isSequentialMode && hiHatDepthSequence
+        ? hiHatDepthSequence.flatMap(() =>
+            playableDots.flatMap((dotKey) => Array.from({ length: hitsPerVolumeLevel }, () => dotKey))
+          )
+      : isSequentialMode && reverbDepthSequence
+        ? reverbDepthSequence.flatMap(() =>
+            playableDots.flatMap((dotKey) => Array.from({ length: hitsPerVolumeLevel }, () => dotKey))
+          )
+      : isSequentialMode && patternHitSequence
+        ? patternHitSequence.flatMap((dotKey) => Array.from({ length: hitsPerVolumeLevel }, () => dotKey))
+      : isSequentialMode && singleDotMiddleDepthSequence
+        ? Array.from({ length: singleDotMiddleDepthHits }, () => playableDots[0])
+      : null;
 
+    const nextStartTime = currentTime + loopDuration;
+    // Fire the timeout slightly early so we can pre-schedule the next batch
+    // using the exact nextStartTime for seamless looping.
+    const earlyMs = Math.min(100, loopDelayMs * 0.25);
     this.loopSequencerTimeoutId = window.setTimeout(() => {
       if (this.isPlaying && this.isLoopSequencerMode()) {
-        this.startLoopSequencer(); // Recursive loop
+        this.startLoopSequencer(nextStartTime); // Recursive loop with precise timing
       }
-    }, loopDelayMs);
+    }, Math.max(0, loopDelayMs - earlyMs));
   }
 
   /**
@@ -2801,6 +3464,26 @@ class DotGridAudioPlayer {
     this.audioService.setBandpassBandwidth(bandwidthOctaves);
   }
 
+  public setBandwidthOscillationEnabled(enabled: boolean): void {
+    this.audioService.setBandwidthOscillationEnabled(enabled);
+  }
+
+  public getBandwidthOscillationEnabled(): boolean {
+    return this.audioService.getBandwidthOscillationEnabled();
+  }
+
+  public setBandwidthOscillationStep(stepOctaves: number): void {
+    this.audioService.setBandwidthOscillationStep(stepOctaves);
+  }
+
+  public getBandwidthOscillationStep(): number {
+    return this.audioService.getBandwidthOscillationStep();
+  }
+
+  public setBandpassSlope(slopeDbPerOct: number): void {
+    this.audioService.setBandpassSlope(slopeDbPerOct);
+  }
+
   public setRepeatCount(count: number): void {
     this.audioService.setRepeatCount(count);
   }
@@ -3143,6 +3826,18 @@ class DotGridAudioPlayer {
     return this.audioService.getHitModeRate();
   }
 
+  public setHitModeStagger(stagger: number): void {
+    this.audioService.setHitModeStagger(stagger);
+    if (this.isPlaying && this.isLoopSequencerMode()) {
+      this.stopLoopSequencer();
+      this.startLoopSequencer();
+    }
+  }
+
+  public getHitModeStagger(): number {
+    return this.audioService.getHitModeStagger();
+  }
+
   public setHitModeAttack(time: number): void {
     this.audioService.setHitModeAttack(time);
   }
@@ -3205,6 +3900,17 @@ class DotGridAudioPlayer {
 
   public getInterleavedHits(): boolean {
     return this.audioService.getInterleavedHits();
+  }
+
+  public setHiHatModeEnabled(enabled: boolean): void {
+    this.audioService.setHiHatModeEnabled(enabled);
+    if (this.isPlaying && this.isLoopSequencerMode()) {
+      this.startLoopSequencer();
+    }
+  }
+
+  public getHiHatModeEnabled(): boolean {
+    return this.audioService.getHiHatModeEnabled();
   }
 
   // Auto volume cycle methods
@@ -3385,6 +4091,55 @@ class SineToneGenerator {
   }
 }
 
+class AdditivePartialGenerator {
+  private ctx: AudioContext;
+  private outputGainNode: GainNode;
+  private partials: Array<{ oscillator: OscillatorNode; gain: GainNode }> = [];
+
+  constructor(audioCtx: AudioContext) {
+    this.ctx = audioCtx;
+    this.outputGainNode = this.ctx.createGain();
+    this.outputGainNode.gain.value = ADDITIVE_PARTIAL_OUTPUT_GAIN_SCALAR;
+
+    const logMin = Math.log2(MIN_AUDIBLE_FREQ);
+    const logMax = Math.log2(MAX_AUDIBLE_FREQ);
+    const partialGain = 1 / Math.sqrt(ADDITIVE_PARTIAL_COUNT);
+
+    for (let index = 0; index < ADDITIVE_PARTIAL_COUNT; index++) {
+      const oscillator = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      const centeredJitter = (Math.random() - 0.5) / ADDITIVE_PARTIAL_COUNT;
+      const normalized = (index + Math.random()) / ADDITIVE_PARTIAL_COUNT + centeredJitter;
+      const clampedNormalized = clamp(normalized, 0, 1);
+      oscillator.type = 'sine';
+      oscillator.frequency.value = Math.pow(2, logMin + clampedNormalized * (logMax - logMin));
+      gain.gain.value = partialGain * (0.65 + Math.random() * 0.7);
+      oscillator.connect(gain);
+      gain.connect(this.outputGainNode);
+      oscillator.start(this.ctx.currentTime + Math.random() * 0.02);
+      this.partials.push({ oscillator, gain });
+    }
+  }
+
+  public getOutputNode(): GainNode {
+    return this.outputGainNode;
+  }
+
+  public dispose(): void {
+    this.partials.forEach(({ oscillator, gain }) => {
+      try {
+        oscillator.stop();
+      } catch {
+        // Oscillator might already be stopped
+      }
+      oscillator.disconnect();
+      gain.disconnect();
+    });
+    this.outputGainNode.disconnect();
+    this.partials = [];
+  }
+}
+
 class BandpassedNoiseGenerator {
   private ctx: AudioContext;
   private inputGainNode: GainNode;
@@ -3394,6 +4149,7 @@ class BandpassedNoiseGenerator {
   private slopingFilter: SlopedPinkNoiseGenerator;
   private currentBandwidthOctaves: number;
   private currentCenterFrequency: number;
+  private currentFilterQ: number;
   private isHighpassActive: boolean = true;
   private isLowpassActive: boolean = true;
 
@@ -3410,16 +4166,17 @@ class BandpassedNoiseGenerator {
     // Create sharp highpass filter
     this.highpassFilter = this.ctx.createBiquadFilter();
     this.highpassFilter.type = 'highpass';
-    this.highpassFilter.Q.value = 10; // Sharp filter
+    this.highpassFilter.Q.value = BANDPASS_FILTER_Q;
     
     // Create sharp lowpass filter
     this.lowpassFilter = this.ctx.createBiquadFilter();
     this.lowpassFilter.type = 'lowpass';
-    this.lowpassFilter.Q.value = 10; // Sharp filter (will be recalculated based on bandwidth)
+    this.lowpassFilter.Q.value = BANDPASS_FILTER_Q;
 
     // Initialize bandwidth and center frequency
     this.currentBandwidthOctaves = BANDPASS_BANDWIDTH_OCTAVES;
     this.currentCenterFrequency = 1000; // Default, will be updated based on Y position
+    this.currentFilterQ = BANDPASS_FILTER_Q;
 
     // Connect input to sloping filter
     this.inputGainNode.connect(this.slopingFilter.getInputNode());
@@ -3437,20 +4194,6 @@ class BandpassedNoiseGenerator {
 
   public getOutputNode(): GainNode {
     return this.outputGainNode;
-  }
-
-  private calculateQFromBandwidth(bandwidthOctaves: number): number {
-    // For a highpass + lowpass combination to approximate a bandpass:
-    // Q relates inversely to bandwidth
-    const numerator = Math.sqrt(2);
-    const denominator = Math.pow(2, bandwidthOctaves / 2) - Math.pow(2, -bandwidthOctaves / 2);
-    const baseQ = numerator / denominator;
-
-    // Multiply by 15 to make filters much sharper (steeper rolloff)
-    // This keeps filters from extending too far outside the intended passband
-    const sharperQ = baseQ * 15;
-
-    return clamp(sharperQ, 0.7, 100);
   }
 
   private disconnectFilterChain(): void {
@@ -3514,10 +4257,9 @@ class BandpassedNoiseGenerator {
     this.highpassFilter.frequency.value = clamp(lowerEdge, 20, 20000);
     this.lowpassFilter.frequency.value = clamp(upperEdge, 20, 20000);
 
-    // Calculate and set Q value based on desired bandwidth
-    const qValue = this.calculateQFromBandwidth(this.currentBandwidthOctaves);
-    this.highpassFilter.Q.value = qValue;
-    this.lowpassFilter.Q.value = qValue;
+    // Keep the actual filter Q fixed; bandwidth only moves the cutoff pair.
+    this.highpassFilter.Q.value = this.currentFilterQ;
+    this.lowpassFilter.Q.value = this.currentFilterQ;
   }
 
   public setBandpassBandwidth(bandwidthOctaves: number): void {
@@ -3528,12 +4270,43 @@ class BandpassedNoiseGenerator {
     this.setBandpassFrequency(this.currentCenterFrequency);
   }
 
+  public scheduleBandpassBandwidth(bandwidthOctaves: number, scheduledTime: number): void {
+    this.currentBandwidthOctaves = clamp(bandwidthOctaves, 0.1, 10);
+
+    const halfBandwidth = this.currentBandwidthOctaves / 2;
+    const lowerEdge = this.currentCenterFrequency / Math.pow(2, halfBandwidth);
+    const upperEdge = this.currentCenterFrequency * Math.pow(2, halfBandwidth);
+
+    this.updateFilterChain(lowerEdge, upperEdge);
+    this.highpassFilter.frequency.setValueAtTime(clamp(lowerEdge, 20, 20000), scheduledTime);
+    this.lowpassFilter.frequency.setValueAtTime(clamp(upperEdge, 20, 20000), scheduledTime);
+  }
+
+  public scheduleBandpassFrequencyAndBandwidth(
+    frequency: number,
+    bandwidthOctaves: number,
+    scheduledTime: number
+  ): void {
+    this.currentCenterFrequency = frequency;
+    this.currentBandwidthOctaves = clamp(bandwidthOctaves, 0.1, 10);
+
+    const halfBandwidth = this.currentBandwidthOctaves / 2;
+    const lowerEdge = frequency / Math.pow(2, halfBandwidth);
+    const upperEdge = frequency * Math.pow(2, halfBandwidth);
+
+    this.updateFilterChain(lowerEdge, upperEdge);
+    this.highpassFilter.frequency.setValueAtTime(clamp(lowerEdge, 20, 20000), scheduledTime);
+    this.lowpassFilter.frequency.setValueAtTime(clamp(upperEdge, 20, 20000), scheduledTime);
+  }
+
+  public setBandpassSlope(slopeDbPerOct: number): void {
+    this.slopingFilter.setSlope(slopeDbPerOct);
+  }
+
   public setBandpassQ(q: number): void {
-    // Convert Q to approximate bandwidth for backward compatibility
-    const qClamped = clamp(q, 0.1, 30);
-    // Approximate inverse: bandwidth ≈ 2 * asinh(sqrt(2) / (2 * q)) / ln(2)
-    const approximateBandwidth = 2 * Math.asinh(Math.sqrt(2) / (2 * qClamped)) / Math.log(2);
-    this.setBandpassBandwidth(approximateBandwidth);
+    this.currentFilterQ = clamp(q, 0.1, 100);
+    this.highpassFilter.Q.value = this.currentFilterQ;
+    this.lowpassFilter.Q.value = this.currentFilterQ;
   }
 
   public dispose(): void {
@@ -3545,15 +4318,15 @@ class BandpassedNoiseGenerator {
   }
 }
 
-class SlopedPinkNoiseGenerator {
-  private ctx: AudioContext;
+export class SlopedPinkNoiseGenerator {
+  private ctx: BaseAudioContext;
   private inputGainNode: GainNode;
   private outputGainNode: GainNode;
   private bandFilters: BiquadFilterNode[] = [];
   private bandGains: GainNode[] = [];
   private centerFrequencies: number[] = [];
 
-  constructor(audioCtx: AudioContext) {
+  constructor(audioCtx: BaseAudioContext) {
     this.ctx = audioCtx;
     this.inputGainNode = this.ctx.createGain();
     this.outputGainNode = this.ctx.createGain();

@@ -57,8 +57,12 @@ interface SimpleSoundstageProps {
   gridRows: number
   gridCols: number
   selectedDots: Set<string>
+  constantDots?: Set<string>
+  referenceDotKey?: string | null
   onDotSelect: (x: number, y: number) => void
   onDotDeselect: (x: number, y: number) => void
+  onDotReference?: (x: number, y: number) => void
+  onDotConstantToggle?: (x: number, y: number) => void
   playingDotKey: string | null
   beatIndex: number
   hoveredDot: string | null
@@ -68,6 +72,7 @@ interface SimpleSoundstageProps {
   cursorDotPosition?: { normalizedX: number; normalizedY: number } | null
   onCursorDotMove?: (normalizedX: number, normalizedY: number) => void
   onCursorDotEnd?: () => void
+  inputDisabled?: boolean
   inviteDotKey?: string | null
   eqHighlights?: Map<string, number> | null
 }
@@ -78,8 +83,12 @@ export function SimpleSoundstage({
   gridRows,
   gridCols,
   selectedDots,
+  constantDots,
+  referenceDotKey,
   onDotSelect,
   onDotDeselect,
+  onDotReference,
+  onDotConstantToggle,
   playingDotKey,
   hoveredDot,
   onHoverDot,
@@ -88,6 +97,7 @@ export function SimpleSoundstage({
   cursorDotPosition,
   onCursorDotMove,
   onCursorDotEnd,
+  inputDisabled,
   inviteDotKey,
   eqHighlights,
 }: SimpleSoundstageProps) {
@@ -185,9 +195,19 @@ export function SimpleSoundstage({
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
-      if (interactionDisabled) return
+      if (interactionDisabled || inputDisabled) return
       const hit = resolveGrid(e)
       if (!hit) return
+      if (e.shiftKey) {
+        onDotConstantToggle?.(hit.col, hit.row)
+        onDragStateChange?.(false)
+        return
+      }
+      if (e.button === 2) {
+        onDotReference?.(hit.col, hit.row)
+        onDragStateChange?.(false)
+        return
+      }
       const key = `${hit.col},${hit.row}`
       dragMode.current = selectedDots.has(key) ? "deselect" : "select"
       visited.current = new Set()
@@ -195,7 +215,7 @@ export function SimpleSoundstage({
       onDragStateChange?.(true)
       ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     },
-    [resolveGrid, selectedDots, applyToHit, interactionDisabled, onDragStateChange]
+    [resolveGrid, selectedDots, applyToHit, interactionDisabled, inputDisabled, onDragStateChange, onDotReference, onDotConstantToggle]
   )
 
   const handlePointerMove = useCallback(
@@ -216,7 +236,7 @@ export function SimpleSoundstage({
       }
 
       const hit = resolveGrid(e)
-      if (interactionDisabled) {
+      if (interactionDisabled || inputDisabled) {
         onHoverDot(null)
         return
       }
@@ -225,7 +245,7 @@ export function SimpleSoundstage({
         applyToHit(hit.col, hit.row)
       }
     },
-    [resolveGrid, onHoverDot, applyToHit, interactionDisabled, onCursorDotMove]
+    [resolveGrid, onHoverDot, applyToHit, interactionDisabled, inputDisabled, onCursorDotMove]
   )
 
   const handlePointerUp = useCallback(() => {
@@ -277,6 +297,8 @@ export function SimpleSoundstage({
       const row = gridRows - 1 - displayRow
       const key = `${col},${row}`
       const isSelected = selectedDots.has(key)
+      const isConstant = constantDots?.has(key) ?? false
+      const isReference = referenceDotKey === key
       const isPlaying = playingDotKey === key
       const isHovered = hoveredDot === key
 
@@ -287,10 +309,16 @@ export function SimpleSoundstage({
       let bgColor: string
       let shadow: string
 
-      if (highlightGrid && !isSongPlaying) {
+      if (isReference) {
+        bgColor = "rgb(255, 199, 31)"
+        shadow = "0 0 18px rgba(255,199,31,0.78), 0 0 38px rgba(255,199,31,0.42)"
+      } else if (highlightGrid && !isSongPlaying) {
         // Grid highlight: all dots glow in their frequency color
         bgColor = hsl
         shadow = `0 0 16px ${glowHsl}, 0 0 32px ${glowHsl}`
+      } else if (isConstant) {
+        bgColor = hsl
+        shadow = `0 0 18px ${glowHsl}, 0 0 30px ${glowHsl}`
       } else if (isPlaying) {
         bgColor = hsl
         shadow = `0 0 18px ${glowHsl}, 0 0 36px ${glowHsl}`
@@ -354,6 +382,7 @@ export function SimpleSoundstage({
       <div
         ref={containerRef}
         className="absolute inset-0 select-none touch-none"
+        onContextMenu={(event) => event.preventDefault()}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}

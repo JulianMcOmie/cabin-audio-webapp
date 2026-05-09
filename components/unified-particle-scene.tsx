@@ -251,8 +251,12 @@ export interface UnifiedParticleSceneProps {
   gridRows: number
   gridCols: number
   selectedDots: Set<string>
+  constantDots?: Set<string>
+  referenceDotKey?: string | null
   onDotSelect: (x: number, y: number) => void
   onDotDeselect: (x: number, y: number) => void
+  onDotReference?: (x: number, y: number) => void
+  onDotConstantToggle?: (x: number, y: number) => void
   playingDotKey: string | null
   beatIndex: number
   hoveredDot: string | null
@@ -263,6 +267,7 @@ export interface UnifiedParticleSceneProps {
   cursorDotPosition?: { normalizedX: number; normalizedY: number } | null
   onCursorDotMove?: (normalizedX: number, normalizedY: number) => void
   onCursorDotEnd?: () => void
+  inputDisabled?: boolean
   inviteDotKey?: string | null
   eqHighlights?: Map<string, number> | null
 }
@@ -759,6 +764,8 @@ function InteractionPlane({
   selectedDots,
   onDotSelect,
   onDotDeselect,
+  onDotReference,
+  onDotConstantToggle,
   onHoverDot,
   disabled,
   onDragStateChange,
@@ -769,6 +776,8 @@ function InteractionPlane({
   selectedDots: Set<string>
   onDotSelect: (x: number, y: number) => void
   onDotDeselect: (x: number, y: number) => void
+  onDotReference?: (x: number, y: number) => void
+  onDotConstantToggle?: (x: number, y: number) => void
   onHoverDot: (key: string | null) => void
   disabled: boolean
   onDragStateChange?: (isDragging: boolean) => void
@@ -811,13 +820,23 @@ function InteractionPlane({
       e.stopPropagation()
       const hit = resolveGrid(e.point)
       if (!hit) return
+      if (e.nativeEvent.shiftKey) {
+        onDotConstantToggle?.(hit.col, hit.row)
+        onDragStateChange?.(false)
+        return
+      }
+      if (e.nativeEvent.button === 2) {
+        onDotReference?.(hit.col, hit.row)
+        onDragStateChange?.(false)
+        return
+      }
       const key = `${hit.col},${hit.row}`
       dragMode.current = selectedDots.has(key) ? "deselect" : "select"
       visited.current = new Set()
       applyToHit(hit.col, hit.row)
       onDragStateChange?.(true)
     },
-    [resolveGrid, selectedDots, applyToHit, disabled, onDragStateChange]
+    [resolveGrid, selectedDots, applyToHit, disabled, onDragStateChange, onDotReference, onDotConstantToggle]
   )
 
   const handlePointerMove = useCallback(
@@ -870,8 +889,12 @@ function UnifiedSceneContent({
   gridRows,
   gridCols,
   selectedDots,
+  constantDots,
+  referenceDotKey,
   onDotSelect,
   onDotDeselect,
+  onDotReference,
+  onDotConstantToggle,
   playingDotKey,
   beatIndex,
   hoveredDot,
@@ -880,6 +903,7 @@ function UnifiedSceneContent({
   highlightTarget,
   onDragStateChange,
   cursorDotPosition,
+  inputDisabled,
   inviteDotKey,
   eqHighlights,
 }: UnifiedParticleSceneProps & { isDarkMode: boolean }) {
@@ -1473,7 +1497,7 @@ function UnifiedSceneContent({
           // Dot state for hover + envelope-driven noise
           const dotKey = dotIdx < dotIdxToKey.length ? dotIdxToKey[dotIdx] : null
           const isDotHovered = dotKey !== null && hoveredDot === dotKey
-          const isDotActive = dotKey !== null && selectedDots.has(dotKey)
+          const isDotActive = dotKey !== null && (selectedDots.has(dotKey) || (constantDots?.has(dotKey) ?? false))
           const envelope = dotKey !== null ? getEnvelope(dotKey) : 0
 
           // Hover amplifies breathing/orbit for both selected and unselected dots
@@ -1937,7 +1961,8 @@ function UnifiedSceneContent({
       const dotIdx = homeAssignment[i]
       if (dotIdx >= 0 && dotIdx < dotIdxToKey.length) {
         const dotKey = dotIdxToKey[dotIdx]
-        const isActive = selectedDots.has(dotKey)
+        const isActive = selectedDots.has(dotKey) || (constantDots?.has(dotKey) ?? false)
+        const isReference = referenceDotKey === dotKey
         const isHovered = hoveredDot === dotKey
 
         // Base color: frequency gradient based on home Y position
@@ -1959,7 +1984,14 @@ function UnifiedSceneContent({
           baseB = mid.b + (treble.b - mid.b) * u
         }
 
-        if (isActive) {
+        if (isReference) {
+          ssR = 1
+          ssG = 0.78
+          ssB = 0.12
+          const baseOpacity = isDarkMode ? 0.82 : 0.92
+          ssOpacity = (baseOpacity + (isHovered ? 0.08 : 0)) * (0.2 + 0.8 * soundstageReveal)
+          ssSize = (isHovered ? 0.29 : 0.27) * (0.7 + 0.3 * soundstageReveal)
+        } else if (isActive) {
           // Selected: full frequency color, very glowy
           const ssBrightness = isHovered ? 0.95 : 0.88
           ssR = dimR + (baseR - dimR) * ssBrightness
@@ -2096,8 +2128,10 @@ function UnifiedSceneContent({
         selectedDots={selectedDots}
         onDotSelect={onDotSelect}
         onDotDeselect={onDotDeselect}
+        onDotReference={onDotReference}
+        onDotConstantToggle={onDotConstantToggle}
         onHoverDot={onHoverDot}
-        disabled={isPlaying}
+        disabled={isPlaying || !!inputDisabled}
         onDragStateChange={onDragStateChange}
       />
     </>
@@ -2176,8 +2210,12 @@ export function UnifiedParticleScene(props: UnifiedParticleSceneProps) {
         gridRows={props.gridRows}
         gridCols={props.gridCols}
         selectedDots={props.selectedDots}
+        constantDots={props.constantDots}
+        referenceDotKey={props.referenceDotKey}
         onDotSelect={props.onDotSelect}
         onDotDeselect={props.onDotDeselect}
+        onDotReference={props.onDotReference}
+        onDotConstantToggle={props.onDotConstantToggle}
         playingDotKey={props.playingDotKey}
         beatIndex={props.beatIndex}
         hoveredDot={props.hoveredDot}
@@ -2185,11 +2223,12 @@ export function UnifiedParticleScene(props: UnifiedParticleSceneProps) {
         highlightGrid={props.highlightTarget === "grid"}
         onDragStateChange={props.onDragStateChange}
         cursorDotPosition={props.cursorDotPosition}
-        onCursorDotMove={props.onCursorDotMove}
-        onCursorDotEnd={props.onCursorDotEnd}
-        inviteDotKey={props.inviteDotKey}
-        eqHighlights={props.eqHighlights}
-      />
+          onCursorDotMove={props.onCursorDotMove}
+          onCursorDotEnd={props.onCursorDotEnd}
+          inputDisabled={props.inputDisabled}
+          inviteDotKey={props.inviteDotKey}
+          eqHighlights={props.eqHighlights}
+        />
     )
   }
 
@@ -2197,7 +2236,7 @@ export function UnifiedParticleScene(props: UnifiedParticleSceneProps) {
   TOTAL_PARTICLES = PARTICLE_COUNTS[quality]
 
   return (
-    <div className="absolute inset-0">
+    <div className="absolute inset-0" onContextMenu={(event) => event.preventDefault()}>
       <Canvas
         key={quality}
         dpr={[1, 2]}
@@ -2214,8 +2253,12 @@ export function UnifiedParticleScene(props: UnifiedParticleSceneProps) {
           gridRows={props.gridRows}
           gridCols={props.gridCols}
           selectedDots={props.selectedDots}
+          constantDots={props.constantDots}
+          referenceDotKey={props.referenceDotKey}
           onDotSelect={props.onDotSelect}
           onDotDeselect={props.onDotDeselect}
+          onDotReference={props.onDotReference}
+          onDotConstantToggle={props.onDotConstantToggle}
           playingDotKey={props.playingDotKey}
           beatIndex={props.beatIndex}
           hoveredDot={props.hoveredDot}
