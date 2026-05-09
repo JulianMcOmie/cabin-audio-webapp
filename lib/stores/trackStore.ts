@@ -7,6 +7,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { useArtistStore } from './artistStore';
 import { useAlbumStore } from './albumStore';
 
+const isBrowser = (): boolean => typeof window !== 'undefined';
+
 interface TrackState {
   tracks: Record<string, Track>;
   currentTrackId: string | null;
@@ -76,6 +78,10 @@ const createDefaultContent = async (): Promise<{track: Track, artistId: string, 
 
 // Helper function to load tracks from IndexedDB
 const loadTracksFromStorage = async (): Promise<{tracks: Record<string, Track>, defaultTrackId?: string}> => {
+  if (!isBrowser()) {
+    return { tracks: {} };
+  }
+
   try {
     // Load artists and albums from IndexedDB into their stores
     const [storedArtists, storedAlbums] = await Promise.all([

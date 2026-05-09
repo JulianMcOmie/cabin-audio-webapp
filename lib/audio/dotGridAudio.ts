@@ -48,6 +48,8 @@ const BANDPASS_NOISE_OUTPUT_GAIN_SCALAR = 0.25; // Much louder output for bandpa
 const BANDPASS_FILTER_Q = 1.5; // Keep Q fixed, but gentle enough that narrow bandwidth does not get overly peaky
 const ADDITIVE_PARTIAL_COUNT = 96;
 const ADDITIVE_PARTIAL_OUTPUT_GAIN_SCALAR = 0.08;
+const CLICK_TRAIN_OUTPUT_GAIN_SCALAR = 0.45;
+const CLICK_TRAIN_RATE_HZ = 140;
 
 // Constants for sine tone generator
 const SINE_TONE_OUTPUT_GAIN_SCALAR = 0.15; // Output gain for sine tones
@@ -61,6 +63,7 @@ enum SoundMode {
   SlopedNoise = 'sloped',
   BandpassedNoise = 'bandpassed',
   AdditivePartials = 'additive-partials',
+  ClickTrain = 'click-train',
   SineTone = 'sine'
 }
 
@@ -87,6 +90,7 @@ interface PointAudioNodes {
   slopedNoiseGenerator: SlopedPinkNoiseGenerator | null;
   bandpassedNoiseGenerator: BandpassedNoiseGenerator | null;
   additivePartialGenerator: AdditivePartialGenerator | null;
+  clickTrainGenerator: ClickTrainGenerator | null;
   sineToneGenerator: SineToneGenerator | null;
   pinkNoiseBuffer: AudioBuffer;
   normalizedYPos: number; // To recalculate slope without re-passing y, totalRows
@@ -119,6 +123,7 @@ class PositionedAudioService {
   private releaseDuration: number = DEFAULT_GLOBAL_STAGGER_RELEASE_S; // Release duration in seconds
   private currentBandwidth: number = BANDPASS_BANDWIDTH_OCTAVES; // Current bandwidth in octaves for bandpassed noise
   private currentBandpassSlope: number = BANDPASS_NOISE_SLOPE_DB_PER_OCT; // dB/oct slope for bandpassed noise
+  private currentClickTrainGainMultiplier: number = 1.8;
   private bandwidthOscillationEnabled: boolean = false;
   private bandwidthOscillationStepIndex: number = 0;
   private frequencyExtensionRange: number = 0; // How far beyond audible range to allow (0 = no extension, both filters always active)
@@ -1160,6 +1165,7 @@ class PositionedAudioService {
     let slopedNoiseGenerator: SlopedPinkNoiseGenerator | null = null;
     let bandpassedNoiseGenerator: BandpassedNoiseGenerator | null = null;
     let additivePartialGenerator: AdditivePartialGenerator | null = null;
+    let clickTrainGenerator: ClickTrainGenerator | null = null;
     let sineToneGenerator: SineToneGenerator | null = null;
     const pinkNoiseBuffer: AudioBuffer = this._generateSinglePinkNoiseBuffer();
 
@@ -1167,7 +1173,7 @@ class PositionedAudioService {
     const source = this.ctx.createBufferSource();
     source.buffer = pinkNoiseBuffer;
 
-    if (this.currentSoundMode === SoundMode.BandpassedNoise || this.currentSoundMode === SoundMode.AdditivePartials) {
+    if (this.currentSoundMode === SoundMode.BandpassedNoise || this.currentSoundMode === SoundMode.AdditivePartials || this.currentSoundMode === SoundMode.ClickTrain) {
       // Use bandpassed noise generator
       bandpassedNoiseGenerator = new BandpassedNoiseGenerator(this.ctx);
 
@@ -1178,6 +1184,9 @@ class PositionedAudioService {
       if (this.currentSoundMode === SoundMode.AdditivePartials) {
         additivePartialGenerator = new AdditivePartialGenerator(this.ctx);
         additivePartialGenerator.getOutputNode().connect(bandpassedNoiseGenerator.getInputNode());
+      } else if (this.currentSoundMode === SoundMode.ClickTrain) {
+        clickTrainGenerator = new ClickTrainGenerator(this.ctx, this.currentClickTrainGainMultiplier);
+        clickTrainGenerator.getOutputNode().connect(bandpassedNoiseGenerator.getInputNode());
       } else {
         source.loop = true;
         source.connect(bandpassedNoiseGenerator.getInputNode());
@@ -1235,6 +1244,7 @@ class PositionedAudioService {
       slopedNoiseGenerator,
       bandpassedNoiseGenerator,
       additivePartialGenerator,
+      clickTrainGenerator,
       sineToneGenerator,
       pinkNoiseBuffer,
       normalizedYPos: normalizedY,
@@ -1266,19 +1276,23 @@ class PositionedAudioService {
     let slopedNoiseGenerator: SlopedPinkNoiseGenerator | null = null;
     let bandpassedNoiseGenerator: BandpassedNoiseGenerator | null = null;
     let additivePartialGenerator: AdditivePartialGenerator | null = null;
+    let clickTrainGenerator: ClickTrainGenerator | null = null;
     let sineToneGenerator: SineToneGenerator | null = null;
     const pinkNoiseBuffer: AudioBuffer = this._generateSinglePinkNoiseBuffer();
 
     const source = this.ctx.createBufferSource();
     source.buffer = pinkNoiseBuffer;
 
-    if (this.currentSoundMode === SoundMode.BandpassedNoise || this.currentSoundMode === SoundMode.AdditivePartials) {
+    if (this.currentSoundMode === SoundMode.BandpassedNoise || this.currentSoundMode === SoundMode.AdditivePartials || this.currentSoundMode === SoundMode.ClickTrain) {
       bandpassedNoiseGenerator = new BandpassedNoiseGenerator(this.ctx);
       bandpassedNoiseGenerator.setBandpassBandwidth(this.currentBandwidth);
       bandpassedNoiseGenerator.setBandpassSlope(this.currentBandpassSlope);
       if (this.currentSoundMode === SoundMode.AdditivePartials) {
         additivePartialGenerator = new AdditivePartialGenerator(this.ctx);
         additivePartialGenerator.getOutputNode().connect(bandpassedNoiseGenerator.getInputNode());
+      } else if (this.currentSoundMode === SoundMode.ClickTrain) {
+        clickTrainGenerator = new ClickTrainGenerator(this.ctx, this.currentClickTrainGainMultiplier);
+        clickTrainGenerator.getOutputNode().connect(bandpassedNoiseGenerator.getInputNode());
       } else {
         source.loop = true;
         source.connect(bandpassedNoiseGenerator.getInputNode());
@@ -1323,6 +1337,7 @@ class PositionedAudioService {
       slopedNoiseGenerator,
       bandpassedNoiseGenerator,
       additivePartialGenerator,
+      clickTrainGenerator,
       sineToneGenerator,
       pinkNoiseBuffer,
       normalizedYPos: normalizedY,
@@ -1371,6 +1386,9 @@ class PositionedAudioService {
     }
     if (point.additivePartialGenerator) {
       point.additivePartialGenerator.dispose();
+    }
+    if (point.clickTrainGenerator) {
+      point.clickTrainGenerator.dispose();
     }
     if (point.sineToneGenerator) {
       point.sineToneGenerator.dispose();
@@ -1673,6 +1691,16 @@ class PositionedAudioService {
     this.audioPoints.forEach((point) => {
       if (point.bandpassedNoiseGenerator) {
         point.bandpassedNoiseGenerator.setBandpassSlope(slopeDbPerOct);
+      }
+    });
+  }
+
+  public setClickTrainGainPercent(percent: number): void {
+    this.currentClickTrainGainMultiplier = clamp(percent, 0, 500) / 100;
+
+    this.audioPoints.forEach((point) => {
+      if (point.clickTrainGenerator) {
+        point.clickTrainGenerator.setGainMultiplier(this.currentClickTrainGainMultiplier);
       }
     });
   }
@@ -3484,6 +3512,10 @@ class DotGridAudioPlayer {
     this.audioService.setBandpassSlope(slopeDbPerOct);
   }
 
+  public setClickTrainGainPercent(percent: number): void {
+    this.audioService.setClickTrainGainPercent(percent);
+  }
+
   public setRepeatCount(count: number): void {
     this.audioService.setRepeatCount(count);
   }
@@ -4137,6 +4169,63 @@ class AdditivePartialGenerator {
     });
     this.outputGainNode.disconnect();
     this.partials = [];
+  }
+}
+
+class ClickTrainGenerator {
+  private ctx: AudioContext;
+  private outputGainNode: GainNode;
+  private source: AudioBufferSourceNode;
+
+  constructor(audioCtx: AudioContext, gainMultiplier: number = 1) {
+    this.ctx = audioCtx;
+    this.outputGainNode = this.ctx.createGain();
+    this.setGainMultiplier(gainMultiplier);
+
+    const buffer = this.createImpulseTrainBuffer();
+    this.source = this.ctx.createBufferSource();
+    this.source.buffer = buffer;
+    this.source.loop = true;
+    this.source.connect(this.outputGainNode);
+    this.source.start();
+  }
+
+  public getOutputNode(): GainNode {
+    return this.outputGainNode;
+  }
+
+  public setGainMultiplier(gainMultiplier: number): void {
+    this.outputGainNode.gain.value = CLICK_TRAIN_OUTPUT_GAIN_SCALAR * clamp(gainMultiplier, 0, 5);
+  }
+
+  private createImpulseTrainBuffer(): AudioBuffer {
+    const sampleRate = this.ctx.sampleRate;
+    const bufferLength = sampleRate;
+    const buffer = this.ctx.createBuffer(1, bufferLength, sampleRate);
+    const channel = buffer.getChannelData(0);
+    const baseSpacing = sampleRate / CLICK_TRAIN_RATE_HZ;
+    let sampleIndex = Math.floor(Math.random() * baseSpacing);
+
+    while (sampleIndex < bufferLength - 4) {
+      const amplitude = (Math.random() < 0.5 ? -1 : 1) * (0.65 + Math.random() * 0.35);
+      channel[sampleIndex] += amplitude;
+      channel[sampleIndex + 1] -= amplitude * 0.45;
+      channel[sampleIndex + 2] += amplitude * 0.15;
+      const jitter = (Math.random() - 0.5) * baseSpacing * 0.15;
+      sampleIndex += Math.max(8, Math.round(baseSpacing + jitter));
+    }
+
+    return buffer;
+  }
+
+  public dispose(): void {
+    try {
+      this.source.stop();
+    } catch {
+      // Source might already be stopped
+    }
+    this.source.disconnect();
+    this.outputGainNode.disconnect();
   }
 }
 

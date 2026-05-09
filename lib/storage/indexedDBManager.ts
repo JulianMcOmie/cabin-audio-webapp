@@ -1,6 +1,10 @@
 const DB_NAME = 'cabinAudioDB';
 const DB_VERSION = 1;
 
+const isIndexedDBAvailable = (): boolean => (
+  typeof window !== 'undefined' && typeof indexedDB !== 'undefined'
+);
+
 // Define store names
 export const STORES = {
   TRACKS: 'tracks',
@@ -16,6 +20,11 @@ export const STORES = {
 // Initialize the database
 export const initDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
+    if (!isIndexedDBAvailable()) {
+      reject(new Error('IndexedDB is only available in the browser'));
+      return;
+    }
+
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     
     request.onerror = (event) => {
@@ -75,6 +84,8 @@ export const initDB = (): Promise<IDBDatabase> => {
 
 // Generic function to add an item to a store
 export const addItem = <T>(storeName: string, item: T): Promise<T> => {
+  if (!isIndexedDBAvailable()) return Promise.resolve(item);
+
   return new Promise((resolve, reject) => {
     initDB().then(db => {
       const transaction = db.transaction(storeName, 'readwrite');
@@ -94,6 +105,8 @@ export const addItem = <T>(storeName: string, item: T): Promise<T> => {
 
 // Generic function to update an item in a store
 export const updateItem = <T>(storeName: string, item: T): Promise<T> => {
+  if (!isIndexedDBAvailable()) return Promise.resolve(item);
+
   return new Promise((resolve, reject) => {
     initDB().then(db => {
       const transaction = db.transaction(storeName, 'readwrite');
@@ -113,6 +126,8 @@ export const updateItem = <T>(storeName: string, item: T): Promise<T> => {
 
 // Generic function to delete an item from a store
 export const deleteItem = (storeName: string, id: string): Promise<void> => {
+  if (!isIndexedDBAvailable()) return Promise.resolve();
+
   return new Promise((resolve, reject) => {
     initDB().then(db => {
       const transaction = db.transaction(storeName, 'readwrite');
@@ -132,6 +147,8 @@ export const deleteItem = (storeName: string, id: string): Promise<void> => {
 
 // Generic function to get an item from a store
 export const getItem = <T>(storeName: string, id: string): Promise<T | undefined> => {
+  if (!isIndexedDBAvailable()) return Promise.resolve(undefined);
+
   return new Promise((resolve, reject) => {
     initDB().then(db => {
       const transaction = db.transaction(storeName, 'readonly');
@@ -151,6 +168,8 @@ export const getItem = <T>(storeName: string, id: string): Promise<T | undefined
 
 // Generic function to get all items from a store
 export const getAllItems = <T>(storeName: string): Promise<T[]> => {
+  if (!isIndexedDBAvailable()) return Promise.resolve([]);
+
   return new Promise((resolve, reject) => {
     initDB().then(db => {
       const transaction = db.transaction(storeName, 'readonly');
@@ -174,6 +193,8 @@ export const getItemsByIndex = <T>(
   indexName: string, 
   value: IDBValidKey
 ): Promise<T[]> => {
+  if (!isIndexedDBAvailable()) return Promise.resolve([]);
+
   return new Promise((resolve, reject) => {
     initDB().then(db => {
       const transaction = db.transaction(storeName, 'readonly');
@@ -194,6 +215,8 @@ export const getItemsByIndex = <T>(
 
 // Function to clear a store
 export const clearStore = (storeName: string): Promise<void> => {
+  if (!isIndexedDBAvailable()) return Promise.resolve();
+
   return new Promise((resolve, reject) => {
     initDB().then(db => {
       const transaction = db.transaction(storeName, 'readwrite');
@@ -217,6 +240,8 @@ export const storeFile = (
   id: string, 
   file: Blob
 ): Promise<string> => {
+  if (!isIndexedDBAvailable()) return Promise.resolve(id);
+
   return new Promise((resolve, reject) => {
     initDB().then(db => {
       const transaction = db.transaction(storeName, 'readwrite');
@@ -236,6 +261,8 @@ export const storeFile = (
 
 // Function to retrieve a binary file
 export const getFile = (storeName: string, id: string): Promise<Blob | undefined> => {
+  if (!isIndexedDBAvailable()) return Promise.resolve(undefined);
+
   return new Promise((resolve, reject) => {
     initDB().then(db => {
       const transaction = db.transaction(storeName, 'readonly');
@@ -261,6 +288,8 @@ export const deleteFile = (storeName: string, id: string): Promise<void> => {
 
 // Function to get the total size of a store
 export const getStoreSize = (storeName: string): Promise<number> => {
+  if (!isIndexedDBAvailable()) return Promise.resolve(0);
+
   return new Promise((resolve, reject) => {
     initDB().then(db => {
       const transaction = db.transaction(storeName, 'readonly');

@@ -98,6 +98,8 @@ const DEFAULTS = {
   eqABEnabled: false,
   flatSlope: false,
   additivePartialsEnabled: false,
+  clickTrainEnabled: false,
+  clickTrainVolumePercent: 180,
   referenceVolumeBalance: 100,
   referenceVolumeOffsetDb: 0,
   referenceVolumeOscillationEnabled: false,
@@ -241,6 +243,8 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   const [eqABEnabled, setEqABEnabled] = useState<boolean>(DEFAULTS.eqABEnabled)
   const [flatSlope, setFlatSlope] = useState<boolean>(DEFAULTS.flatSlope)
   const [additivePartialsEnabled, setAdditivePartialsEnabled] = useState<boolean>(DEFAULTS.additivePartialsEnabled)
+  const [clickTrainEnabled, setClickTrainEnabled] = useState<boolean>(DEFAULTS.clickTrainEnabled)
+  const [clickTrainVolumePercent, setClickTrainVolumePercent] = useState<number>(DEFAULTS.clickTrainVolumePercent)
   const [referenceVolumeBalance, setReferenceVolumeBalance] = useState<number>(DEFAULTS.referenceVolumeBalance)
   const [referenceVolumeOffsetDb, setReferenceVolumeOffsetDb] = useState<number>(DEFAULTS.referenceVolumeOffsetDb)
   const [referenceVolumeOscillationEnabled, setReferenceVolumeOscillationEnabled] = useState<boolean>(DEFAULTS.referenceVolumeOscillationEnabled)
@@ -281,6 +285,8 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     setEqABEnabled(loadSetting("cabin:eqABEnabled", DEFAULTS.eqABEnabled))
     setFlatSlope(loadSetting("cabin:flatSlope", DEFAULTS.flatSlope))
     setAdditivePartialsEnabled(loadSetting("cabin:additivePartialsEnabled", DEFAULTS.additivePartialsEnabled))
+    setClickTrainEnabled(loadSetting("cabin:clickTrainEnabled", DEFAULTS.clickTrainEnabled))
+    setClickTrainVolumePercent(loadSetting("cabin:clickTrainVolumePercent", DEFAULTS.clickTrainVolumePercent))
     setReferenceVolumeBalance(loadSetting("cabin:referenceVolumeBalance", DEFAULTS.referenceVolumeBalance))
     setReferenceVolumeOffsetDb(loadSetting("cabin:referenceVolumeOffsetDb", DEFAULTS.referenceVolumeOffsetDb))
     setReferenceVolumeOscillationEnabled(loadSetting("cabin:referenceVolumeOscillationEnabled", DEFAULTS.referenceVolumeOscillationEnabled))
@@ -371,6 +377,8 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   useEffect(() => { saveSetting("cabin:eqABEnabled", eqABEnabled) }, [eqABEnabled])
   useEffect(() => { saveSetting("cabin:flatSlope", flatSlope) }, [flatSlope])
   useEffect(() => { saveSetting("cabin:additivePartialsEnabled", additivePartialsEnabled) }, [additivePartialsEnabled])
+  useEffect(() => { saveSetting("cabin:clickTrainEnabled", clickTrainEnabled) }, [clickTrainEnabled])
+  useEffect(() => { saveSetting("cabin:clickTrainVolumePercent", clickTrainVolumePercent) }, [clickTrainVolumePercent])
   useEffect(() => { saveSetting("cabin:referenceVolumeBalance", referenceVolumeBalance) }, [referenceVolumeBalance])
   useEffect(() => { saveSetting("cabin:referenceVolumeOffsetDb", referenceVolumeOffsetDb) }, [referenceVolumeOffsetDb])
   useEffect(() => { saveSetting("cabin:referenceVolumeOscillationEnabled", referenceVolumeOscillationEnabled) }, [referenceVolumeOscillationEnabled])
@@ -547,6 +555,20 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     }
   }, [])
 
+  const handleAdditivePartialsChange = useCallback((enabled: boolean) => {
+    setAdditivePartialsEnabled(enabled)
+    if (enabled) {
+      setClickTrainEnabled(false)
+    }
+  }, [])
+
+  const handleClickTrainChange = useCallback((enabled: boolean) => {
+    setClickTrainEnabled(enabled)
+    if (enabled) {
+      setAdditivePartialsEnabled(false)
+    }
+  }, [])
+
   useEffect(() => {
     const count = Math.max(1, dotCount)
     const hitsPerDot = patternModeEnabled ? 8 : reverbModeEnabled ? 16 : hiHatModeEnabled ? 8 : Math.max(1, depth)
@@ -581,9 +603,17 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
 
   useEffect(() => {
     dotGridAudio.getDotGridAudioPlayer().setSoundMode(
-      additivePartialsEnabled ? dotGridAudio.SoundMode.AdditivePartials : dotGridAudio.SoundMode.BandpassedNoise
+      clickTrainEnabled
+        ? dotGridAudio.SoundMode.ClickTrain
+        : additivePartialsEnabled
+          ? dotGridAudio.SoundMode.AdditivePartials
+          : dotGridAudio.SoundMode.BandpassedNoise
     )
-  }, [additivePartialsEnabled])
+  }, [additivePartialsEnabled, clickTrainEnabled])
+
+  useEffect(() => {
+    dotGridAudio.getDotGridAudioPlayer().setClickTrainGainPercent(clickTrainVolumePercent)
+  }, [clickTrainVolumePercent])
 
   useEffect(() => {
     const player = dotGridAudio.getDotGridAudioPlayer()
@@ -881,7 +911,11 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
         flatSlope={flatSlope}
         onFlatSlopeChange={setFlatSlope}
         additivePartialsEnabled={additivePartialsEnabled}
-        onAdditivePartialsChange={setAdditivePartialsEnabled}
+        onAdditivePartialsChange={handleAdditivePartialsChange}
+        clickTrainEnabled={clickTrainEnabled}
+        onClickTrainChange={handleClickTrainChange}
+        clickTrainVolumePercent={clickTrainVolumePercent}
+        onClickTrainVolumeChange={setClickTrainVolumePercent}
         referenceVolumeBalance={referenceVolumeBalance}
         onReferenceVolumeBalanceChange={setReferenceVolumeBalance}
         referenceVolumeOffsetDb={referenceVolumeOffsetDb}

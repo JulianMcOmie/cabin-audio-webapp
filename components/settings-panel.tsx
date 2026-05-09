@@ -112,6 +112,10 @@ interface SettingsPanelProps {
   onFlatSlopeChange: (enabled: boolean) => void
   additivePartialsEnabled: boolean
   onAdditivePartialsChange: (enabled: boolean) => void
+  clickTrainEnabled: boolean
+  onClickTrainChange: (enabled: boolean) => void
+  clickTrainVolumePercent: number
+  onClickTrainVolumeChange: (value: number) => void
   referenceVolumeBalance: number
   onReferenceVolumeBalanceChange: (value: number) => void
   referenceVolumeOffsetDb: number
@@ -262,6 +266,10 @@ export function SettingsPanel({
   onFlatSlopeChange,
   additivePartialsEnabled,
   onAdditivePartialsChange,
+  clickTrainEnabled,
+  onClickTrainChange,
+  clickTrainVolumePercent,
+  onClickTrainVolumeChange,
   referenceVolumeBalance,
   onReferenceVolumeBalanceChange,
   referenceVolumeOffsetDb,
@@ -645,6 +653,34 @@ export function SettingsPanel({
                 <Switch
                   checked={additivePartialsEnabled}
                   onCheckedChange={onAdditivePartialsChange}
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <Tip text="Use a jittered impulse train through the same bandpass path instead of filtered noise">
+                  <span className="text-xs dark:text-white/50 text-black/50 uppercase tracking-wider">Clicks</span>
+                </Tip>
+                <Switch
+                  checked={clickTrainEnabled}
+                  onCheckedChange={onClickTrainChange}
+                />
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Tip text="Scales the click-train source before it enters the shared bandpass path">
+                    <span className="text-xs dark:text-white/50 text-black/50 uppercase tracking-wider">Click volume</span>
+                  </Tip>
+                  <span className="text-xs dark:text-white/70 text-black/70 font-medium tabular-nums">
+                    {clickTrainVolumePercent.toFixed(0)}%
+                  </span>
+                </div>
+                <Slider
+                  value={[clickTrainVolumePercent]}
+                  min={0}
+                  max={500}
+                  step={5}
+                  disabled={!clickTrainEnabled}
+                  className={!clickTrainEnabled ? "opacity-45" : undefined}
+                  onValueChange={(v) => onClickTrainVolumeChange(v[0])}
                 />
               </div>
             </div>
