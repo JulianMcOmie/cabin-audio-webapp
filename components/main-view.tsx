@@ -20,19 +20,13 @@ const MAX_ROWS = 12
 const MIN_COLS = 3
 const MAX_COLS = 16
 const SPEED_MIN = 0.5
-const SPEED_MAX = 16
+const SPEED_MAX = 32
 const MIN_PER_HIT_MS = 30
 const MAX_PER_HIT_MS = 500
 const SPEED_INTERVAL_MULTIPLIER = 2
 const HIT_ATTACK_S = 0.01
 const AUTO_RELEASE_MARGIN_S = 0.005
-const FREEFORM_GRID_SIZE = 1001
-
-type FreeformDot = {
-  id: string
-  x: number
-  y: number
-}
+const FIXED_ACCENT_RELEASE_MS = 200
 
 function speedToPerHitSeconds(speed: number): number {
   const t = Math.min(1, Math.max(0, (speed - SPEED_MIN) / (SPEED_MAX - SPEED_MIN)))
@@ -42,17 +36,6 @@ function speedToPerHitSeconds(speed: number): number {
 
 function getAutoReleaseSeconds(perHitSeconds: number): number {
   return Math.max(0.001, perHitSeconds - HIT_ATTACK_S - AUTO_RELEASE_MARGIN_S)
-}
-
-function clamp01(value: number): number {
-  return Math.min(1, Math.max(0, value))
-}
-
-function freeformDotKey(dot: FreeformDot): string {
-  const max = FREEFORM_GRID_SIZE - 1
-  const x = Math.round(clamp01(dot.x) * max)
-  const y = Math.round(clamp01(dot.y) * max)
-  return `${x},${y}`
 }
 
 function loadSetting<T>(key: string, fallback: T): T {
@@ -77,8 +60,8 @@ const DEFAULTS = {
   gridRows: 3,
   gridCols: 5,
   freeformModeEnabled: false,
-  speed: 1.5,
-  volumePercent: 90,
+  speed: SPEED_MAX,
+  volumePercent: 100,
   release: 2,
   releaseAuto: true,
   releaseAutoOffsetMs: 0,
@@ -98,8 +81,8 @@ const DEFAULTS = {
   eqABEnabled: false,
   flatSlope: false,
   additivePartialsEnabled: false,
-  clickTrainEnabled: false,
-  clickTrainVolumePercent: 180,
+  clickTrainEnabled: true,
+  clickTrainVolumePercent: 500,
   referenceVolumeBalance: 100,
   referenceVolumeOffsetDb: 0,
   referenceVolumeOscillationEnabled: false,
@@ -113,187 +96,57 @@ export interface ActiveBand {
   q: number
 }
 
-function FreeformDotOverlay({
-  dots,
-  playingDotKey,
-  disabled,
-  onAddDot,
-  onMoveDot,
-  onRemoveDot,
-  onDragStateChange,
-}: {
-  dots: FreeformDot[]
-  playingDotKey: string | null
-  disabled: boolean
-  onAddDot: (x: number, y: number) => string
-  onMoveDot: (id: string, x: number, y: number) => void
-  onRemoveDot: (id: string) => void
-  onDragStateChange?: (isDragging: boolean) => void
-}) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const draggingIdRef = useRef<string | null>(null)
-
-  const resolvePoint = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    const rect = containerRef.current?.getBoundingClientRect()
-    if (!rect) return { x: 0.5, y: 0.5 }
-    return {
-      x: clamp01((e.clientX - rect.left) / rect.width),
-      y: clamp01(1 - (e.clientY - rect.top) / rect.height),
-    }
-  }, [])
-
-  const beginDrag = useCallback((id: string, e: React.PointerEvent<HTMLDivElement>) => {
-    draggingIdRef.current = id
-    e.currentTarget.setPointerCapture(e.pointerId)
-    onDragStateChange?.(true)
-  }, [onDragStateChange])
-
-  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (disabled || e.button !== 0) return
-    const point = resolvePoint(e)
-    const id = onAddDot(point.x, point.y)
-    beginDrag(id, e)
-  }, [beginDrag, disabled, onAddDot, resolvePoint])
-
-  const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!draggingIdRef.current || disabled) return
-    const point = resolvePoint(e)
-    onMoveDot(draggingIdRef.current, point.x, point.y)
-  }, [disabled, onMoveDot, resolvePoint])
-
-  const endDrag = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (draggingIdRef.current) {
-      draggingIdRef.current = null
-      onDragStateChange?.(false)
-    }
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-      e.currentTarget.releasePointerCapture(e.pointerId)
-    }
-  }, [onDragStateChange])
-
-  return (
-    <div
-      ref={containerRef}
-      className="absolute inset-0 z-30"
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
-      onContextMenu={(e) => e.preventDefault()}
-    >
-      {dots.map((dot) => {
-        const dotKey = freeformDotKey(dot)
-        const active = playingDotKey === dotKey
-        return (
-          <div
-            key={dot.id}
-            className={`absolute h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border transition-transform ${
-              active
-                ? "scale-125 border-cyan-100 bg-cyan-200 shadow-[0_0_22px_rgba(34,211,238,0.9)]"
-                : "border-cyan-200/80 bg-cyan-300/70 shadow-[0_0_14px_rgba(34,211,238,0.45)]"
-            }`}
-            style={{ left: `${dot.x * 100}%`, top: `${(1 - dot.y) * 100}%` }}
-            onPointerDown={(e) => {
-              e.stopPropagation()
-              if (disabled) return
-              if (e.button === 2 || e.altKey) {
-                onRemoveDot(dot.id)
-                return
-              }
-              beginDrag(dot.id, e)
-            }}
-            onContextMenu={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              onRemoveDot(dot.id)
-            }}
-          />
-        )
-      })}
-    </div>
-  )
-}
-
 export function MainView({ quality, highlightTarget, isPlaying, onDragStateChange, activeBand }: { quality: QualityLevel; highlightTarget: HighlightTarget; isPlaying: boolean; onDragStateChange?: (isDragging: boolean) => void; activeBand?: ActiveBand | null }) {
   const [selectedDots, setSelectedDots] = useState<Set<string>>(new Set())
-  const [constantDots, setConstantDots] = useState<Set<string>>(new Set())
-  const [referenceDotKey, setReferenceDotKey] = useState<string | null>(null)
   const [gridRows, setGridRows] = useState<number>(DEFAULTS.gridRows)
   const [gridCols, setGridCols] = useState<number>(DEFAULTS.gridCols)
-  const [freeformModeEnabled, setFreeformModeEnabled] = useState<boolean>(DEFAULTS.freeformModeEnabled)
-  const [freeformDots, setFreeformDots] = useState<FreeformDot[]>([])
   const [speed, setSpeed] = useState<number>(DEFAULTS.speed)
   const [volumePercent, setVolumePercent] = useState<number>(DEFAULTS.volumePercent)
-  const [release, setRelease] = useState<number>(DEFAULTS.release)
-  const [releaseAuto, setReleaseAuto] = useState<boolean>(DEFAULTS.releaseAuto)
-  const [releaseAutoOffsetMs, setReleaseAutoOffsetMs] = useState<number>(DEFAULTS.releaseAutoOffsetMs)
   const [bandwidth, setBandwidth] = useState<number>(DEFAULTS.bandwidth)
   const [bandwidthOscillationEnabled, setBandwidthOscillationEnabled] = useState<boolean>(DEFAULTS.bandwidthOscillationEnabled)
   const [settingsCollapsed, setSettingsCollapsed] = useState<boolean>(DEFAULTS.settingsCollapsed)
   const [depth, setDepth] = useState<number>(DEFAULTS.depth)
-  const [hiHatModeEnabled, setHiHatModeEnabled] = useState<boolean>(DEFAULTS.hiHatModeEnabled)
   const [patternModeEnabled, setPatternModeEnabled] = useState<boolean>(DEFAULTS.patternModeEnabled)
   const [patternVolumeDiffDb, setPatternVolumeDiffDb] = useState<number>(DEFAULTS.patternVolumeDiffDb)
-  const [reverbModeEnabled, setReverbModeEnabled] = useState<boolean>(DEFAULTS.reverbModeEnabled)
-  const [reverbVolumeSpreadDb, setReverbVolumeSpreadDb] = useState<number>(DEFAULTS.reverbVolumeSpreadDb)
   const [hiHatQuietDropDb, setHiHatQuietDropDb] = useState<number>(DEFAULTS.hiHatQuietDropDb)
-  const [hiHatLoudReleaseBoostMs, setHiHatLoudReleaseBoostMs] = useState<number>(DEFAULTS.hiHatLoudReleaseBoostMs)
-  const [repeatCount, setRepeatCount] = useState<number>(DEFAULTS.repeatCount)
-  const [depthGapDb, setDepthGapDb] = useState<number>(DEFAULTS.depthGapDb)
   const [eqABEnabled, setEqABEnabled] = useState<boolean>(DEFAULTS.eqABEnabled)
   const [flatSlope, setFlatSlope] = useState<boolean>(DEFAULTS.flatSlope)
-  const [additivePartialsEnabled, setAdditivePartialsEnabled] = useState<boolean>(DEFAULTS.additivePartialsEnabled)
-  const [clickTrainEnabled, setClickTrainEnabled] = useState<boolean>(DEFAULTS.clickTrainEnabled)
   const [clickTrainVolumePercent, setClickTrainVolumePercent] = useState<number>(DEFAULTS.clickTrainVolumePercent)
   const [referenceVolumeBalance, setReferenceVolumeBalance] = useState<number>(DEFAULTS.referenceVolumeBalance)
   const [referenceVolumeOffsetDb, setReferenceVolumeOffsetDb] = useState<number>(DEFAULTS.referenceVolumeOffsetDb)
   const [referenceVolumeOscillationEnabled, setReferenceVolumeOscillationEnabled] = useState<boolean>(DEFAULTS.referenceVolumeOscillationEnabled)
-  const [allVolumeOscillationEnabled, setAllVolumeOscillationEnabled] = useState<boolean>(DEFAULTS.allVolumeOscillationEnabled)
   const [referenceVolumeMultiplyCount, setReferenceVolumeMultiplyCount] = useState<number>(DEFAULTS.referenceVolumeMultiplyCount)
 
   // Hydrate from localStorage after mount to avoid SSR mismatch
   useEffect(() => {
-    setGridRows(loadSetting("cabin:gridRows", DEFAULTS.gridRows))
-    setGridCols(loadSetting("cabin:gridCols", DEFAULTS.gridCols))
-    setFreeformModeEnabled(loadSetting("cabin:freeformModeEnabled", DEFAULTS.freeformModeEnabled))
-    setFreeformDots(loadSetting("cabin:freeformDots", [] as FreeformDot[]))
-    setSpeed(loadSetting("cabin:speed", DEFAULTS.speed))
-    setVolumePercent(loadSetting("cabin:volumePercent", DEFAULTS.volumePercent))
-    setRelease(loadSetting("cabin:release", DEFAULTS.release))
-    setReleaseAuto(loadSetting("cabin:releaseAuto", DEFAULTS.releaseAuto))
-    setReleaseAutoOffsetMs(loadSetting("cabin:releaseAutoOffsetMs", DEFAULTS.releaseAutoOffsetMs))
+    const focusedDefaultsMigrated = loadSetting("cabin:focusedClickDefaultsV1", false)
+    setGridRows(focusedDefaultsMigrated ? loadSetting("cabin:gridRows", DEFAULTS.gridRows) : DEFAULTS.gridRows)
+    setGridCols(focusedDefaultsMigrated ? loadSetting("cabin:gridCols", DEFAULTS.gridCols) : DEFAULTS.gridCols)
+    setSpeed(focusedDefaultsMigrated ? loadSetting("cabin:speed", DEFAULTS.speed) : DEFAULTS.speed)
+    setVolumePercent(focusedDefaultsMigrated ? loadSetting("cabin:volumePercent", DEFAULTS.volumePercent) : DEFAULTS.volumePercent)
+    saveSetting("cabin:release", DEFAULTS.release)
     setBandwidth(loadSetting("cabin:bandwidth", DEFAULTS.bandwidth))
     setBandwidthOscillationEnabled(loadSetting("cabin:bandwidthOscillationEnabled", DEFAULTS.bandwidthOscillationEnabled))
     setSettingsCollapsed(loadSetting("cabin:settingsCollapsed", DEFAULTS.settingsCollapsed))
     setDepth(loadSetting("cabin:depth", DEFAULTS.depth))
-    setHiHatModeEnabled(loadSetting("cabin:hiHatModeEnabled", DEFAULTS.hiHatModeEnabled))
     setPatternModeEnabled(loadSetting("cabin:patternModeEnabled", DEFAULTS.patternModeEnabled))
     setPatternVolumeDiffDb(loadSetting("cabin:patternVolumeDiffDb", DEFAULTS.patternVolumeDiffDb))
-    setReverbModeEnabled(loadSetting("cabin:reverbModeEnabled", DEFAULTS.reverbModeEnabled))
-    setReverbVolumeSpreadDb(loadSetting("cabin:reverbVolumeSpreadDb", DEFAULTS.reverbVolumeSpreadDb))
     setHiHatQuietDropDb(loadSetting("cabin:hiHatQuietDropDb", DEFAULTS.hiHatQuietDropDb))
-    const releaseBoostDefaultMigrated = loadSetting("cabin:hiHatLoudReleaseBoostMsDefaultV2", false)
-    const savedReleaseBoost = loadSetting<number | null>("cabin:hiHatLoudReleaseBoostMs", null)
-    setHiHatLoudReleaseBoostMs(
-      !releaseBoostDefaultMigrated && (savedReleaseBoost === null || savedReleaseBoost === 0)
-        ? DEFAULTS.hiHatLoudReleaseBoostMs
-        : savedReleaseBoost ?? DEFAULTS.hiHatLoudReleaseBoostMs
-    )
-    saveSetting("cabin:hiHatLoudReleaseBoostMsDefaultV2", true)
-    setRepeatCount(loadSetting("cabin:repeatCount", DEFAULTS.repeatCount))
-    setDepthGapDb(loadSetting("cabin:depthGapDb", DEFAULTS.depthGapDb))
     setEqABEnabled(loadSetting("cabin:eqABEnabled", DEFAULTS.eqABEnabled))
-    setFlatSlope(loadSetting("cabin:flatSlope", DEFAULTS.flatSlope))
-    setAdditivePartialsEnabled(loadSetting("cabin:additivePartialsEnabled", DEFAULTS.additivePartialsEnabled))
-    setClickTrainEnabled(loadSetting("cabin:clickTrainEnabled", DEFAULTS.clickTrainEnabled))
-    setClickTrainVolumePercent(loadSetting("cabin:clickTrainVolumePercent", DEFAULTS.clickTrainVolumePercent))
-    setReferenceVolumeBalance(loadSetting("cabin:referenceVolumeBalance", DEFAULTS.referenceVolumeBalance))
-    setReferenceVolumeOffsetDb(loadSetting("cabin:referenceVolumeOffsetDb", DEFAULTS.referenceVolumeOffsetDb))
-    setReferenceVolumeOscillationEnabled(loadSetting("cabin:referenceVolumeOscillationEnabled", DEFAULTS.referenceVolumeOscillationEnabled))
-    setAllVolumeOscillationEnabled(loadSetting("cabin:allVolumeOscillationEnabled", DEFAULTS.allVolumeOscillationEnabled))
-    const savedReferenceMultiplyCount = loadSetting<number | null>("cabin:referenceVolumeMultiplyCount", null)
-    const legacyReferenceMultiplyEnabled = loadSetting("cabin:referenceVolumeMultiplyEnabled", false)
-    setReferenceVolumeMultiplyCount(savedReferenceMultiplyCount ?? (legacyReferenceMultiplyEnabled ? 2 : DEFAULTS.referenceVolumeMultiplyCount))
+    setFlatSlope(false)
+    const clickVolumeDefaultMigrated = loadSetting("cabin:clickTrainVolumeDefaultV2", false)
+    const savedClickVolume = loadSetting<number | null>("cabin:clickTrainVolumePercent", null)
+    setClickTrainVolumePercent(
+      (!focusedDefaultsMigrated || !clickVolumeDefaultMigrated) && (savedClickVolume === null || savedClickVolume < DEFAULTS.clickTrainVolumePercent)
+        ? DEFAULTS.clickTrainVolumePercent
+        : savedClickVolume ?? DEFAULTS.clickTrainVolumePercent
+    )
+    saveSetting("cabin:clickTrainVolumeDefaultV2", true)
+    setReferenceVolumeBalance(DEFAULTS.referenceVolumeBalance)
+    setReferenceVolumeOffsetDb(DEFAULTS.referenceVolumeOffsetDb)
+    setReferenceVolumeOscillationEnabled(false)
+    setReferenceVolumeMultiplyCount(DEFAULTS.referenceVolumeMultiplyCount)
+    saveSetting("cabin:focusedClickDefaultsV1", true)
   }, [])
   const [hoveredDot, setHoveredDot] = useState<string | null>(null)
   const [sequencerVisual, setSequencerVisual] = useState<{ playingDotKey: string | null; beatIndex: number }>({
@@ -303,20 +156,16 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   const { setEQEnabled } = useEQProfileStore()
 
   const hasSelectedDots = selectedDots.size > 0
-  const freeformSelectedDots = useMemo(
-    () => new Set(freeformDots.map(freeformDotKey)),
-    [freeformDots]
-  )
-  const activeSelectedDots = freeformModeEnabled ? freeformSelectedDots : selectedDots
-  const activeGridRows = freeformModeEnabled ? FREEFORM_GRID_SIZE : gridRows
-  const activeGridCols = freeformModeEnabled ? FREEFORM_GRID_SIZE : gridCols
-  const activeReferenceDotKey = freeformModeEnabled ? null : referenceDotKey
+  const activeSelectedDots = selectedDots
+  const activeGridRows = gridRows
+  const activeGridCols = gridCols
+  const activeReferenceDotKey = null
   const hasActiveDots = activeSelectedDots.size > 0
 
   // Pulsing invite dot — center of grid, shown until user taps a dot this session
   const hasEverSelected = useRef(false)
   if (hasActiveDots) hasEverSelected.current = true
-  const inviteDotKey = !freeformModeEnabled && !hasEverSelected.current
+  const inviteDotKey = !hasEverSelected.current
     ? `${Math.floor(gridCols / 2)},${Math.floor(gridRows / 2)}`
     : null
 
@@ -354,36 +203,36 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   // Persist settings to localStorage
   useEffect(() => { saveSetting("cabin:gridRows", gridRows) }, [gridRows])
   useEffect(() => { saveSetting("cabin:gridCols", gridCols) }, [gridCols])
-  useEffect(() => { saveSetting("cabin:freeformModeEnabled", freeformModeEnabled) }, [freeformModeEnabled])
-  useEffect(() => { saveSetting("cabin:freeformDots", freeformDots) }, [freeformDots])
+  useEffect(() => { saveSetting("cabin:freeformModeEnabled", false) }, [])
+  useEffect(() => { saveSetting("cabin:freeformDots", []) }, [])
   useEffect(() => { saveSetting("cabin:speed", speed) }, [speed])
   useEffect(() => { saveSetting("cabin:volumePercent", volumePercent) }, [volumePercent])
   useEffect(() => { saveSetting("cabin:settingsCollapsed", settingsCollapsed) }, [settingsCollapsed])
-  useEffect(() => { saveSetting("cabin:release", release) }, [release])
-  useEffect(() => { saveSetting("cabin:releaseAuto", releaseAuto) }, [releaseAuto])
-  useEffect(() => { saveSetting("cabin:releaseAutoOffsetMs", releaseAutoOffsetMs) }, [releaseAutoOffsetMs])
+  useEffect(() => { saveSetting("cabin:release", DEFAULTS.release) }, [])
+  useEffect(() => { saveSetting("cabin:releaseAuto", true) }, [])
+  useEffect(() => { saveSetting("cabin:releaseAutoOffsetMs", 0) }, [])
   useEffect(() => { saveSetting("cabin:bandwidth", bandwidth) }, [bandwidth])
   useEffect(() => { saveSetting("cabin:bandwidthOscillationEnabled", bandwidthOscillationEnabled) }, [bandwidthOscillationEnabled])
   useEffect(() => { saveSetting("cabin:depth", depth) }, [depth])
-  useEffect(() => { saveSetting("cabin:hiHatModeEnabled", hiHatModeEnabled) }, [hiHatModeEnabled])
+  useEffect(() => { saveSetting("cabin:hiHatModeEnabled", false) }, [])
   useEffect(() => { saveSetting("cabin:patternModeEnabled", patternModeEnabled) }, [patternModeEnabled])
   useEffect(() => { saveSetting("cabin:patternVolumeDiffDb", patternVolumeDiffDb) }, [patternVolumeDiffDb])
-  useEffect(() => { saveSetting("cabin:reverbModeEnabled", reverbModeEnabled) }, [reverbModeEnabled])
-  useEffect(() => { saveSetting("cabin:reverbVolumeSpreadDb", reverbVolumeSpreadDb) }, [reverbVolumeSpreadDb])
+  useEffect(() => { saveSetting("cabin:reverbModeEnabled", false) }, [])
+  useEffect(() => { saveSetting("cabin:reverbVolumeSpreadDb", DEFAULTS.reverbVolumeSpreadDb) }, [])
   useEffect(() => { saveSetting("cabin:hiHatQuietDropDb", hiHatQuietDropDb) }, [hiHatQuietDropDb])
-  useEffect(() => { saveSetting("cabin:hiHatLoudReleaseBoostMs", hiHatLoudReleaseBoostMs) }, [hiHatLoudReleaseBoostMs])
-  useEffect(() => { saveSetting("cabin:repeatCount", repeatCount) }, [repeatCount])
-  useEffect(() => { saveSetting("cabin:depthGapDb", depthGapDb) }, [depthGapDb])
+  useEffect(() => { saveSetting("cabin:hiHatLoudReleaseBoostMs", FIXED_ACCENT_RELEASE_MS) }, [])
+  useEffect(() => { saveSetting("cabin:repeatCount", 1) }, [])
+  useEffect(() => { saveSetting("cabin:depthGapDb", DEFAULTS.depthGapDb) }, [])
   useEffect(() => { saveSetting("cabin:eqABEnabled", eqABEnabled) }, [eqABEnabled])
-  useEffect(() => { saveSetting("cabin:flatSlope", flatSlope) }, [flatSlope])
-  useEffect(() => { saveSetting("cabin:additivePartialsEnabled", additivePartialsEnabled) }, [additivePartialsEnabled])
-  useEffect(() => { saveSetting("cabin:clickTrainEnabled", clickTrainEnabled) }, [clickTrainEnabled])
+  useEffect(() => { saveSetting("cabin:flatSlope", false) }, [])
+  useEffect(() => { saveSetting("cabin:additivePartialsEnabled", false) }, [])
+  useEffect(() => { saveSetting("cabin:clickTrainEnabled", true) }, [])
   useEffect(() => { saveSetting("cabin:clickTrainVolumePercent", clickTrainVolumePercent) }, [clickTrainVolumePercent])
-  useEffect(() => { saveSetting("cabin:referenceVolumeBalance", referenceVolumeBalance) }, [referenceVolumeBalance])
-  useEffect(() => { saveSetting("cabin:referenceVolumeOffsetDb", referenceVolumeOffsetDb) }, [referenceVolumeOffsetDb])
-  useEffect(() => { saveSetting("cabin:referenceVolumeOscillationEnabled", referenceVolumeOscillationEnabled) }, [referenceVolumeOscillationEnabled])
-  useEffect(() => { saveSetting("cabin:allVolumeOscillationEnabled", allVolumeOscillationEnabled) }, [allVolumeOscillationEnabled])
-  useEffect(() => { saveSetting("cabin:referenceVolumeMultiplyCount", referenceVolumeMultiplyCount) }, [referenceVolumeMultiplyCount])
+  useEffect(() => { saveSetting("cabin:referenceVolumeBalance", DEFAULTS.referenceVolumeBalance) }, [])
+  useEffect(() => { saveSetting("cabin:referenceVolumeOffsetDb", DEFAULTS.referenceVolumeOffsetDb) }, [])
+  useEffect(() => { saveSetting("cabin:referenceVolumeOscillationEnabled", false) }, [])
+  useEffect(() => { saveSetting("cabin:allVolumeOscillationEnabled", false) }, [])
+  useEffect(() => { saveSetting("cabin:referenceVolumeMultiplyCount", DEFAULTS.referenceVolumeMultiplyCount) }, [])
 
   useEffect(() => {
     const player = dotGridAudio.getDotGridAudioPlayer()
@@ -417,23 +266,6 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
         const [x, y] = dotKey.split(",").map(Number)
         if (x < gridCols && y < gridRows) {
           next.add(dotKey)
-        }
-      })
-      return next
-    })
-    setReferenceDotKey((prev) => {
-      if (!prev) return prev
-      const [x, y] = prev.split(",").map(Number)
-      return x < gridCols && y < gridRows ? prev : null
-    })
-    setConstantDots((prev) => {
-      const next = new Set<string>()
-      prev.forEach((dotKey) => {
-        const [x, y] = dotKey.split(",").map(Number)
-        if (x < gridCols && y < gridRows) {
-          next.add(dotKey)
-        } else {
-          dotGridAudio.getDotGridAudioPlayer().setConstantDotPlaying(dotKey, false, gridRows, gridCols)
         }
       })
       return next
@@ -514,8 +346,8 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   }, [referenceVolumeOscillationEnabled])
 
   useEffect(() => {
-    dotGridAudio.getDotGridAudioPlayer().setAllVolumeOscillationEnabled(allVolumeOscillationEnabled)
-  }, [allVolumeOscillationEnabled])
+    dotGridAudio.getDotGridAudioPlayer().setAllVolumeOscillationEnabled(false)
+  }, [])
 
   useEffect(() => {
     dotGridAudio.getDotGridAudioPlayer().setReferenceVolumeMultiplyCount(referenceVolumeMultiplyCount)
@@ -527,63 +359,27 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   const dotCount = activeSelectedDots.size
   const perHitS = useMemo(() => speedToPerHitSeconds(speed), [speed])
   const effectiveRelease = useMemo(
-    () => releaseAuto ? Math.max(0.001, getAutoReleaseSeconds(perHitS) + releaseAutoOffsetMs / 1000) : release,
-    [perHitS, release, releaseAuto, releaseAutoOffsetMs]
+    () => Math.max(0.001, getAutoReleaseSeconds(perHitS)),
+    [perHitS]
   )
-
-  const handleHiHatModeChange = useCallback((enabled: boolean) => {
-    setHiHatModeEnabled(enabled)
-    if (enabled) {
-      setPatternModeEnabled(false)
-      setReverbModeEnabled(false)
-    }
-  }, [])
 
   const handlePatternModeChange = useCallback((enabled: boolean) => {
     setPatternModeEnabled(enabled)
-    if (enabled) {
-      setHiHatModeEnabled(false)
-      setReverbModeEnabled(false)
-    }
-  }, [])
-
-  const handleReverbModeChange = useCallback((enabled: boolean) => {
-    setReverbModeEnabled(enabled)
-    if (enabled) {
-      setHiHatModeEnabled(false)
-      setPatternModeEnabled(false)
-    }
-  }, [])
-
-  const handleAdditivePartialsChange = useCallback((enabled: boolean) => {
-    setAdditivePartialsEnabled(enabled)
-    if (enabled) {
-      setClickTrainEnabled(false)
-    }
-  }, [])
-
-  const handleClickTrainChange = useCallback((enabled: boolean) => {
-    setClickTrainEnabled(enabled)
-    if (enabled) {
-      setAdditivePartialsEnabled(false)
-    }
   }, [])
 
   useEffect(() => {
     const count = Math.max(1, dotCount)
-    const hitsPerDot = patternModeEnabled ? 8 : reverbModeEnabled ? 16 : hiHatModeEnabled ? 8 : Math.max(1, depth)
-    const repeatsPerHit = Math.max(1, repeatCount)
-    const totalHits = count * hitsPerDot * repeatsPerHit
+    const totalHits = count * Math.max(1, depth)
 
     const player = dotGridAudio.getDotGridAudioPlayer()
     player.setHitModeStagger(perHitS)
     // Wave rate = one full cycle covers all dots × all volume steps
     player.setHitModeRate(1 / (perHitS * totalHits))
-  }, [perHitS, dotCount, depth, hiHatModeEnabled, patternModeEnabled, reverbModeEnabled, repeatCount])
+  }, [perHitS, dotCount, depth])
 
   useEffect(() => {
-    dotGridAudio.getDotGridAudioPlayer().setNumberOfHits(repeatCount)
-  }, [repeatCount])
+    dotGridAudio.getDotGridAudioPlayer().setNumberOfHits(1)
+  }, [])
 
   useEffect(() => {
     dotGridAudio.getDotGridAudioPlayer().setHitModeRelease(effectiveRelease)
@@ -602,14 +398,8 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   }, [flatSlope])
 
   useEffect(() => {
-    dotGridAudio.getDotGridAudioPlayer().setSoundMode(
-      clickTrainEnabled
-        ? dotGridAudio.SoundMode.ClickTrain
-        : additivePartialsEnabled
-          ? dotGridAudio.SoundMode.AdditivePartials
-          : dotGridAudio.SoundMode.BandpassedNoise
-    )
-  }, [additivePartialsEnabled, clickTrainEnabled])
+    dotGridAudio.getDotGridAudioPlayer().setSoundMode(dotGridAudio.SoundMode.ClickTrain)
+  }, [])
 
   useEffect(() => {
     dotGridAudio.getDotGridAudioPlayer().setClickTrainGainPercent(clickTrainVolumePercent)
@@ -617,17 +407,16 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
 
   useEffect(() => {
     const player = dotGridAudio.getDotGridAudioPlayer()
-    const effectiveDepth = hiHatModeEnabled || reverbModeEnabled ? 3 : depth
-    player.setVolumeSteps(effectiveDepth)
-    player.setHitDecay((effectiveDepth - 1) * depthGapDb)
-    player.setHiHatModeEnabled(hiHatModeEnabled)
+    player.setVolumeSteps(depth)
+    player.setHitDecay(0)
+    player.setHiHatModeEnabled(false)
     player.setPatternModeEnabled(patternModeEnabled)
     player.setPatternVolumeDiffDb(patternVolumeDiffDb)
-    player.setReverbModeEnabled(reverbModeEnabled)
-    player.setReverbVolumeSpreadDb(reverbVolumeSpreadDb)
+    player.setReverbModeEnabled(false)
+    player.setReverbVolumeSpreadDb(DEFAULTS.reverbVolumeSpreadDb)
     player.setHiHatQuietDropDb(hiHatQuietDropDb)
-    player.setHiHatLoudReleaseBoostMs(hiHatLoudReleaseBoostMs)
-  }, [depth, depthGapDb, hiHatModeEnabled, patternModeEnabled, patternVolumeDiffDb, reverbModeEnabled, reverbVolumeSpreadDb, hiHatQuietDropDb, hiHatLoudReleaseBoostMs])
+    player.setHiHatLoudReleaseBoostMs(FIXED_ACCENT_RELEASE_MS)
+  }, [depth, patternModeEnabled, patternVolumeDiffDb, hiHatQuietDropDb])
 
   useEffect(() => {
     if (volumePercent === 0) {
@@ -642,7 +431,6 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   // Arrow-key movement of selected dots
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (freeformModeEnabled) return
       let dx = 0
       let dy = 0
       switch (e.key) {
@@ -688,7 +476,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [freeformModeEnabled, gridRows, gridCols])
+  }, [gridRows, gridCols])
 
   // ---- Cursor dot (Command-key) state ----
   const [cursorDotPosition, setCursorDotPosition] = useState<{ normalizedX: number; normalizedY: number } | null>(null)
@@ -746,7 +534,6 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
 
   const handleDotDeselect = useCallback((x: number, y: number) => {
     const key = `${x},${y}`
-    setReferenceDotKey((prev) => (prev === key ? null : prev))
     setSelectedDots((prev) => {
       if (!prev.has(key)) return prev
       const next = new Set(prev)
@@ -755,54 +542,9 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     })
   }, [])
 
-  const handleDotReference = useCallback((x: number, y: number) => {
-    void resumeAudioContext()
-    const key = `${x},${y}`
-    setReferenceDotKey(key)
-    setSelectedDots((prev) => {
-      if (prev.has(key)) return prev
-      const next = new Set(prev)
-      next.add(key)
-      return next
-    })
-  }, [])
-
-  const handleDotConstantToggle = useCallback((x: number, y: number) => {
-    void resumeAudioContext()
-    const key = `${x},${y}`
-    setConstantDots((prev) => {
-      const next = new Set(prev)
-      const shouldPlay = !next.has(key)
-      if (shouldPlay) {
-        next.add(key)
-      } else {
-        next.delete(key)
-      }
-      dotGridAudio.getDotGridAudioPlayer().setConstantDotPlaying(key, shouldPlay, gridRows, gridCols)
-      return next
-    })
-  }, [gridRows, gridCols])
-
   const handleSetGridSize = useCallback((rows: number, cols: number) => {
     setGridRows(rows)
     setGridCols(cols)
-  }, [])
-
-  const handleAddFreeformDot = useCallback((x: number, y: number) => {
-    void resumeAudioContext()
-    const id = globalThis.crypto?.randomUUID?.() ?? `freeform-${Date.now()}-${Math.random()}`
-    setFreeformDots((prev) => [...prev, { id, x, y }])
-    return id
-  }, [])
-
-  const handleMoveFreeformDot = useCallback((id: string, x: number, y: number) => {
-    setFreeformDots((prev) => prev.map((dot) => (
-      dot.id === id ? { ...dot, x: clamp01(x), y: clamp01(y) } : dot
-    )))
-  }, [])
-
-  const handleRemoveFreeformDot = useCallback((id: string) => {
-    setFreeformDots((prev) => prev.filter((dot) => dot.id !== id))
   }, [])
 
   return (
@@ -826,13 +568,11 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
       <UnifiedParticleScene
         gridRows={gridRows}
         gridCols={gridCols}
-        selectedDots={freeformModeEnabled ? new Set() : selectedDots}
-        constantDots={freeformModeEnabled ? new Set() : constantDots}
-        referenceDotKey={freeformModeEnabled ? null : referenceDotKey}
+        selectedDots={selectedDots}
+        constantDots={new Set()}
+        referenceDotKey={null}
         onDotSelect={handleDotSelect}
         onDotDeselect={handleDotDeselect}
-        onDotReference={handleDotReference}
-        onDotConstantToggle={handleDotConstantToggle}
         playingDotKey={playingDotKey}
         beatIndex={beatIndex}
         hoveredDot={hoveredDot}
@@ -843,29 +583,15 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
         cursorDotPosition={cursorDotPosition}
         onCursorDotMove={handleCursorDotMove}
         onCursorDotEnd={handleCursorDotEnd}
-        inputDisabled={freeformModeEnabled}
+        inputDisabled={false}
         inviteDotKey={inviteDotKey}
         eqHighlights={eqHighlights}
       />
-      {freeformModeEnabled && (
-        <FreeformDotOverlay
-          dots={freeformDots}
-          playingDotKey={playingDotKey}
-          disabled={isPlaying}
-          onAddDot={handleAddFreeformDot}
-          onMoveDot={handleMoveFreeformDot}
-          onRemoveDot={handleRemoveFreeformDot}
-          onDragStateChange={onDragStateChange}
-        />
-      )}
       <SettingsPanel
         collapsed={settingsCollapsed}
         onToggle={() => setSettingsCollapsed((v) => !v)}
         gridRows={gridRows}
         gridCols={gridCols}
-        freeformModeEnabled={freeformModeEnabled}
-        onFreeformModeChange={setFreeformModeEnabled}
-        onClearFreeformDots={() => setFreeformDots([])}
         minRows={MIN_ROWS}
         maxRows={MAX_ROWS}
         minCols={MIN_COLS}
@@ -875,57 +601,19 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
         onSpeedChange={setSpeed}
         volumePercent={volumePercent}
         onVolumeChange={setVolumePercent}
-        release={release}
         effectiveRelease={effectiveRelease}
-        releaseAuto={releaseAuto}
-        releaseAutoOffsetMs={releaseAutoOffsetMs}
-        onReleaseChange={setRelease}
-        onReleaseAutoChange={setReleaseAuto}
-        onReleaseAutoOffsetMsChange={setReleaseAutoOffsetMs}
         bandwidth={bandwidth}
         onBandwidthChange={setBandwidth}
         bandwidthOscillationEnabled={bandwidthOscillationEnabled}
         onBandwidthOscillationChange={setBandwidthOscillationEnabled}
-        depth={depth}
-        onDepthChange={setDepth}
-        hiHatModeEnabled={hiHatModeEnabled}
-        onHiHatModeChange={handleHiHatModeChange}
         patternModeEnabled={patternModeEnabled}
         onPatternModeChange={handlePatternModeChange}
         patternVolumeDiffDb={patternVolumeDiffDb}
         onPatternVolumeDiffDbChange={setPatternVolumeDiffDb}
-        reverbModeEnabled={reverbModeEnabled}
-        onReverbModeChange={handleReverbModeChange}
-        reverbVolumeSpreadDb={reverbVolumeSpreadDb}
-        onReverbVolumeSpreadDbChange={setReverbVolumeSpreadDb}
-        hiHatQuietDropDb={hiHatQuietDropDb}
-        onHiHatQuietDropDbChange={setHiHatQuietDropDb}
-        hiHatLoudReleaseBoostMs={hiHatLoudReleaseBoostMs}
-        onHiHatLoudReleaseBoostMsChange={setHiHatLoudReleaseBoostMs}
-        repeatCount={repeatCount}
-        onRepeatCountChange={setRepeatCount}
-        depthGapDb={depthGapDb}
-        onDepthGapDbChange={setDepthGapDb}
         eqABEnabled={eqABEnabled}
         onEqABChange={setEqABEnabled}
-        flatSlope={flatSlope}
-        onFlatSlopeChange={setFlatSlope}
-        additivePartialsEnabled={additivePartialsEnabled}
-        onAdditivePartialsChange={handleAdditivePartialsChange}
-        clickTrainEnabled={clickTrainEnabled}
-        onClickTrainChange={handleClickTrainChange}
         clickTrainVolumePercent={clickTrainVolumePercent}
         onClickTrainVolumeChange={setClickTrainVolumePercent}
-        referenceVolumeBalance={referenceVolumeBalance}
-        onReferenceVolumeBalanceChange={setReferenceVolumeBalance}
-        referenceVolumeOffsetDb={referenceVolumeOffsetDb}
-        onReferenceVolumeOffsetDbChange={setReferenceVolumeOffsetDb}
-        referenceVolumeOscillationEnabled={referenceVolumeOscillationEnabled}
-        onReferenceVolumeOscillationChange={setReferenceVolumeOscillationEnabled}
-        allVolumeOscillationEnabled={allVolumeOscillationEnabled}
-        onAllVolumeOscillationChange={setAllVolumeOscillationEnabled}
-        referenceVolumeMultiplyCount={referenceVolumeMultiplyCount}
-        onReferenceVolumeMultiplyCountChange={setReferenceVolumeMultiplyCount}
         isPlaying={isPlaying}
       />
     </div>

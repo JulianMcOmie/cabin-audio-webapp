@@ -112,7 +112,7 @@ class PositionedAudioService {
   private currentBaseDbLevel: number = 0;
   private subHitAdsrEnabled: boolean = true; // Renamed from envelopeEnabled
   private subHitPlaybackEnabled: boolean = false; // New: Toggle for sub-hit mechanism - DEFAULT FALSE for continuous mode
-  private currentSoundMode: SoundMode = SoundMode.BandpassedNoise; // Current sound generation mode - default to bandpassed
+  private currentSoundMode: SoundMode = SoundMode.ClickTrain; // Current sound generation mode - click train only by default
   private repeatCount: number = DEFAULT_REPEAT_COUNT; // Number of repeats for each dot
   private dbIncreasePerRepeat: number = DEFAULT_DB_INCREASE_PER_REPEAT; // dB increase per repeat (was reduction)
   private baseDb: number = DEFAULT_BASE_DB; // Starting dB level for first hit
@@ -123,7 +123,7 @@ class PositionedAudioService {
   private releaseDuration: number = DEFAULT_GLOBAL_STAGGER_RELEASE_S; // Release duration in seconds
   private currentBandwidth: number = BANDPASS_BANDWIDTH_OCTAVES; // Current bandwidth in octaves for bandpassed noise
   private currentBandpassSlope: number = BANDPASS_NOISE_SLOPE_DB_PER_OCT; // dB/oct slope for bandpassed noise
-  private currentClickTrainGainMultiplier: number = 1.8;
+  private currentClickTrainGainMultiplier: number = 5;
   private bandwidthOscillationEnabled: boolean = false;
   private bandwidthOscillationStepIndex: number = 0;
   private frequencyExtensionRange: number = 0; // How far beyond audible range to allow (0 = no extension, both filters always active)
@@ -1182,12 +1182,15 @@ class PositionedAudioService {
       bandpassedNoiseGenerator.setBandpassSlope(this.currentBandpassSlope);
 
       if (this.currentSoundMode === SoundMode.AdditivePartials) {
+        bandpassedNoiseGenerator.setInputSlope(0);
         additivePartialGenerator = new AdditivePartialGenerator(this.ctx);
         additivePartialGenerator.getOutputNode().connect(bandpassedNoiseGenerator.getInputNode());
       } else if (this.currentSoundMode === SoundMode.ClickTrain) {
+        bandpassedNoiseGenerator.setInputSlope(0);
         clickTrainGenerator = new ClickTrainGenerator(this.ctx, this.currentClickTrainGainMultiplier);
         clickTrainGenerator.getOutputNode().connect(bandpassedNoiseGenerator.getInputNode());
       } else {
+        bandpassedNoiseGenerator.setInputSlope(PINK_NOISE_SLOPE_DB_PER_OCT);
         source.loop = true;
         source.connect(bandpassedNoiseGenerator.getInputNode());
         source.start(); // Start source immediately, loop, control with envelopeGain
@@ -1288,12 +1291,15 @@ class PositionedAudioService {
       bandpassedNoiseGenerator.setBandpassBandwidth(this.currentBandwidth);
       bandpassedNoiseGenerator.setBandpassSlope(this.currentBandpassSlope);
       if (this.currentSoundMode === SoundMode.AdditivePartials) {
+        bandpassedNoiseGenerator.setInputSlope(0);
         additivePartialGenerator = new AdditivePartialGenerator(this.ctx);
         additivePartialGenerator.getOutputNode().connect(bandpassedNoiseGenerator.getInputNode());
       } else if (this.currentSoundMode === SoundMode.ClickTrain) {
+        bandpassedNoiseGenerator.setInputSlope(0);
         clickTrainGenerator = new ClickTrainGenerator(this.ctx, this.currentClickTrainGainMultiplier);
         clickTrainGenerator.getOutputNode().connect(bandpassedNoiseGenerator.getInputNode());
       } else {
+        bandpassedNoiseGenerator.setInputSlope(PINK_NOISE_SLOPE_DB_PER_OCT);
         source.loop = true;
         source.connect(bandpassedNoiseGenerator.getInputNode());
         source.start();
@@ -1696,7 +1702,7 @@ class PositionedAudioService {
   }
 
   public setClickTrainGainPercent(percent: number): void {
-    this.currentClickTrainGainMultiplier = clamp(percent, 0, 500) / 100;
+    this.currentClickTrainGainMultiplier = clamp(percent, 0, 2000) / 100;
 
     this.audioPoints.forEach((point) => {
       if (point.clickTrainGenerator) {
@@ -4195,7 +4201,7 @@ class ClickTrainGenerator {
   }
 
   public setGainMultiplier(gainMultiplier: number): void {
-    this.outputGainNode.gain.value = CLICK_TRAIN_OUTPUT_GAIN_SCALAR * clamp(gainMultiplier, 0, 5);
+    this.outputGainNode.gain.value = CLICK_TRAIN_OUTPUT_GAIN_SCALAR * clamp(gainMultiplier, 0, 20);
   }
 
   private createImpulseTrainBuffer(): AudioBuffer {
@@ -4239,6 +4245,7 @@ class BandpassedNoiseGenerator {
   private currentBandwidthOctaves: number;
   private currentCenterFrequency: number;
   private currentFilterQ: number;
+  private currentSlopeDbPerOct: number = BANDPASS_NOISE_SLOPE_DB_PER_OCT;
   private isHighpassActive: boolean = true;
   private isLowpassActive: boolean = true;
 
@@ -4389,7 +4396,13 @@ class BandpassedNoiseGenerator {
   }
 
   public setBandpassSlope(slopeDbPerOct: number): void {
+    this.currentSlopeDbPerOct = slopeDbPerOct;
     this.slopingFilter.setSlope(slopeDbPerOct);
+  }
+
+  public setInputSlope(inputSlopeDbPerOct: number): void {
+    this.slopingFilter.setInputSlope(inputSlopeDbPerOct);
+    this.slopingFilter.setSlope(this.currentSlopeDbPerOct);
   }
 
   public setBandpassQ(q: number): void {
@@ -4414,6 +4427,7 @@ export class SlopedPinkNoiseGenerator {
   private bandFilters: BiquadFilterNode[] = [];
   private bandGains: GainNode[] = [];
   private centerFrequencies: number[] = [];
+  private inputSlopeDbPerOctave: number = PINK_NOISE_SLOPE_DB_PER_OCT;
 
   constructor(audioCtx: BaseAudioContext) {
     this.ctx = audioCtx;
@@ -4453,11 +4467,14 @@ export class SlopedPinkNoiseGenerator {
     return this.outputGainNode;
   }
 
+  public setInputSlope(inputSlopeDbPerOctave: number): void {
+    this.inputSlopeDbPerOctave = inputSlopeDbPerOctave;
+  }
+
   public setSlope(targetOverallSlopeDbPerOctave: number): void {
-    // Calculate shaping slope relative to the INHERENT PINK NOISE SLOPE.
-    // This ensures the generator actively shapes the input pink noise (-3dB/oct)
-    // to achieve the absolute targetOverallSlopeDbPerOctave.
-    const shapingSlope = targetOverallSlopeDbPerOctave - PINK_NOISE_SLOPE_DB_PER_OCT;
+    // Shape relative to the source's inherent slope. Pink noise enters near
+    // -3 dB/oct; click and additive sources are treated as flat.
+    const shapingSlope = targetOverallSlopeDbPerOctave - this.inputSlopeDbPerOctave;
 
     for (let i = 0; i < NUM_BANDS; i++) {
       const fc = this.centerFrequencies[i];
