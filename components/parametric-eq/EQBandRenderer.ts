@@ -81,8 +81,39 @@ export class EQBandRenderer {
     // Increase handle color opacity when highlighted
     // const handleOpacity = band.isHovered || isHovered ? 0.9 : 0.8; // More vibrant by default
     const handleColor = EQCoordinateUtils.getBandColor(band.frequency, 1.0, isDarkMode)
-    
+
     this.drawBandHandle(ctx, x + xOffset, y + yOffset, handleColor, band.isHovered || isHovered, isDragging, isEnabled);
+
+    // Draw a small L/R badge for non-'both' bands
+    const channel = band.channel ?? 'both';
+    if (channel !== 'both') {
+      const label = channel === 'left' ? 'L' : 'R';
+      const badgeRadius = 7;
+      const badgeX = x + xOffset + 10;
+      const badgeY = y + yOffset - 10;
+
+      // Badge background
+      ctx.beginPath();
+      ctx.arc(badgeX, badgeY, badgeRadius, 0, Math.PI * 2);
+      ctx.fillStyle = isEnabled
+        ? (isDarkMode ? 'rgba(0, 0, 0, 0.75)' : 'rgba(255, 255, 255, 0.85)')
+        : (isDarkMode ? 'rgba(0, 0, 0, 0.5)' : 'rgba(255, 255, 255, 0.6)');
+      ctx.fill();
+      ctx.strokeStyle = isEnabled
+        ? ColorUtils.setOpacity(handleColor, 0.9)
+        : ColorUtils.makeGrayscale(handleColor, 0.6);
+      ctx.lineWidth = 1.25;
+      ctx.stroke();
+
+      // Badge label
+      ctx.fillStyle = isEnabled
+        ? (isDarkMode ? '#ffffff' : '#000000')
+        : (isDarkMode ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.5)');
+      ctx.font = 'bold 9px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, badgeX, badgeY + 0.5);
+    }
   }
   
   /**

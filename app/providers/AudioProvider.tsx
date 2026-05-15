@@ -1,6 +1,7 @@
 'use client';
 
-import { ReactNode, useEffect } from 'react';
+import { ReactNode, useEffect, useRef } from 'react';
+import { usePathname } from 'next/navigation';
 import { initializeAudio, cleanupAudio } from '@/lib/audio/initAudio';
 
 interface AudioProviderProps {
@@ -14,26 +15,36 @@ interface AudioProviderProps {
  * This should be placed high in the component tree, but after any required providers.
  */
 export function AudioProvider({ children }: AudioProviderProps) {
+  const pathname = usePathname();
+  const isInitializedRef = useRef(false);
+
   useEffect(() => {
-    // Initialize audio system on component mount
-    console.log('🔈 AudioProvider - Mounting and initializing audio system');
-    
+    const shouldSkipAudio = pathname?.startsWith('/hrtf');
+
+    if (shouldSkipAudio) {
+      if (isInitializedRef.current) {
+        cleanupAudio();
+        isInitializedRef.current = false;
+      }
+      return;
+    }
+
     try {
       initializeAudio();
+      isInitializedRef.current = true;
     } catch (error) {
       console.error('🔈 AudioProvider - Failed to initialize audio system:', error);
-      // Could show a toast notification here if critical
     }
-    
-    // Clean up audio system on component unmount
+
     return () => {
-      console.log('🔈 AudioProvider - Unmounting and cleaning up audio system');
-      cleanupAudio();
+      if (isInitializedRef.current) {
+        cleanupAudio();
+        isInitializedRef.current = false;
+      }
     };
-  }, []);
-  
-  // Simply render children - this component only handles audio initialization
+  }, [pathname]);
+
   return <>{children}</>;
 }
 
-export default AudioProvider; 
+export default AudioProvider;

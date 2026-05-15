@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, RefObject, useRef } from 'react';
 import { throttle } from 'lodash';
-import { EQBandWithUI } from './types';
+import { EQBandWithUI, EQBandChannel } from './types';
 import { EQCoordinateUtils } from './EQCoordinateUtils';
 import { getReferenceCalibrationAudio } from '@/lib/audio/referenceCalibrationAudio';
 
@@ -8,6 +8,7 @@ interface UseEQInteractionProps {
   canvasRef: RefObject<HTMLCanvasElement | null>;
   bands: EQBandWithUI[];
   freqRange: { min: number; max: number };
+  activeChannel: EQBandChannel;
   onBandAdd: (band: Omit<EQBandWithUI, 'id' | 'isHovered' | 'frequencyResponse'>) => string | undefined;
   onBandUpdate: (id: string, updates: Partial<EQBandWithUI>) => void;
   onBandRemove: (id: string) => void;
@@ -30,6 +31,7 @@ export function useEQInteraction({
   canvasRef,
   bands,
   freqRange,
+  activeChannel,
   onBandAdd,
   onBandUpdate,
   onBandRemove,
@@ -126,6 +128,46 @@ export function useEQInteraction({
       window.removeEventListener('keyup', handleKeyUp);
     };
   }, []);
+
+  // Keyboard: L / R / B reassigns the hovered or selected band(s) to a channel
+  useEffect(() => {
+    const handleChannelKey = (e: KeyboardEvent) => {
+      // Ignore when typing in an input / textarea / contentEditable
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      let nextChannel: EQBandChannel | null = null;
+      const key = e.key.toLowerCase();
+      if (key === 'l') nextChannel = 'left';
+      else if (key === 'r') nextChannel = 'right';
+      else if (key === 'b') nextChannel = 'both';
+      if (!nextChannel) return;
+
+      // Targets: selected bands if any, otherwise hovered band
+      const targetIds: string[] = [];
+      if (selectedBandIds.size > 0) {
+        for (const id of selectedBandIds) targetIds.push(id);
+      } else if (hoveredBandId) {
+        targetIds.push(hoveredBandId);
+      }
+      if (targetIds.length === 0) return;
+
+      e.preventDefault();
+      if (targetIds.length > 1 && onMultiBandUpdate) {
+        onMultiBandUpdate(targetIds.map(id => ({ id, changes: { channel: nextChannel! } })));
+      } else {
+        for (const id of targetIds) {
+          onBandUpdate(id, { channel: nextChannel });
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleChannelKey);
+    return () => window.removeEventListener('keydown', handleChannelKey);
+  }, [hoveredBandId, selectedBandIds, onBandUpdate, onMultiBandUpdate]);
 
   // Clear selection when bands array identity changes (profile switch)
   const bandsIdentityRef = useRef(bands);
@@ -628,7 +670,8 @@ export function useEQInteraction({
             frequency: clampedFrequency,
             gain: 0,
             q: lastUsedQ,
-            type: 'peaking' as BiquadFilterType
+            type: 'peaking' as BiquadFilterType,
+            channel: activeChannel,
           };
 
           const newBandId = onBandAdd(newBand);
@@ -686,7 +729,7 @@ export function useEQInteraction({
         update.cancel();
       }
     }
-  }, [bands, freqRange, hoveredBandId, draggingBand, onBandAdd, onBandRemove, onBandSelect, canvasRef, handleMouseMoveThrottled, throttledBandUpdate, lastUsedQ, SHOULD_UPDATE_CALIBRATION, isShiftPressed, selectedBandIds, onMultiBandRemove, snapshotSelectedBands]);
+  }, [activeChannel, bands, freqRange, hoveredBandId, draggingBand, onBandAdd, onBandRemove, onBandSelect, canvasRef, handleMouseMoveThrottled, throttledBandUpdate, lastUsedQ, SHOULD_UPDATE_CALIBRATION, isShiftPressed, selectedBandIds, onMultiBandRemove, snapshotSelectedBands]);
 
   // Cancel throttled functions on unmount
   useEffect(() => {

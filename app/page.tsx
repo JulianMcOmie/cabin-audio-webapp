@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useRef } from "react"
 import { MainView } from "@/components/main-view"
-import { TopOverlay } from "@/components/top-overlay"
 import { ControlPanel } from "@/components/control-panel"
 import { EQOverlay } from "@/components/eq-overlay"
 import { LibraryPanel } from "@/components/library-panel"
@@ -37,9 +36,8 @@ export default function Home() {
   const [showEQOverlay, setShowEQOverlay] = useState(false)
   const [showLibrary, setShowLibrary] = useState(false)
   const [quality, setQuality] = useState<QualityLevel>("low")
-  const [highlightTarget, setHighlightTarget] = useState<HighlightTarget>(null)
-  const [isDraggingGrid, setIsDraggingGrid] = useState(false)
-  const [metaHeld, setMetaHeld] = useState(false)
+  const highlightTarget: HighlightTarget = null
+  const [, setIsDraggingGrid] = useState(false)
   const [activeBand, setActiveBand] = useState<ActiveBand | null>(null)
 
   const isPlaying = usePlayerStore(s => s.isPlaying)
@@ -116,25 +114,6 @@ export default function Home() {
     setShowLibrary((v) => !v)
   }, [])
 
-  // Track Command (Meta) key for cursor sphere mode
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Meta") setMetaHeld(true)
-    }
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === "Meta") setMetaHeld(false)
-    }
-    const handleBlur = () => setMetaHeld(false)
-    window.addEventListener("keydown", handleKeyDown)
-    window.addEventListener("keyup", handleKeyUp)
-    window.addEventListener("blur", handleBlur)
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown)
-      window.removeEventListener("keyup", handleKeyUp)
-      window.removeEventListener("blur", handleBlur)
-    }
-  }, [])
-
   // Escape key dismisses overlays
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -149,13 +128,13 @@ export default function Home() {
 
   return (
     <div className="relative w-screen h-screen overflow-hidden">
-      {/* Main view fills entire viewport */}
-      <div className="absolute inset-0 z-0">
+      <div
+        className={`absolute left-0 right-32 top-0 z-0 transition-[bottom] duration-200 ${
+          showEQOverlay ? "bottom-[calc(33vh+12rem)]" : "bottom-44"
+        }`}
+      >
         <MainView quality={quality} highlightTarget={highlightTarget} isPlaying={isPlaying} onDragStateChange={setIsDraggingGrid} activeBand={activeBand} />
       </div>
-
-      {/* Top overlay: logo + how to use + quality */}
-      <TopOverlay quality={quality} onQualityChange={setQuality} onHighlightTarget={setHighlightTarget} />
 
       {/* EQ Overlay */}
       <EQOverlay isOpen={showEQOverlay} onClose={() => setShowEQOverlay(false)} onActiveBandChange={handleActiveBandChange} />
@@ -163,16 +142,13 @@ export default function Home() {
       {/* Library Panel — sits directly above control bar */}
       <LibraryPanel isOpen={showLibrary} onClose={() => setShowLibrary(false)} />
 
-      {/* Control Panel: fades out while dragging on the grid */}
-      <div className={`transition-opacity duration-300 ${isDraggingGrid || metaHeld ? "opacity-0 pointer-events-none" : "opacity-100"}`}>
-        <ControlPanel
-          showEQOverlay={showEQOverlay}
-          onToggleEQOverlay={toggleEQOverlay}
-          onToggleLibrary={toggleLibrary}
-          highlightTarget={highlightTarget}
-          quality={quality}
-        />
-      </div>
+      <ControlPanel
+        showEQOverlay={showEQOverlay}
+        onToggleEQOverlay={toggleEQOverlay}
+        onToggleLibrary={toggleLibrary}
+        highlightTarget={highlightTarget}
+        quality={quality}
+      />
     </div>
   )
 }

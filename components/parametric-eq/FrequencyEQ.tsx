@@ -1,13 +1,13 @@
 "use client"
 
-import { useRef, useEffect, useState, useCallback } from "react"
+import { useRef, useEffect, useState, useCallback, useMemo } from "react"
 import { useDarkMode } from "@/lib/hooks/useDarkMode"
-import { EQBandWithUI } from "./types"
+import { EQBandWithUI, EQBandChannel } from "./types"
 import { EQBandRenderer } from "./EQBandRenderer"
 import { EQCurveRenderer } from "./EQCurveRenderer"
 import { EQCoordinateUtils } from "./EQCoordinateUtils"
 import { useEQInteraction } from "./useEQInteraction"
-import { useEQProcessor, calculateBandResponse } from "./useEQProcessor"
+import { useEQProcessor, calculateBandResponse, calculateCombinedFrequencyResponse } from "./useEQProcessor"
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
 import { EQBand } from "@/lib/models/EQBand"
 import { getReferenceCalibrationAudio } from '@/lib/audio/referenceCalibrationAudio';
@@ -16,6 +16,7 @@ interface FrequencyEQProps {
   profileId?: string
   disabled?: boolean
   className?: string
+  activeChannel?: EQBandChannel
   onInstructionChange?: (instruction: string) => void
   onRequestEnable?: () => void
   onActiveBandChange?: (band: { frequency: number; gain: number; q: number } | null) => void
@@ -61,7 +62,7 @@ export function updateAudio(
   // Fixed frequency range outside component to be stable
 const freqRange = { min: 20, max: 20000 }
 
-export function FrequencyEQ({ profileId, disabled = false, className, onInstructionChange, onRequestEnable, onActiveBandChange }: FrequencyEQProps) {
+export function FrequencyEQ({ profileId, disabled = false, className, activeChannel = 'both', onInstructionChange, onRequestEnable, onActiveBandChange }: FrequencyEQProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<CanvasWithMargin>(null)
   const backgroundCanvasRef = useRef<CanvasWithMargin>(null)
@@ -109,21 +110,36 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       ...band,
       isHovered: false,
       type: 'peaking' as BiquadFilterType, // Default type for all bands
+      channel: band.channel ?? 'both',
       frequencyResponse: calculateBandResponse({
         ...band,
         isHovered: false,
         type: 'peaking' as BiquadFilterType,
       })
     }))
-    
+
     setRenderableBands(updatedBands)
   }, [profile])
   
   // Fixed frequency range
   // const freqRange = { min: 20, max: 20000 } // Moved outside component
   
-  // Process EQ bands to get frequency response
+  // Process EQ bands to get frequency response (combined, for the dimmer background curve)
   const { frequencyResponse } = useEQProcessor(renderableBands)
+
+  // Per-channel responses: left = both+left bands, right = both+right bands
+  const leftChannelResponse = useMemo(() => {
+    const bandsForLeft = renderableBands.filter(b => (b.channel ?? 'both') !== 'right')
+    return calculateCombinedFrequencyResponse(bandsForLeft)
+  }, [renderableBands])
+  const rightChannelResponse = useMemo(() => {
+    const bandsForRight = renderableBands.filter(b => (b.channel ?? 'both') !== 'left')
+    return calculateCombinedFrequencyResponse(bandsForRight)
+  }, [renderableBands])
+  const hasChannelSpecificBands = useMemo(
+    () => renderableBands.some(b => (b.channel ?? 'both') !== 'both'),
+    [renderableBands]
+  )
   
   // Handle band operations
   const handleBandAdd = useCallback((band: Omit<EQBandWithUI, 'id' | 'isHovered' | 'frequencyResponse'>) => {
@@ -135,7 +151,8 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       frequency: band.frequency,
       gain: band.gain,
       q: band.q,
-      type: band.type || 'peaking' // Include type in the profile band
+      type: band.type || 'peaking', // Include type in the profile band
+      channel: band.channel ?? 'both',
     }
     
     // Check if this is the first band - if so, enable the EQ automatically
@@ -261,12 +278,13 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
 
     // Create updated profile bands
     const updatedBands = [...profile.bands]
-    updatedBands[bandIndex] = { 
+    updatedBands[bandIndex] = {
       ...updatedBands[bandIndex],
       ...(updates.frequency !== undefined ? { frequency: updates.frequency } : {}),
       ...(updates.gain !== undefined ? { gain: updates.gain } : {}),
       ...(updates.q !== undefined ? { q: updates.q } : {}),
-      ...(updates.type !== undefined ? { type: updates.type } : {})
+      ...(updates.type !== undefined ? { type: updates.type } : {}),
+      ...(updates.channel !== undefined ? { channel: updates.channel } : {})
     }
     
     // Update profile with the new bands
@@ -315,6 +333,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
           ...(changes.gain !== undefined ? { gain: changes.gain } : {}),
           ...(changes.q !== undefined ? { q: changes.q } : {}),
           ...(changes.type !== undefined ? { type: changes.type } : {}),
+          ...(changes.channel !== undefined ? { channel: changes.channel } : {}),
         }
       }
     }
@@ -360,6 +379,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     canvasRef,
     bands: renderableBands,
     freqRange,
+    activeChannel,
     onBandAdd: handleBandAdd,
     onBandUpdate: handleBandUpdate,
     onBandRemove: handleBandRemove,
@@ -500,7 +520,7 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
     } else if (hoveredBandId && isShiftPressed) {
       onInstructionChange("Click to add to selection");
     } else if (hoveredBandId) {
-      onInstructionChange("Right click to delete band");
+      onInstructionChange("Right click to delete • L/R/B to assign channel");
     } else if (isShiftPressed) {
       onInstructionChange("Click a band to add to selection");
     } else {
@@ -732,29 +752,68 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
       }
     });
 
-    // Draw the combined EQ curve (brighter with glow effect)
+    // Draw the combined EQ curve(s)
     if (frequencyResponse.length > 0) {
       // Create clipping path for the inner area to ensure curve doesn't exceed boundaries
       ctx.save();
       ctx.beginPath();
       ctx.rect(margin, margin, rect.width - margin * 2, rect.height - margin * 2);
       ctx.clip();
-      
-      // Then draw the main curve with higher brightness
-      EQCurveRenderer.drawFrequencyResponse(
-        ctx,
-        frequencyResponse,
-        rect.width - margin * 2, // Adjust width for margins
-        rect.height - margin * 2, // Adjust height for margins
-        freqRange,
-        isDarkMode,
-        2.5, // slightly thinner for sharper appearance
-        1.0, // full alpha for maximum brightness
-        isEnabled, // Pass isEnabled parameter
-        margin, // Pass margin for x coordinate adjustment
-        margin  // Pass margin for y coordinate adjustment
-      );
-      
+
+      if (hasChannelSpecificBands) {
+        // Draw L and R curves separately with tinted colors
+        const leftColor = isEnabled
+          ? (isDarkMode ? 'rgba(100, 170, 255, 0.95)' : 'rgba(30, 100, 220, 0.95)')
+          : `rgba(128, 128, 128, 1.0)`;
+        const rightColor = isEnabled
+          ? (isDarkMode ? 'rgba(255, 130, 110, 0.95)' : 'rgba(200, 60, 40, 0.95)')
+          : `rgba(160, 160, 160, 1.0)`;
+
+        EQCurveRenderer.drawFrequencyResponse(
+          ctx,
+          leftChannelResponse,
+          rect.width - margin * 2,
+          rect.height - margin * 2,
+          freqRange,
+          isDarkMode,
+          2.5,
+          1.0,
+          isEnabled,
+          margin,
+          margin,
+          leftColor
+        );
+        EQCurveRenderer.drawFrequencyResponse(
+          ctx,
+          rightChannelResponse,
+          rect.width - margin * 2,
+          rect.height - margin * 2,
+          freqRange,
+          isDarkMode,
+          2.5,
+          1.0,
+          isEnabled,
+          margin,
+          margin,
+          rightColor
+        );
+      } else {
+        // Single combined curve with the frequency gradient
+        EQCurveRenderer.drawFrequencyResponse(
+          ctx,
+          frequencyResponse,
+          rect.width - margin * 2, // Adjust width for margins
+          rect.height - margin * 2, // Adjust height for margins
+          freqRange,
+          isDarkMode,
+          2.5, // slightly thinner for sharper appearance
+          1.0, // full alpha for maximum brightness
+          isEnabled, // Pass isEnabled parameter
+          margin, // Pass margin for x coordinate adjustment
+          margin  // Pass margin for y coordinate adjustment
+        );
+      }
+
       // Restore context to remove clipping
       ctx.restore();
     }
@@ -814,6 +873,9 @@ export function FrequencyEQ({ profileId, disabled = false, className, onInstruct
   }, [
     renderableBands,
     frequencyResponse,
+    leftChannelResponse,
+    rightChannelResponse,
+    hasChannelSpecificBands,
     disabled,
     isDarkMode,
     selectedBandId,

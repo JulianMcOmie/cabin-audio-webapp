@@ -20,7 +20,8 @@ export class EQCurveRenderer {
     alpha: number = 0.8,
     isEnabled: boolean = true,
     xOffset: number = 0,
-    yOffset: number = 0
+    yOffset: number = 0,
+    solidColor?: string
   ): void {
     if (frequencyResponse.length === 0) return;
     
@@ -70,35 +71,40 @@ export class EQCurveRenderer {
       }
     }
     
-    // Create gradient for the curve
-    const gradient = ctx.createLinearGradient(xOffset, yOffset, width + xOffset, yOffset);
-    
-    // Add color stops based on visible frequency range
-    const logMin = Math.log10(freqRange.min);
-    const logMax = Math.log10(freqRange.max);
-    const logRange = logMax - logMin;
-    
-    // Create more granular color stops for smoother gradient
-    const numStops = 20; // Increase number of color stops for smoother gradient
-    
-    if (isEnabled) {
-      // Full color when enabled
-      for (let i = 0; i <= numStops; i++) {
-        const position = i / numStops;
-        const logFreq = logMin + position * logRange;
-        const freq = Math.pow(10, logFreq);
-        gradient.addColorStop(position, EQCoordinateUtils.getBandColor(freq, alpha, isDarkMode));
-      }
+    if (solidColor) {
+      ctx.strokeStyle = solidColor;
     } else {
-      // Grayscale when disabled
-      for (let i = 0; i <= numStops; i++) {
-        const position = i / numStops;
-        gradient.addColorStop(position, `rgba(128, 128, 128, ${alpha})`);
+      // Create gradient for the curve
+      const gradient = ctx.createLinearGradient(xOffset, yOffset, width + xOffset, yOffset);
+
+      // Add color stops based on visible frequency range
+      const logMin = Math.log10(freqRange.min);
+      const logMax = Math.log10(freqRange.max);
+      const logRange = logMax - logMin;
+
+      // Create more granular color stops for smoother gradient
+      const numStops = 20; // Increase number of color stops for smoother gradient
+
+      if (isEnabled) {
+        // Full color when enabled
+        for (let i = 0; i <= numStops; i++) {
+          const position = i / numStops;
+          const logFreq = logMin + position * logRange;
+          const freq = Math.pow(10, logFreq);
+          gradient.addColorStop(position, EQCoordinateUtils.getBandColor(freq, alpha, isDarkMode));
+        }
+      } else {
+        // Grayscale when disabled
+        for (let i = 0; i <= numStops; i++) {
+          const position = i / numStops;
+          gradient.addColorStop(position, `rgba(128, 128, 128, ${alpha})`);
+        }
       }
+
+      ctx.strokeStyle = gradient;
     }
-    
-    // Draw the stroke with gradient
-    ctx.strokeStyle = gradient;
+
+    // Draw the stroke
     ctx.lineWidth = lineWidth;
     ctx.lineCap = 'round'; // Round line ends for smoother appearance
     ctx.lineJoin = 'round'; // Round line joins for smoother appearance

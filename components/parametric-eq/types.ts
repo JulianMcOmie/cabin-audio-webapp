@@ -1,4 +1,4 @@
-import { EQBand } from '@/lib/models/EQBand';
+import { EQBand, EQBandChannel } from '@/lib/models/EQBand';
 
 export interface FrequencyResponse {
   frequency: number;
@@ -13,4 +13,6 @@ export interface EQBandWithUI extends EQBand {
   frequencyResponse?: FrequencyResponse[];
 }
 
-// We now import EQBand from lib/models/EQBand.ts 
+export type { EQBandChannel };
+
+// We now import EQBand from lib/models/EQBand.ts
