@@ -53,26 +53,27 @@ function clampReleaseOverlapMs(overlapMs: number): number {
   return Math.max(RELEASE_OVERLAP_MIN_MS, Math.min(RELEASE_OVERLAP_MAX_MS, overlapMs))
 }
 
-function clampPatternSize(sizePx: number, width: number, height: number, centerX: number, centerY: number): number {
-  const maxFromCenter = Math.max(
+function clampPatternSize(size: PatternSize, width: number, height: number, centerX: number, centerY: number): PatternSize {
+  const maxWidthFromCenter = Math.max(
     MIN_PATTERN_SIZE_PX,
-    Math.min(
-      width,
-      height,
-      centerX * 2,
-      (width - centerX) * 2,
-      centerY * 2,
-      (height - centerY) * 2
-    )
+    Math.min(width, centerX * 2, (width - centerX) * 2)
   )
-  return Math.max(MIN_PATTERN_SIZE_PX, Math.min(sizePx, maxFromCenter))
+  const maxHeightFromCenter = Math.max(
+    MIN_PATTERN_SIZE_PX,
+    Math.min(height, centerY * 2, (height - centerY) * 2)
+  )
+  return {
+    width: Math.max(MIN_PATTERN_SIZE_PX, Math.min(size.width, maxWidthFromCenter)),
+    height: Math.max(MIN_PATTERN_SIZE_PX, Math.min(size.height, maxHeightFromCenter)),
+  }
 }
 
-function clampPatternCenter(centerX: number, centerY: number, sizePx: number, width: number, height: number) {
-  const half = sizePx / 2
+function clampPatternCenter(centerX: number, centerY: number, size: PatternSize, width: number, height: number) {
+  const halfWidth = size.width / 2
+  const halfHeight = size.height / 2
   return {
-    x: Math.max(half, Math.min(width - half, centerX)),
-    y: Math.max(half, Math.min(height - half, centerY)),
+    x: Math.max(halfWidth, Math.min(width - halfWidth, centerX)),
+    y: Math.max(halfHeight, Math.min(height - halfHeight, centerY)),
   }
 }
 
@@ -160,8 +161,9 @@ type PatternDragState = {
   startClientY: number
   startCenterX: number
   startCenterY: number
-  startSizePx: number
+  startSize: PatternSize
 }
+type PatternSize = { width: number; height: number }
 type PatternDot = {
   key: string
   col: number
@@ -178,7 +180,7 @@ const PATTERN_DOT_KEYS = Array.from({ length: PATTERN_GRID_SIZE * PATTERN_GRID_S
   const visualRow = Math.floor(index / PATTERN_GRID_SIZE)
   return `${col},${PATTERN_GRID_SIZE - 1 - visualRow}`
 })
-const DEFAULT_PATTERN_SIZE_PX = 420
+const DEFAULT_PATTERN_SIZE: PatternSize = { width: 420, height: 420 }
 const MIN_PATTERN_SIZE_PX = 72
 const PATTERN_DOT_SIZE_PX = 18
 
@@ -188,7 +190,7 @@ export function MainView({ highlightTarget, isPlaying, onDragStateChange }: { qu
   const patternDragRef = useRef<PatternDragState | null>(null)
   const [patternAreaSize, setPatternAreaSize] = useState({ width: 0, height: 0 })
   const [patternCenter, setPatternCenter] = useState({ x: 0.5, y: 0.5 })
-  const [patternSizePx, setPatternSizePx] = useState(DEFAULT_PATTERN_SIZE_PX)
+  const [patternSize, setPatternSize] = useState<PatternSize>(DEFAULT_PATTERN_SIZE)
   const [isPatternDragging, setIsPatternDragging] = useState(false)
   const [patternPlaybackEnabled, setPatternPlaybackEnabled] = useState<boolean>(DEFAULTS.patternPlaybackEnabled)
   const [gridRows, setGridRows] = useState<number>(DEFAULTS.gridRows)
@@ -309,7 +311,7 @@ export function MainView({ highlightTarget, isPlaying, onDragStateChange }: { qu
   useEffect(() => {
     const { width, height } = patternAreaSize
     if (width <= 0 || height <= 0) return
-    setPatternSizePx((prevSize) => {
+    setPatternSize((prevSize) => {
       const centerX = patternCenter.x * width
       const centerY = patternCenter.y * height
       return clampPatternSize(prevSize, width, height, centerX, centerY)
@@ -321,14 +323,14 @@ export function MainView({ highlightTarget, isPlaying, onDragStateChange }: { qu
     if (width <= 0 || height <= 0) return []
     const centerX = patternCenter.x * width
     const centerY = patternCenter.y * height
-    const half = patternSizePx / 2
-    const step = half
+    const stepX = patternSize.width / 2
+    const stepY = patternSize.height / 2
 
     return PATTERN_DOT_KEYS.map((key, index) => {
       const col = index % PATTERN_GRID_SIZE
       const row = Math.floor(index / PATTERN_GRID_SIZE)
-      const xPx = centerX + (col - 1) * step
-      const yPx = centerY + (row - 1) * step
+      const xPx = centerX + (col - 1) * stepX
+      const yPx = centerY + (row - 1) * stepY
       return {
         key,
         col,
@@ -339,7 +341,7 @@ export function MainView({ highlightTarget, isPlaying, onDragStateChange }: { qu
         normalizedY: Math.max(0, Math.min(1, 1 - yPx / height)),
       }
     })
-  }, [patternAreaSize, patternCenter.x, patternCenter.y, patternSizePx])
+  }, [patternAreaSize, patternCenter.x, patternCenter.y, patternSize.width, patternSize.height])
   const patternPlayButtonPosition = useMemo(() => {
     const { width, height } = patternAreaSize
     if (width <= 0 || height <= 0) return null
@@ -352,9 +354,9 @@ export function MainView({ highlightTarget, isPlaying, onDragStateChange }: { qu
 
     return {
       x: Math.max(buttonHalfWidth + margin, Math.min(width - buttonHalfWidth - margin, centerX)),
-      y: Math.max(margin, Math.min(height - buttonHeight - margin, centerY + patternSizePx / 2 + 16)),
+      y: Math.max(margin, Math.min(height - buttonHeight - margin, centerY + patternSize.height / 2 + 16)),
     }
-  }, [patternAreaSize, patternCenter.x, patternCenter.y, patternSizePx])
+  }, [patternAreaSize, patternCenter.x, patternCenter.y, patternSize.height])
 
   const activeSelectedDots = useMemo(
     () => new Set(PATTERN_DOT_KEYS),
@@ -826,7 +828,7 @@ export function MainView({ highlightTarget, isPlaying, onDragStateChange }: { qu
     }
   }, [])
 
-  const beginPatternDrag = useCallback((event: PointerEvent<HTMLButtonElement>, mode: PatternDragMode) => {
+  const beginPatternDrag = useCallback((event: PointerEvent<HTMLElement>, mode: PatternDragMode) => {
     if (isSongPlaying) return
     const point = getPatternPointer(event.clientX, event.clientY)
     if (!point) return
@@ -840,11 +842,11 @@ export function MainView({ highlightTarget, isPlaying, onDragStateChange }: { qu
       startClientY: event.clientY,
       startCenterX: patternCenter.x * point.width,
       startCenterY: patternCenter.y * point.height,
-      startSizePx: patternSizePx,
+      startSize: patternSize,
     }
     setIsPatternDragging(true)
     onDragStateChange?.(true)
-  }, [getPatternPointer, isSongPlaying, onDragStateChange, patternCenter.x, patternCenter.y, patternSizePx])
+  }, [getPatternPointer, isSongPlaying, onDragStateChange, patternCenter.x, patternCenter.y, patternSize])
 
   useEffect(() => {
     if (!isPatternDragging) return
@@ -858,18 +860,21 @@ export function MainView({ highlightTarget, isPlaying, onDragStateChange }: { qu
       if (drag.mode === "move") {
         const nextCenterX = drag.startCenterX + event.clientX - drag.startClientX
         const nextCenterY = drag.startCenterY + event.clientY - drag.startClientY
-        const size = Math.max(MIN_PATTERN_SIZE_PX, Math.min(drag.startSizePx, point.width, point.height))
+        const size = clampPatternSize(drag.startSize, point.width, point.height, nextCenterX, nextCenterY)
         const center = clampPatternCenter(nextCenterX, nextCenterY, size, point.width, point.height)
-        setPatternSizePx(size)
+        setPatternSize(size)
         setPatternCenter({ x: center.x / point.width, y: center.y / point.height })
         return
       }
 
       const dx = Math.abs(point.x - drag.startCenterX)
       const dy = Math.abs(point.y - drag.startCenterY)
-      const requestedSize = Math.max(MIN_PATTERN_SIZE_PX, Math.max(dx, dy) * 2)
+      const requestedSize = {
+        width: Math.max(MIN_PATTERN_SIZE_PX, dx * 2),
+        height: Math.max(MIN_PATTERN_SIZE_PX, dy * 2),
+      }
       const size = clampPatternSize(requestedSize, point.width, point.height, drag.startCenterX, drag.startCenterY)
-      setPatternSizePx(size)
+      setPatternSize(size)
     }
 
     const endDrag = (event: globalThis.PointerEvent) => {
@@ -915,13 +920,16 @@ export function MainView({ highlightTarget, isPlaying, onDragStateChange }: { qu
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(34,211,238,0.08),transparent_58%)]" />
         {patternDots.length > 0 && (
           <>
-            <div
-              className="pointer-events-none absolute border border-cyan-300/25 bg-cyan-300/[0.03]"
+            <button
+              type="button"
+              className="absolute cursor-move border border-cyan-300/25 bg-cyan-300/[0.03] p-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-200/60"
+              onPointerDown={(event) => beginPatternDrag(event, "move")}
+              aria-label="Move pattern"
               style={{
                 left: `${patternCenter.x * 100}%`,
                 top: `${patternCenter.y * 100}%`,
-                width: `${patternSizePx}px`,
-                height: `${patternSizePx}px`,
+                width: `${patternSize.width}px`,
+                height: `${patternSize.height}px`,
                 transform: "translate(-50%, -50%)",
               }}
             />
@@ -939,7 +947,7 @@ export function MainView({ highlightTarget, isPlaying, onDragStateChange }: { qu
                   disabled={!handleMode || isSongPlaying}
                   onPointerDown={handleMode ? (event) => beginPatternDrag(event, handleMode) : undefined}
                   className={cn(
-                    "absolute rounded-full border transition-[box-shadow,background-color,border-color,transform] duration-150",
+                    "absolute z-10 rounded-full border transition-[box-shadow,background-color,border-color,transform] duration-150",
                     handleMode && !isSongPlaying ? "pointer-events-auto" : "pointer-events-none",
                     isCenter ? "cursor-move" : isCorner ? "cursor-nwse-resize" : "cursor-default",
                     isPlayingDot
