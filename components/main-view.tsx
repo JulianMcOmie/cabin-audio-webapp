@@ -27,7 +27,7 @@ const DEPTH_MAX = 16
 const DEPTH_AMOUNT_MIN_DB = 0
 const DEPTH_AMOUNT_MAX_DB = 40
 const DEFAULT_DEPTH_AMOUNT_DB = 10
-const DEFAULT_SPEED_HZ = 4
+const DEFAULT_SPEED_HZ = 0.1
 
 function clampSpeed(speed: number): number {
   return Math.min(SPEED_MAX, Math.max(SPEED_MIN, speed))
