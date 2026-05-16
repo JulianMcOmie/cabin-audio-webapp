@@ -574,7 +574,7 @@ class PositionedAudioService {
 
   // Hit mode methods for loop sequencer
   public setHitModeRate(rate: number): void {
-    this.hitModeRate = clamp(rate, 0.1, 200); // Clamp 0.1-200 hits/sec
+    this.hitModeRate = clamp(rate, 0.001, 200); // Clamp 0.001-200 hits/sec
   }
 
   public getHitModeRate(): number {
@@ -582,7 +582,7 @@ class PositionedAudioService {
   }
 
   public setHitModeStagger(stagger: number): void {
-    this.hitModeStagger = clamp(stagger, 0.001, 0.5); // Clamp 1ms-500ms
+    this.hitModeStagger = clamp(stagger, 0.001, 120); // Clamp 1ms-120s
   }
 
   public getHitModeStagger(): number {

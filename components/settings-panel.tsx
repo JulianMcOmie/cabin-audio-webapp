@@ -63,7 +63,7 @@ interface SettingsPanelProps {
   onVolumeChange: (value: number) => void
 }
 
-const SPEED_MIN_HZ = 0.1
+const SPEED_MIN_HZ = 0.01
 const SPEED_MAX_HZ = 32
 const SPEED_SLIDER_MAX = 100
 
@@ -88,6 +88,7 @@ function sliderValueToSpeed(value: number): number {
 
 function formatSpeed(speed: number): string {
   const clamped = clampSpeed(speed)
+  if (clamped < 0.1) return `${clamped.toFixed(2)}/s`
   if (clamped < 1) return `${clamped.toFixed(1)}/s`
   if (clamped < 10) return `${clamped.toFixed(1)}/s`
   return `${clamped.toFixed(0)}/s`
