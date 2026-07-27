@@ -59,6 +59,7 @@ interface SimpleSoundstageProps {
   selectedDots: Set<string>
   constantDots?: Set<string>
   referenceDotKey?: string | null
+  referenceDotKeys?: Set<string>
   onDotSelect: (x: number, y: number) => void
   onDotDeselect: (x: number, y: number) => void
   onDotReference?: (x: number, y: number) => void
@@ -85,6 +86,7 @@ export function SimpleSoundstage({
   selectedDots,
   constantDots,
   referenceDotKey,
+  referenceDotKeys,
   onDotSelect,
   onDotDeselect,
   onDotReference,
@@ -298,7 +300,7 @@ export function SimpleSoundstage({
       const key = `${col},${row}`
       const isSelected = selectedDots.has(key)
       const isConstant = constantDots?.has(key) ?? false
-      const isReference = referenceDotKey === key
+      const isReference = referenceDotKey === key || (referenceDotKeys?.has(key) ?? false)
       const isPlaying = playingDotKey === key
       const isHovered = hoveredDot === key
 

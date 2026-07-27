@@ -50,37 +50,11 @@ const BANDPASS_BANDWIDTH_OCTAVES = 6.0; // Default bandwidth: 6 octaves
 const BANDPASS_BOTTOM_LOWER_EDGE_HZ = 30; // Lift the lowest dot so the floor does not feel subterranean
 const BANDPASS_NOISE_OUTPUT_GAIN_SCALAR = 0.25; // Much louder output for bandpassed noise
 const INVERSE_DOT_NOISE_OUTPUT_GAIN_SCALAR = 0.16;
+const INVERSE_DOT_OUTSIDE_GAIN = 0.85;
 const INVERSE_DOT_MIN_ATTACK_S = 0.05;
-// Inverse-dot noise is now full-spectrum noise carved by one parametric-EQ dip
-// per dot. At rest each dip sits at a deep cut (the "not-dot" hole); on a hit the
-// dip rises via ADSR toward the dot-boost gain, momentarily restoring/emphasizing
-// that band. Dots sharing a column live as a series of dips on one noise source,
-// so every hole coexists and all dips pulse together.
-const INVERSE_DOT_NOTCH_REST_DB = -40;
-const INVERSE_DOT_MIN_DIP_WIDTH_OCTAVES = 0.15;
-const INVERSE_DOT_MAX_DIP_WIDTH_OCTAVES = 10;
-// The dip is a thin, Q-based notch, so it doesn't need the bandpass edge-capping
-// that compresses band centers toward the middle. Place it at the pure row
-// frequency: bottom row = 30 Hz, top row = 15 kHz (log-mapped over normalized Y).
-const INVERSE_DOT_MIN_FREQ_HZ = 30;
-const INVERSE_DOT_MAX_FREQ_HZ = 15000;
-
-function getInverseDotDipFrequencyForNormalizedY(normalizedYPos: number): number {
-  return INVERSE_DOT_MIN_FREQ_HZ * Math.pow(
-    INVERSE_DOT_MAX_FREQ_HZ / INVERSE_DOT_MIN_FREQ_HZ,
-    clamp(normalizedYPos, 0, 1)
-  );
-}
-
-// Convert a target notch/peak width in octaves into a biquad peaking-filter Q.
-// Standard audio-EQ relation: BW(oct) = (2 / ln2) * asinh(1 / (2Q)).
-function octavesToPeakingQ(bandwidthOctaves: number): number {
-  const width = clamp(bandwidthOctaves, INVERSE_DOT_MIN_DIP_WIDTH_OCTAVES, INVERSE_DOT_MAX_DIP_WIDTH_OCTAVES);
-  return 1 / (2 * Math.sinh((Math.LN2 / 2) * width));
-}
 export const DEFAULT_INVERSE_DOT_OUTSIDE_GAP_OCTAVES = 0.35;
 export const MIN_INVERSE_DOT_OUTSIDE_GAP_OCTAVES = 0;
-export const MAX_INVERSE_DOT_OUTSIDE_GAP_OCTAVES = 10;
+export const MAX_INVERSE_DOT_OUTSIDE_GAP_OCTAVES = 1.5;
 export const DEFAULT_INVERSE_DOT_BAND_BOOST_DB = 6;
 export const MIN_INVERSE_DOT_BAND_BOOST_DB = -12;
 export const MAX_INVERSE_DOT_BAND_BOOST_DB = 24;
@@ -131,12 +105,6 @@ export const CLICK_TRAIN_INPUT_SLOPE_DB_PER_OCT = 1.5;
 type PatternAccentEvery = 2 | 4 | 8;
 type HalfBandPatternStep = 'bottom' | 'full' | 'top';
 type RowAlternationPatternStep = 'top' | 'full' | 'bottom';
-const RHYTHM_PATTERN_BEAT_OFFSETS = [
-  [0, 2],
-  [0, 1, 2, 3],
-  [0, 1.5, 3],
-] as const;
-const RHYTHM_PATTERN_BEAT_COUNT = 4;
 const DEFAULT_SHARED_BANDPASS_NOISE_ID = 'default';
 const HALF_BAND_PATTERN_SEQUENCE: HalfBandPatternStep[] = ['bottom', 'full', 'top', 'full'];
 const ROW_ALTERNATION_PATTERN_SEQUENCE: RowAlternationPatternStep[] = ['top', 'full', 'bottom', 'full'];
@@ -168,6 +136,10 @@ export interface BandpassRange {
 export interface NormalizedAudioPoint {
   normalizedX: number;
   normalizedY: number;
+}
+
+interface LineStepAudioPoint extends NormalizedAudioPoint {
+  gain: number;
 }
 
 export interface NormalizedBandpassRange extends BandpassRange {
@@ -301,10 +273,18 @@ const CONSTANT_DOT_ID_PREFIX = '__constant__:';
 const SINGLE_LOCATION_TWO_DOT_ID_PREFIX = '__single_location_two_dot__:';
 const LINE_CALIBRATION_ID_PREFIX = '__line_calibration__:';
 const LINE_PATH_AUDIO_ID = `${LINE_CALIBRATION_ID_PREFIX}path`;
+const LINE_PATH_AUDIO_ID_PREFIX = `${LINE_CALIBRATION_ID_PREFIX}path:`;
+const LINE_STEP_AUDIO_ID_PREFIX = `${LINE_CALIBRATION_ID_PREFIX}step:`;
+const CIRCLE_SIMULTANEOUS_AUDIO_ID_PREFIX = `${LINE_CALIBRATION_ID_PREFIX}circle:`;
+const LINE_PATH_FIXED_HIT_ID_PREFIX = `${LINE_CALIBRATION_ID_PREFIX}path-hit:`;
 const LINE_CALIBRATION_COPY_DELAY_SECONDS = 0.026;
 const LINE_INVERSE_DOT_HIT_INTERVAL_SECONDS = 0.28;
 const LINE_INVERSE_DOT_HIT_ATTACK_SECONDS = 0.075;
-const LINE_INVERSE_DOT_HIT_RELEASE_SECONDS = 0.06;
+export const DEFAULT_LINE_INVERSE_DOT_HIT_RELEASE_SECONDS = 0.25;
+export const MIN_LINE_INVERSE_DOT_HIT_RELEASE_SECONDS = 0.04;
+export const MAX_LINE_INVERSE_DOT_HIT_RELEASE_SECONDS = 2;
+const LINE_STEP_INVERSE_DOT_HIT_ATTACK_SECONDS = 0.035;
+const LINE_STEP_INVERSE_DOT_HIT_RELEASE_SECONDS = 0.045;
 
 // Interface for nodes managed by PositionedAudioService
 interface PointAudioNodes {
@@ -343,10 +323,19 @@ interface SharedBandpassNoiseNodes {
   panner: StereoPannerNode;
 }
 
+interface MultiInverseDotGroupNodes {
+  generator: MultiInverseDotNoiseGenerator;
+  mainGain: GainNode;
+  panner: StereoPannerNode;
+  normalizedX: number;
+  normalizedYPoints: number[];
+}
+
 class PositionedAudioService {
   private ctx: AudioContext;
   private audioPoints: Map<string, PointAudioNodes> = new Map();
   private sharedBandpassNoises: Map<string, SharedBandpassNoiseNodes> = new Map();
+  private multiInverseDotGroups: Map<string, MultiInverseDotGroupNodes> = new Map();
   private outputGain: GainNode;
   private currentDistortionGain: number = 1.0;
   private currentBaseDbLevel: number = 0;
@@ -502,11 +491,13 @@ class PositionedAudioService {
   public setDistortion(gain: number): void {
     this.currentDistortionGain = clamp(gain, 0, 1);
     this.refreshAllPointGains();
+    this.refreshMultiInverseDotGroups();
   }
 
   public setBaseVolumeDb(db: number): void {
     this.currentBaseDbLevel = db;
     this.refreshAllPointGains();
+    this.refreshMultiInverseDotGroups();
   }
 
   public setSubHitAdsrMode(enabled: boolean): void { // Renamed from setEnvelopeMode
@@ -1489,8 +1480,7 @@ class PositionedAudioService {
     snareWaveEnabledOverride?: boolean | null,
     snareWavePhaseIndex?: number | null,
     preserveBandpassCenterFrequency = false,
-    bandpassRangeOverride?: BandpassRange | null,
-    inverseDotColumnBands?: BandpassRange[] | null
+    bandpassRangeOverride?: BandpassRange | null
   ): void {
     const point = this.audioPoints.get(pointId);
     if (!point) return;
@@ -1506,20 +1496,15 @@ class PositionedAudioService {
       snareWaveEnabledOverride,
       snareWavePhaseIndex,
       preserveBandpassCenterFrequency,
-      bandpassRangeOverride,
-      inverseDotColumnBands
+      bandpassRangeOverride
     );
 
     if (point.inverseDotNoiseGenerator) {
-      // Volume is applied to the fullband as a whole: envelopeGain gates the full
-      // noise + every dip together, so the loud/quiet cycle just scales overall
-      // level. The dips ride their own (volume-independent) ADSR, so all of this
-      // lead's column dots carve/fill the same notches together on each hit.
       const pointGate = point.envelopeGain.gain;
       const sharedPeakGain = ENVELOPE_MAX_GAIN * 0.8 * Math.max(0, peakVolume);
       pointGate.cancelScheduledValues(scheduledTime);
       pointGate.setValueAtTime(sharedPeakGain, scheduledTime);
-      point.inverseDotNoiseGenerator.scheduleDotBandHit(scheduledTime, attackTime, releaseTime);
+      point.inverseDotNoiseGenerator.scheduleDotBandHit(scheduledTime, attackTime, releaseTime, 1);
       return;
     }
 
@@ -1550,6 +1535,39 @@ class PositionedAudioService {
 
     // Mark when this voice will be free
     voice.releaseEndTime = scheduledTime + attackTime + releaseTime;
+  }
+
+  public scheduleStandaloneInverseDotHit(
+    pointId: string,
+    normalizedX: number,
+    normalizedY: number,
+    scheduledTime: number,
+    attackTime: number,
+    releaseTime: number,
+    peakVolume: number
+  ): number {
+    if (this.currentSoundMode !== SoundMode.InverseDotNoise) return 0;
+    if (this.audioPoints.has(pointId)) {
+      this.removePoint(pointId);
+    }
+
+    this.addPointNormalized(pointId, clamp(normalizedX, 0, 1), clamp(normalizedY, 0, 1), 3);
+    const point = this.audioPoints.get(pointId);
+    if (!point?.inverseDotNoiseGenerator) {
+      this.removePoint(pointId);
+      return 0;
+    }
+
+    point.inverseDotNoiseGenerator.setOutsideGainMultiplier(0);
+    this.schedulePointHit(
+      pointId,
+      scheduledTime,
+      attackTime,
+      releaseTime,
+      peakVolume
+    );
+
+    return scheduledTime + Math.max(0.001, attackTime + releaseTime);
   }
 
   /**
@@ -2152,6 +2170,7 @@ class PositionedAudioService {
     this.stopAlwaysPlayingOscillation();
     this.stopNoiseOscillation();
     this.disposeSharedBandpassNoise();
+    this.removeAllMultiInverseDotGroups();
     this.audioPoints.forEach((point, id) => {
         if (point.subHitTimerId !== null) {
             clearTimeout(point.subHitTimerId);
@@ -2190,30 +2209,6 @@ class PositionedAudioService {
 
     const bandwidthOctaves = point.bandwidthOctavesOverride ?? this.currentBandwidth;
     return this.getBandpassRange(point.normalizedYPos, bandwidthOctaves);
-  }
-
-  // The inverse-dot dip sits at the dot's pure row frequency (30 Hz .. 15 kHz),
-  // independent of the bandpass bandwidth that compresses band centers inward.
-  public getInverseDotDipBand(pointId: string): BandpassRange | null {
-    const point = this.audioPoints.get(pointId);
-    if (!point) return null;
-    const centerFrequency = getInverseDotDipFrequencyForNormalizedY(point.normalizedYPos);
-    return { lowerEdge: centerFrequency, upperEdge: centerFrequency, centerFrequency };
-  }
-
-  // Turn an inverse-dot point into flat, full-spectrum constant noise (no dip).
-  public setInverseDotFlatNoise(pointId: string): void {
-    const point = this.audioPoints.get(pointId);
-    point?.inverseDotNoiseGenerator?.clearDips();
-  }
-
-  // Give an inverse-dot lead point the full set of dips for the dots sharing its
-  // column, so the resting bed already excludes every one of those bands.
-  public setInverseDotColumnBands(pointId: string, bands: BandpassRange[]): void {
-    const point = this.audioPoints.get(pointId);
-    if (point?.inverseDotNoiseGenerator && bands.length > 0) {
-      point.inverseDotNoiseGenerator.setBands(bands);
-    }
   }
 
   private getBandpassLoudnessCompensationDb(centerFrequency: number): number {
@@ -2333,6 +2328,113 @@ class PositionedAudioService {
     this.sharedBandpassNoises.clear();
   }
 
+  private applyMultiInverseDotGroupGain(nodes: MultiInverseDotGroupNodes): void {
+    const gainRatio = dbToGain(this.currentBaseDbLevel);
+    nodes.mainGain.gain.setValueAtTime(
+      MASTER_GAIN * this.currentDistortionGain * gainRatio,
+      this.ctx.currentTime
+    );
+  }
+
+  public updateMultiInverseDotGroup(
+    groupId: string,
+    normalizedX: number,
+    normalizedYPoints: number[]
+  ): void {
+    const safeNormalizedX = clamp(normalizedX, 0, 1);
+    const safeNormalizedYPoints = normalizedYPoints.map((normalizedY) => clamp(normalizedY, 0, 1));
+    let nodes = this.multiInverseDotGroups.get(groupId);
+
+    if (!nodes) {
+      const generator = new MultiInverseDotNoiseGenerator(this.ctx);
+      generator.setBandwidthFilterMode(this.currentBandwidthFilterMode);
+      generator.setOutsideGapOctaves(this.currentInverseDotOutsideGapOctaves);
+      generator.setDotBandBoostDb(this.currentInverseDotBandBoostDb);
+
+      const mainGain = this.ctx.createGain();
+      mainGain.gain.value = 0;
+      const panner = this.ctx.createStereoPanner();
+      panner.pan.value = 2 * safeNormalizedX - 1;
+
+      generator.getOutputNode().connect(mainGain);
+      mainGain.connect(panner);
+      panner.connect(this.outputGain);
+
+      nodes = {
+        generator,
+        mainGain,
+        panner,
+        normalizedX: safeNormalizedX,
+        normalizedYPoints: [],
+      };
+      this.multiInverseDotGroups.set(groupId, nodes);
+    }
+
+    nodes.normalizedX = safeNormalizedX;
+    nodes.normalizedYPoints = safeNormalizedYPoints;
+    nodes.panner.pan.setValueAtTime(2 * safeNormalizedX - 1, this.ctx.currentTime);
+    nodes.generator.setBands(safeNormalizedYPoints.map((normalizedY) =>
+      this.getBandpassRange(normalizedY, this.currentBandwidth)
+    ));
+    this.applyMultiInverseDotGroupGain(nodes);
+  }
+
+  public scheduleMultiInverseDotGroupHits(
+    groupId: string,
+    scheduledTime: number,
+    hitGains: number[],
+    attackTime: number,
+    releaseTime: number
+  ): void {
+    const nodes = this.multiInverseDotGroups.get(groupId);
+    if (!nodes) return;
+
+    hitGains.forEach((hitGain, index) => {
+      nodes.generator.scheduleDotBandHit(index, scheduledTime, attackTime, releaseTime, Math.max(0, hitGain));
+    });
+  }
+
+  public removeMultiInverseDotGroup(groupId: string, fadeSeconds: number = 0): void {
+    const nodes = this.multiInverseDotGroups.get(groupId);
+    if (!nodes) return;
+
+    const disconnect = () => {
+      nodes.generator.dispose();
+      nodes.mainGain.disconnect();
+      nodes.panner.disconnect();
+      this.multiInverseDotGroups.delete(groupId);
+    };
+
+    if (fadeSeconds <= 0) {
+      disconnect();
+      return;
+    }
+
+    const now = this.ctx.currentTime;
+    nodes.mainGain.gain.cancelScheduledValues(now);
+    nodes.mainGain.gain.setValueAtTime(Math.max(0.0001, nodes.mainGain.gain.value), now);
+    nodes.mainGain.gain.linearRampToValueAtTime(0.0001, now + fadeSeconds);
+    window.setTimeout(disconnect, Math.ceil((fadeSeconds + 0.02) * 1000));
+  }
+
+  public removeAllMultiInverseDotGroups(fadeSeconds: number = 0): void {
+    Array.from(this.multiInverseDotGroups.keys()).forEach((groupId) => {
+      this.removeMultiInverseDotGroup(groupId, fadeSeconds);
+    });
+  }
+
+  private refreshMultiInverseDotGroups(): void {
+    this.multiInverseDotGroups.forEach((nodes) => {
+      nodes.generator.setBandwidthFilterMode(this.currentBandwidthFilterMode);
+      nodes.generator.setOutsideGapOctaves(this.currentInverseDotOutsideGapOctaves);
+      nodes.generator.setDotBandBoostDb(this.currentInverseDotBandBoostDb);
+      nodes.generator.setBands(nodes.normalizedYPoints.map((normalizedY) =>
+        this.getBandpassRange(normalizedY, this.currentBandwidth)
+      ));
+      this.applyMultiInverseDotGroupGain(nodes);
+    });
+  }
+
   // Helper method to set main gain and slope (used in activatePoint)
   private setMainGainAndSlope(
     point: PointAudioNodes,
@@ -2342,8 +2444,7 @@ class PositionedAudioService {
     snareWaveEnabledOverride?: boolean | null,
     snareWavePhaseIndex?: number | null,
     preserveBandpassCenterFrequency = false,
-    bandpassRangeOverride?: BandpassRange | null,
-    inverseDotColumnBands?: BandpassRange[] | null
+    bandpassRangeOverride?: BandpassRange | null
   ): void {
     const slopeOffset = slopeOffsetDbPerOct ?? 0;
     const effectiveNormalizedX = point.normalizedXPos;
@@ -2420,17 +2521,37 @@ class PositionedAudioService {
       }
     }
     if (point.inverseDotNoiseGenerator) {
-      // The dip sits at the dot's row frequency (30 Hz .. 15 kHz), not the
-      // bandwidth-compressed bandpass center. A lead standing in for a whole
-      // column carries one dip per dot (all holes coexist and pulse together); a
-      // lone dot is just a single dip at its own row frequency.
-      if (inverseDotColumnBands && inverseDotColumnBands.length > 0) {
-        point.inverseDotNoiseGenerator.setBands(inverseDotColumnBands);
-        bandpassCenterFreq = inverseDotColumnBands[0].centerFrequency;
+      if (bandpassRangeOverride) {
+        bandpassCenterFreq = bandpassRangeOverride.centerFrequency;
       } else {
-        const dipFrequency = getInverseDotDipFrequencyForNormalizedY(effectiveNormalizedY);
-        point.inverseDotNoiseGenerator.setBandpassFrequency(dipFrequency);
-        bandpassCenterFreq = dipFrequency;
+        const bandwidthOctaves = scheduledBandwidthOctaves ?? baseBandwidthOctaves;
+        const centerBandwidthOctaves = preserveBandpassCenterFrequency ? baseBandwidthOctaves : bandwidthOctaves;
+        bandpassCenterFreq = this.getBandpassCenterFrequency(effectiveNormalizedY, centerBandwidthOctaves);
+      }
+
+      if (bandpassRangeOverride && scheduledTime !== undefined) {
+        point.inverseDotNoiseGenerator.scheduleBandpassRange(
+          bandpassRangeOverride.lowerEdge,
+          bandpassRangeOverride.upperEdge,
+          bandpassRangeOverride.centerFrequency,
+          scheduledTime
+        );
+      } else if (bandpassRangeOverride) {
+        point.inverseDotNoiseGenerator.setBandpassRange(
+          bandpassRangeOverride.lowerEdge,
+          bandpassRangeOverride.upperEdge,
+          bandpassRangeOverride.centerFrequency
+        );
+      } else if (scheduledBandwidthOctaves !== undefined && scheduledBandwidthOctaves !== null && scheduledTime !== undefined) {
+        point.inverseDotNoiseGenerator.scheduleBandpassFrequencyAndBandwidth(
+          bandpassCenterFreq,
+          scheduledBandwidthOctaves,
+          scheduledTime
+        );
+      } else {
+        const bandwidthOctaves = scheduledBandwidthOctaves ?? baseBandwidthOctaves;
+        point.inverseDotNoiseGenerator.setBandpassBandwidth(bandwidthOctaves);
+        point.inverseDotNoiseGenerator.setBandpassFrequency(bandpassCenterFreq);
       }
     }
     // Sine tone uses the same frequency mapping as bandpassed noise
@@ -2549,6 +2670,7 @@ class PositionedAudioService {
   public setBandpassBandwidth(bandwidthOctaves: number): void {
     // Store the current bandwidth setting
     this.currentBandwidth = bandwidthOctaves;
+    this.refreshMultiInverseDotGroups();
 
     // Update bandwidth for all active bandpassed noise generators
     this.audioPoints.forEach((point) => {
@@ -2564,6 +2686,7 @@ class PositionedAudioService {
 
   public setBandwidthFilterMode(filterMode: BandwidthFilterMode): void {
     this.currentBandwidthFilterMode = filterMode;
+    this.refreshMultiInverseDotGroups();
 
     this.audioPoints.forEach((point) => {
       if (point.bandpassedNoiseGenerator) {
@@ -2591,6 +2714,7 @@ class PositionedAudioService {
         this.setMainGainAndSlope(point);
       }
     });
+    this.refreshMultiInverseDotGroups();
   }
 
   public setInverseDotBandBoostDb(boostDb: number): void {
@@ -2605,6 +2729,7 @@ class PositionedAudioService {
         point.inverseDotNoiseGenerator.setDotBandBoostDb(this.currentInverseDotBandBoostDb);
       }
     });
+    this.refreshMultiInverseDotGroups();
   }
 
   public setGentleEdgeFalloffDbPerOct(dbPerOct: number): void {
@@ -2760,9 +2885,6 @@ class DotGridAudioPlayer {
   private static instance: DotGridAudioPlayer;
   private isPlaying: boolean = false;
   private activeDotKeys: Set<string> = new Set();
-  // Inverse-dot dots that have been right-clicked to play flat constant noise
-  // instead of acting as a dot (no notch, no pulse, excluded from the sequence).
-  private inverseConstantNoiseDotKeys: Set<string> = new Set();
   private selectionOrderByDotKey: Map<string, number> = new Map();
   private selectionVolumeStepDb: number = 0;
   private dotVolumeLevels: Map<string, number> = new Map(); // Volume level for each dot (0 = off, 1+ = on)
@@ -2834,10 +2956,9 @@ class DotGridAudioPlayer {
   private loudQuietBandwidthModeEnabled: boolean = false;
   private fourFourHalfBandPatternEnabled: boolean = false;
   private fourFourRowAlternationEnabled: boolean = false;
-  private rhythmPatternEnabled: boolean = false;
   private fourFourStraightNoiseEnabled: boolean = false;
   private continuousLoudQuietStepSeconds: number = 0.5;
-  private continuousLoudQuietRatio: number = 0.5;
+  private continuousLoudQuietRatio: number = 0.25;
   private continuousLoudQuietStartTime: number = 0;
   private continuousLoudQuietAnimationFrameId: number | null = null;
   private continuousLoudQuietLastStateKey: string | null = null;
@@ -2884,12 +3005,26 @@ class DotGridAudioPlayer {
   private linePathActive: boolean = false;
   private linePathPointSoundMode: SoundMode | null = null;
   private linePathInverseDotNextHitTime: number = 0;
+  private linePathPointIds: string[] = [];
+  private linePathPointsSoundMode: SoundMode | null = null;
+  private linePathPointsNextHitTime: number = 0;
+  private linePathFixedHitCounter: number = 0;
+  private linePathFixedHitTimeoutIds: Map<string, number> = new Map();
+  private circleSimultaneousGroupIds: string[] = [];
+  private circleSimultaneousNextHitTime: number = 0;
+  private lineStepPointIds: string[] = [];
+  private lineStepPointSoundMode: SoundMode | null = null;
+  private lineStepNextHitTime: number = 0;
+  private lineStepCurrentIndex: number = 0;
+  private lineStepActiveIndex: number = 0;
   private lineCalibrationEndpointGainMultipliers: [number, number] = [1, 1];
   private lineCalibrationAnimationFrameId: number | null = null;
   private lineCalibrationRemoveTimeoutIds: Map<string, number> = new Map();
 
   private constructor() {
-    this.audioService = new PositionedAudioService(audioContext.getAudioContext());
+    const ctx = audioContext.getAudioContext();
+    this.audioService = new PositionedAudioService(ctx);
+    this.audioService.getOutputNode().connect(ctx.destination);
 
     const { distortionGain: initialDistortionGain, isEQEnabled: initialEQEnabled } = useEQProfileStore.getState();
     this.audioService.setDistortion(initialEQEnabled ? initialDistortionGain : 1.0);
@@ -3382,15 +3517,6 @@ class DotGridAudioPlayer {
     if (this.fourFourRowAlternationEnabled === enabled) return;
     this.fourFourRowAlternationEnabled = enabled;
     if (this.isPlaying && this.isLoopSequencerMode() && this.fourFourHitModeEnabled) {
-      this.stopLoopSequencer();
-      this.startLoopSequencer();
-    }
-  }
-
-  public setRhythmPatternEnabled(enabled: boolean): void {
-    if (this.rhythmPatternEnabled === enabled) return;
-    this.rhythmPatternEnabled = enabled;
-    if (this.isPlaying && this.isLoopSequencerMode()) {
       this.stopLoopSequencer();
       this.startLoopSequencer();
     }
@@ -4413,21 +4539,6 @@ class DotGridAudioPlayer {
     return `${CONSTANT_DOT_ID_PREFIX}${dotKey}`;
   }
 
-  // Replace the set of inverse-dot "constant noise" dots (right-clicked). These
-  // play steady flat full-spectrum noise and are excluded from the pulse sequence.
-  public setInverseConstantNoiseDots(dotKeys: Set<string>): void {
-    const next = new Set(dotKeys);
-    const changed =
-      next.size !== this.inverseConstantNoiseDotKeys.size ||
-      Array.from(next).some((key) => !this.inverseConstantNoiseDotKeys.has(key));
-    this.inverseConstantNoiseDotKeys = next;
-    if (!changed) return;
-    if (this.isPlaying && this.isLoopSequencerMode()) {
-      this.stopLoopSequencer();
-      this.startLoopSequencer();
-    }
-  }
-
   public setConstantDotPlaying(dotKey: string, playing: boolean, currentGridSize?: number, currentColumns?: number): void {
     if (currentGridSize && currentGridSize !== this.gridSize) {
       this.gridSize = currentGridSize;
@@ -4464,6 +4575,23 @@ class DotGridAudioPlayer {
 
   private getDragNoiseAudioId(index: number): string {
     return `${DRAG_NOISE_ID_PREFIX}${index}`;
+  }
+
+  private getLinePathAudioId(index: number): string {
+    return `${LINE_PATH_AUDIO_ID_PREFIX}${index}`;
+  }
+
+  private getLinePathFixedHitAudioId(): string {
+    this.linePathFixedHitCounter = (this.linePathFixedHitCounter + 1) % 1000000;
+    return `${LINE_PATH_FIXED_HIT_ID_PREFIX}${this.linePathFixedHitCounter}`;
+  }
+
+  private getLineStepAudioId(index: number): string {
+    return `${LINE_STEP_AUDIO_ID_PREFIX}${index}`;
+  }
+
+  private getCircleSimultaneousAudioId(columnIndex: number): string {
+    return `${CIRCLE_SIMULTANEOUS_AUDIO_ID_PREFIX}${columnIndex}`;
   }
 
   private cancelDragNoiseRemoval(audioId: string): void {
@@ -4637,7 +4765,47 @@ class DotGridAudioPlayer {
     this.applyLineCalibrationGain();
   }
 
-  private scheduleLinePathInverseDotHit(gain: number): void {
+  private scheduleFixedLinePathInverseDotHit(
+    point: NormalizedAudioPoint,
+    gain: number,
+    scheduledTime: number,
+    hitReleaseSeconds: number
+  ): void {
+    const audioId = this.getLinePathFixedHitAudioId();
+    const releaseEndTime = this.audioService.scheduleStandaloneInverseDotHit(
+      audioId,
+      point.normalizedX,
+      point.normalizedY,
+      scheduledTime,
+      LINE_INVERSE_DOT_HIT_ATTACK_SECONDS,
+      hitReleaseSeconds,
+      Math.max(0, gain / 0.8)
+    );
+    if (releaseEndTime <= 0) return;
+
+    const currentTime = audioContext.getAudioContext().currentTime;
+    const removeDelayMs = Math.ceil(Math.max(0.02, releaseEndTime - currentTime + 0.08) * 1000);
+    const timeoutId = window.setTimeout(() => {
+      this.audioService.removePoint(audioId);
+      this.linePathFixedHitTimeoutIds.delete(audioId);
+    }, removeDelayMs);
+    this.linePathFixedHitTimeoutIds.set(audioId, timeoutId);
+  }
+
+  private clearFixedLinePathInverseDotHits(): void {
+    this.linePathFixedHitTimeoutIds.forEach((timeoutId, audioId) => {
+      clearTimeout(timeoutId);
+      this.audioService.removePoint(audioId);
+    });
+    this.linePathFixedHitTimeoutIds.clear();
+  }
+
+  private scheduleLinePathInverseDotHit(
+    point: NormalizedAudioPoint,
+    gain: number,
+    hitIntervalSeconds: number = LINE_INVERSE_DOT_HIT_INTERVAL_SECONDS,
+    hitReleaseSeconds: number = DEFAULT_LINE_INVERSE_DOT_HIT_RELEASE_SECONDS
+  ): void {
     if (this.audioService.getSoundMode() !== SoundMode.InverseDotNoise) {
       this.linePathInverseDotNextHitTime = 0;
       return;
@@ -4645,21 +4813,17 @@ class DotGridAudioPlayer {
 
     const currentTime = audioContext.getAudioContext().currentTime;
     if (this.linePathInverseDotNextHitTime <= 0 || currentTime >= this.linePathInverseDotNextHitTime) {
-      this.audioService.schedulePointHit(
-        LINE_PATH_AUDIO_ID,
-        currentTime,
-        LINE_INVERSE_DOT_HIT_ATTACK_SECONDS,
-        LINE_INVERSE_DOT_HIT_RELEASE_SECONDS,
-        Math.max(0, gain / 0.8)
-      );
-      this.linePathInverseDotNextHitTime = currentTime + LINE_INVERSE_DOT_HIT_INTERVAL_SECONDS;
+      this.scheduleFixedLinePathInverseDotHit(point, gain, currentTime, hitReleaseSeconds);
+      this.linePathInverseDotNextHitTime = currentTime + clamp(hitIntervalSeconds, 0.03, 2);
     }
   }
 
   public updateLinePathPoint(
     point: { normalizedX: number; normalizedY: number },
     gain: number = 0.8,
-    inverseDotPulseEnabled: boolean = false
+    inverseDotPulseEnabled: boolean = false,
+    hitIntervalSeconds: number = LINE_INVERSE_DOT_HIT_INTERVAL_SECONDS,
+    hitReleaseSeconds: number = DEFAULT_LINE_INVERSE_DOT_HIT_RELEASE_SECONDS
   ): void {
     const normalizedX = clamp(point.normalizedX, 0, 1);
     const normalizedY = clamp(point.normalizedY, 0, 1);
@@ -4670,6 +4834,7 @@ class DotGridAudioPlayer {
 
     if (this.audioService.hasPoint(LINE_PATH_AUDIO_ID) && this.linePathPointSoundMode !== currentSoundMode) {
       this.audioService.removePoint(LINE_PATH_AUDIO_ID);
+      this.clearFixedLinePathInverseDotHits();
       this.linePathInverseDotNextHitTime = 0;
     }
 
@@ -4682,17 +4847,269 @@ class DotGridAudioPlayer {
 
     this.audioService.activatePointWithGain(LINE_PATH_AUDIO_ID, gain, DRAG_NOISE_RAMP_SECONDS);
     if (inverseDotPulseEnabled) {
-      this.scheduleLinePathInverseDotHit(gain);
+      this.scheduleLinePathInverseDotHit(
+        { normalizedX, normalizedY },
+        gain,
+        hitIntervalSeconds,
+        hitReleaseSeconds
+      );
     } else {
       this.linePathInverseDotNextHitTime = 0;
     }
   }
 
   public stopLinePathPoint(): void {
-    if (!this.linePathActive && !this.audioService.hasPoint(LINE_PATH_AUDIO_ID)) return;
+    if (!this.linePathActive && !this.audioService.hasPoint(LINE_PATH_AUDIO_ID)) {
+      this.clearFixedLinePathInverseDotHits();
+      return;
+    }
 
     this.linePathActive = false;
+    this.clearFixedLinePathInverseDotHits();
     this.releaseLineCalibrationPoint(LINE_PATH_AUDIO_ID);
+  }
+
+  public updateLinePathPoints(
+    points: LineStepAudioPoint[],
+    hitIntervalSeconds: number,
+    hitReleaseSeconds: number = DEFAULT_LINE_INVERSE_DOT_HIT_RELEASE_SECONDS
+  ): void {
+    const activePoints = points.slice(0, 8);
+    if (activePoints.length === 0) {
+      this.stopLinePathPoints();
+      return;
+    }
+
+    const currentSoundMode = this.audioService.getSoundMode();
+    if (this.linePathPointsSoundMode !== null && this.linePathPointsSoundMode !== currentSoundMode) {
+      this.linePathPointIds.forEach((audioId) => {
+        this.cancelLineCalibrationRemoval(audioId);
+        this.audioService.removePoint(audioId);
+      });
+      this.linePathPointIds = [];
+      this.linePathPointsNextHitTime = 0;
+      this.clearFixedLinePathInverseDotHits();
+    }
+
+    const nextAudioIds = activePoints.map((_, index) => this.getLinePathAudioId(index));
+    const nextAudioIdSet = new Set(nextAudioIds);
+    this.linePathPointIds.forEach((audioId) => {
+      if (!nextAudioIdSet.has(audioId)) {
+        this.releaseLineCalibrationPoint(audioId);
+      }
+    });
+
+    const gainScale = 1 / Math.sqrt(activePoints.length);
+    activePoints.forEach((point, index) => {
+      const audioId = this.getLinePathAudioId(index);
+      const normalizedX = clamp(point.normalizedX, 0, 1);
+      const normalizedY = clamp(point.normalizedY, 0, 1);
+      const gain = Math.max(0, point.gain) * gainScale;
+      this.cancelLineCalibrationRemoval(audioId);
+
+      if (this.audioService.hasPoint(audioId) && this.linePathPointsSoundMode !== currentSoundMode) {
+        this.audioService.removePoint(audioId);
+      }
+
+      if (!this.audioService.hasPoint(audioId)) {
+        this.audioService.addPointNormalized(audioId, normalizedX, normalizedY, 3);
+      } else {
+        this.audioService.updatePointPosition(audioId, normalizedX, normalizedY);
+      }
+      this.audioService.activatePointWithGain(audioId, gain, DRAG_NOISE_RAMP_SECONDS);
+    });
+
+    this.linePathPointIds = nextAudioIds;
+    this.linePathPointsSoundMode = currentSoundMode;
+
+    if (currentSoundMode !== SoundMode.InverseDotNoise) {
+      this.linePathPointsNextHitTime = 0;
+      return;
+    }
+
+    const currentTime = audioContext.getAudioContext().currentTime;
+    if (this.linePathPointsNextHitTime <= 0 || currentTime >= this.linePathPointsNextHitTime) {
+      activePoints.forEach((point) => {
+        this.scheduleFixedLinePathInverseDotHit(
+          point,
+          point.gain * gainScale,
+          currentTime,
+          hitReleaseSeconds
+        );
+      });
+      this.linePathPointsNextHitTime = currentTime + clamp(hitIntervalSeconds, 0.03, 2);
+    }
+  }
+
+  public stopLinePathPoints(): void {
+    this.linePathPointIds.forEach((audioId) => {
+      this.releaseLineCalibrationPoint(audioId);
+    });
+    this.linePathPointIds = [];
+    this.linePathPointsSoundMode = null;
+    this.linePathPointsNextHitTime = 0;
+    this.clearFixedLinePathInverseDotHits();
+  }
+
+  public updateCircleSimultaneousPoints(
+    points: LineStepAudioPoint[],
+    hitIntervalSeconds: number,
+    hitReleaseSeconds: number = DEFAULT_LINE_INVERSE_DOT_HIT_RELEASE_SECONDS
+  ): void {
+    const activePoints = points.slice(0, 64);
+    if (activePoints.length === 0) {
+      this.stopCircleSimultaneousPoints();
+      return;
+    }
+
+    const groups = new Map<number, LineStepAudioPoint[]>();
+    activePoints.forEach((point) => {
+      const columnIndex = Math.round(clamp(point.normalizedX, 0, 1) * (COLUMNS - 1));
+      const group = groups.get(columnIndex);
+      if (group) {
+        group.push(point);
+      } else {
+        groups.set(columnIndex, [point]);
+      }
+    });
+
+    const nextAudioIds = Array.from(groups.keys())
+      .sort((a, b) => a - b)
+      .map((columnIndex) => this.getCircleSimultaneousAudioId(columnIndex));
+    const nextAudioIdSet = new Set(nextAudioIds);
+
+    this.circleSimultaneousGroupIds.forEach((audioId) => {
+      if (!nextAudioIdSet.has(audioId)) {
+        this.audioService.removeMultiInverseDotGroup(audioId, DRAG_NOISE_RAMP_SECONDS);
+      }
+    });
+
+    const groupEntries = Array.from(groups.entries()).sort(([a], [b]) => a - b);
+    const gainScale = 1 / Math.sqrt(activePoints.length);
+    groupEntries.forEach(([columnIndex, groupPoints]) => {
+      const audioId = this.getCircleSimultaneousAudioId(columnIndex);
+      const normalizedX = COLUMNS <= 1 ? 0.5 : columnIndex / (COLUMNS - 1);
+      this.audioService.updateMultiInverseDotGroup(
+        audioId,
+        normalizedX,
+        groupPoints.map((point) => clamp(point.normalizedY, 0, 1))
+      );
+    });
+
+    this.circleSimultaneousGroupIds = nextAudioIds;
+
+    const currentTime = audioContext.getAudioContext().currentTime;
+    if (this.circleSimultaneousNextHitTime <= 0 || currentTime >= this.circleSimultaneousNextHitTime) {
+      groupEntries.forEach(([columnIndex, groupPoints]) => {
+        const audioId = this.getCircleSimultaneousAudioId(columnIndex);
+        this.audioService.scheduleMultiInverseDotGroupHits(
+          audioId,
+          currentTime,
+          groupPoints.map((point) => Math.max(0, point.gain * gainScale / 0.8)),
+          LINE_INVERSE_DOT_HIT_ATTACK_SECONDS,
+          hitReleaseSeconds
+        );
+      });
+      this.circleSimultaneousNextHitTime = currentTime + clamp(hitIntervalSeconds, 0.03, 2);
+    }
+  }
+
+  public stopCircleSimultaneousPoints(): void {
+    this.circleSimultaneousGroupIds.forEach((audioId) => {
+      this.audioService.removeMultiInverseDotGroup(audioId, DRAG_NOISE_RAMP_SECONDS);
+    });
+    this.circleSimultaneousGroupIds = [];
+    this.circleSimultaneousNextHitTime = 0;
+  }
+
+  public updateLineStepPoints(points: LineStepAudioPoint[], hitIntervalSeconds: number): number {
+    const activePoints = points.slice(0, 8);
+    if (activePoints.length === 0) {
+      this.stopLineStepPoints();
+      return 0;
+    }
+
+    const currentSoundMode = this.audioService.getSoundMode();
+    if (this.lineStepPointSoundMode !== null && this.lineStepPointSoundMode !== currentSoundMode) {
+      this.lineStepPointIds.forEach((audioId) => {
+        this.cancelLineCalibrationRemoval(audioId);
+        this.audioService.removePoint(audioId);
+      });
+      this.lineStepPointIds = [];
+      this.lineStepNextHitTime = 0;
+      this.lineStepCurrentIndex = 0;
+      this.lineStepActiveIndex = 0;
+    }
+
+    const nextAudioIds = activePoints.map((_, index) => this.getLineStepAudioId(index));
+    const nextAudioIdSet = new Set(nextAudioIds);
+    this.lineStepPointIds.forEach((audioId) => {
+      if (!nextAudioIdSet.has(audioId)) {
+        this.releaseLineCalibrationPoint(audioId);
+      }
+    });
+
+    const gainScale = 1 / Math.sqrt(activePoints.length);
+    activePoints.forEach((point, index) => {
+      const audioId = this.getLineStepAudioId(index);
+      const normalizedX = clamp(point.normalizedX, 0, 1);
+      const normalizedY = clamp(point.normalizedY, 0, 1);
+      const gain = Math.max(0, point.gain) * gainScale;
+      this.cancelLineCalibrationRemoval(audioId);
+
+      if (this.audioService.hasPoint(audioId) && this.lineStepPointSoundMode !== currentSoundMode) {
+        this.audioService.removePoint(audioId);
+      }
+
+      if (!this.audioService.hasPoint(audioId)) {
+        this.audioService.addPointNormalized(audioId, normalizedX, normalizedY, 3);
+      } else {
+        this.audioService.updatePointPosition(audioId, normalizedX, normalizedY);
+      }
+      this.audioService.activatePointWithGain(audioId, gain, DRAG_NOISE_RAMP_SECONDS);
+    });
+
+    this.lineStepPointIds = nextAudioIds;
+    this.lineStepPointSoundMode = currentSoundMode;
+    this.lineStepCurrentIndex %= activePoints.length;
+    this.lineStepActiveIndex %= activePoints.length;
+
+    if (currentSoundMode !== SoundMode.InverseDotNoise) {
+      this.lineStepNextHitTime = 0;
+      return this.lineStepActiveIndex;
+    }
+
+    const currentTime = audioContext.getAudioContext().currentTime;
+    if (this.lineStepNextHitTime <= 0 || currentTime >= this.lineStepNextHitTime) {
+      const activeIndex = this.lineStepCurrentIndex;
+      const activePoint = activePoints[activeIndex] ?? activePoints[0];
+      const audioId = nextAudioIds[activeIndex] ?? nextAudioIds[0];
+      if (!activePoint || !audioId) return this.lineStepActiveIndex;
+
+      this.audioService.schedulePointHit(
+        audioId,
+        currentTime,
+        LINE_STEP_INVERSE_DOT_HIT_ATTACK_SECONDS,
+        LINE_STEP_INVERSE_DOT_HIT_RELEASE_SECONDS,
+        Math.max(0, activePoint.gain * gainScale / 0.8)
+      );
+      this.lineStepActiveIndex = activeIndex;
+      this.lineStepCurrentIndex = (activeIndex + 1) % activePoints.length;
+      this.lineStepNextHitTime = currentTime + clamp(hitIntervalSeconds, 0.03, 1);
+    }
+
+    return this.lineStepActiveIndex;
+  }
+
+  public stopLineStepPoints(): void {
+    this.lineStepPointIds.forEach((audioId) => {
+      this.releaseLineCalibrationPoint(audioId);
+    });
+    this.lineStepPointIds = [];
+    this.lineStepPointSoundMode = null;
+    this.lineStepNextHitTime = 0;
+    this.lineStepCurrentIndex = 0;
+    this.lineStepActiveIndex = 0;
   }
 
   public stopLineCalibration(): void {
@@ -5055,58 +5472,26 @@ class DotGridAudioPlayer {
       ? sortedDotKeys.filter((dotKey) => this.continuousLoudQuietTargetDotKeys.has(dotKey))
       : [];
     const heldSequentialTargetSet = new Set(heldSequentialTargetDotKeys);
-    const inverseDotMode = this.audioService.getSoundMode() === SoundMode.InverseDotNoise;
-
-    // Right-clicked inverse-dot dots play flat constant noise: they're pulled out
-    // of the pulse sequence entirely and just held on as steady full-band noise.
-    const inverseConstantNoiseDots = inverseDotMode
-      ? sortedDotKeys.filter((dotKey) => this.inverseConstantNoiseDotKeys.has(dotKey))
-      : [];
-    const inverseConstantNoiseSet = new Set(inverseConstantNoiseDots);
-
-    // In inverse-dot mode every column is voiced by a single "lead" point: full-
-    // spectrum noise carrying one parametric dip per dot in the column, so all the
-    // holes coexist and every dot in the column pulses together on each hit. The
-    // other dots become silent peers and are dropped from the sequence, so a
-    // multi-dot column behaves like one event everywhere downstream.
-    const rawSequencerDotKeys = sortedDotKeys.filter(
-      (dotKey) => !heldSequentialTargetSet.has(dotKey) && !inverseConstantNoiseSet.has(dotKey)
-    );
-
-    const inverseDotColumnBandsByLead = new Map<string, BandpassRange[]>();
-    const inverseDotNonLeadPeers = new Set<string>();
-    if (inverseDotMode) {
-      const columns = new Map<number, string[]>();
-      rawSequencerDotKeys.forEach((dotKey) => {
-        const coordinates = this.parseDotKey(dotKey);
-        if (!coordinates) return;
-        if (!columns.has(coordinates.x)) columns.set(coordinates.x, []);
-        columns.get(coordinates.x)!.push(dotKey);
-      });
-      columns.forEach((dotKeys) => {
-        const leadDotKey = dotKeys[0];
-        if (!leadDotKey) return;
-        const bands = dotKeys
-          .map((dotKey) => this.audioService.getInverseDotDipBand(dotKey))
-          .filter((band): band is BandpassRange => band !== null)
-          .sort((a, b) => a.centerFrequency - b.centerFrequency);
-        inverseDotColumnBandsByLead.set(leadDotKey, bands);
-        for (let index = 1; index < dotKeys.length; index += 1) {
-          inverseDotNonLeadPeers.add(dotKeys[index]!);
-        }
-      });
-      // TEMP DEBUG: inspect column grouping + resolved dip bands.
-      console.log('[INV] columns=', Array.from(columns.entries()).map(([x, keys]) => `x${x}:[${keys.join(' | ')}]`),
-        'leadBands=', Array.from(inverseDotColumnBandsByLead.entries()).map(([lead, bands]) => `${lead}->[${bands.map((b) => Math.round(b.centerFrequency)).join(',')}]`),
-        'mutedPeers=', Array.from(inverseDotNonLeadPeers));
-    }
-
-    const sequencerDotKeys = inverseDotNonLeadPeers.size > 0
-      ? rawSequencerDotKeys.filter((dotKey) => !inverseDotNonLeadPeers.has(dotKey))
-      : rawSequencerDotKeys;
+    const sequencerDotKeys = heldSequentialTargetSet.size > 0
+      ? sortedDotKeys.filter((dotKey) => !heldSequentialTargetSet.has(dotKey))
+      : sortedDotKeys;
     const dotCount = sequencerDotKeys.length;
     const playableDots = sequencerDotKeys.filter(dotKey => this.shouldRedDotPlay(dotKey));
+    const inverseDotMode = this.audioService.getSoundMode() === SoundMode.InverseDotNoise;
     const inverseHeldTargetsFollowHitVolume = inverseDotMode && heldSequentialTargetDotKeys.length > 0;
+    const inverseDotColumnGroups = new Map<number, string[]>();
+    const inverseDotColumnPeersByDotKey = new Map<string, string[]>();
+    if (inverseDotMode) {
+      [...playableDots, ...heldSequentialTargetDotKeys].forEach((dotKey) => {
+        const coordinates = this.parseDotKey(dotKey);
+        if (!coordinates) return;
+        if (!inverseDotColumnGroups.has(coordinates.x)) inverseDotColumnGroups.set(coordinates.x, []);
+        inverseDotColumnGroups.get(coordinates.x)!.push(dotKey);
+      });
+      inverseDotColumnGroups.forEach((dotKeys) => {
+        dotKeys.forEach((dotKey) => inverseDotColumnPeersByDotKey.set(dotKey, dotKeys));
+      });
+    }
     const referenceHiHatHitSequence = this.getReferenceHiHatHitSequence(sequencerDotKeys);
     const referenceHitSequence = referenceHiHatHitSequence ? null : this.getReferenceInterleavedHitSequence(sequencerDotKeys);
 
@@ -5117,19 +5502,17 @@ class DotGridAudioPlayer {
     }
 
     if (scheduledStartTime === undefined && inverseDotMode) {
-      // Silence the peers folded into a lead, and prime each lead with its whole
-      // column of dips so the resting bed already excludes every dot's band.
-      inverseDotNonLeadPeers.forEach((dotKey) => {
-        this.audioService.activatePointWithGain(dotKey, 0);
-      });
-      inverseDotColumnBandsByLead.forEach((bands, leadDotKey) => {
-        this.audioService.setInverseDotColumnBands(leadDotKey, bands);
-        this.audioService.activatePointWithGain(leadDotKey, 0.8);
-      });
-      // Constant-noise dots: flat full-band noise, held on, no dip, no pulse.
-      inverseConstantNoiseDots.forEach((dotKey) => {
-        this.audioService.setInverseDotFlatNoise(dotKey);
-        this.audioService.activatePointWithGain(dotKey, 0.8);
+      inverseDotColumnGroups.forEach((dotKeys) => {
+        if (dotKeys.length === 1) {
+          const onlyDotKey = dotKeys[0];
+          if (onlyDotKey) {
+            this.audioService.activatePointWithGain(onlyDotKey, 0.8);
+          }
+          return;
+        }
+        dotKeys.forEach((dotKey) => {
+          this.audioService.activatePointWithGain(dotKey, 0);
+        });
       });
     }
 
@@ -5184,16 +5567,9 @@ class DotGridAudioPlayer {
       !rowCompareActive && playableDots.length > 0 && this.reverbModeEnabled
         ? [2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]
         : null;
-    const rhythmPatternDotKeys =
-      !referenceHitSequence && !referenceBalancedVolumeSequence && !referenceMultipliedVolumeSequence &&
-      !rowCompareActive && !experimentalClusterMode && !patternDepthSequence && !hiHatDepthSequence && !reverbDepthSequence &&
-      this.rhythmPatternEnabled && playableDots.length > 0
-        ? playableDots.slice(0, RHYTHM_PATTERN_BEAT_OFFSETS.length)
-        : [];
-    const rhythmPatternActive = rhythmPatternDotKeys.length > 0;
     const fourFourHitModeActive =
       !referenceHitSequence && !referenceBalancedVolumeSequence && !referenceMultipliedVolumeSequence &&
-      !rowCompareActive && !experimentalClusterMode && !patternDepthSequence && !hiHatDepthSequence && !reverbDepthSequence && !rhythmPatternActive &&
+      !rowCompareActive && !experimentalClusterMode && !patternDepthSequence && !hiHatDepthSequence && !reverbDepthSequence &&
       playableDots.length > 0 && this.fourFourHitModeEnabled;
     const fourFourStraightNoiseActive =
       fourFourHitModeActive &&
@@ -5298,9 +5674,14 @@ class DotGridAudioPlayer {
         slopeOffsetDbPerOct = sign * this.tiltOscillationAmount;
       }
 
-      // A lead dot carries every dip for the dots sharing its column, so its bed
-      // excludes all their bands and all of them pulse together on this hit.
-      const inverseColumnBands = inverseDotColumnBandsByLead.get(dotKey) ?? null;
+      const inverseColumnPeers = inverseDotColumnPeersByDotKey.get(dotKey);
+      if (inverseColumnPeers && inverseColumnPeers.length > 1) {
+        inverseColumnPeers.forEach((peerDotKey) => {
+          if (peerDotKey !== dotKey) {
+            this.audioService.schedulePointGainOnly(peerDotKey, hitTime, 0);
+          }
+        });
+      }
 
       this.audioService.schedulePointHit(
         dotKey,
@@ -5313,8 +5694,7 @@ class DotGridAudioPlayer {
         snareWaveEnabledOverride,
         snareWavePhaseIndex,
         hasBandwidthOverride,
-        bandpassRangeOverride,
-        inverseColumnBands
+        bandpassRangeOverride
       );
     };
 
@@ -5722,33 +6102,6 @@ class DotGridAudioPlayer {
           scheduleSequencerHit(dotKey, hitTime, peakVolume, experimentalRelease);
         });
       });
-    } else if (rhythmPatternActive) {
-      // Rhythm pattern: the first three selected dots run concurrent rhythms
-      // on one quarter-note clock: half notes, quarter notes, then clave.
-      const beatSeconds = Math.max(0.01, this.continuousLoudQuietStepSeconds);
-      const loudStep = Math.max(0, volumeSteps - 1);
-      const rhythmEvents = rhythmPatternDotKeys.flatMap((dotKey, dotIndex) => (
-        (RHYTHM_PATTERN_BEAT_OFFSETS[dotIndex] ?? []).map((beatOffset) => ({
-          dotKey,
-          dotIndex,
-          beatOffset,
-        }))
-      )).sort((a, b) => a.beatOffset - b.beatOffset || a.dotIndex - b.dotIndex);
-
-      rhythmEvents.forEach(({ dotKey, dotIndex, beatOffset }) => {
-        const hitTime = currentTime + beatOffset * beatSeconds;
-        const peakVolume = getDotVolume(
-          dotKey,
-          dotIndex,
-          rhythmPatternDotKeys.length,
-          loudStep,
-          volumeSteps,
-          hitTime
-        );
-        scheduleSequencerHit(dotKey, hitTime, peakVolume);
-      });
-
-      straightNoiseLoopDuration = RHYTHM_PATTERN_BEAT_COUNT * beatSeconds;
     } else if (fourFourStraightNoiseActive) {
       const stepSeconds = Math.max(0.01, this.continuousLoudQuietStepSeconds);
       const hitRepeats = Math.max(1, hitsPerVolumeLevel);
@@ -6154,9 +6507,6 @@ class DotGridAudioPlayer {
         ? fourFourHitModeSequence.length * hitsPerVolumeLevel
         : fourFourHitModeSequence.length * playableDotCount * hitsPerVolumeLevel
       : 0;
-    const rhythmPatternHits = rhythmPatternActive
-      ? scheduledVisualHitDotKeys.length
-      : 0;
     const patternDepthHits = patternDepthSequence
       ? patternDepthSequence.length * playableDotCount * hitsPerVolumeLevel
       : 0;
@@ -6187,8 +6537,6 @@ class DotGridAudioPlayer {
       ? fourFourRowAlternationHits
       : fourFourHitModeSequence
       ? fourFourHitModeHits
-      : rhythmPatternActive
-      ? rhythmPatternHits
       : patternDepthSequence
       ? patternDepthHits
       : hiHatDepthSequence
@@ -6198,10 +6546,8 @@ class DotGridAudioPlayer {
       : singleDotMiddleDepthSequence
         ? singleDotMiddleDepthHits
         : playableDotCount * hitsPerDot;
-    const effectiveSequentialMode = isSequentialMode || rowCompareActive || fourFourHitModeActive || rhythmPatternActive;
-    const effectiveSequentialHitInterval = rhythmPatternActive
-      ? Math.max(0.01, this.continuousLoudQuietStepSeconds)
-      : (this.loudQuietBandwidthModeEnabled && fourFourVolumeLevelSequence) || fourFourHalfBandPatternSequence || fourFourRowAlternationActive
+    const effectiveSequentialMode = isSequentialMode || rowCompareActive || fourFourHitModeActive;
+    const effectiveSequentialHitInterval = (this.loudQuietBandwidthModeEnabled && fourFourVolumeLevelSequence) || fourFourHalfBandPatternSequence || fourFourRowAlternationActive
       ? Math.max(0.01, this.continuousLoudQuietStepSeconds)
       : stagger;
     const inverseClusterTailDuration = inverseClusteredVolumeSequenceActive
@@ -6227,7 +6573,7 @@ class DotGridAudioPlayer {
     const sequentialVisualHitDotKeys = effectiveSequentialMode && scheduledVisualHitDotKeys.length > 0
       ? scheduledVisualHitDotKeys
       : null;
-    this.loopSequencerVisualDotKeys = referenceMultipliedVolumeSequence ?? referenceBalancedVolumeSequence?.map(({ dotKey }) => dotKey) ?? referenceHiHatHitSequence ?? referenceHitSequence ?? rowCompareGroups?.flatMap(({ dotKeys }) => dotKeys) ?? (rhythmPatternActive ? rhythmPatternDotKeys : playableDots);
+    this.loopSequencerVisualDotKeys = referenceMultipliedVolumeSequence ?? referenceBalancedVolumeSequence?.map(({ dotKey }) => dotKey) ?? referenceHiHatHitSequence ?? referenceHitSequence ?? rowCompareGroups?.flatMap(({ dotKeys }) => dotKeys) ?? playableDots;
     this.loopSequencerVisualCycleStartTime = currentTime;
     this.loopSequencerVisualHitInterval = effectiveSequentialMode ? effectiveSequentialHitInterval : waveInterval;
     this.loopSequencerVisualTotalHitsPerDot = hitsPerDot;
@@ -6652,6 +6998,7 @@ class DotGridAudioPlayer {
     this.stopAllRhythmsInternalCleanup();
     this.audioService.stopNoiseOscillation();
     this.stopContinuousLoudQuietCycle(false);
+    this.stopCircleSimultaneousPoints();
     this.audioService.deactivateAllPoints();
   }
 
@@ -6670,6 +7017,7 @@ class DotGridAudioPlayer {
     this.setPlaying(false);
     this.stopAllRhythms();
     this.stopDragNoiseFormation();
+    this.stopCircleSimultaneousPoints();
 
     // Clean up analyzer nodes
     if (this.preEQGain) {
@@ -7703,10 +8051,12 @@ class InverseDotNoiseGenerator {
   private ctx: AudioContext;
   private slopingNoiseGenerator: SlopedPinkNoiseGenerator;
   private outputGainNode: GainNode;
-  // One peaking-EQ dip per dot in the column, chained in series on the shared
-  // noise. Each dip is a notch at rest and rises to the dot-boost gain on a hit.
-  private dipFilters: BiquadFilterNode[] = [];
-  private bands: BandpassRange[] = [];
+  private lowOutsideFilter: BiquadFilterNode;
+  private highOutsideFilter: BiquadFilterNode;
+  private bandHighpassFilter: BiquadFilterNode;
+  private bandLowpassFilter: BiquadFilterNode;
+  private outsideGainNode: GainNode;
+  private dotBandEnvelopeGain: GainNode;
   private currentBandwidthOctaves: number = BANDPASS_BANDWIDTH_OCTAVES;
   private currentCenterFrequency: number = 1000;
   private outsideGapOctaves: number = DEFAULT_INVERSE_DOT_OUTSIDE_GAP_OCTAVES;
@@ -7723,8 +8073,36 @@ class InverseDotNoiseGenerator {
     this.outputGainNode = this.ctx.createGain();
     this.outputGainNode.gain.value = INVERSE_DOT_NOISE_OUTPUT_GAIN_SCALAR;
 
-    // Start with a single dip at the default frequency.
-    this.setBands([this.getBandpassRange(this.currentCenterFrequency, this.currentBandwidthOctaves)]);
+    this.outsideGainNode = this.ctx.createGain();
+    this.outsideGainNode.gain.value = INVERSE_DOT_OUTSIDE_GAIN;
+
+    this.dotBandEnvelopeGain = this.ctx.createGain();
+    this.dotBandEnvelopeGain.gain.value = 0;
+
+    this.lowOutsideFilter = this.createFilter('lowpass');
+    this.highOutsideFilter = this.createFilter('highpass');
+    this.bandHighpassFilter = this.createFilter('highpass');
+    this.bandLowpassFilter = this.createFilter('lowpass');
+
+    this.slopingNoiseGenerator.getOutputNode().connect(this.lowOutsideFilter);
+    this.lowOutsideFilter.connect(this.outsideGainNode);
+    this.slopingNoiseGenerator.getOutputNode().connect(this.highOutsideFilter);
+    this.highOutsideFilter.connect(this.outsideGainNode);
+    this.outsideGainNode.connect(this.outputGainNode);
+
+    this.slopingNoiseGenerator.getOutputNode().connect(this.bandHighpassFilter);
+    this.bandHighpassFilter.connect(this.bandLowpassFilter);
+    this.bandLowpassFilter.connect(this.dotBandEnvelopeGain);
+    this.dotBandEnvelopeGain.connect(this.outputGainNode);
+
+    this.setBandpassFrequency(this.currentCenterFrequency);
+  }
+
+  private createFilter(type: BiquadFilterType): BiquadFilterNode {
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = type;
+    filter.Q.value = BANDPASS_FILTER_Q;
+    return filter;
   }
 
   private getBandpassRange(frequency: number, bandwidthOctaves: number): BandpassRange {
@@ -7748,66 +8126,49 @@ class InverseDotNoiseGenerator {
     };
   }
 
-  // The dot-gap control now sets how wide each parametric dip is (a relatively
-  // thin, adjustable notch) rather than a spectral gap around a split band.
-  private getDipQ(): number {
-    return octavesToPeakingQ(Math.max(INVERSE_DOT_MIN_DIP_WIDTH_OCTAVES, this.outsideGapOctaves));
-  }
+  private setFilterRange(range: BandpassRange, scheduledTime?: number): void {
+    const lowerEdge = clamp(range.lowerEdge, MIN_AUDIBLE_FREQ, MAX_AUDIBLE_FREQ);
+    const upperEdge = clamp(range.upperEdge, MIN_AUDIBLE_FREQ, MAX_AUDIBLE_FREQ);
+    const safeLowerEdge = Math.min(lowerEdge, upperEdge);
+    const safeUpperEdge = Math.max(lowerEdge, upperEdge);
+    const outsideLowCutoff = clamp(
+      safeLowerEdge / Math.pow(2, this.outsideGapOctaves),
+      MIN_AUDIBLE_FREQ,
+      MAX_AUDIBLE_FREQ
+    );
+    const outsideHighCutoff = clamp(
+      safeUpperEdge * Math.pow(2, this.outsideGapOctaves),
+      MIN_AUDIBLE_FREQ,
+      MAX_AUDIBLE_FREQ
+    );
+    const bandwidthOctaves = Math.log2(range.upperEdge / range.lowerEdge);
+    const bandQ = bandpassBandwidthToQ(bandwidthOctaves, this.bandwidthFilterMode);
 
-  private rebuildChain(): void {
-    this.slopingNoiseGenerator.getOutputNode().disconnect();
-    this.dipFilters.forEach((filter) => filter.disconnect());
-
-    let node: AudioNode = this.slopingNoiseGenerator.getOutputNode();
-    for (const filter of this.dipFilters) {
-      node.connect(filter);
-      node = filter;
-    }
-    node.connect(this.outputGainNode);
-  }
-
-  // Configure the column's dips: one peaking filter per band, resting at the deep
-  // notch depth. Filter count only changes when dots are added/removed from the
-  // column, so an in-flight ADSR on an existing dip is never stomped mid-pulse.
-  public setBands(bands: BandpassRange[]): void {
-    const safeBands = bands.length > 0
-      ? bands
-      : [this.getBandpassRange(this.currentCenterFrequency, this.currentBandwidthOctaves)];
-    this.bands = safeBands;
-
-    if (this.dipFilters.length !== safeBands.length) {
-      while (this.dipFilters.length < safeBands.length) {
-        const filter = this.ctx.createBiquadFilter();
-        filter.type = 'peaking';
-        filter.gain.value = INVERSE_DOT_NOTCH_REST_DB;
-        this.dipFilters.push(filter);
+    const setFrequency = (filter: BiquadFilterNode, frequency: number) => {
+      if (scheduledTime !== undefined) {
+        filter.frequency.cancelScheduledValues(scheduledTime);
+        filter.frequency.setValueAtTime(frequency, scheduledTime);
+      } else {
+        filter.frequency.value = frequency;
       }
-      while (this.dipFilters.length > safeBands.length) {
-        const filter = this.dipFilters.pop();
-        filter?.disconnect();
+    };
+    const setQ = (filter: BiquadFilterNode, q: number) => {
+      if (scheduledTime !== undefined) {
+        filter.Q.cancelScheduledValues(scheduledTime);
+        filter.Q.setValueAtTime(q, scheduledTime);
+      } else {
+        filter.Q.value = q;
       }
-      this.rebuildChain();
-    }
+    };
 
-    const dipQ = this.getDipQ();
-    safeBands.forEach((band, index) => {
-      const filter = this.dipFilters[index];
-      if (!filter) return;
-      filter.frequency.value = clamp(band.centerFrequency, MIN_AUDIBLE_FREQ, MAX_AUDIBLE_FREQ);
-      filter.Q.value = dipQ;
-    });
-    this.currentCenterFrequency = safeBands[0]?.centerFrequency ?? this.currentCenterFrequency;
-  }
-
-  // Remove every dip so the generator emits flat, full-spectrum noise with no
-  // notch — used for a right-clicked "constant noise" dot that doesn't act as a
-  // dot (no hole, no pulse, just steady noise).
-  public clearDips(): void {
-    while (this.dipFilters.length > 0) {
-      this.dipFilters.pop()?.disconnect();
-    }
-    this.bands = [];
-    this.rebuildChain();
+    setFrequency(this.lowOutsideFilter, outsideLowCutoff);
+    setFrequency(this.highOutsideFilter, outsideHighCutoff);
+    setFrequency(this.bandHighpassFilter, safeLowerEdge);
+    setFrequency(this.bandLowpassFilter, safeUpperEdge);
+    setQ(this.lowOutsideFilter, BANDPASS_FILTER_Q);
+    setQ(this.highOutsideFilter, BANDPASS_FILTER_Q);
+    setQ(this.bandHighpassFilter, bandQ);
+    setQ(this.bandLowpassFilter, bandQ);
   }
 
   public getOutputNode(): GainNode {
@@ -7816,7 +8177,7 @@ class InverseDotNoiseGenerator {
 
   public setBandwidthFilterMode(filterMode: BandwidthFilterMode): void {
     this.bandwidthFilterMode = filterMode;
-    this.setBands(this.bands);
+    this.setBandpassFrequency(this.currentCenterFrequency);
   }
 
   public setOutsideGapOctaves(gapOctaves: number): void {
@@ -7825,7 +8186,7 @@ class InverseDotNoiseGenerator {
       MIN_INVERSE_DOT_OUTSIDE_GAP_OCTAVES,
       MAX_INVERSE_DOT_OUTSIDE_GAP_OCTAVES
     );
-    this.setBands(this.bands);
+    this.setBandpassFrequency(this.currentCenterFrequency);
   }
 
   public setDotBandBoostDb(boostDb: number): void {
@@ -7836,9 +8197,16 @@ class InverseDotNoiseGenerator {
     );
   }
 
+  public setOutsideGainMultiplier(multiplier: number): void {
+    this.outsideGainNode.gain.setValueAtTime(
+      INVERSE_DOT_OUTSIDE_GAIN * clamp(Number.isFinite(multiplier) ? multiplier : 1, 0, 4),
+      this.ctx.currentTime
+    );
+  }
+
   public setBandpassFrequency(frequency: number): void {
     this.currentCenterFrequency = frequency;
-    this.setBands([this.getBandpassRange(frequency, this.currentBandwidthOctaves)]);
+    this.setFilterRange(this.getBandpassRange(frequency, this.currentBandwidthOctaves));
   }
 
   public setBandpassBandwidth(bandwidthOctaves: number): void {
@@ -7847,7 +8215,7 @@ class InverseDotNoiseGenerator {
       MIN_BANDPASS_BANDWIDTH_OCTAVES,
       MAX_BANDPASS_BANDWIDTH_OCTAVES
     );
-    this.setBands([this.getBandpassRange(this.currentCenterFrequency, this.currentBandwidthOctaves)]);
+    this.setBandpassFrequency(this.currentCenterFrequency);
   }
 
   public setBandpassRange(lowerEdge: number, upperEdge: number, centerFrequency?: number): void {
@@ -7858,46 +8226,38 @@ class InverseDotNoiseGenerator {
       MIN_BANDPASS_BANDWIDTH_OCTAVES,
       MAX_BANDPASS_BANDWIDTH_OCTAVES
     );
-    this.setBands([range]);
+    this.setFilterRange(range);
   }
 
-  // The notch position is static per selection, so scheduled variants just apply
-  // the band immediately; the scheduledTime only matters for the pulse envelope.
   public scheduleBandpassFrequencyAndBandwidth(
     frequency: number,
     bandwidthOctaves: number,
-    _scheduledTime: number
+    scheduledTime: number
   ): void {
-    void _scheduledTime;
     const safeBandwidthOctaves = clamp(
       bandwidthOctaves,
       MIN_BANDPASS_BANDWIDTH_OCTAVES,
       MAX_BANDPASS_BANDWIDTH_OCTAVES
     );
-    this.currentBandwidthOctaves = safeBandwidthOctaves;
-    this.currentCenterFrequency = frequency;
-    this.setBands([this.getBandpassRange(frequency, safeBandwidthOctaves)]);
+    this.setFilterRange(this.getBandpassRange(frequency, safeBandwidthOctaves), scheduledTime);
   }
 
   public scheduleBandpassRange(
     lowerEdge: number,
     upperEdge: number,
     centerFrequency: number,
-    _scheduledTime: number
+    scheduledTime: number
   ): void {
-    void _scheduledTime;
-    this.setBandpassRange(lowerEdge, upperEdge, centerFrequency);
+    this.setFilterRange(this.normalizeBandpassRange(lowerEdge, upperEdge, centerFrequency), scheduledTime);
   }
 
-  // Pulse every dip in the column together: each peaking gain rides the same ADSR
-  // from the resting notch depth up to the dot-boost peak and back. The EQ shape is
-  // volume-independent — hit loudness is handled entirely by the fullband gate
-  // (envelopeGain), so every hit carves/fills the same notch regardless of level.
   public scheduleDotBandHit(
     scheduledTime: number,
     attackTime: number,
-    releaseTime: number
+    releaseTime: number,
+    peakVolume: number
   ): void {
+    const gainParam = this.dotBandEnvelopeGain.gain;
     const totalEnvelopeTime = Math.max(0.001, attackTime + releaseTime);
     const safeAttackTime = Math.min(
       totalEnvelopeTime - 0.0001,
@@ -7906,30 +8266,272 @@ class InverseDotNoiseGenerator {
     const safeReleaseTime = Math.max(0.0001, totalEnvelopeTime - safeAttackTime);
     const attackEndTime = scheduledTime + safeAttackTime;
     const releaseEndTime = attackEndTime + safeReleaseTime;
-    const peakDb = this.dotBandBoostDb;
+    const safePeakVolume = Math.max(0, peakVolume) * INVERSE_DOT_OUTSIDE_GAIN * dbToGain(this.dotBandBoostDb);
 
-    // TEMP DEBUG: sample how many dips this generator actually pulses at hit time.
-    if (Math.random() < 0.03) {
-      console.log('[INV pulse] dips=', this.dipFilters.length, 'freqs=', this.dipFilters.map((f) => Math.round(f.frequency.value)));
+    gainParam.cancelScheduledValues(scheduledTime);
+    gainParam.setValueAtTime(0, scheduledTime);
+    if (safeAttackTime <= 0) {
+      gainParam.setValueAtTime(safePeakVolume, scheduledTime);
+    } else {
+      gainParam.linearRampToValueAtTime(safePeakVolume, attackEndTime);
     }
-
-    this.dipFilters.forEach((filter) => {
-      const gainParam = filter.gain;
-      gainParam.cancelScheduledValues(scheduledTime);
-      gainParam.setValueAtTime(INVERSE_DOT_NOTCH_REST_DB, scheduledTime);
-      if (safeAttackTime <= 0) {
-        gainParam.setValueAtTime(peakDb, scheduledTime);
-      } else {
-        gainParam.linearRampToValueAtTime(peakDb, attackEndTime);
-      }
-      gainParam.linearRampToValueAtTime(INVERSE_DOT_NOTCH_REST_DB, releaseEndTime);
-    });
+    gainParam.linearRampToValueAtTime(0, releaseEndTime);
   }
 
   public dispose(): void {
     this.slopingNoiseGenerator.dispose();
-    this.dipFilters.forEach((filter) => filter.disconnect());
-    this.dipFilters = [];
+    this.lowOutsideFilter.disconnect();
+    this.highOutsideFilter.disconnect();
+    this.bandHighpassFilter.disconnect();
+    this.bandLowpassFilter.disconnect();
+    this.outsideGainNode.disconnect();
+    this.dotBandEnvelopeGain.disconnect();
+    this.outputGainNode.disconnect();
+  }
+}
+
+interface MultiInverseDotBranch {
+  nodes: AudioNode[];
+  envelopeGain?: GainNode;
+}
+
+class MultiInverseDotNoiseGenerator {
+  private ctx: AudioContext;
+  private slopingNoiseGenerator: SlopedPinkNoiseGenerator;
+  private outputGainNode: GainNode;
+  private outsideGainNode: GainNode;
+  private outsideBranches: MultiInverseDotBranch[] = [];
+  private dotBandBranches: MultiInverseDotBranch[] = [];
+  private outsideGapOctaves: number = DEFAULT_INVERSE_DOT_OUTSIDE_GAP_OCTAVES;
+  private dotBandBoostDb: number = DEFAULT_INVERSE_DOT_BAND_BOOST_DB;
+  private bandwidthFilterMode: BandwidthFilterMode = DEFAULT_BANDWIDTH_FILTER_MODE;
+  private bandSignature: string = '';
+
+  constructor(audioCtx: AudioContext) {
+    this.ctx = audioCtx;
+    this.slopingNoiseGenerator = new SlopedPinkNoiseGenerator(this.ctx);
+    this.slopingNoiseGenerator.setInputSlope(PINK_NOISE_SLOPE_DB_PER_OCT);
+    this.slopingNoiseGenerator.setSlope(BANDPASS_NOISE_SLOPE_DB_PER_OCT);
+    this.slopingNoiseGenerator.setIndependentBandNoiseEnabled(true);
+
+    this.outputGainNode = this.ctx.createGain();
+    this.outputGainNode.gain.value = INVERSE_DOT_NOISE_OUTPUT_GAIN_SCALAR;
+
+    this.outsideGainNode = this.ctx.createGain();
+    this.outsideGainNode.gain.value = INVERSE_DOT_OUTSIDE_GAIN;
+    this.outsideGainNode.connect(this.outputGainNode);
+  }
+
+  public getOutputNode(): GainNode {
+    return this.outputGainNode;
+  }
+
+  public setBandwidthFilterMode(filterMode: BandwidthFilterMode): void {
+    if (this.bandwidthFilterMode === filterMode) return;
+    this.bandwidthFilterMode = filterMode;
+    this.bandSignature = '';
+  }
+
+  public setOutsideGapOctaves(gapOctaves: number): void {
+    const next = clamp(
+      Number.isFinite(gapOctaves) ? gapOctaves : DEFAULT_INVERSE_DOT_OUTSIDE_GAP_OCTAVES,
+      MIN_INVERSE_DOT_OUTSIDE_GAP_OCTAVES,
+      MAX_INVERSE_DOT_OUTSIDE_GAP_OCTAVES
+    );
+    if (this.outsideGapOctaves === next) return;
+    this.outsideGapOctaves = next;
+    this.bandSignature = '';
+  }
+
+  public setDotBandBoostDb(boostDb: number): void {
+    this.dotBandBoostDb = clamp(
+      Number.isFinite(boostDb) ? boostDb : DEFAULT_INVERSE_DOT_BAND_BOOST_DB,
+      MIN_INVERSE_DOT_BAND_BOOST_DB,
+      MAX_INVERSE_DOT_BAND_BOOST_DB
+    );
+  }
+
+  private normalizeRange(range: BandpassRange): BandpassRange {
+    const lower = clamp(Math.min(range.lowerEdge, range.upperEdge), MIN_AUDIBLE_FREQ, MAX_AUDIBLE_FREQ);
+    const upper = clamp(Math.max(range.lowerEdge, range.upperEdge), MIN_AUDIBLE_FREQ, MAX_AUDIBLE_FREQ);
+    const safeUpper = Math.max(lower * 1.0001, upper);
+    return {
+      lowerEdge: lower,
+      upperEdge: safeUpper,
+      centerFrequency: clamp(range.centerFrequency || Math.sqrt(lower * safeUpper), MIN_AUDIBLE_FREQ, MAX_AUDIBLE_FREQ),
+    };
+  }
+
+  private getSignature(ranges: BandpassRange[]): string {
+    return [
+      this.bandwidthFilterMode,
+      this.outsideGapOctaves.toFixed(4),
+      ...ranges.map((range) =>
+        `${range.lowerEdge.toFixed(3)}:${range.upperEdge.toFixed(3)}:${range.centerFrequency.toFixed(3)}`
+      ),
+    ].join('|');
+  }
+
+  private disconnectBranches(branches: MultiInverseDotBranch[]): void {
+    branches.forEach((branch) => {
+      branch.nodes.forEach((node) => {
+        try {
+          node.disconnect();
+        } catch {
+          // Branch nodes may already be disconnected during rebuild.
+        }
+      });
+    });
+  }
+
+  private createFilter(type: BiquadFilterType, frequency: number, q: number = BANDPASS_FILTER_Q): BiquadFilterNode {
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = type;
+    filter.frequency.value = clamp(frequency, MIN_AUDIBLE_FREQ, MAX_AUDIBLE_FREQ);
+    filter.Q.value = q;
+    return filter;
+  }
+
+  private createOutsideBranch(lowerEdge: number, upperEdge: number): MultiInverseDotBranch | null {
+    const lower = clamp(lowerEdge, MIN_AUDIBLE_FREQ, MAX_AUDIBLE_FREQ);
+    const upper = clamp(upperEdge, MIN_AUDIBLE_FREQ, MAX_AUDIBLE_FREQ);
+    if (upper <= lower * 1.0001) return null;
+
+    const source = this.slopingNoiseGenerator.getOutputNode();
+    const nodes: AudioNode[] = [];
+
+    if (lower <= MIN_AUDIBLE_FREQ * 1.0001) {
+      const lowpass = this.createFilter('lowpass', upper);
+      source.connect(lowpass);
+      lowpass.connect(this.outsideGainNode);
+      nodes.push(lowpass);
+    } else if (upper >= MAX_AUDIBLE_FREQ / 1.0001) {
+      const highpass = this.createFilter('highpass', lower);
+      source.connect(highpass);
+      highpass.connect(this.outsideGainNode);
+      nodes.push(highpass);
+    } else {
+      const highpass = this.createFilter('highpass', lower);
+      const lowpass = this.createFilter('lowpass', upper);
+      source.connect(highpass);
+      highpass.connect(lowpass);
+      lowpass.connect(this.outsideGainNode);
+      nodes.push(highpass, lowpass);
+    }
+
+    return { nodes };
+  }
+
+  private createDotBandBranch(range: BandpassRange): MultiInverseDotBranch {
+    const bandwidthOctaves = Math.log2(range.upperEdge / range.lowerEdge);
+    const bandQ = bandpassBandwidthToQ(bandwidthOctaves, this.bandwidthFilterMode);
+    const highpass = this.createFilter('highpass', range.lowerEdge, bandQ);
+    const lowpass = this.createFilter('lowpass', range.upperEdge, bandQ);
+    const envelopeGain = this.ctx.createGain();
+    envelopeGain.gain.value = 0;
+
+    this.slopingNoiseGenerator.getOutputNode().connect(highpass);
+    highpass.connect(lowpass);
+    lowpass.connect(envelopeGain);
+    envelopeGain.connect(this.outputGainNode);
+
+    return { nodes: [highpass, lowpass, envelopeGain], envelopeGain };
+  }
+
+  private getOutsideRanges(dotRanges: BandpassRange[]): Array<{ lowerEdge: number; upperEdge: number }> {
+    if (dotRanges.length === 0) {
+      return [{ lowerEdge: MIN_AUDIBLE_FREQ, upperEdge: MAX_AUDIBLE_FREQ }];
+    }
+
+    const gapMultiplier = Math.pow(2, this.outsideGapOctaves);
+    const exclusions = dotRanges
+      .map((range) => ({
+        lowerEdge: clamp(range.lowerEdge / gapMultiplier, MIN_AUDIBLE_FREQ, MAX_AUDIBLE_FREQ),
+        upperEdge: clamp(range.upperEdge * gapMultiplier, MIN_AUDIBLE_FREQ, MAX_AUDIBLE_FREQ),
+      }))
+      .sort((a, b) => a.lowerEdge - b.lowerEdge);
+
+    const mergedExclusions: Array<{ lowerEdge: number; upperEdge: number }> = [];
+    exclusions.forEach((range) => {
+      const previous = mergedExclusions[mergedExclusions.length - 1];
+      if (!previous || range.lowerEdge > previous.upperEdge) {
+        mergedExclusions.push({ ...range });
+        return;
+      }
+      previous.upperEdge = Math.max(previous.upperEdge, range.upperEdge);
+    });
+
+    const outsideRanges: Array<{ lowerEdge: number; upperEdge: number }> = [];
+    let cursor = MIN_AUDIBLE_FREQ;
+    mergedExclusions.forEach((range) => {
+      if (range.lowerEdge > cursor * 1.0001) {
+        outsideRanges.push({ lowerEdge: cursor, upperEdge: range.lowerEdge });
+      }
+      cursor = Math.max(cursor, range.upperEdge);
+    });
+    if (cursor < MAX_AUDIBLE_FREQ / 1.0001) {
+      outsideRanges.push({ lowerEdge: cursor, upperEdge: MAX_AUDIBLE_FREQ });
+    }
+
+    return outsideRanges;
+  }
+
+  public setBands(ranges: BandpassRange[]): void {
+    const dotRanges = ranges.map((range) => this.normalizeRange(range));
+    const signature = this.getSignature(dotRanges);
+    if (signature === this.bandSignature) return;
+
+    this.disconnectBranches(this.outsideBranches);
+    this.disconnectBranches(this.dotBandBranches);
+    this.outsideBranches = [];
+    this.dotBandBranches = [];
+
+    this.getOutsideRanges(dotRanges).forEach((outsideRange) => {
+      const branch = this.createOutsideBranch(outsideRange.lowerEdge, outsideRange.upperEdge);
+      if (branch) this.outsideBranches.push(branch);
+    });
+    this.dotBandBranches = dotRanges.map((range) => this.createDotBandBranch(range));
+    this.bandSignature = signature;
+  }
+
+  public scheduleDotBandHit(
+    index: number,
+    scheduledTime: number,
+    attackTime: number,
+    releaseTime: number,
+    peakVolume: number
+  ): void {
+    const branch = this.dotBandBranches[index];
+    if (!branch?.envelopeGain) return;
+
+    const gainParam = branch.envelopeGain.gain;
+    const totalEnvelopeTime = Math.max(0.001, attackTime + releaseTime);
+    const safeAttackTime = Math.min(
+      totalEnvelopeTime - 0.0001,
+      Math.max(0, attackTime, INVERSE_DOT_MIN_ATTACK_S)
+    );
+    const safeReleaseTime = Math.max(0.0001, totalEnvelopeTime - safeAttackTime);
+    const attackEndTime = scheduledTime + safeAttackTime;
+    const releaseEndTime = attackEndTime + safeReleaseTime;
+    const safePeakVolume = Math.max(0, peakVolume) * INVERSE_DOT_OUTSIDE_GAIN * dbToGain(this.dotBandBoostDb);
+
+    gainParam.cancelScheduledValues(scheduledTime);
+    gainParam.setValueAtTime(0, scheduledTime);
+    if (safeAttackTime <= 0) {
+      gainParam.setValueAtTime(safePeakVolume, scheduledTime);
+    } else {
+      gainParam.linearRampToValueAtTime(safePeakVolume, attackEndTime);
+    }
+    gainParam.linearRampToValueAtTime(0, releaseEndTime);
+  }
+
+  public dispose(): void {
+    this.disconnectBranches(this.outsideBranches);
+    this.disconnectBranches(this.dotBandBranches);
+    this.outsideBranches = [];
+    this.dotBandBranches = [];
+    this.slopingNoiseGenerator.dispose();
+    this.outsideGainNode.disconnect();
     this.outputGainNode.disconnect();
   }
 }

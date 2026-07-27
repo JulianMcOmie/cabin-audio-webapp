@@ -253,6 +253,7 @@ export interface UnifiedParticleSceneProps {
   selectedDots: Set<string>
   constantDots?: Set<string>
   referenceDotKey?: string | null
+  referenceDotKeys?: Set<string>
   onDotSelect: (x: number, y: number) => void
   onDotDeselect: (x: number, y: number) => void
   onDotReference?: (x: number, y: number) => void
@@ -891,6 +892,7 @@ function UnifiedSceneContent({
   selectedDots,
   constantDots,
   referenceDotKey,
+  referenceDotKeys,
   onDotSelect,
   onDotDeselect,
   onDotReference,
@@ -1962,7 +1964,7 @@ function UnifiedSceneContent({
       if (dotIdx >= 0 && dotIdx < dotIdxToKey.length) {
         const dotKey = dotIdxToKey[dotIdx]
         const isActive = selectedDots.has(dotKey) || (constantDots?.has(dotKey) ?? false)
-        const isReference = referenceDotKey === dotKey
+        const isReference = referenceDotKey === dotKey || (referenceDotKeys?.has(dotKey) ?? false)
         const isHovered = hoveredDot === dotKey
 
         // Base color: frequency gradient based on home Y position
@@ -2212,6 +2214,7 @@ export function UnifiedParticleScene(props: UnifiedParticleSceneProps) {
         selectedDots={props.selectedDots}
         constantDots={props.constantDots}
         referenceDotKey={props.referenceDotKey}
+        referenceDotKeys={props.referenceDotKeys}
         onDotSelect={props.onDotSelect}
         onDotDeselect={props.onDotDeselect}
         onDotReference={props.onDotReference}
@@ -2255,6 +2258,7 @@ export function UnifiedParticleScene(props: UnifiedParticleSceneProps) {
           selectedDots={props.selectedDots}
           constantDots={props.constantDots}
           referenceDotKey={props.referenceDotKey}
+          referenceDotKeys={props.referenceDotKeys}
           onDotSelect={props.onDotSelect}
           onDotDeselect={props.onDotDeselect}
           onDotReference={props.onDotReference}
@@ -2267,6 +2271,7 @@ export function UnifiedParticleScene(props: UnifiedParticleSceneProps) {
           highlightTarget={props.highlightTarget}
           onDragStateChange={props.onDragStateChange}
           cursorDotPosition={props.cursorDotPosition}
+          inputDisabled={props.inputDisabled}
           inviteDotKey={props.inviteDotKey}
           eqHighlights={props.eqHighlights}
         />
