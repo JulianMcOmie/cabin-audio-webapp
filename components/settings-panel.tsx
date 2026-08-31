@@ -106,6 +106,8 @@ interface SettingsPanelProps {
   onHitSpacingMsChange: (value: number) => void
   pingPongEnabled: boolean
   onPingPongEnabledChange: (value: boolean) => void
+  depth: number
+  onDepthChange: (value: number) => void
   bandwidth: number
   onBandwidthChange: (value: number) => void
   bandwidthFilterMode: BandwidthFilterMode
@@ -234,6 +236,8 @@ export function SettingsPanel({
   onHitSpacingMsChange,
   pingPongEnabled,
   onPingPongEnabledChange,
+  depth,
+  onDepthChange,
   bandwidth,
   onBandwidthChange,
   bandwidthFilterMode,
@@ -1357,6 +1361,22 @@ export function SettingsPanel({
               max={2000}
               step={10}
               onValueChange={(value) => onHitSpacingMsChange(value[0] ?? hitSpacingMs)}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Tip text="Repeat each dot at this many volume levels per cycle (quiet→loud→quiet)">
+                <span className="text-[10px] dark:text-white/50 text-black/50 uppercase tracking-wider">Depth</span>
+              </Tip>
+              <span className="text-[10px] dark:text-white/70 text-black/70 tabular-nums">{depth <= 1 ? "off" : `${depth} levels`}</span>
+            </div>
+            <Slider
+              value={[depth]}
+              min={1}
+              max={8}
+              step={1}
+              onValueChange={(value) => onDepthChange(value[0] ?? depth)}
             />
           </div>
 

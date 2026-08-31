@@ -631,7 +631,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     setBandwidthFilterMode(DEFAULTS.bandwidthFilterMode)
     setGentleEdgeFalloffDbPerOct(DEFAULTS.gentleEdgeFalloffDbPerOct)
     setSettingsCollapsed(loadSetting("cabin:settingsCollapsed", DEFAULTS.settingsCollapsed))
-    setDepth(DEFAULTS.depth)
+    setDepth(Math.max(1, Math.min(8, Math.round(loadSetting("cabin:depth", DEFAULTS.depth)))))
     // Hidden-mode settings are pinned to defaults so the simplified panel
     // always yields plain alternating noise hits, regardless of any modes
     // saved by older builds.
@@ -865,7 +865,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   useEffect(() => { saveSetting("cabin:bandwidthFilterMode", bandwidthFilterMode) }, [bandwidthFilterMode])
   useEffect(() => { saveSetting("cabin:gentleEdgeFalloffDbPerOct", gentleEdgeFalloffDbPerOct) }, [gentleEdgeFalloffDbPerOct])
   useEffect(() => { saveSetting("cabin:bandwidthOscillationEnabled", false) }, [])
-  useEffect(() => { saveSetting("cabin:depth", DEFAULTS.depth) }, [])
+  useEffect(() => { saveSetting("cabin:depth", depth) }, [depth])
   useEffect(() => { saveSetting("cabin:hiHatModeEnabled", false) }, [])
   useEffect(() => { saveSetting("cabin:patternModeEnabled", false) }, [])
   useEffect(() => { saveSetting("cabin:patternAccentEvery", DEFAULTS.patternAccentEvery) }, [])
@@ -1639,8 +1639,10 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
 
   useEffect(() => {
     const player = dotGridAudio.getDotGridAudioPlayer()
-    player.setVolumeSteps(1)
-    player.setHitDecay(0)
+    // Depth: each dot repeats at this many volume levels per cycle
+    // (ping-ponged quiet→loud→quiet), spread across depthGapDb.
+    player.setVolumeSteps(Math.max(1, Math.min(8, depth)))
+    player.setHitDecay(depth > 1 ? DEFAULTS.depthGapDb : 0)
     player.setHiHatModeEnabled(false)
     player.setPatternModeEnabled(false)
     player.setPatternAccentEvery(DEFAULTS.patternAccentEvery)
@@ -1665,7 +1667,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     player.setReverbVolumeSpreadDb(DEFAULTS.reverbVolumeSpreadDb)
     player.setHiHatQuietDropDb(hiHatQuietDropDb)
     player.setHiHatLoudReleaseBoostMs(FIXED_ACCENT_RELEASE_MS)
-  }, [halfBandPatternEnabled, hiHatQuietDropDb, loudQuietBandwidthModeEnabled, loudQuietBlockSize, loudQuietPerDot, rhythmPatternEnabled, rowAlternationModeEnabled, sidePolarityLoudQuietEnabled, threeLevelVolumeEnabled])
+  }, [depth, halfBandPatternEnabled, hiHatQuietDropDb, loudQuietBandwidthModeEnabled, loudQuietBlockSize, loudQuietPerDot, rhythmPatternEnabled, rowAlternationModeEnabled, sidePolarityLoudQuietEnabled, threeLevelVolumeEnabled])
 
   useEffect(() => {
     dotGridAudio.getDotGridAudioPlayer().setVolumeDb(volumeDb)
@@ -2339,6 +2341,8 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
         onHitSpacingMsChange={setHitSpacingMs}
         pingPongEnabled={pingPongEnabled}
         onPingPongEnabledChange={setPingPongEnabled}
+        depth={depth}
+        onDepthChange={(value) => setDepth(Math.max(1, Math.min(8, Math.round(value))))}
         bandwidth={bandwidth}
         onBandwidthChange={setBandwidth}
         bandwidthFilterMode={bandwidthFilterMode}
