@@ -17,6 +17,11 @@ import {
   type VolumeOscillationShape,
 } from "@/lib/audio/dotGridAudio"
 
+// When false, the panel shows only the core controls (volume, bandwidth,
+// attack, release). Flip to true to bring back the full experimental
+// settings surface.
+const SHOW_ALL_SETTINGS: boolean = false
+
 function formatDb(value: number): string {
   if (value > 0) return `+${value.toFixed(0)} dB`
   return `${value.toFixed(0)} dB`
@@ -93,6 +98,14 @@ interface SettingsPanelProps {
   onSpeedChange: (value: number) => void
   volumeDb: number
   onVolumeChange: (value: number) => void
+  attackMs: number
+  onAttackMsChange: (value: number) => void
+  releaseMs: number
+  onReleaseMsChange: (value: number) => void
+  hitSpacingMs: number
+  onHitSpacingMsChange: (value: number) => void
+  pingPongEnabled: boolean
+  onPingPongEnabledChange: (value: boolean) => void
   bandwidth: number
   onBandwidthChange: (value: number) => void
   bandwidthFilterMode: BandwidthFilterMode
@@ -213,6 +226,14 @@ export function SettingsPanel({
   onSpeedChange,
   volumeDb,
   onVolumeChange,
+  attackMs,
+  onAttackMsChange,
+  releaseMs,
+  onReleaseMsChange,
+  hitSpacingMs,
+  onHitSpacingMsChange,
+  pingPongEnabled,
+  onPingPongEnabledChange,
   bandwidth,
   onBandwidthChange,
   bandwidthFilterMode,
@@ -1248,6 +1269,121 @@ export function SettingsPanel({
     </div>
   )
 
+  const minimalContent = (
+    <div className="fixed right-4 bottom-4 z-50 flex flex-col items-end gap-2 transition-opacity duration-500 pointer-events-none opacity-100">
+      <div
+        className={cn(
+          "rounded-xl glass-panel overflow-hidden transition-all duration-200 ease-out origin-bottom-right",
+          collapsed
+            ? "opacity-0 scale-95 translate-y-2 pointer-events-none"
+            : "opacity-100 scale-100 translate-y-0 pointer-events-auto"
+        )}
+      >
+        <div className="w-64 max-h-[calc(100vh-6rem)] overflow-y-auto overscroll-contain p-4 space-y-4">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Tip text="Master hit volume">
+                <span className="text-[10px] dark:text-white/50 text-black/50 uppercase tracking-wider">Volume</span>
+              </Tip>
+              <span className="text-[10px] dark:text-white/70 text-black/70 tabular-nums">{formatDb(volumeDb)}</span>
+            </div>
+            <Slider
+              value={[volumeDb]}
+              min={-24}
+              max={24}
+              step={1}
+              onValueChange={(value) => onVolumeChange(value[0] ?? volumeDb)}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Tip text="Bandpass width of each noise hit, in octaves">
+                <span className="text-[10px] dark:text-white/50 text-black/50 uppercase tracking-wider">Bandwidth</span>
+              </Tip>
+              <span className="text-[10px] dark:text-white/70 text-black/70 tabular-nums">{bandwidth.toFixed(2)} oct</span>
+            </div>
+            <Slider
+              value={[bandwidth]}
+              min={0.25}
+              max={8.5}
+              step={0.05}
+              onValueChange={(value) => onBandwidthChange(value[0] ?? bandwidth)}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Tip text="Fade-in time of each hit">
+                <span className="text-[10px] dark:text-white/50 text-black/50 uppercase tracking-wider">Attack</span>
+              </Tip>
+              <span className="text-[10px] dark:text-white/70 text-black/70 tabular-nums">{Math.round(attackMs)} ms</span>
+            </div>
+            <Slider
+              value={[attackMs]}
+              min={1}
+              max={200}
+              step={1}
+              onValueChange={(value) => onAttackMsChange(value[0] ?? attackMs)}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Tip text="Fade-out time of each hit">
+                <span className="text-[10px] dark:text-white/50 text-black/50 uppercase tracking-wider">Release</span>
+              </Tip>
+              <span className="text-[10px] dark:text-white/70 text-black/70 tabular-nums">{Math.round(releaseMs)} ms</span>
+            </div>
+            <Slider
+              value={[releaseMs]}
+              min={20}
+              max={2000}
+              step={10}
+              onValueChange={(value) => onReleaseMsChange(value[0] ?? releaseMs)}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Tip text="Time between consecutive hits — shorter than the release lets hits overlap">
+                <span className="text-[10px] dark:text-white/50 text-black/50 uppercase tracking-wider">Spacing</span>
+              </Tip>
+              <span className="text-[10px] dark:text-white/70 text-black/70 tabular-nums">{Math.round(hitSpacingMs)} ms</span>
+            </div>
+            <Slider
+              value={[hitSpacingMs]}
+              min={30}
+              max={2000}
+              step={10}
+              onValueChange={(value) => onHitSpacingMsChange(value[0] ?? hitSpacingMs)}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <Tip text="Sweep the dot order back and forth (A B C B A…) instead of looping one way">
+              <span className="text-[10px] dark:text-white/50 text-black/50 uppercase tracking-wider">Back &amp; forth</span>
+            </Tip>
+            <Switch checked={pingPongEnabled} onCheckedChange={onPingPongEnabledChange} />
+          </div>
+        </div>
+      </div>
+
+      <button
+        onClick={onToggle}
+        className={cn(
+          "glass-panel rounded-lg p-2.5 transition-colors flex-shrink-0 pointer-events-auto",
+          collapsed
+            ? "dark:text-white/70 text-black/50 dark:hover:text-white hover:text-black"
+            : "dark:text-white text-black dark:bg-white/10 bg-black/10"
+        )}
+        aria-label={collapsed ? "Open settings" : "Close settings"}
+      >
+        <Settings className="h-5 w-5" />
+      </button>
+    </div>
+  )
+
   if (!mounted) return null
-  return createPortal(content, document.body)
+  return createPortal(SHOW_ALL_SETTINGS ? content : minimalContent, document.body)
 }

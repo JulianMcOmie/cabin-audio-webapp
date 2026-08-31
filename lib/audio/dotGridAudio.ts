@@ -352,7 +352,7 @@ class PositionedAudioService {
   private currentBaseDbLevel: number = 0;
   private subHitAdsrEnabled: boolean = true; // Renamed from envelopeEnabled
   private subHitPlaybackEnabled: boolean = false; // New: Toggle for sub-hit mechanism - DEFAULT FALSE for continuous mode
-  private currentSoundMode: SoundMode = SoundMode.ClickTrain; // Current sound generation mode - click train only by default
+  private currentSoundMode: SoundMode = SoundMode.BandpassedNoise; // Current sound generation mode - bandpassed noise by default
   private repeatCount: number = DEFAULT_REPEAT_COUNT; // Number of repeats for each dot
   private dbIncreasePerRepeat: number = DEFAULT_DB_INCREASE_PER_REPEAT; // dB increase per repeat (was reduction)
   private baseDb: number = DEFAULT_BASE_DB; // Starting dB level for first hit
@@ -2827,6 +2827,7 @@ class DotGridAudioPlayer {
   private patternAccentEvery: PatternAccentEvery = 8;
   private patternVolumeDiffDb: number = 0;
   private fourFourHitModeEnabled: boolean = false;
+  private sequencerPingPongEnabled: boolean = false;
   private fourFourVolumeBlockSize: number = 4;
   private fourFourVolumePerDot: boolean = false;
   private fourFourThreeLevelVolumeEnabled: boolean = false;
@@ -3304,6 +3305,16 @@ class DotGridAudioPlayer {
 
   public setFourFourHitModeEnabled(enabled: boolean): void {
     this.fourFourHitModeEnabled = enabled;
+    if (this.isPlaying && this.isLoopSequencerMode()) {
+      this.stopLoopSequencer();
+      this.startLoopSequencer();
+    }
+  }
+
+  // Ping-pong dot order: sweep A→B→C→B→A→B… instead of looping one way.
+  public setSequencerPingPongEnabled(enabled: boolean): void {
+    if (this.sequencerPingPongEnabled === enabled) return;
+    this.sequencerPingPongEnabled = enabled;
     if (this.isPlaying && this.isLoopSequencerMode()) {
       this.stopLoopSequencer();
       this.startLoopSequencer();
@@ -6099,8 +6110,15 @@ class DotGridAudioPlayer {
       // every selected dot plays at layer 1, then every dot at layer 2, etc.
       let hitIndex = 0;
 
+      // Optional back-and-forth dot order: A B C B (then loop) instead of
+      // A B C. The endpoints are not doubled so the sweep stays even.
+      const sequenceDots = this.sequencerPingPongEnabled && playableDots.length > 2
+        ? [...playableDots, ...playableDots.slice(1, -1).reverse()]
+        : playableDots;
+
       volumeCycleSteps.forEach((volumeStep) => {
-        playableDots.forEach((dotKey, dotIndex) => {
+        sequenceDots.forEach((dotKey) => {
+          const dotIndex = Math.max(0, playableDots.indexOf(dotKey));
           for (let hit = 0; hit < hitsPerVolumeLevel; hit++) {
             const hitTime = currentTime + hitIndex * stagger;
             const peakVolume = getDotVolume(dotKey, dotIndex, playableDots.length, volumeStep, volumeSteps, hitTime);
@@ -6197,7 +6215,9 @@ class DotGridAudioPlayer {
       ? reverbDepthHits
       : singleDotMiddleDepthSequence
         ? singleDotMiddleDepthHits
-        : playableDotCount * hitsPerDot;
+        : (this.sequencerPingPongEnabled && playableDotCount > 2
+            ? playableDotCount * 2 - 2
+            : playableDotCount) * hitsPerDot;
     const effectiveSequentialMode = isSequentialMode || rowCompareActive || fourFourHitModeActive || rhythmPatternActive;
     const effectiveSequentialHitInterval = rhythmPatternActive
       ? Math.max(0.01, this.continuousLoudQuietStepSeconds)
@@ -6211,16 +6231,17 @@ class DotGridAudioPlayer {
           0.025
         )
       : 0;
-    const sequentialNoOverlapDuration = totalSequentialHits <= 0
+    // Loop period is a strict hit grid (hits x interval), independent of the
+    // envelope, so long releases overlap the next cycle instead of inserting
+    // a gap between loops.
+    const sequentialLoopDuration = totalSequentialHits <= 0
       ? 0
-      : fourFourHalfBandPatternSequence || fourFourRowAlternationActive
-        ? totalSequentialHits * effectiveSequentialHitInterval
-        : (totalSequentialHits - 1) * effectiveSequentialHitInterval + inverseClusterTailDuration + attackTime + releaseTime;
+      : totalSequentialHits * effectiveSequentialHitInterval + inverseClusterTailDuration;
     const waitDuration = this.loopWaveWaitSeconds * Math.max(1, scheduledWaitGroupCount);
     const loopDuration = straightNoiseLoopDuration !== null
       ? straightNoiseLoopDuration
       : effectiveSequentialMode
-      ? sequentialNoOverlapDuration + waitDuration
+      ? sequentialLoopDuration + waitDuration
       : totalWaves * waveInterval + this.loopWaveWaitSeconds;
 
     const loopDelayMs = loopDuration * 1000;
@@ -6738,7 +6759,7 @@ class DotGridAudioPlayer {
       ? continuousSoundMode
       : loopNoiseMode
         ? loopSoundMode
-        : SoundMode.ClickTrain;
+        : SoundMode.BandpassedNoise;
     const targetLoopSequencerEnabled = loopNoiseMode || !enabled;
     const wasPlaying = this.isPlaying;
 

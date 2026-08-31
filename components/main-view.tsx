@@ -27,7 +27,6 @@ const MIN_PER_HIT_MS = 30
 const MAX_PER_HIT_MS = 2500
 const SPEED_INTERVAL_MULTIPLIER = 2
 const HIT_ATTACK_S = 0.01
-const AUTO_RELEASE_MARGIN_S = 0.005
 const FIXED_ACCENT_RELEASE_MS = 200
 const HIT_STAGGER_PERCENT_MIN = 5
 const HIT_STAGGER_PERCENT_MAX = 100
@@ -111,9 +110,6 @@ function dbToLinearGain(db: number): number {
   return Math.pow(10, db / 20)
 }
 
-function getAutoReleaseSeconds(perHitSeconds: number): number {
-  return Math.max(0.001, perHitSeconds - HIT_ATTACK_S - AUTO_RELEASE_MARGIN_S)
-}
 
 function clampLoudQuietBlockSize(size: number): number {
   return Math.max(1, Math.min(8, Math.round(size)))
@@ -413,6 +409,10 @@ const DEFAULTS = {
   freeformModeEnabled: false,
   speed: DEFAULT_SPEED,
   volumeDb: 0,
+  attackMs: 2,
+  releaseMs: 600,
+  hitSpacingMs: 250,
+  pingPongEnabled: false,
   release: 2,
   releaseAuto: true,
   releaseAutoOffsetMs: 0,
@@ -427,7 +427,7 @@ const DEFAULTS = {
   patternAccentEvery: 8 as PatternAccentEvery,
   blindRandomModeEnabled: false,
   patternVolumeDiffDb: 0,
-  fourFourHitModeEnabled: true,
+  fourFourHitModeEnabled: false,
   loudQuietBlockSize: 4,
   loudQuietPerDot: false,
   threeLevelVolumeEnabled: false,
@@ -522,6 +522,10 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   const [gridCols, setGridCols] = useState<number>(DEFAULTS.gridCols)
   const [speed, setSpeed] = useState<number>(DEFAULTS.speed)
   const [volumeDb, setVolumeDb] = useState<number>(DEFAULTS.volumeDb)
+  const [attackMs, setAttackMs] = useState<number>(DEFAULTS.attackMs)
+  const [releaseMs, setReleaseMs] = useState<number>(DEFAULTS.releaseMs)
+  const [hitSpacingMs, setHitSpacingMs] = useState<number>(DEFAULTS.hitSpacingMs)
+  const [pingPongEnabled, setPingPongEnabled] = useState<boolean>(DEFAULTS.pingPongEnabled)
   const [bandwidth, setBandwidth] = useState<number>(DEFAULTS.bandwidth)
   const [bandwidthFilterMode, setBandwidthFilterMode] = useState<dotGridAudio.BandwidthFilterMode>(DEFAULTS.bandwidthFilterMode)
   const [gentleEdgeFalloffDbPerOct, setGentleEdgeFalloffDbPerOct] = useState<number>(DEFAULTS.gentleEdgeFalloffDbPerOct)
@@ -614,28 +618,32 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     const hydratedCols = Math.max(MIN_COLS, Math.min(MAX_COLS, focusedDefaultsMigrated ? loadSetting("cabin:gridCols", DEFAULTS.gridCols) : DEFAULTS.gridCols))
     setGridRows(hydratedRows)
     setGridCols(hydratedCols)
-    setSpeed(Math.max(SPEED_MIN, Math.min(SPEED_MAX, focusedDefaultsMigrated ? loadSetting("cabin:speed", DEFAULTS.speed) : DEFAULTS.speed)))
+    setSpeed(DEFAULTS.speed)
+    setAttackMs(loadSetting("cabin:attackMsV2", DEFAULTS.attackMs))
+    setReleaseMs(loadSetting("cabin:releaseMsV2", DEFAULTS.releaseMs))
+    setHitSpacingMs(loadSetting("cabin:hitSpacingMs", DEFAULTS.hitSpacingMs))
+    setPingPongEnabled(loadSetting("cabin:pingPongEnabled", DEFAULTS.pingPongEnabled))
     const masterVolumeDbMigrated = loadSetting("cabin:masterVolumeDbV1", false)
     setVolumeDb(masterVolumeDbMigrated ? loadSetting("cabin:volumeDb", DEFAULTS.volumeDb) : DEFAULTS.volumeDb)
     saveSetting("cabin:masterVolumeDbV1", true)
     saveSetting("cabin:release", DEFAULTS.release)
     setBandwidth(loadSetting("cabin:bandwidth", DEFAULTS.bandwidth))
-    setBandwidthFilterMode(loadSetting("cabin:bandwidthFilterMode", DEFAULTS.bandwidthFilterMode))
-    setGentleEdgeFalloffDbPerOct(loadSetting("cabin:gentleEdgeFalloffDbPerOct", DEFAULTS.gentleEdgeFalloffDbPerOct))
+    setBandwidthFilterMode(DEFAULTS.bandwidthFilterMode)
+    setGentleEdgeFalloffDbPerOct(DEFAULTS.gentleEdgeFalloffDbPerOct)
     setSettingsCollapsed(loadSetting("cabin:settingsCollapsed", DEFAULTS.settingsCollapsed))
     setDepth(DEFAULTS.depth)
-    setLoudQuietBlockSize(clampLoudQuietBlockSize(loadSetting("cabin:loudQuietBlockSize", DEFAULTS.loudQuietBlockSize)))
-    setLoudQuietPerDot(loadSetting("cabin:loudQuietPerDot", DEFAULTS.loudQuietPerDot))
-    const savedRowAlternationModeEnabled = loadSetting("cabin:rowAlternationModeEnabled", DEFAULTS.rowAlternationModeEnabled)
-    const savedRhythmPatternEnabled = loadSetting("cabin:rhythmPatternEnabled", DEFAULTS.rhythmPatternEnabled)
-    const savedInverseDotNoiseEnabled = loadSetting("cabin:inverseDotNoiseEnabled", DEFAULTS.inverseDotNoiseEnabled)
-    setThreeLevelVolumeEnabled(savedRowAlternationModeEnabled || savedRhythmPatternEnabled ? false : loadSetting("cabin:threeLevelVolumeEnabled", DEFAULTS.threeLevelVolumeEnabled))
-    setSidePolarityLoudQuietEnabled(loadSetting("cabin:sidePolarityLoudQuietEnabled", DEFAULTS.sidePolarityLoudQuietEnabled))
-    setLoudQuietBandwidthModeEnabled(savedRowAlternationModeEnabled || savedRhythmPatternEnabled ? false : loadSetting("cabin:loudQuietBandwidthModeEnabled", DEFAULTS.loudQuietBandwidthModeEnabled))
-    setHalfBandPatternEnabled(savedRowAlternationModeEnabled || savedInverseDotNoiseEnabled || savedRhythmPatternEnabled ? false : loadSetting("cabin:halfBandPatternEnabled", DEFAULTS.halfBandPatternEnabled))
-    setRowAlternationModeEnabled(savedInverseDotNoiseEnabled || savedRhythmPatternEnabled ? false : savedRowAlternationModeEnabled)
-    setRhythmPatternEnabled(savedRhythmPatternEnabled)
-    setInverseDotNoiseEnabled(savedInverseDotNoiseEnabled)
+    // Hidden-mode settings are pinned to defaults so the simplified panel
+    // always yields plain alternating noise hits, regardless of any modes
+    // saved by older builds.
+    setLoudQuietBlockSize(DEFAULTS.loudQuietBlockSize)
+    setLoudQuietPerDot(DEFAULTS.loudQuietPerDot)
+    setThreeLevelVolumeEnabled(DEFAULTS.threeLevelVolumeEnabled)
+    setSidePolarityLoudQuietEnabled(DEFAULTS.sidePolarityLoudQuietEnabled)
+    setLoudQuietBandwidthModeEnabled(DEFAULTS.loudQuietBandwidthModeEnabled)
+    setHalfBandPatternEnabled(DEFAULTS.halfBandPatternEnabled)
+    setRowAlternationModeEnabled(DEFAULTS.rowAlternationModeEnabled)
+    setRhythmPatternEnabled(DEFAULTS.rhythmPatternEnabled)
+    setInverseDotNoiseEnabled(DEFAULTS.inverseDotNoiseEnabled)
     setInverseDotOutsideGapOctaves(Math.max(
       dotGridAudio.MIN_INVERSE_DOT_OUTSIDE_GAP_OCTAVES,
       Math.min(
@@ -650,9 +658,9 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
         loadSetting("cabin:inverseDotBandBoostDb", DEFAULTS.inverseDotBandBoostDb)
       )
     ))
-    setHitMultiplier(clampHitMultiplier(loadSetting("cabin:hitMultiplier", DEFAULTS.hitMultiplier)))
-    setHitStaggerPercent(clampHitStaggerPercent(loadSetting("cabin:hitStaggerPercent", DEFAULTS.hitStaggerPercent)))
-    setWaveWaitSeconds(clampWaveWaitSeconds(loadSetting("cabin:waveWaitSeconds", DEFAULTS.waveWaitSeconds)))
+    setHitMultiplier(DEFAULTS.hitMultiplier)
+    setHitStaggerPercent(DEFAULTS.hitStaggerPercent)
+    setWaveWaitSeconds(DEFAULTS.waveWaitSeconds)
     setHiHatQuietDropDb(loadSetting("cabin:hiHatQuietDropDb", DEFAULTS.hiHatQuietDropDb))
     setEqABEnabled(false)
     setFlatSlope(false)
@@ -664,14 +672,14 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     setReferenceVolumeBalance(DEFAULTS.referenceVolumeBalance)
     setReferenceVolumeOffsetDb(DEFAULTS.referenceVolumeOffsetDb)
     setReferenceVolumeOscillationEnabled(false)
-    setAllVolumeOscillationEnabled(loadSetting("cabin:allVolumeOscillationEnabled", DEFAULTS.allVolumeOscillationEnabled))
-    setAllVolumeOscillationRateHz(clampVolumeOscillationRate(loadSetting("cabin:allVolumeOscillationRateHz", DEFAULTS.allVolumeOscillationRateHz)))
-    setAllVolumeOscillationShape(clampVolumeOscillationShape(loadSetting("cabin:allVolumeOscillationShape", DEFAULTS.allVolumeOscillationShape)))
-    setAllVolumeOscillationWaveEnabled(loadSetting("cabin:allVolumeOscillationWaveEnabled", DEFAULTS.allVolumeOscillationWaveEnabled))
-    setAllVolumeOscillationWavePhase(clampVolumeOscillationWavePhase(loadSetting("cabin:allVolumeOscillationWavePhase", DEFAULTS.allVolumeOscillationWavePhase)))
+    setAllVolumeOscillationEnabled(DEFAULTS.allVolumeOscillationEnabled)
+    setAllVolumeOscillationRateHz(DEFAULTS.allVolumeOscillationRateHz)
+    setAllVolumeOscillationShape(DEFAULTS.allVolumeOscillationShape)
+    setAllVolumeOscillationWaveEnabled(DEFAULTS.allVolumeOscillationWaveEnabled)
+    setAllVolumeOscillationWavePhase(DEFAULTS.allVolumeOscillationWavePhase)
     setSelectionVolumeStepDb(clampSelectionVolumeStepDb(loadSetting("cabin:selectionVolumeStepDb", DEFAULTS.selectionVolumeStepDb)))
-    setContinuousNoiseEnabled(savedInverseDotNoiseEnabled || savedRhythmPatternEnabled ? false : loadSetting("cabin:continuousNoiseEnabled", DEFAULTS.continuousNoiseEnabled))
-    setStraightLoudQuietNoiseEnabled(savedInverseDotNoiseEnabled || savedRhythmPatternEnabled ? false : loadSetting("cabin:straightLoudQuietNoiseEnabled", DEFAULTS.straightLoudQuietNoiseEnabled))
+    setContinuousNoiseEnabled(DEFAULTS.continuousNoiseEnabled)
+    setStraightLoudQuietNoiseEnabled(DEFAULTS.straightLoudQuietNoiseEnabled)
     const loudRatioDefaultMigrated = loadSetting("cabin:continuousLoudRatioDefaultV3", false)
     const savedContinuousLoudRatio = loadSetting("cabin:continuousLoudRatio", DEFAULTS.continuousLoudRatio)
     const continuousLoudRatioDefault =
@@ -681,13 +689,13 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
         : savedContinuousLoudRatio
     setContinuousLoudRatio(clampContinuousLoudRatio(continuousLoudRatioDefault))
     saveSetting("cabin:continuousLoudRatioDefaultV3", true)
-    setContinuousTargetsOnlyEnabled(loadSetting("cabin:continuousTargetsOnlyEnabled", DEFAULTS.continuousTargetsOnlyEnabled))
-    setContinuousTargetsSequentialHoldEnabled(loadSetting("cabin:continuousTargetsSequentialHoldEnabled", DEFAULTS.continuousTargetsSequentialHoldEnabled))
-    setContinuousTwoDotAlternateEnabled(loadSetting("cabin:continuousTwoDotAlternateEnabled", DEFAULTS.continuousTwoDotAlternateEnabled))
-    setSingleLocationTwoDotEnabled(loadSetting("cabin:singleLocationTwoDotEnabled", DEFAULTS.singleLocationTwoDotEnabled))
-    setContinuousLeftRightLoudQuietEnabled(loadSetting("cabin:continuousLeftRightLoudQuietEnabled", DEFAULTS.continuousLeftRightLoudQuietEnabled))
-    setContinuousSequentialEnabled(loadSetting("cabin:continuousSequentialEnabled", DEFAULTS.continuousSequentialEnabled))
-    setContinuousSequentialRowsEnabled(loadSetting("cabin:continuousSequentialRowsEnabled", DEFAULTS.continuousSequentialRowsEnabled))
+    setContinuousTargetsOnlyEnabled(DEFAULTS.continuousTargetsOnlyEnabled)
+    setContinuousTargetsSequentialHoldEnabled(DEFAULTS.continuousTargetsSequentialHoldEnabled)
+    setContinuousTwoDotAlternateEnabled(DEFAULTS.continuousTwoDotAlternateEnabled)
+    setSingleLocationTwoDotEnabled(DEFAULTS.singleLocationTwoDotEnabled)
+    setContinuousLeftRightLoudQuietEnabled(DEFAULTS.continuousLeftRightLoudQuietEnabled)
+    setContinuousSequentialEnabled(DEFAULTS.continuousSequentialEnabled)
+    setContinuousSequentialRowsEnabled(DEFAULTS.continuousSequentialRowsEnabled)
     setDragNoiseModeEnabled(DEFAULTS.dragNoiseModeEnabled)
     setDragNoiseFormationCount(clampDragNoiseFormationCount(loadSetting("cabin:dragNoiseFormationCount", DEFAULTS.dragNoiseFormationCount)))
     setDragNoiseFormationSpread(clampDragNoiseFormationSpread(loadSetting("cabin:dragNoiseFormationSpread", DEFAULTS.dragNoiseFormationSpread)))
@@ -705,7 +713,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     setLineCenter(clampLineCenter(hydratedLineCenter, hydratedLineLength, hydratedLineAngle))
     setLineLength(hydratedLineLength)
     setLineAngle(hydratedLineAngle)
-    setLineSquareModeEnabled(loadSetting("cabin:lineSquareModeEnabled", DEFAULTS.lineSquareModeEnabled))
+    setLineSquareModeEnabled(DEFAULTS.lineSquareModeEnabled)
     setLinePathMotionEnabled(DEFAULTS.linePathMotionEnabled)
     setLineInverseDotPathEnabled(DEFAULTS.lineInverseDotPathEnabled)
     setLineStartGainDb(clampLineEndpointGainDb(loadSetting("cabin:lineStartGainDb", DEFAULTS.lineStartGainDb)))
@@ -717,7 +725,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     setRowCompareVolumeADb(clampRowCompareVolumeDb(loadSetting("cabin:rowCompareVolumeADb", DEFAULTS.rowCompareVolumeADb)))
     setRowCompareVolumeBDb(clampRowCompareVolumeDb(loadSetting("cabin:rowCompareVolumeBDb", DEFAULTS.rowCompareVolumeBDb)))
     setReferenceVolumeMultiplyCount(DEFAULTS.referenceVolumeMultiplyCount)
-    setPositionVolumeEnabled(loadSetting("cabin:positionVolumeEnabled", DEFAULTS.positionVolumeEnabled))
+    setPositionVolumeEnabled(DEFAULTS.positionVolumeEnabled)
     setPositionVolumeLeftDb(clampPositionVolumeDb(loadSetting("cabin:positionVolumeLeftDb", DEFAULTS.positionVolumeLeftDb)))
     setPositionVolumeRightDb(clampPositionVolumeDb(loadSetting("cabin:positionVolumeRightDb", DEFAULTS.positionVolumeRightDb)))
     const savedDotVolumeOffsets = loadSetting<unknown>("cabin:dotVolumeOffsetsDb", [])
@@ -862,7 +870,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   useEffect(() => { saveSetting("cabin:patternModeEnabled", false) }, [])
   useEffect(() => { saveSetting("cabin:patternAccentEvery", DEFAULTS.patternAccentEvery) }, [])
   useEffect(() => { saveSetting("cabin:patternVolumeDiffDb", DEFAULTS.patternVolumeDiffDb) }, [])
-  useEffect(() => { saveSetting("cabin:fourFourHitModeEnabled", true) }, [])
+  useEffect(() => { saveSetting("cabin:fourFourHitModeEnabled", DEFAULTS.fourFourHitModeEnabled) }, [])
   useEffect(() => { saveSetting("cabin:loudQuietBlockSize", loudQuietBlockSize) }, [loudQuietBlockSize])
   useEffect(() => { saveSetting("cabin:loudQuietPerDot", loudQuietPerDot) }, [loudQuietPerDot])
   useEffect(() => { saveSetting("cabin:threeLevelVolumeEnabled", threeLevelVolumeEnabled) }, [threeLevelVolumeEnabled])
@@ -1277,11 +1285,13 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   // Speed controls envelope length and the old no-overlap hit slot.
   // Stagger independently packs consecutive hits inside that timing.
   const dotCount = activeSelectedDots.size
-  const perHitS = useMemo(() => speedToPerHitSeconds(speed), [speed])
+  // Hit spacing directly sets the grid interval between consecutive hits;
+  // envelopes longer than the spacing simply overlap (polyphonic voices).
+  const perHitS = useMemo(() => Math.max(0.02, hitSpacingMs / 1000), [hitSpacingMs])
   const hitStaggerS = useMemo(() => perHitS * (hitStaggerPercent / 100), [perHitS, hitStaggerPercent])
   const effectiveRelease = useMemo(
-    () => Math.max(0.001, getAutoReleaseSeconds(perHitS)),
-    [perHitS]
+    () => Math.max(0.001, releaseMs / 1000),
+    [releaseMs]
   )
 
   const handleRowCompareEnabledChange = useCallback((enabled: boolean) => {
@@ -1579,6 +1589,19 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   }, [effectiveRelease])
 
   useEffect(() => {
+    dotGridAudio.getDotGridAudioPlayer().setHitModeAttack(Math.max(0.001, attackMs / 1000))
+  }, [attackMs])
+
+  useEffect(() => { saveSetting("cabin:attackMsV2", attackMs) }, [attackMs])
+  useEffect(() => { saveSetting("cabin:releaseMsV2", releaseMs) }, [releaseMs])
+  useEffect(() => { saveSetting("cabin:hitSpacingMs", hitSpacingMs) }, [hitSpacingMs])
+  useEffect(() => { saveSetting("cabin:pingPongEnabled", pingPongEnabled) }, [pingPongEnabled])
+
+  useEffect(() => {
+    dotGridAudio.getDotGridAudioPlayer().setSequencerPingPongEnabled(pingPongEnabled)
+  }, [pingPongEnabled])
+
+  useEffect(() => {
     const player = dotGridAudio.getDotGridAudioPlayer()
     player.setBandwidthOscillationEnabled(false)
     player.setBandwidthFilterMode(bandwidthFilterMode)
@@ -1622,7 +1645,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     player.setPatternModeEnabled(false)
     player.setPatternAccentEvery(DEFAULTS.patternAccentEvery)
     player.setPatternVolumeDiffDb(DEFAULTS.patternVolumeDiffDb)
-    player.setFourFourHitModeEnabled(true)
+    player.setFourFourHitModeEnabled(DEFAULTS.fourFourHitModeEnabled)
     player.setFourFourVolumeBlockSize(loudQuietBlockSize)
     player.setFourFourVolumePerDot(loudQuietPerDot)
     player.setFourFourThreeLevelVolumeEnabled(threeLevelVolumeEnabled)
@@ -2308,6 +2331,14 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
         onSpeedChange={(value) => setSpeed(Math.max(SPEED_MIN, Math.min(SPEED_MAX, value)))}
         volumeDb={volumeDb}
         onVolumeChange={setVolumeDb}
+        attackMs={attackMs}
+        onAttackMsChange={setAttackMs}
+        releaseMs={releaseMs}
+        onReleaseMsChange={setReleaseMs}
+        hitSpacingMs={hitSpacingMs}
+        onHitSpacingMsChange={setHitSpacingMs}
+        pingPongEnabled={pingPongEnabled}
+        onPingPongEnabledChange={setPingPongEnabled}
         bandwidth={bandwidth}
         onBandwidthChange={setBandwidth}
         bandwidthFilterMode={bandwidthFilterMode}
