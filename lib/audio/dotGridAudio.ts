@@ -2828,6 +2828,7 @@ class DotGridAudioPlayer {
   private patternVolumeDiffDb: number = 0;
   private fourFourHitModeEnabled: boolean = false;
   private sequencerPingPongEnabled: boolean = false;
+  private dotBalanceDb: number = 0; // + boosts the first dot / quiets the last (reading order)
   private fourFourVolumeBlockSize: number = 4;
   private fourFourVolumePerDot: boolean = false;
   private fourFourThreeLevelVolumeEnabled: boolean = false;
@@ -3309,6 +3310,18 @@ class DotGridAudioPlayer {
       this.stopLoopSequencer();
       this.startLoopSequencer();
     }
+  }
+
+  // Balance between dots in playback order: the first dot gets +balanceDb,
+  // the last gets -balanceDb, dots in between interpolate linearly.
+  public setDotBalanceDb(db: number): void {
+    this.dotBalanceDb = clamp(db, -60, 60);
+  }
+
+  private getDotBalanceDb(dotIndex: number, dotTotal: number): number {
+    if (dotTotal <= 1 || this.dotBalanceDb === 0) return 0;
+    const t = clamp(dotIndex / (dotTotal - 1), 0, 1);
+    return this.dotBalanceDb * (1 - 2 * t);
   }
 
   // Ping-pong dot order: sweep A→B→C→B→A→B… instead of looping one way.
@@ -5421,7 +5434,8 @@ class DotGridAudioPlayer {
       const perDotMultiplier = perDotWaveEnabled
         ? this.audioService.getPerDotVolumeWaveMultiplier(dotIndex, dotTotal)
         : 1.0;
-      return applyReferenceVolumeOffset(dotKey, calculateStepVolume(basePeakVolume * perDotMultiplier, volumeStep, stepCount));
+      const balanceMultiplier = dbToGain(this.getDotBalanceDb(dotIndex, dotTotal));
+      return applyReferenceVolumeOffset(dotKey, calculateStepVolume(basePeakVolume * perDotMultiplier * balanceMultiplier, volumeStep, stepCount));
     };
 
     const getHiHatDotVolume = (

@@ -108,6 +108,10 @@ interface SettingsPanelProps {
   onPingPongEnabledChange: (value: boolean) => void
   depth: number
   onDepthChange: (value: number) => void
+  depthGapDb: number
+  onDepthGapDbChange: (value: number) => void
+  dotBalanceDb: number
+  onDotBalanceDbChange: (value: number) => void
   bandwidth: number
   onBandwidthChange: (value: number) => void
   bandwidthFilterMode: BandwidthFilterMode
@@ -238,6 +242,10 @@ export function SettingsPanel({
   onPingPongEnabledChange,
   depth,
   onDepthChange,
+  depthGapDb,
+  onDepthGapDbChange,
+  dotBalanceDb,
+  onDotBalanceDbChange,
   bandwidth,
   onBandwidthChange,
   bandwidthFilterMode,
@@ -1377,6 +1385,41 @@ export function SettingsPanel({
               max={8}
               step={1}
               onValueChange={(value) => onDepthChange(value[0] ?? depth)}
+            />
+          </div>
+
+          <div className={cn("space-y-2", depth <= 1 && "opacity-35")}>
+            <div className="flex items-center justify-between">
+              <Tip text="Total dB spread from the quietest to the loudest depth level — more levels split it into smaller steps">
+                <span className="text-[10px] dark:text-white/50 text-black/50 uppercase tracking-wider">Depth range</span>
+              </Tip>
+              <span className="text-[10px] dark:text-white/70 text-black/70 tabular-nums">{depthGapDb.toFixed(0)} dB</span>
+            </div>
+            <Slider
+              value={[depthGapDb]}
+              min={0}
+              max={60}
+              step={1}
+              disabled={depth <= 1}
+              onValueChange={(value) => onDepthGapDbChange(value[0] ?? depthGapDb)}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Tip text="Boost the first dot and quiet the last (playback order, left→right / top→bottom); dots in between interpolate">
+                <span className="text-[10px] dark:text-white/50 text-black/50 uppercase tracking-wider">Balance</span>
+              </Tip>
+              <span className="text-[10px] dark:text-white/70 text-black/70 tabular-nums">
+                {dotBalanceDb === 0 ? "even" : `${formatDb(dotBalanceDb)} / ${formatDb(-dotBalanceDb)}`}
+              </span>
+            </div>
+            <Slider
+              value={[dotBalanceDb]}
+              min={-24}
+              max={24}
+              step={1}
+              onValueChange={(value) => onDotBalanceDbChange(value[0] ?? dotBalanceDb)}
             />
           </div>
 
