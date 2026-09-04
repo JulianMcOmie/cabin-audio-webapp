@@ -412,7 +412,7 @@ const DEFAULTS = {
   attackMs: 2,
   releaseMs: 600,
   hitSpacingMs: 250,
-  pingPongEnabled: false,
+  loudnessSwapEnabled: false,
   release: 2,
   releaseAuto: true,
   releaseAutoOffsetMs: 0,
@@ -526,7 +526,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   const [attackMs, setAttackMs] = useState<number>(DEFAULTS.attackMs)
   const [releaseMs, setReleaseMs] = useState<number>(DEFAULTS.releaseMs)
   const [hitSpacingMs, setHitSpacingMs] = useState<number>(DEFAULTS.hitSpacingMs)
-  const [pingPongEnabled, setPingPongEnabled] = useState<boolean>(DEFAULTS.pingPongEnabled)
+  const [loudnessSwapEnabled, setLoudnessSwapEnabled] = useState<boolean>(DEFAULTS.loudnessSwapEnabled)
   const [depthGapDb, setDepthGapDb] = useState<number>(DEFAULTS.depthGapDb)
   const [dotBalanceDb, setDotBalanceDb] = useState<number>(DEFAULTS.dotBalanceDb)
   const [bandwidth, setBandwidth] = useState<number>(DEFAULTS.bandwidth)
@@ -625,7 +625,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     setAttackMs(loadSetting("cabin:attackMsV2", DEFAULTS.attackMs))
     setReleaseMs(loadSetting("cabin:releaseMsV2", DEFAULTS.releaseMs))
     setHitSpacingMs(loadSetting("cabin:hitSpacingMs", DEFAULTS.hitSpacingMs))
-    setPingPongEnabled(loadSetting("cabin:pingPongEnabled", DEFAULTS.pingPongEnabled))
+    setLoudnessSwapEnabled(loadSetting("cabin:loudnessSwapEnabled", DEFAULTS.loudnessSwapEnabled))
     const masterVolumeDbMigrated = loadSetting("cabin:masterVolumeDbV1", false)
     setVolumeDb(masterVolumeDbMigrated ? loadSetting("cabin:volumeDb", DEFAULTS.volumeDb) : DEFAULTS.volumeDb)
     saveSetting("cabin:masterVolumeDbV1", true)
@@ -1605,11 +1605,11 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   useEffect(() => { saveSetting("cabin:attackMsV2", attackMs) }, [attackMs])
   useEffect(() => { saveSetting("cabin:releaseMsV2", releaseMs) }, [releaseMs])
   useEffect(() => { saveSetting("cabin:hitSpacingMs", hitSpacingMs) }, [hitSpacingMs])
-  useEffect(() => { saveSetting("cabin:pingPongEnabled", pingPongEnabled) }, [pingPongEnabled])
+  useEffect(() => { saveSetting("cabin:loudnessSwapEnabled", loudnessSwapEnabled) }, [loudnessSwapEnabled])
 
   useEffect(() => {
-    dotGridAudio.getDotGridAudioPlayer().setSequencerPingPongEnabled(pingPongEnabled)
-  }, [pingPongEnabled])
+    dotGridAudio.getDotGridAudioPlayer().setLoudnessSwapEnabled(loudnessSwapEnabled)
+  }, [loudnessSwapEnabled])
 
   useEffect(() => {
     const player = dotGridAudio.getDotGridAudioPlayer()
@@ -1679,6 +1679,12 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     player.setHiHatQuietDropDb(hiHatQuietDropDb)
     player.setHiHatLoudReleaseBoostMs(FIXED_ACCENT_RELEASE_MS)
   }, [depth, depthGapDb, halfBandPatternEnabled, hiHatQuietDropDb, loudQuietBandwidthModeEnabled, loudQuietBlockSize, loudQuietPerDot, rhythmPatternEnabled, rowAlternationModeEnabled, sidePolarityLoudQuietEnabled, threeLevelVolumeEnabled])
+
+  // Apply sequencer parameter changes to playback immediately (from the next
+  // hit slot) instead of waiting for the current loop to finish.
+  useEffect(() => {
+    dotGridAudio.getDotGridAudioPlayer().requestLoopSequencerRefresh()
+  }, [attackMs, bandwidth, depth, depthGapDb, dotBalanceDb, hitSpacingMs, loudnessSwapEnabled, releaseMs, volumeDb])
 
   useEffect(() => {
     dotGridAudio.getDotGridAudioPlayer().setVolumeDb(volumeDb)
@@ -2350,8 +2356,8 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
         onReleaseMsChange={setReleaseMs}
         hitSpacingMs={hitSpacingMs}
         onHitSpacingMsChange={setHitSpacingMs}
-        pingPongEnabled={pingPongEnabled}
-        onPingPongEnabledChange={setPingPongEnabled}
+        loudnessSwapEnabled={loudnessSwapEnabled}
+        onLoudnessSwapEnabledChange={setLoudnessSwapEnabled}
         depth={depth}
         onDepthChange={(value) => setDepth(Math.max(1, Math.min(8, Math.round(value))))}
         depthGapDb={depthGapDb}

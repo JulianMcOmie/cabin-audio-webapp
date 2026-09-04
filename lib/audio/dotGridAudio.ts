@@ -284,6 +284,8 @@ enum SoundMode {
 interface Voice {
   envelopeGain: GainNode;
   releaseEndTime: number; // When this voice will be free (after release completes)
+  startTime?: number; // Scheduled start of the hit currently assigned to this voice
+  previousReleaseEndTime?: number; // Tail end of the hit that preceded it
 }
 
 interface DelayedCloneOutput {
@@ -1526,6 +1528,8 @@ class PositionedAudioService {
     // Find an available voice from the pool (or steal the oldest one)
     const voice = this.allocateVoice(point.voicePool, scheduledTime);
     const gainParam = voice.envelopeGain.gain;
+    voice.previousReleaseEndTime = voice.releaseEndTime;
+    voice.startTime = scheduledTime;
 
     // Cancel any previous scheduled values and start fresh
     gainParam.cancelScheduledValues(scheduledTime);
@@ -1550,6 +1554,33 @@ class PositionedAudioService {
 
     // Mark when this voice will be free
     voice.releaseEndTime = scheduledTime + attackTime + releaseTime;
+  }
+
+  /**
+   * Drop every hit scheduled to start at or after `time` without touching
+   * hits that are already sounding: a voice still ringing a previous tail keeps
+   * ramping to silence, a voice that was idle simply stays silent.
+   */
+  public cancelScheduledHitsFrom(time: number): void {
+    this.audioPoints.forEach((point) => {
+      point.voicePool.forEach((voice) => {
+        if (voice.startTime === undefined || voice.startTime < time) return;
+        const gainParam = voice.envelopeGain.gain;
+        const previousTailEnd = voice.previousReleaseEndTime ?? 0;
+        if (typeof gainParam.cancelAndHoldAtTime === 'function') {
+          gainParam.cancelAndHoldAtTime(time);
+        } else {
+          gainParam.cancelScheduledValues(time);
+        }
+        if (previousTailEnd > time) {
+          gainParam.linearRampToValueAtTime(0, previousTailEnd);
+        } else {
+          gainParam.setValueAtTime(0, time);
+        }
+        voice.releaseEndTime = Math.max(previousTailEnd, time);
+        voice.startTime = undefined;
+      });
+    });
   }
 
   /**
@@ -2827,7 +2858,12 @@ class DotGridAudioPlayer {
   private patternAccentEvery: PatternAccentEvery = 8;
   private patternVolumeDiffDb: number = 0;
   private fourFourHitModeEnabled: boolean = false;
-  private sequencerPingPongEnabled: boolean = false;
+  // Every 4 cycles, swap which dots are loud and quiet (flips the balance sign).
+  private loudnessSwapEnabled: boolean = false;
+  private loudnessSwapCycleIndex: number = 0;
+  // Hit index (within the full cycle) the currently scheduled batch started at.
+  private loopSequencerCycleStartHitIndex: number = 0;
+  private loopSequencerRefreshTimeoutId: number | null = null;
   private dotBalanceDb: number = 0; // + boosts the first dot / quiets the last (reading order)
   private fourFourVolumeBlockSize: number = 4;
   private fourFourVolumePerDot: boolean = false;
@@ -3318,20 +3354,60 @@ class DotGridAudioPlayer {
     this.dotBalanceDb = clamp(db, -60, 60);
   }
 
+  private getLoudnessSwapPolarity(): number {
+    if (!this.loudnessSwapEnabled) return 1;
+    return Math.floor(this.loudnessSwapCycleIndex / 4) % 2 === 1 ? -1 : 1;
+  }
+
   private getDotBalanceDb(dotIndex: number, dotTotal: number): number {
     if (dotTotal <= 1 || this.dotBalanceDb === 0) return 0;
     const t = clamp(dotIndex / (dotTotal - 1), 0, 1);
-    return this.dotBalanceDb * (1 - 2 * t);
+    return this.dotBalanceDb * (1 - 2 * t) * this.getLoudnessSwapPolarity();
   }
 
-  // Ping-pong dot order: sweep A→B→C→B→A→B… instead of looping one way.
-  public setSequencerPingPongEnabled(enabled: boolean): void {
-    if (this.sequencerPingPongEnabled === enabled) return;
-    this.sequencerPingPongEnabled = enabled;
-    if (this.isPlaying && this.isLoopSequencerMode()) {
-      this.stopLoopSequencer();
+  public setLoudnessSwapEnabled(enabled: boolean): void {
+    if (this.loudnessSwapEnabled === enabled) return;
+    this.loudnessSwapEnabled = enabled;
+    this.loudnessSwapCycleIndex = 0;
+  }
+
+  /**
+   * Apply changed sequencer parameters to playback right away. Hits that have
+   * not started yet are dropped and the cycle is re-scheduled from the next
+   * hit slot on the existing grid, so nothing doubles up or cuts off.
+   * Calls are coalesced so slider drags don't thrash the scheduler.
+   */
+  public requestLoopSequencerRefresh(): void {
+    if (!this.isPlaying || !this.isLoopSequencerMode()) return;
+    if (this.loopSequencerRefreshTimeoutId !== null) return;
+    this.loopSequencerRefreshTimeoutId = window.setTimeout(() => {
+      this.loopSequencerRefreshTimeoutId = null;
+      this.refreshLoopSequencerLive();
+    }, 30);
+  }
+
+  private refreshLoopSequencerLive(): void {
+    if (!this.isPlaying || !this.isLoopSequencerMode() || this.activeDotKeys.size === 0) return;
+
+    const now = audioContext.getAudioContext().currentTime;
+    const interval = this.loopSequencerVisualHitInterval;
+    const cycleStart = this.loopSequencerVisualCycleStartTime;
+    if (!(interval > 0) || this.loopSequencerVisualCycleHits <= 0) {
+      this.stopLoopSequencerInternalCleanup();
       this.startLoopSequencer();
+      return;
     }
+
+    // Hits starting within the safety margin are left to play as scheduled.
+    const margin = 0.03;
+    const slotsElapsed = Math.max(0, Math.ceil((now + margin - cycleStart) / interval));
+    const nextSlotTime = cycleStart + slotsElapsed * interval;
+    const fullCycleHits = this.loopSequencerCycleStartHitIndex + this.loopSequencerVisualCycleHits;
+    const nextHitIndex = this.loopSequencerCycleStartHitIndex + slotsElapsed;
+
+    this.audioService.cancelScheduledHitsFrom(nextSlotTime - 0.0005);
+    this.stopLoopSequencerInternalCleanup();
+    this.startLoopSequencer(nextSlotTime, nextHitIndex >= fullCycleHits ? 0 : nextHitIndex);
   }
 
   public setFourFourVolumeBlockSize(size: number): void {
@@ -5057,8 +5133,10 @@ class DotGridAudioPlayer {
    * @param scheduledStartTime If provided, use this as the start time for
    *   scheduling hits (for seamless looping). Otherwise use currentTime.
    */
-  private startLoopSequencer(scheduledStartTime?: number): void {
+  private startLoopSequencer(scheduledStartTime?: number, startHitIndex: number = 0, advanceSwapCycle: boolean = false): void {
     this.stopLoopSequencerInternalCleanup();
+    if (advanceSwapCycle) this.loudnessSwapCycleIndex++;
+    let plainSkipHits = 0;
 
     if (!this.isPlaying || this.activeDotKeys.size === 0) {
       this.resetLoopSequencerVisualState();
@@ -6122,21 +6200,22 @@ class DotGridAudioPlayer {
     } else {
       // Non-interleaved mode: walk the ping-pong depth layer as a wave:
       // every selected dot plays at layer 1, then every dot at layer 2, etc.
+      // A live parameter refresh resumes part-way through the cycle: hits
+      // before `startHitIndex` are skipped and the rest keep the hit grid.
+      const cycleHitCount = volumeCycleSteps.length * playableDots.length * hitsPerVolumeLevel;
+      plainSkipHits = cycleHitCount > 0 ? startHitIndex % cycleHitCount : 0;
       let hitIndex = 0;
-
-      // Optional back-and-forth dot order: A B C B (then loop) instead of
-      // A B C. The endpoints are not doubled so the sweep stays even.
-      const sequenceDots = this.sequencerPingPongEnabled && playableDots.length > 2
-        ? [...playableDots, ...playableDots.slice(1, -1).reverse()]
-        : playableDots;
+      let scheduledHitIndex = 0;
 
       volumeCycleSteps.forEach((volumeStep) => {
-        sequenceDots.forEach((dotKey) => {
-          const dotIndex = Math.max(0, playableDots.indexOf(dotKey));
+        playableDots.forEach((dotKey, dotIndex) => {
           for (let hit = 0; hit < hitsPerVolumeLevel; hit++) {
-            const hitTime = currentTime + hitIndex * stagger;
-            const peakVolume = getDotVolume(dotKey, dotIndex, playableDots.length, volumeStep, volumeSteps, hitTime);
-            scheduleSequencerHit(dotKey, hitTime, peakVolume);
+            if (hitIndex >= plainSkipHits) {
+              const hitTime = currentTime + scheduledHitIndex * stagger;
+              const peakVolume = getDotVolume(dotKey, dotIndex, playableDots.length, volumeStep, volumeSteps, hitTime);
+              scheduleSequencerHit(dotKey, hitTime, peakVolume);
+              scheduledHitIndex++;
+            }
             hitIndex++;
           }
         });
@@ -6229,9 +6308,7 @@ class DotGridAudioPlayer {
       ? reverbDepthHits
       : singleDotMiddleDepthSequence
         ? singleDotMiddleDepthHits
-        : (this.sequencerPingPongEnabled && playableDotCount > 2
-            ? playableDotCount * 2 - 2
-            : playableDotCount) * hitsPerDot;
+        : playableDotCount * hitsPerDot;
     const effectiveSequentialMode = isSequentialMode || rowCompareActive || fourFourHitModeActive || rhythmPatternActive;
     const effectiveSequentialHitInterval = rhythmPatternActive
       ? Math.max(0.01, this.continuousLoudQuietStepSeconds)
@@ -6250,7 +6327,8 @@ class DotGridAudioPlayer {
     // a gap between loops.
     const sequentialLoopDuration = totalSequentialHits <= 0
       ? 0
-      : totalSequentialHits * effectiveSequentialHitInterval + inverseClusterTailDuration;
+      : Math.max(1, totalSequentialHits - plainSkipHits) * effectiveSequentialHitInterval + inverseClusterTailDuration;
+    this.loopSequencerCycleStartHitIndex = plainSkipHits;
     const waitDuration = this.loopWaveWaitSeconds * Math.max(1, scheduledWaitGroupCount);
     const loopDuration = straightNoiseLoopDuration !== null
       ? straightNoiseLoopDuration
@@ -6319,7 +6397,7 @@ class DotGridAudioPlayer {
     const earlyMs = Math.min(100, loopDelayMs * 0.25);
     this.loopSequencerTimeoutId = window.setTimeout(() => {
       if (this.isPlaying && this.isLoopSequencerMode()) {
-        this.startLoopSequencer(nextStartTime); // Recursive loop with precise timing
+        this.startLoopSequencer(nextStartTime, 0, true); // Recursive loop with precise timing
       }
     }, Math.max(0, loopDelayMs - earlyMs));
   }

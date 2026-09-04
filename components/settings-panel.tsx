@@ -104,8 +104,8 @@ interface SettingsPanelProps {
   onReleaseMsChange: (value: number) => void
   hitSpacingMs: number
   onHitSpacingMsChange: (value: number) => void
-  pingPongEnabled: boolean
-  onPingPongEnabledChange: (value: boolean) => void
+  loudnessSwapEnabled: boolean
+  onLoudnessSwapEnabledChange: (value: boolean) => void
   depth: number
   onDepthChange: (value: number) => void
   depthGapDb: number
@@ -238,8 +238,8 @@ export function SettingsPanel({
   onReleaseMsChange,
   hitSpacingMs,
   onHitSpacingMsChange,
-  pingPongEnabled,
-  onPingPongEnabledChange,
+  loudnessSwapEnabled,
+  onLoudnessSwapEnabledChange,
   depth,
   onDepthChange,
   depthGapDb,
@@ -1424,10 +1424,10 @@ export function SettingsPanel({
           </div>
 
           <div className="flex items-center justify-between">
-            <Tip text="Sweep the dot order back and forth (A B C B A…) instead of looping one way">
+            <Tip text="Every 4 cycles, swap which dots are loud and which are quiet (flips the balance)">
               <span className="text-[10px] dark:text-white/50 text-black/50 uppercase tracking-wider">Back &amp; forth</span>
             </Tip>
-            <Switch checked={pingPongEnabled} onCheckedChange={onPingPongEnabledChange} />
+            <Switch checked={loudnessSwapEnabled} onCheckedChange={onLoudnessSwapEnabledChange} />
           </div>
         </div>
       </div>

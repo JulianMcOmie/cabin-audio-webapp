@@ -164,17 +164,19 @@ export function SimpleSoundstage({
 
   const resolveGrid = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      // The dot grid is laid out inside a 2rem padding, so hit-test in that
+      // same inner box (otherwise hitboxes drift away from the drawn dots).
+      // Pointers in the padding snap to the nearest edge cell.
       const rect = e.currentTarget.getBoundingClientRect()
-      const x = e.clientX - rect.left
-      const y = e.clientY - rect.top
-      const cellW = rect.width / gridCols
-      const cellH = rect.height / gridRows
-      const col = Math.floor(x / cellW)
-      const row = Math.floor(y / cellH)
-      if (col >= 0 && col < gridCols && row >= 0 && row < gridRows) {
-        return { col, row: gridRows - 1 - row }
-      }
-      return null
+      const pad = 32 // 2rem padding
+      const innerW = rect.width - pad * 2
+      const innerH = rect.height - pad * 2
+      if (innerW <= 0 || innerH <= 0) return null
+      const x = e.clientX - rect.left - pad
+      const y = e.clientY - rect.top - pad
+      const col = Math.max(0, Math.min(gridCols - 1, Math.floor((x / innerW) * gridCols)))
+      const displayRow = Math.max(0, Math.min(gridRows - 1, Math.floor((y / innerH) * gridRows)))
+      return { col, row: gridRows - 1 - displayRow }
     },
     [gridRows, gridCols]
   )
@@ -337,11 +339,19 @@ export function SimpleSoundstage({
         bgColor = hsl
         shadow = `0 0 14px ${glowHsl}`
       } else if (isHovered) {
-        bgColor = isDarkMode ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.22)"
-        shadow = "none"
+        // Preview the dot's frequency color so it's obvious what a click selects
+        bgColor = hsl
+        shadow = `0 0 10px ${glowHsl}`
       } else {
         bgColor = isDarkMode ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.1)"
         shadow = "none"
+      }
+
+      const hoverPreview = isHovered && !isSelected && !isPlaying && !isReference && !isConstant
+      const showHoverRing = isHovered && !interactionDisabled
+      if (showHoverRing) {
+        const ring = isDarkMode ? "rgba(255,255,255,0.85)" : "rgba(0,0,0,0.6)"
+        shadow = `${shadow === "none" ? "" : `${shadow}, `}0 0 0 2px ${ring}`
       }
 
       const highlightActive = highlightGrid && !isSongPlaying
@@ -353,8 +363,12 @@ export function SimpleSoundstage({
         animation = "dot-invite-breathe 2s ease-in-out infinite"
       }
 
-      // EQ highlight opacity boost
-      const opacityStyle = eqIntensity > 0.01 ? Math.min(1, 0.3 + eqIntensity * 0.7) : undefined
+      // EQ highlight opacity boost; hover preview shows the color at partial strength
+      const opacityStyle = eqIntensity > 0.01
+        ? Math.min(1, 0.3 + eqIntensity * 0.7)
+        : hoverPreview
+          ? 0.6
+          : undefined
 
       cells.push(
         <div
@@ -363,7 +377,7 @@ export function SimpleSoundstage({
           style={{ gridColumn: col + 1, gridRow: displayRow + 1 }}
         >
           <div
-            className="rounded-full transition-colors transition-shadow duration-150"
+            className="rounded-full transition-[background-color,box-shadow,transform,opacity] duration-150"
             style={{
               width: dotSize,
               height: dotSize,
@@ -371,6 +385,7 @@ export function SimpleSoundstage({
               boxShadow: shadow,
               animation,
               opacity: opacityStyle,
+              transform: showHoverRing ? "scale(1.1)" : undefined,
             }}
           />
         </div>
