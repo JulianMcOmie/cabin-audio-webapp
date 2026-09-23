@@ -18,11 +18,7 @@ export function LibraryPanel({ isOpen, onClose }: LibraryPanelProps) {
 
   return (
     <div
-      className={`absolute bottom-[140px] left-4 right-16 z-[35] max-w-2xl transition-all duration-300 ease-out ${
-        isOpen
-          ? "opacity-100 translate-y-0 pointer-events-auto"
-          : "opacity-0 translate-y-6 pointer-events-none"
-      }`}
+      className={`relative w-full min-w-0 shrink-0 ${isOpen ? "" : "hidden"}`}
     >
       <div className="glass-panel rounded-2xl max-h-[50vh] flex flex-col overflow-hidden">
         {/* Header */}

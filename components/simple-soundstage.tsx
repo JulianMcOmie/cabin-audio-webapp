@@ -65,6 +65,7 @@ interface SimpleSoundstageProps {
   onDotReference?: (x: number, y: number) => void
   onDotConstantToggle?: (x: number, y: number) => void
   playingDotKey: string | null
+  playingDotKeys?: string[]
   beatIndex: number
   hoveredDot: string | null
   onHoverDot: (key: string | null) => void
@@ -92,6 +93,7 @@ export function SimpleSoundstage({
   onDotReference,
   onDotConstantToggle,
   playingDotKey,
+  playingDotKeys,
   hoveredDot,
   onHoverDot,
   highlightGrid,
@@ -303,7 +305,7 @@ export function SimpleSoundstage({
       const isSelected = selectedDots.has(key)
       const isConstant = constantDots?.has(key) ?? false
       const isReference = referenceDotKey === key || (referenceDotKeys?.has(key) ?? false)
-      const isPlaying = playingDotKey === key
+      const isPlaying = playingDotKeys ? playingDotKeys.includes(key) : playingDotKey === key
       const isHovered = hoveredDot === key
 
       const { hsl, glowHsl } = getDotColor(row, gridRows, isDarkMode)

@@ -127,19 +127,15 @@ export default function Home() {
   }, [showEQOverlay, showLibrary])
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden">
-      <div
-        className={`absolute left-0 right-32 top-0 z-0 transition-[bottom] duration-200 ${
-          showEQOverlay ? "bottom-[calc(33vh+12rem)]" : "bottom-44"
-        }`}
-      >
+    <div className="relative flex min-h-dvh w-full min-w-0 flex-col gap-3 p-3 sm:p-4">
+      <div className="flex min-w-0 flex-1">
         <MainView quality={quality} highlightTarget={highlightTarget} isPlaying={isPlaying} onDragStateChange={setIsDraggingGrid} activeBand={activeBand} />
       </div>
 
-      {/* EQ Overlay */}
+      {/* Panels occupy their own rows, never covering the interactive grid. */}
       <EQOverlay isOpen={showEQOverlay} onClose={() => setShowEQOverlay(false)} onActiveBandChange={handleActiveBandChange} />
 
-      {/* Library Panel — sits directly above control bar */}
+      {/* Library sits directly above the control bar. */}
       <LibraryPanel isOpen={showLibrary} onClose={() => setShowLibrary(false)} />
 
       <ControlPanel

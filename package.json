@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:guided-eq": "node --test lib/calibration/guidedEQ.test.mjs"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.3",

@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react"
 import dynamic from "next/dynamic"
 import { SettingsPanel } from "@/components/settings-panel"
+import { LiveAudioSpectrum } from "@/components/live-audio-spectrum"
 import { Slider } from "@/components/ui/slider"
 import * as dotGridAudio from "@/lib/audio/dotGridAudio"
-import { resumeAudioContext } from "@/lib/audio/audioContext"
+import { getAudioContext, resumeAudioContext } from "@/lib/audio/audioContext"
 import { useEQProfileStore } from "@/lib/stores/eqProfileStore"
 import { usePlayerStore } from "@/lib/stores"
 import type { QualityLevel } from "@/components/unified-particle-scene"
@@ -364,12 +365,6 @@ function isDotKeyInGrid(dotKey: string | null, rows: number, cols: number): bool
   return Number.isInteger(col) && Number.isInteger(row) && col >= 0 && row >= 0 && col < cols && row < rows
 }
 
-function formatDotKeyLabel(dotKey: string): string {
-  const [col, row] = dotKey.split(",").map(Number)
-  if (!Number.isInteger(col) || !Number.isInteger(row)) return dotKey
-  return `c${col + 1} r${row + 1}`
-}
-
 function getRandomDotKey(rows: number, cols: number, previousKey: string | null = null): string {
   const safeRows = Math.max(1, Math.floor(rows))
   const safeCols = Math.max(1, Math.floor(cols))
@@ -411,8 +406,9 @@ const DEFAULTS = {
   volumeDb: 0,
   attackMs: 2,
   releaseMs: 600,
-  hitSpacingMs: 250,
+  hitSpacingMs: 125,
   loudnessSwapEnabled: false,
+  balanceAlternateHits: 4,
   release: 2,
   releaseAuto: true,
   releaseAutoOffsetMs: 0,
@@ -422,6 +418,8 @@ const DEFAULTS = {
   bandwidthOscillationEnabled: false,
   settingsCollapsed: true,
   depth: 1,
+  bandwidthLevels: 1,
+  depthPerDot: false,
   hiHatModeEnabled: false,
   patternModeEnabled: false,
   patternAccentEvery: 8 as PatternAccentEvery,
@@ -439,7 +437,7 @@ const DEFAULTS = {
   inverseDotNoiseEnabled: false,
   inverseDotOutsideGapOctaves: dotGridAudio.DEFAULT_INVERSE_DOT_OUTSIDE_GAP_OCTAVES,
   inverseDotBandBoostDb: dotGridAudio.DEFAULT_INVERSE_DOT_BAND_BOOST_DB,
-  hitMultiplier: 1,
+  hitMultiplier: 4,
   hitStaggerPercent: DEFAULT_HIT_STAGGER_PERCENT,
   waveWaitSeconds: DEFAULT_WAVE_WAIT_SECONDS,
   experimentalModeEnabled: false,
@@ -455,6 +453,7 @@ const DEFAULTS = {
   hiHatLoudReleaseBoostMs: 200,
   repeatCount: 1,
   depthGapDb: 20,
+  bandwidthRangeOctaves: 0,
   dotBalanceDb: 0,
   eqABEnabled: false,
   flatSlope: false,
@@ -474,7 +473,7 @@ const DEFAULTS = {
   allVolumeOscillationWaveEnabled: false,
   allVolumeOscillationWavePhase: DEFAULT_VOLUME_OSCILLATION_WAVE_PHASE,
   selectionVolumeStepDb: DEFAULT_SELECTION_VOLUME_STEP_DB,
-  continuousNoiseEnabled: false,
+  continuousNoiseEnabled: true,
   straightLoudQuietNoiseEnabled: false,
   continuousLoudRatio: DEFAULT_CONTINUOUS_LOUD_RATIO,
   continuousTargetsOnlyEnabled: false,
@@ -527,13 +526,28 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   const [releaseMs, setReleaseMs] = useState<number>(DEFAULTS.releaseMs)
   const [hitSpacingMs, setHitSpacingMs] = useState<number>(DEFAULTS.hitSpacingMs)
   const [loudnessSwapEnabled, setLoudnessSwapEnabled] = useState<boolean>(DEFAULTS.loudnessSwapEnabled)
+  const [balanceAlternateHits, setBalanceAlternateHits] = useState<number>(DEFAULTS.balanceAlternateHits)
   const [depthGapDb, setDepthGapDb] = useState<number>(DEFAULTS.depthGapDb)
+  const [bandwidthRangeOctaves, setBandwidthRangeOctaves] = useState<number>(DEFAULTS.bandwidthRangeOctaves)
   const [dotBalanceDb, setDotBalanceDb] = useState<number>(DEFAULTS.dotBalanceDb)
   const [bandwidth, setBandwidth] = useState<number>(DEFAULTS.bandwidth)
   const [bandwidthFilterMode, setBandwidthFilterMode] = useState<dotGridAudio.BandwidthFilterMode>(DEFAULTS.bandwidthFilterMode)
   const [gentleEdgeFalloffDbPerOct, setGentleEdgeFalloffDbPerOct] = useState<number>(DEFAULTS.gentleEdgeFalloffDbPerOct)
   const [settingsCollapsed, setSettingsCollapsed] = useState<boolean>(DEFAULTS.settingsCollapsed)
   const [depth, setDepth] = useState<number>(DEFAULTS.depth)
+  const [simultaneousHeightEnabled, setSimultaneousHeightEnabled] = useState(false)
+  const [rowRepeatEnabled, setRowRepeatEnabled] = useState(false)
+  const [rowWiseEnabled, setRowWiseEnabled] = useState(false)
+  const [columnWiseEnabled, setColumnWiseEnabled] = useState(false)
+  const [depthAfterPass, setDepthAfterPass] = useState(false)
+  const [rectangleAlternationEnabled, setRectangleAlternationEnabled] = useState(false)
+  const [rectangleAlternationSeconds, setRectangleAlternationSeconds] = useState(2)
+  const [pulseOverlapEnabled, setPulseOverlapEnabled] = useState(false)
+  const [continuousReleaseMs, setContinuousReleaseMs] = useState(0)
+  const [lowerEdgeSineEnabled, setLowerEdgeSineEnabled] = useState(false)
+  const [lowerEdgeSineVolumeDb, setLowerEdgeSineVolumeDb] = useState(-24)
+  const [bandwidthLevels, setBandwidthLevels] = useState<number>(DEFAULTS.bandwidthLevels)
+  const [depthPerDot, setDepthPerDot] = useState<boolean>(DEFAULTS.depthPerDot)
   const [blindRandomModeEnabled, setBlindRandomModeEnabled] = useState<boolean>(DEFAULTS.blindRandomModeEnabled)
   const [blindRandomDotKey, setBlindRandomDotKey] = useState<string | null>(null)
   const [loudQuietBlockSize, setLoudQuietBlockSize] = useState<number>(DEFAULTS.loudQuietBlockSize)
@@ -616,6 +630,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
 
   // Hydrate from localStorage after mount to avoid SSR mismatch
   useEffect(() => {
+    const speedDefaultsMigrated = loadSetting("cabin:speedDefaultsV2", false)
     const focusedDefaultsMigrated = loadSetting("cabin:focusedClickDefaultsV1", false)
     const hydratedRows = Math.max(MIN_ROWS, Math.min(MAX_ROWS, focusedDefaultsMigrated ? loadSetting("cabin:gridRows", DEFAULTS.gridRows) : DEFAULTS.gridRows))
     const hydratedCols = Math.max(MIN_COLS, Math.min(MAX_COLS, focusedDefaultsMigrated ? loadSetting("cabin:gridCols", DEFAULTS.gridCols) : DEFAULTS.gridCols))
@@ -623,20 +638,40 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     setGridCols(hydratedCols)
     setSpeed(DEFAULTS.speed)
     setAttackMs(loadSetting("cabin:attackMsV2", DEFAULTS.attackMs))
-    setReleaseMs(loadSetting("cabin:releaseMsV2", DEFAULTS.releaseMs))
-    setHitSpacingMs(loadSetting("cabin:hitSpacingMs", DEFAULTS.hitSpacingMs))
-    setLoudnessSwapEnabled(loadSetting("cabin:loudnessSwapEnabled", DEFAULTS.loudnessSwapEnabled))
+    setReleaseMs(0)
+    const savedHitSpacing = loadSetting<number>("cabin:hitSpacingMs", DEFAULTS.hitSpacingMs)
+    setHitSpacingMs(Math.max(20, !speedDefaultsMigrated && savedHitSpacing === 250 ? 125 : savedHitSpacing))
+    setLoudnessSwapEnabled(false)
+    setBalanceAlternateHits(Math.max(1, Math.min(64, Math.round(loadSetting("cabin:balanceAlternateHits", DEFAULTS.balanceAlternateHits)))))
     const masterVolumeDbMigrated = loadSetting("cabin:masterVolumeDbV1", false)
     setVolumeDb(masterVolumeDbMigrated ? loadSetting("cabin:volumeDb", DEFAULTS.volumeDb) : DEFAULTS.volumeDb)
     saveSetting("cabin:masterVolumeDbV1", true)
     saveSetting("cabin:release", DEFAULTS.release)
-    setBandwidth(loadSetting("cabin:bandwidth", DEFAULTS.bandwidth))
+    setBandwidth(DEFAULTS.bandwidth)
     setBandwidthFilterMode(DEFAULTS.bandwidthFilterMode)
     setGentleEdgeFalloffDbPerOct(DEFAULTS.gentleEdgeFalloffDbPerOct)
     setSettingsCollapsed(loadSetting("cabin:settingsCollapsed", DEFAULTS.settingsCollapsed))
+    setRowRepeatEnabled(false)
+    setDepthAfterPass(loadSetting<boolean>("cabin:depthAfterPass", false) === true)
+    const savedColumnWise = loadSetting<boolean>("cabin:columnWiseEnabled", false) === true
+    setColumnWiseEnabled(savedColumnWise)
+    setRowWiseEnabled(!savedColumnWise && loadSetting<boolean>("cabin:rowWiseEnabled", false) === true)
+    setRectangleAlternationEnabled(false)
+    const savedRectangleSeconds = loadSetting<number>("cabin:rectangleAlternationSeconds", 2)
+    setPulseOverlapEnabled(false)
+    setLowerEdgeSineEnabled(false)
+    const savedSineVolume = loadSetting("cabin:lowerEdgeSineVolumeDb", -24)
+    setLowerEdgeSineVolumeDb(Number.isFinite(savedSineVolume) ? Math.max(-60, Math.min(0, savedSineVolume)) : -24)
+    setContinuousReleaseMs(0)
+    setRectangleAlternationSeconds(Number.isFinite(savedRectangleSeconds)
+      ? Math.max(0.05, Math.min(30, !speedDefaultsMigrated && savedRectangleSeconds === 4 ? 2 : savedRectangleSeconds)) : 2)
+    saveSetting("cabin:speedDefaultsV2", true)
     setDepth(Math.max(1, Math.min(8, Math.round(loadSetting("cabin:depth", DEFAULTS.depth)))))
+    setDepthPerDot(false)
+    setBandwidthLevels(DEFAULTS.bandwidthLevels)
     setDepthGapDb(Math.max(0, Math.min(60, loadSetting("cabin:depthGapDbV2", DEFAULTS.depthGapDb))))
-    setDotBalanceDb(Math.max(-24, Math.min(24, loadSetting("cabin:dotBalanceDb", DEFAULTS.dotBalanceDb))))
+    setBandwidthRangeOctaves(0)
+    setDotBalanceDb(0)
     // Hidden-mode settings are pinned to defaults so the simplified panel
     // always yields plain alternating noise hits, regardless of any modes
     // saved by older builds.
@@ -663,7 +698,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
         loadSetting("cabin:inverseDotBandBoostDb", DEFAULTS.inverseDotBandBoostDb)
       )
     ))
-    setHitMultiplier(DEFAULTS.hitMultiplier)
+    setHitMultiplier(clampHitMultiplier(loadSetting("cabin:rowDepthRepeats", DEFAULTS.hitMultiplier)))
     setHitStaggerPercent(DEFAULTS.hitStaggerPercent)
     setWaveWaitSeconds(DEFAULTS.waveWaitSeconds)
     setHiHatQuietDropDb(loadSetting("cabin:hiHatQuietDropDb", DEFAULTS.hiHatQuietDropDb))
@@ -683,7 +718,9 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     setAllVolumeOscillationWaveEnabled(DEFAULTS.allVolumeOscillationWaveEnabled)
     setAllVolumeOscillationWavePhase(DEFAULTS.allVolumeOscillationWavePhase)
     setSelectionVolumeStepDb(clampSelectionVolumeStepDb(loadSetting("cabin:selectionVolumeStepDb", DEFAULTS.selectionVolumeStepDb)))
-    setContinuousNoiseEnabled(DEFAULTS.continuousNoiseEnabled)
+    const continuousDefaultApplied = loadSetting<boolean>("cabin:continuousDefaultV2", false)
+    setContinuousNoiseEnabled(continuousDefaultApplied ? loadSetting<boolean>("cabin:continuousNoiseEnabled", true) : true)
+    saveSetting("cabin:continuousDefaultV2", true)
     setStraightLoudQuietNoiseEnabled(DEFAULTS.straightLoudQuietNoiseEnabled)
     const loudRatioDefaultMigrated = loadSetting("cabin:continuousLoudRatioDefaultV3", false)
     const savedContinuousLoudRatio = loadSetting("cabin:continuousLoudRatio", DEFAULTS.continuousLoudRatio)
@@ -748,7 +785,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     saveSetting("cabin:focusedClickDefaultsV1", true)
   }, [])
   const [hoveredDot, setHoveredDot] = useState<string | null>(null)
-  const [sequencerVisual, setSequencerVisual] = useState<{ playingDotKey: string | null; beatIndex: number }>({
+  const [sequencerVisual, setSequencerVisual] = useState<{ playingDotKey: string | null; playingDotKeys?: string[]; beatIndex: number }>({
     playingDotKey: null,
     beatIndex: 0,
   })
@@ -830,15 +867,10 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     const band = activeBand
     for (let row = 0; row < gridRows; row++) {
       const normalizedY = gridRows <= 1 ? 0.5 : row / (gridRows - 1)
-      // Match dotGridAudio frequency mapping (default: no extension, bandwidth from state)
-      const BOTTOM_LOWER_EDGE_HZ = 30
-      const MAX_AUDIBLE = 20000
-      const effectiveBandwidth = dotGridAudio.getEffectiveBandpassBandwidth(bandwidth, bandwidthFilterMode)
-      const topUpperEdge = MAX_AUDIBLE
-      const topLowerEdge = topUpperEdge / Math.pow(2, effectiveBandwidth)
-      const bottomLowerEdge = BOTTOM_LOWER_EDGE_HZ
-      const lowerEdge = bottomLowerEdge * Math.pow(topLowerEdge / bottomLowerEdge, normalizedY)
-      const upperEdge = lowerEdge * Math.pow(2, effectiveBandwidth)
+      // Match the audible portion of the player's bottom-anchored band.
+      const range = dotGridAudio.getBandpassRangeForNormalizedY(normalizedY, bandwidth, bandwidthFilterMode)
+      const lowerEdge = Math.max(20, Math.min(20000, range.lowerEdge))
+      const upperEdge = Math.max(lowerEdge, Math.min(20000, range.upperEdge))
       const centerFreq = Math.sqrt(lowerEdge * upperEdge)
 
       // Gaussian-like falloff in log-frequency space
@@ -871,6 +903,8 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   useEffect(() => { saveSetting("cabin:gentleEdgeFalloffDbPerOct", gentleEdgeFalloffDbPerOct) }, [gentleEdgeFalloffDbPerOct])
   useEffect(() => { saveSetting("cabin:bandwidthOscillationEnabled", false) }, [])
   useEffect(() => { saveSetting("cabin:depth", depth) }, [depth])
+  useEffect(() => { saveSetting("cabin:depthPerDot", depthPerDot) }, [depthPerDot])
+  useEffect(() => { saveSetting("cabin:bandwidthLevels", bandwidthLevels) }, [bandwidthLevels])
   useEffect(() => { saveSetting("cabin:hiHatModeEnabled", false) }, [])
   useEffect(() => { saveSetting("cabin:patternModeEnabled", false) }, [])
   useEffect(() => { saveSetting("cabin:patternAccentEvery", DEFAULTS.patternAccentEvery) }, [])
@@ -887,7 +921,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   useEffect(() => { saveSetting("cabin:inverseDotNoiseEnabled", inverseDotNoiseEnabled) }, [inverseDotNoiseEnabled])
   useEffect(() => { saveSetting("cabin:inverseDotOutsideGapOctaves", inverseDotOutsideGapOctaves) }, [inverseDotOutsideGapOctaves])
   useEffect(() => { saveSetting("cabin:inverseDotBandBoostDb", inverseDotBandBoostDb) }, [inverseDotBandBoostDb])
-  useEffect(() => { saveSetting("cabin:hitMultiplier", hitMultiplier) }, [hitMultiplier])
+  useEffect(() => { saveSetting("cabin:rowDepthRepeats", hitMultiplier) }, [hitMultiplier])
   useEffect(() => { saveSetting("cabin:hitStaggerPercent", hitStaggerPercent) }, [hitStaggerPercent])
   useEffect(() => { saveSetting("cabin:waveWaitSeconds", waveWaitSeconds) }, [waveWaitSeconds])
   useEffect(() => { saveSetting("cabin:experimentalModeEnabled", false) }, [])
@@ -903,6 +937,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   useEffect(() => { saveSetting("cabin:hiHatLoudReleaseBoostMs", FIXED_ACCENT_RELEASE_MS) }, [])
   useEffect(() => { saveSetting("cabin:repeatCount", 1) }, [])
   useEffect(() => { saveSetting("cabin:depthGapDbV2", depthGapDb) }, [depthGapDb])
+  useEffect(() => { saveSetting("cabin:bandwidthRangeOctaves", bandwidthRangeOctaves) }, [bandwidthRangeOctaves])
   useEffect(() => { saveSetting("cabin:dotBalanceDb", dotBalanceDb) }, [dotBalanceDb])
 
   useEffect(() => {
@@ -1090,6 +1125,44 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   // Subscribe to song playback state — stop soundstage sequencer when a song is playing
   const isSongPlaying = usePlayerStore((s) => s.isPlaying)
 
+  useEffect(() => { saveSetting("cabin:rectangleAlternationEnabled", rectangleAlternationEnabled) }, [rectangleAlternationEnabled])
+  useEffect(() => { saveSetting("cabin:rectangleAlternationSeconds", rectangleAlternationSeconds) }, [rectangleAlternationSeconds])
+  useEffect(() => {
+    if (rectangleAlternationSeconds < 0.05) setRectangleAlternationSeconds(0.05)
+    const minimumHitSpacing = simultaneousHeightEnabled && !rowRepeatEnabled && !rowWiseEnabled && !columnWiseEnabled ? 12.5 : 20
+    if (hitSpacingMs < minimumHitSpacing) setHitSpacingMs(minimumHitSpacing)
+  }, [rectangleAlternationSeconds, hitSpacingMs, simultaneousHeightEnabled, rowRepeatEnabled, rowWiseEnabled, columnWiseEnabled])
+  useEffect(() => { saveSetting("cabin:pulseOverlapEnabled", pulseOverlapEnabled) }, [pulseOverlapEnabled])
+  useEffect(() => { saveSetting("cabin:continuousReleaseMs", continuousReleaseMs) }, [continuousReleaseMs])
+  useEffect(() => {
+    saveSetting("cabin:rowRepeatEnabled", rowRepeatEnabled)
+    dotGridAudio.getDotGridAudioPlayer().setRowRepeatEnabled(rowRepeatEnabled)
+  }, [rowRepeatEnabled])
+  useEffect(() => {
+    saveSetting("cabin:rowWiseEnabled", rowWiseEnabled)
+    saveSetting("cabin:columnWiseEnabled", columnWiseEnabled)
+    dotGridAudio.getDotGridAudioPlayer().setPlaybackGrouping(columnWiseEnabled ? "column" : rowWiseEnabled ? "row" : "dot")
+  }, [rowWiseEnabled, columnWiseEnabled])
+  useEffect(() => {
+    saveSetting("cabin:depthAfterPass", depthAfterPass)
+    dotGridAudio.getDotGridAudioPlayer().setDepthAfterPass(depthAfterPass, hitMultiplier)
+  }, [depthAfterPass, hitMultiplier])
+  useEffect(() => { saveSetting("cabin:lowerEdgeSineEnabled", lowerEdgeSineEnabled) }, [lowerEdgeSineEnabled])
+  useEffect(() => { saveSetting("cabin:lowerEdgeSineVolumeDb", lowerEdgeSineVolumeDb) }, [lowerEdgeSineVolumeDb])
+  useEffect(() => {
+    dotGridAudio.getDotGridAudioPlayer().setLowerEdgeSine(lowerEdgeSineEnabled, lowerEdgeSineVolumeDb)
+  }, [lowerEdgeSineEnabled, lowerEdgeSineVolumeDb])
+
+  const rectangleCorners = useMemo(() => {
+    if (selectedDots.size !== 2) return null
+    const [[x1, y1], [x2, y2]] = Array.from(selectedDots, key => key.split(",").map(Number))
+    if (x1 === x2 || y1 === y2) return null
+    // Keep each note at its pitch and exchange its horizontal position.
+    return new Set([`${x2},${y1}`, `${x1},${y2}`])
+  }, [selectedDots])
+
+
+
   useEffect(() => {
     const player = dotGridAudio.getDotGridAudioPlayer()
     if (!hasSelectedDots || isSongPlaying) {
@@ -1132,17 +1205,76 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     setEQEnabled(group % 2 === 0)
   }, [eqABEnabled, sequencerVisual.beatIndex, depth, setEQEnabled])
 
+  const pendingCornerDepthStep = useRef<{ dots: Set<string>; step: number } | null>(null)
+
   useEffect(() => {
     const player = dotGridAudio.getDotGridAudioPlayer()
-    player.updateDots(activeSelectedDots, activeGridRows, activeGridCols)
+    let canceled = false
+    player.updateDots(activeSelectedDots, activeGridRows, activeGridCols,
+      pendingCornerDepthStep.current?.dots === selectedDots ? continuousReleaseMs / 1000 : 0)
     if (activeSelectedDots.size > 0 && !isSongPlaying) {
       void resumeAudioContext().then(() => {
-        player.setPlaying(true)
+        if (!canceled) player.setPlaying(true)
       })
     } else {
       player.setPlaying(false)
     }
-  }, [activeSelectedDots, activeGridRows, activeGridCols, isSongPlaying])
+    return () => { canceled = true }
+  }, [activeSelectedDots, activeGridRows, activeGridCols, isSongPlaying, continuousReleaseMs, selectedDots])
+
+  useEffect(() => {
+    const continuation = pendingCornerDepthStep.current
+    let depthStepIndex = continuation?.dots === selectedDots ? continuation.step : 0
+    pendingCornerDepthStep.current = null
+    const switchCorners = !columnWiseEnabled && !rowWiseEnabled && !rowRepeatEnabled && rectangleAlternationEnabled && rectangleCorners !== null
+    const sequenceDots = continuousNoiseEnabled && (selectedDots.size >= 2 || ((columnWiseEnabled || rowWiseEnabled || rowRepeatEnabled || (depthAfterPass && depth > 1)) && selectedDots.size > 0))
+    const depthStepsPerPosition = (continuousNoiseEnabled ? Math.max(1, depth) : 1)
+      * (continuousNoiseEnabled && switchCorners ? 2 : 1)
+      * (continuousNoiseEnabled && depthAfterPass ? hitMultiplier : 1)
+    const pulseDots = continuousNoiseEnabled && selectedDots.size >= 1 && (depth > 1 || selectedDots.size <= 2)
+    if ((!switchCorners && !pulseDots && !sequenceDots) || isSongPlaying ||
+      lineCalibrationEnabled || dragNoiseModeEnabled || rowCompareEnabled || blindRandomModeEnabled) return
+    const player = dotGridAudio.getDotGridAudioPlayer()
+    let canceled = false
+    let timer: number | undefined
+    // The playback effect above creates the points and starts them first.
+    void resumeAudioContext().then(() => {
+      if (canceled) return
+      // Ensure playback is active before scheduling: independent resume
+      // promises need not complete in the order the effects requested them.
+      player.setPlaying(true)
+      const context = getAudioContext()
+      const start = context.currentTime + 0.002
+      let nextCycleAt = start + rectangleAlternationSeconds
+      if (sequenceDots) player.scheduleSelectedDotStep(start, depthStepIndex, depth, depthGapDb, continuousReleaseMs / 1000)
+      else if (pulseDots) player.scheduleStaggeredDotPulses(start, rectangleAlternationSeconds, false, pulseOverlapEnabled, depth, depthGapDb, depthStepIndex, continuousReleaseMs / 1000)
+      timer = window.setInterval(() => {
+        if (context.state !== "running") return
+        const finishesDepthSequence = (depthStepIndex + 1) % depthStepsPerPosition === 0
+        if (switchCorners && rectangleCorners && finishesDepthSequence) {
+          if (context.currentTime < nextCycleAt) return
+          window.clearInterval(timer)
+          pendingCornerDepthStep.current = { dots: rectangleCorners, step: depthStepIndex + 1 }
+          setSelectedDots(current => current === selectedDots ? rectangleCorners : current)
+        } else while ((pulseDots || sequenceDots) && context.currentTime >= nextCycleAt - 0.1
+          && (!switchCorners || (depthStepIndex + 1) % depthStepsPerPosition !== 0)) {
+          // Fill the audio-clock lookahead even when steps are faster than the JS timer.
+          const nextStart = Math.max(nextCycleAt, context.currentTime + 0.002)
+          depthStepIndex++
+          if (sequenceDots) player.scheduleSelectedDotStep(nextStart, depthStepIndex, depth, depthGapDb, continuousReleaseMs / 1000)
+          else player.scheduleStaggeredDotPulses(nextStart, rectangleAlternationSeconds, true, pulseOverlapEnabled, depth, depthGapDb, depthStepIndex, continuousReleaseMs / 1000)
+          nextCycleAt = nextStart + rectangleAlternationSeconds
+        }
+      }, Math.min(25, Math.max(4, rectangleAlternationSeconds * 250)))
+    })
+    return () => {
+      canceled = true
+      window.clearInterval(timer)
+      if (!pendingCornerDepthStep.current) player.clearStaggeredDotPulses()
+    }
+  }, [columnWiseEnabled, rowWiseEnabled, rowRepeatEnabled, depthAfterPass, hitMultiplier, rectangleAlternationEnabled, rectangleAlternationSeconds, pulseOverlapEnabled, continuousReleaseMs, depth, depthGapDb, rectangleCorners, selectedDots,
+    activeGridRows, activeGridCols, continuousNoiseEnabled, isSongPlaying,
+    lineCalibrationEnabled, dragNoiseModeEnabled, rowCompareEnabled, blindRandomModeEnabled])
 
   useEffect(() => {
     dotGridAudio.getDotGridAudioPlayer().setInverseConstantNoiseDots(
@@ -1297,11 +1429,11 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   const dotCount = activeSelectedDots.size
   // Hit spacing directly sets the grid interval between consecutive hits;
   // envelopes longer than the spacing simply overlap (polyphonic voices).
-  const perHitS = useMemo(() => Math.max(0.02, hitSpacingMs / 1000), [hitSpacingMs])
+  const perHitS = useMemo(() => Math.max(0.01, hitSpacingMs / 1000), [hitSpacingMs])
   const hitStaggerS = useMemo(() => perHitS * (hitStaggerPercent / 100), [perHitS, hitStaggerPercent])
   const effectiveRelease = useMemo(
-    () => Math.max(0.001, releaseMs / 1000),
-    [releaseMs]
+    () => Math.max(0.001, perHitS - Math.min(attackMs / 1000, perHitS * 0.25)),
+    [perHitS, attackMs]
   )
 
   const handleRowCompareEnabledChange = useCallback((enabled: boolean) => {
@@ -1599,13 +1731,18 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   }, [effectiveRelease])
 
   useEffect(() => {
-    dotGridAudio.getDotGridAudioPlayer().setHitModeAttack(Math.max(0.001, attackMs / 1000))
-  }, [attackMs])
+    dotGridAudio.getDotGridAudioPlayer().setHitModeAttack(Math.max(0.001, Math.min(attackMs / 1000, perHitS * 0.25)))
+  }, [attackMs, perHitS])
 
   useEffect(() => { saveSetting("cabin:attackMsV2", attackMs) }, [attackMs])
   useEffect(() => { saveSetting("cabin:releaseMsV2", releaseMs) }, [releaseMs])
   useEffect(() => { saveSetting("cabin:hitSpacingMs", hitSpacingMs) }, [hitSpacingMs])
   useEffect(() => { saveSetting("cabin:loudnessSwapEnabled", loudnessSwapEnabled) }, [loudnessSwapEnabled])
+  useEffect(() => { saveSetting("cabin:balanceAlternateHits", balanceAlternateHits) }, [balanceAlternateHits])
+
+  useEffect(() => {
+    dotGridAudio.getDotGridAudioPlayer().setBalanceAlternateHits(balanceAlternateHits)
+  }, [balanceAlternateHits])
 
   useEffect(() => {
     dotGridAudio.getDotGridAudioPlayer().setLoudnessSwapEnabled(loudnessSwapEnabled)
@@ -1650,7 +1787,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   useEffect(() => {
     const player = dotGridAudio.getDotGridAudioPlayer()
     // Depth: each dot repeats at this many volume levels per cycle
-    // (ping-ponged quiet→loud→quiet), spread across depthGapDb total —
+    // (ascending quiet→loud, then resetting), spread across depthGapDb total —
     // the per-step difference shrinks as depth grows.
     player.setVolumeSteps(Math.max(1, Math.min(8, depth)))
     player.setHitDecay(depth > 1 ? depthGapDb : 0)
@@ -1680,11 +1817,28 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     player.setHiHatLoudReleaseBoostMs(FIXED_ACCENT_RELEASE_MS)
   }, [depth, depthGapDb, halfBandPatternEnabled, hiHatQuietDropDb, loudQuietBandwidthModeEnabled, loudQuietBlockSize, loudQuietPerDot, rhythmPatternEnabled, rowAlternationModeEnabled, sidePolarityLoudQuietEnabled, threeLevelVolumeEnabled])
 
+  useEffect(() => {
+    dotGridAudio.getDotGridAudioPlayer().setBandwidthRangeOctaves(bandwidthRangeOctaves)
+  }, [bandwidthRangeOctaves])
+
+  useEffect(() => {
+    dotGridAudio.getDotGridAudioPlayer().setBandwidthLevels(bandwidthLevels)
+  }, [bandwidthLevels])
+
+  useEffect(() => {
+    dotGridAudio.getDotGridAudioPlayer().setDepthPerDot(depthPerDot)
+  }, [depthPerDot])
+
+  useEffect(() => {
+    dotGridAudio.getDotGridAudioPlayer().setRowDepthEnabled(true)
+    dotGridAudio.getDotGridAudioPlayer().setSimultaneousHeightEnabled(simultaneousHeightEnabled)
+  }, [simultaneousHeightEnabled])
+
   // Apply sequencer parameter changes to playback immediately (from the next
   // hit slot) instead of waiting for the current loop to finish.
   useEffect(() => {
     dotGridAudio.getDotGridAudioPlayer().requestLoopSequencerRefresh()
-  }, [attackMs, bandwidth, depth, depthGapDb, dotBalanceDb, hitSpacingMs, loudnessSwapEnabled, releaseMs, volumeDb])
+  }, [attackMs, bandwidth, bandwidthLevels, bandwidthRangeOctaves, depth, depthGapDb, depthPerDot, dotBalanceDb, hitSpacingMs, loudnessSwapEnabled, balanceAlternateHits, releaseMs, volumeDb])
 
   useEffect(() => {
     dotGridAudio.getDotGridAudioPlayer().setVolumeDb(volumeDb)
@@ -1970,45 +2124,6 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   const { playingDotKey, beatIndex } = sequencerVisual
   const visiblePlayingDotKey = blindRandomModeEnabled ? null : playingDotKey
   const rowCompareSameRow = rowCompareRowA === rowCompareRowB
-  const editableDotVolumeKeys = useMemo(() => {
-    if (blindRandomModeEnabled || rowCompareEnabled || dragNoiseModeEnabled || lineCalibrationEnabled) return []
-
-    return Array.from(selectedDots)
-      .filter((dotKey) => isDotKeyInGrid(dotKey, gridRows, gridCols))
-      .sort((a, b) => {
-        const [colA, rowA] = a.split(",").map(Number)
-        const [colB, rowB] = b.split(",").map(Number)
-        return rowA - rowB || colA - colB
-      })
-  }, [blindRandomModeEnabled, dragNoiseModeEnabled, gridCols, gridRows, lineCalibrationEnabled, rowCompareEnabled, selectedDots])
-  const selectedDotVolumeValues = useMemo(
-    () => editableDotVolumeKeys.map((dotKey) => dotVolumeOffsetsDb.get(dotKey) ?? 0),
-    [dotVolumeOffsetsDb, editableDotVolumeKeys]
-  )
-  const selectedDotVolumeValue = selectedDotVolumeValues[0] ?? 0
-  const selectedDotVolumesMixed = selectedDotVolumeValues.some((value) => Math.abs(value - selectedDotVolumeValue) > 0.001)
-  const dotVolumeSliderValue = selectedDotVolumesMixed ? 0 : selectedDotVolumeValue
-  const selectedDotVolumeLabel = editableDotVolumeKeys.length === 1
-    ? formatDotKeyLabel(editableDotVolumeKeys[0])
-    : `${editableDotVolumeKeys.length} dots`
-
-  const handleSelectedDotVolumeChange = useCallback((volumeDb: number) => {
-    const nextVolumeDb = clampDotVolumeDb(volumeDb)
-    setDotVolumeOffsetsDb((prev) => {
-      const next = new Map(prev)
-
-      editableDotVolumeKeys.forEach((dotKey) => {
-        if (Math.abs(nextVolumeDb) < 0.001) {
-          next.delete(dotKey)
-        } else {
-          next.set(dotKey, nextVolumeDb)
-        }
-      })
-
-      return next
-    })
-  }, [editableDotVolumeKeys])
-
   const renderRowCompareGuide = (rowId: "A" | "B", row: number, volumeDbForRow: number) => {
     const percent = gridRows <= 1 ? 50 : (row / (gridRows - 1)) * 100
     const isA = rowId === "A"
@@ -2127,9 +2242,17 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   }, [inverseDotNoiseEnabled])
 
   return (
-    <div className={`relative w-full h-full min-h-0 transition-opacity duration-200 ${
+    <div className={`relative flex w-full min-w-0 flex-1 flex-col gap-3 transition-opacity duration-200 ${
       highlightTarget === "eq" ? "opacity-30" : ""
     }`}>
+      <section aria-label="Dot grid" className="mx-auto grid w-full max-w-6xl flex-1 grid-cols-[2.5rem_minmax(0,1fr)_2.5rem] grid-rows-[minmax(20rem,1fr)_auto] gap-2">
+        <div className="col-start-1 row-start-1 flex min-h-0 flex-col items-center gap-3 py-8">
+          <label id="dot-rows-label" className="text-[10px] text-muted-foreground">Rows</label>
+          <output className="text-xs tabular-nums">{gridRows}</output>
+          <Slider aria-labelledby="dot-rows-label" orientation="vertical" min={MIN_ROWS} max={MAX_ROWS} step={1}
+            value={[gridRows]} onValueChange={([rows]) => setGridRows(rows)} className="min-h-0 flex-1" />
+        </div>
+        <div className="relative isolate col-start-2 row-start-1 min-h-[20rem] min-w-0 overflow-hidden rounded-lg">
       {highlightTarget === "grid" && (
         <>
           {/* Subtle border + glow — the real glow comes from the dots/particles */}
@@ -2155,6 +2278,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
         onDotDeselect={handleDotDeselect}
         onDotReference={handleDotReference}
         playingDotKey={visiblePlayingDotKey}
+        playingDotKeys={blindRandomModeEnabled ? undefined : sequencerVisual.playingDotKeys}
         beatIndex={beatIndex}
         hoveredDot={hoveredDot}
         onHoverDot={setHoveredDot}
@@ -2168,33 +2292,6 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
         inviteDotKey={inviteDotKey}
         eqHighlights={eqHighlights}
       />
-      {editableDotVolumeKeys.length > 0 && (
-        <div className="absolute bottom-4 left-4 z-40 w-[min(18rem,calc(100%-2rem))] rounded-lg border border-white/10 bg-black/60 p-3 text-white shadow-2xl backdrop-blur-md">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-white/55">Dot vol</span>
-            <span className="font-mono text-[10px] tabular-nums text-white/75">
-              {selectedDotVolumesMixed ? "mixed" : formatSignedDb(selectedDotVolumeValue)}
-            </span>
-          </div>
-          <Slider
-            value={[dotVolumeSliderValue]}
-            min={DOT_VOLUME_MIN_DB}
-            max={DOT_VOLUME_MAX_DB}
-            step={1}
-            onValueChange={([value]) => handleSelectedDotVolumeChange(value ?? dotVolumeSliderValue)}
-          />
-          <div className="mt-3 flex items-center justify-between gap-3 text-[10px] text-white/45">
-            <span className="min-w-0 truncate">{selectedDotVolumeLabel}</span>
-            <button
-              type="button"
-              className="shrink-0 rounded-md border border-white/10 px-2 py-1 font-mono text-white/65 transition hover:bg-white/10 hover:text-white"
-              onClick={() => handleSelectedDotVolumeChange(0)}
-            >
-              0 dB
-            </button>
-          </div>
-        </div>
-      )}
       {dragNoiseModeEnabled && !isPlaying && (
         <div
           ref={dragNoiseSurfaceRef}
@@ -2333,7 +2430,50 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
           {renderRowCompareGuide("B", rowCompareRowB, rowCompareVolumeBDb)}
         </div>
       )}
+        </div>
+        <div className="col-start-2 row-start-2 flex items-center gap-3 px-8 py-2">
+          <label id="dot-columns-label" className="text-[10px] text-muted-foreground">Columns</label>
+          <Slider aria-labelledby="dot-columns-label" min={MIN_COLS} max={MAX_COLS} step={1}
+            value={[gridCols]} onValueChange={([cols]) => setGridCols(cols)} className="min-w-0 flex-1" />
+          <output className="w-6 text-right text-xs tabular-nums">{gridCols}</output>
+        </div>
+      </section>
+      <div className="mx-auto flex w-full max-w-6xl flex-col items-start gap-3 lg:flex-row">
+      <div className="w-full min-w-0 flex-1">
+        <LiveAudioSpectrum />
+      </div>
+      <aside aria-label="Grid settings" className="w-full min-w-0 lg:w-auto">
       <SettingsPanel
+        depthAfterPass={depthAfterPass}
+        rowWiseEnabled={rowWiseEnabled}
+        onRowWiseChange={enabled => {
+          setRowWiseEnabled(enabled)
+          if (enabled) setColumnWiseEnabled(false)
+        }}
+        columnWiseEnabled={columnWiseEnabled}
+        onColumnWiseChange={enabled => {
+          setColumnWiseEnabled(enabled)
+          if (enabled) setRowWiseEnabled(false)
+        }}
+        onDepthAfterPassChange={setDepthAfterPass}
+        rowRepeatEnabled={rowRepeatEnabled}
+        onRowRepeatChange={setRowRepeatEnabled}
+        lowerEdgeSineEnabled={lowerEdgeSineEnabled}
+        onLowerEdgeSineChange={setLowerEdgeSineEnabled}
+        lowerEdgeSineVolumeDb={lowerEdgeSineVolumeDb}
+        onLowerEdgeSineVolumeChange={setLowerEdgeSineVolumeDb}
+        continuousReleaseMs={continuousReleaseMs}
+        onContinuousReleaseChange={setContinuousReleaseMs}
+        selectedDotCount={selectedDots.size}
+        pulseOverlapEnabled={pulseOverlapEnabled}
+        onPulseOverlapChange={setPulseOverlapEnabled}
+        rectangleAlternationEnabled={rectangleAlternationEnabled}
+        onRectangleAlternationChange={setRectangleAlternationEnabled}
+        rectangleAlternationSeconds={rectangleAlternationSeconds}
+        onRectangleAlternationSecondsChange={setRectangleAlternationSeconds}
+        rectangleSelectionValid={rectangleCorners !== null}
+        simultaneousHeightEnabled={simultaneousHeightEnabled}
+        onSimultaneousHeightChange={setSimultaneousHeightEnabled}
         collapsed={settingsCollapsed}
         onToggle={() => setSettingsCollapsed((v) => !v)}
         gridRows={gridRows}
@@ -2357,11 +2497,19 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
         hitSpacingMs={hitSpacingMs}
         onHitSpacingMsChange={setHitSpacingMs}
         loudnessSwapEnabled={loudnessSwapEnabled}
+        balanceAlternateHits={balanceAlternateHits}
+        onBalanceAlternateHitsChange={(value) => setBalanceAlternateHits(Math.max(1, Math.min(64, Math.round(value))))}
         onLoudnessSwapEnabledChange={setLoudnessSwapEnabled}
         depth={depth}
         onDepthChange={(value) => setDepth(Math.max(1, Math.min(8, Math.round(value))))}
+        depthPerDot={depthPerDot}
+        bandwidthLevels={bandwidthLevels}
+        onBandwidthLevelsChange={(value) => setBandwidthLevels(Math.max(1, Math.min(8, Math.round(value))))}
+        onDepthPerDotChange={setDepthPerDot}
         depthGapDb={depthGapDb}
         onDepthGapDbChange={(value) => setDepthGapDb(Math.max(0, Math.min(60, value)))}
+        bandwidthRangeOctaves={bandwidthRangeOctaves}
+        onBandwidthRangeOctavesChange={(value) => setBandwidthRangeOctaves(Math.max(0, Math.min(8.25, value)))}
         dotBalanceDb={dotBalanceDb}
         onDotBalanceDbChange={(value) => setDotBalanceDb(Math.max(-24, Math.min(24, value)))}
         bandwidth={bandwidth}
@@ -2475,6 +2623,8 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
         quietLevelDb={-hiHatQuietDropDb}
         onQuietLevelChange={(value) => setHiHatQuietDropDb(Math.max(0, -value))}
       />
+      </aside>
+      </div>
     </div>
   )
 }

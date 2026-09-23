@@ -259,6 +259,7 @@ export interface UnifiedParticleSceneProps {
   onDotReference?: (x: number, y: number) => void
   onDotConstantToggle?: (x: number, y: number) => void
   playingDotKey: string | null
+  playingDotKeys?: string[]
   beatIndex: number
   hoveredDot: string | null
   onHoverDot: (key: string | null) => void
@@ -284,26 +285,27 @@ interface EnvelopeState {
   releaseStartValue: number
 }
 
-function useEnvelopeTracker(selectedDots: Set<string>, playingDotKey: string | null, beatIndex: number) {
+function useEnvelopeTracker(selectedDots: Set<string>, playingDotKey: string | null, beatIndex: number, playingDotKeys?: string[]) {
   const envelopes = useRef<Map<string, EnvelopeState>>(new Map())
   const prevPlaying = useRef<string | null>(null)
   const prevBeat = useRef<number>(-1)
 
   const tick = useCallback((clockMs: number) => {
     const currentPlaying = playingDotKey
+    const currentKeys = playingDotKeys ?? (currentPlaying ? [currentPlaying] : [])
     const beatChanged = beatIndex !== prevBeat.current
 
     if (currentPlaying !== prevPlaying.current || beatChanged) {
       envelopes.current.forEach((env, key) => {
-        if (key !== currentPlaying && env.phase !== "idle") {
+        if (!currentKeys.includes(key) && env.phase !== "idle") {
           env.releaseStartValue = env.value
           env.phase = "release"
           env.phaseStartTime = clockMs
         }
       })
 
-      if (currentPlaying) {
-        envelopes.current.set(currentPlaying, {
+      for (const key of currentKeys) {
+        envelopes.current.set(key, {
           value: 0,
           phase: "attack",
           phaseStartTime: clockMs,
@@ -337,7 +339,7 @@ function useEnvelopeTracker(selectedDots: Set<string>, playingDotKey: string | n
         envelopes.current.delete(dotKey)
       }
     }
-  }, [playingDotKey, beatIndex, selectedDots])
+  }, [playingDotKey, playingDotKeys, beatIndex, selectedDots])
 
   const getEnvelope = useCallback((dotKey: string): number => {
     const env = envelopes.current.get(dotKey)
@@ -898,6 +900,7 @@ function UnifiedSceneContent({
   onDotReference,
   onDotConstantToggle,
   playingDotKey,
+  playingDotKeys,
   beatIndex,
   hoveredDot,
   onHoverDot,
@@ -937,7 +940,7 @@ function UnifiedSceneContent({
   }, [soundstageSeedMask])
 
   // Envelope tracker for dot glow
-  const { tick: envelopeTick, getEnvelope } = useEnvelopeTracker(selectedDots, playingDotKey, beatIndex)
+  const { tick: envelopeTick, getEnvelope } = useEnvelopeTracker(selectedDots, playingDotKey, beatIndex, playingDotKeys)
   const clockRef = useRef(0)
 
   // Cursor dot tracking
@@ -2220,6 +2223,7 @@ export function UnifiedParticleScene(props: UnifiedParticleSceneProps) {
         onDotReference={props.onDotReference}
         onDotConstantToggle={props.onDotConstantToggle}
         playingDotKey={props.playingDotKey}
+        playingDotKeys={props.playingDotKeys}
         beatIndex={props.beatIndex}
         hoveredDot={props.hoveredDot}
         onHoverDot={props.onHoverDot}
@@ -2264,6 +2268,7 @@ export function UnifiedParticleScene(props: UnifiedParticleSceneProps) {
           onDotReference={props.onDotReference}
           onDotConstantToggle={props.onDotConstantToggle}
           playingDotKey={props.playingDotKey}
+          playingDotKeys={props.playingDotKeys}
           beatIndex={props.beatIndex}
           hoveredDot={props.hoveredDot}
           onHoverDot={props.onHoverDot}

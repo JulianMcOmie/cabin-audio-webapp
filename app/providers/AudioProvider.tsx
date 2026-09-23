@@ -19,7 +19,7 @@ export function AudioProvider({ children }: AudioProviderProps) {
   const isInitializedRef = useRef(false);
 
   useEffect(() => {
-    const shouldSkipAudio = pathname?.startsWith('/hrtf');
+    const shouldSkipAudio = pathname?.startsWith('/hrtf') || pathname?.startsWith('/guided-calibration') || pathname?.startsWith('/cutoff-demo') || pathname?.startsWith('/glyph-grid');
 
     if (shouldSkipAudio) {
       if (isInitializedRef.current) {

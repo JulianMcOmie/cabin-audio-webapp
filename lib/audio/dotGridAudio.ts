@@ -1,5 +1,6 @@
 import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
+import { createSharpHighpassFilters } from './sharpHighpass';
 // import { getAudioPlayer } from './audioPlayer';
 import { useEQProfileStore } from '../stores';
 import { dbToGain, clamp } from '../utils/audioMath';
@@ -183,13 +184,16 @@ export function getBandpassRangeForNormalizedY(
   filterMode: BandwidthFilterMode = DEFAULT_BANDWIDTH_FILTER_MODE,
   frequencyExtensionRange = 0
 ): BandpassRange {
-  const effectiveBandwidthOctaves = getEffectiveBandpassBandwidth(bandwidthOctaves, filterMode);
+  void bandwidthOctaves;
+  void filterMode;
   const extensionMultiplier = Math.pow(2, clamp(frequencyExtensionRange, 0, 5));
   const bottomLowerEdge = BANDPASS_BOTTOM_LOWER_EDGE_HZ / extensionMultiplier;
-  const topUpperEdge = MAX_AUDIBLE_FREQ * extensionMultiplier;
-  const topLowerEdge = topUpperEdge / Math.pow(2, effectiveBandwidthOctaves);
+  // Height picks a fixed lower edge on the logarithmic frequency axis.
+  // The highest row starts at 14 kHz. The upper edge is display metadata only;
+  // noise has no upper cutoff filter.
+  const topLowerEdge = 14000;
   const lowerEdge = bottomLowerEdge * Math.pow(topLowerEdge / bottomLowerEdge, clamp(normalizedYPos, 0, 1));
-  const upperEdge = lowerEdge * Math.pow(2, effectiveBandwidthOctaves);
+  const upperEdge = MAX_AUDIBLE_FREQ;
 
   return {
     lowerEdge,
@@ -211,7 +215,7 @@ export function getBandpassRangeForNormalizedBand(
   const bandwidthOctaves = getEffectiveBandpassBandwidth(rawBandwidthOctaves, filterMode);
   const effectiveHeight = bandwidthOctaves / fullRangeOctaves;
   const upper = clamp(lower + effectiveHeight, lower + minHeight, 1);
-  const normalizedYDenominator = Math.max(0.000001, 1 - effectiveHeight);
+  const normalizedYDenominator = Math.max(0.000001, 1 - minHeight);
   const audioNormalizedY = clamp(lower / normalizedYDenominator, 0, 1);
   const range = getBandpassRangeForNormalizedY(audioNormalizedY, bandwidthOctaves, filterMode);
 
@@ -283,6 +287,8 @@ enum SoundMode {
 // Voice for polyphonic playback - allows overlapping hits with independent envelopes
 interface Voice {
   envelopeGain: GainNode;
+  bandpassedNoiseGenerator?: BandpassedNoiseGenerator;
+  mainGain?: GainNode;
   releaseEndTime: number; // When this voice will be free (after release completes)
   startTime?: number; // Scheduled start of the hit currently assigned to this voice
   previousReleaseEndTime?: number; // Tail end of the hit that preceded it
@@ -315,6 +321,7 @@ interface PointAudioNodes {
   volumeLevelGain: GainNode; // Controls volume based on dot's on/off state
   noiseOscillationGain: GainNode; // Dedicated sustained-noise volume LFO
     envelopeGain: GainNode; // Legacy single envelope (used for continuous mode)
+  continuousPulseGain?: GainNode;
     panner: StereoPannerNode;
   slopedNoiseGenerator: SlopedPinkNoiseGenerator | null;
   bandpassedNoiseGenerator: BandpassedNoiseGenerator | null;
@@ -345,9 +352,13 @@ interface SharedBandpassNoiseNodes {
   panner: StereoPannerNode;
 }
 
-class PositionedAudioService {
+export class PositionedAudioService {
   private ctx: AudioContext;
   private audioPoints: Map<string, PointAudioNodes> = new Map();
+  private releaseTailCounter = 0;
+  private releaseTailTimers = new Map<string, number>();
+  private lowerEdgeSineEnabled = false;
+  private lowerEdgeSineVolumeDb = -24;
   private sharedBandpassNoises: Map<string, SharedBandpassNoiseNodes> = new Map();
   private outputGain: GainNode;
   private currentDistortionGain: number = 1.0;
@@ -1318,6 +1329,128 @@ class PositionedAudioService {
     point.envelopeGain.gain.linearRampToValueAtTime(Math.max(0.0001, gain), currentTime + rampSeconds);
   }
 
+  public setLowerEdgeSine(enabled: boolean, volumeDb: number): void {
+    this.lowerEdgeSineEnabled = enabled;
+    this.lowerEdgeSineVolumeDb = clamp(volumeDb, -60, 0);
+    this.audioPoints.forEach(point => {
+      point.bandpassedNoiseGenerator?.setLowerEdgeSine(enabled, this.lowerEdgeSineVolumeDb);
+      point.voicePool.forEach(voice => voice.bandpassedNoiseGenerator?.setLowerEdgeSine(enabled, this.lowerEdgeSineVolumeDb));
+    });
+    this.sharedBandpassNoises.forEach(nodes => nodes.generator.setLowerEdgeSine(enabled, this.lowerEdgeSineVolumeDb));
+  }
+
+  private getContinuousPulseGain(pointId: string): AudioParam | null {
+    const point = this.audioPoints.get(pointId);
+    if (!point) return null;
+    if (!point.continuousPulseGain) {
+      point.continuousPulseGain = this.ctx.createGain();
+      // Gate the full dot output, including any overlapping voices, so no
+      // parallel envelope can fill in the silent part of the pulse.
+      point.panner.disconnect(this.outputGain);
+      point.panner.connect(point.continuousPulseGain);
+      point.continuousPulseGain.connect(this.outputGain);
+    }
+    return point.continuousPulseGain.gain;
+  }
+
+  public scheduleContinuousDotLevel(pointId: string, startTime: number, level: number, releaseSeconds = 0): void {
+    const gain = this.getContinuousPulseGain(pointId);
+    if (!gain) return;
+    this.scheduleContinuousGainStep(gain, startTime, level, 0.002 + (level === 0 ? releaseSeconds : 0));
+  }
+
+  private scheduleContinuousGainStep(gain: AudioParam, startTime: number, level: number, transitionSeconds: number): void {
+    gain.cancelAndHoldAtTime(startTime);
+    // A future cancelAndHold can be a no-op after the last automation event.
+    // A bare linearRamp would then begin at the PREVIOUS step's endpoint,
+    // fading across the entire hold interval. setTarget has an explicit start
+    // time: keep the old level until the boundary, then settle within 2 ms.
+    gain.setTargetAtTime(level, startTime, transitionSeconds / 8);
+    gain.setValueAtTime(level, startTime + transitionSeconds);
+  }
+
+  public scheduleContinuousPulses(pointId: string, startTime: number, duration: number, phaseOffset = 0, overlap = true, depthLevels = 1, depthRangeDb = 20, depthStepIndex = 0, releaseSeconds = 0): void {
+    // A separate gain keeps balance/volume edits from canceling the pulses.
+    const gain = this.getContinuousPulseGain(pointId);
+    if (!gain) return;
+    const interval = duration;
+    if (depthLevels > 1) {
+      const levels = Math.max(2, Math.min(8, Math.round(depthLevels)));
+      const steps = Array.from({ length: levels }, (_, index) => index);
+      const offsetSteps = Math.round(phaseOffset * steps.length);
+      const step = steps[((depthStepIndex - offsetSteps) % steps.length + steps.length) % steps.length];
+      const target = dbToGain(-clamp(depthRangeDb, 0, 60) * (1 - step / (levels - 1)));
+      const previousStep = steps[((depthStepIndex - 1 - offsetSteps) % steps.length + steps.length) % steps.length];
+      // One depth level per position-switch interval; hold until the next call.
+      this.scheduleContinuousGainStep(gain, startTime, target, 0.002 + (step < previousStep ? releaseSeconds : 0));
+      return;
+    }
+    const attack = Math.min(0.01, interval * 0.05);
+    const release = Math.min(0.02, interval * 0.05);
+    void overlap;
+    const onTime = interval;
+    const cycleEnd = startTime + duration;
+    const offset = phaseOffset * interval;
+    if (releaseSeconds > 0) {
+      const releaseStart = onTime - release;
+      const releaseLength = release + releaseSeconds;
+      const carry = Math.max(0, 1 - (interval - releaseStart) / releaseLength);
+      const levelAt = (time: number) => {
+        const phase = ((time - startTime - offset) % interval + interval) % interval;
+        if (phase < attack) return carry + (1 - carry) * phase / attack;
+        if (phase <= releaseStart) return 1;
+        return Math.max(0, 1 - (phase - releaseStart) / releaseLength);
+      };
+      const times = new Set<number>([startTime, cycleEnd]);
+      for (let index = -1; index < 1; index++) {
+        const pulseStart = startTime + index * interval + offset;
+        for (const position of [0, attack, releaseStart, Math.min(interval, releaseStart + releaseLength)]) {
+          const time = pulseStart + position;
+          if (time > startTime && time < cycleEnd) times.add(time);
+        }
+      }
+      gain.cancelAndHoldAtTime(startTime);
+      gain.setValueAtTime(levelAt(startTime), startTime);
+      Array.from(times).sort((a, b) => a - b).forEach(time => {
+        if (time > startTime) gain.linearRampToValueAtTime(levelAt(time), time);
+      });
+      return;
+    }
+    // Preserve a release that lands exactly on the next cycle boundary.
+    gain.cancelAndHoldAtTime(startTime);
+    // The offset dot starts inside the previous pulse's hold. Carry that
+    // partial pulse across cycle boundaries instead of resetting both dots.
+    const phase = (interval - offset) % interval;
+    const initialGain = phase < attack ? phase / attack
+      : phase <= onTime - release ? 1
+      : phase < onTime ? (onTime - phase) / release : 0;
+    gain.setValueAtTime(initialGain, startTime);
+    for (let index = -1; index < 1; index++) {
+      const start = startTime + index * interval + offset;
+      const end = start + onTime;
+      if (start >= startTime && start < cycleEnd) gain.setValueAtTime(0, start);
+      if (start + attack > startTime && start + attack < cycleEnd) {
+        gain.linearRampToValueAtTime(1, start + attack);
+      }
+      if (end - release >= startTime && end - release < cycleEnd) {
+        gain.setValueAtTime(1, end - release);
+      }
+      if (end > startTime && end <= cycleEnd) gain.linearRampToValueAtTime(0, end);
+    }
+  }
+
+  public clearContinuousPulses(): void {
+    const now = this.ctx.currentTime;
+    this.audioPoints.forEach((point, key) => {
+      if (this.releaseTailTimers.has(key)) return;
+      const gain = point.continuousPulseGain?.gain;
+      if (!gain) return;
+      gain.cancelScheduledValues(now);
+      gain.setValueAtTime(gain.value, now);
+      gain.linearRampToValueAtTime(1, now + 0.01);
+    });
+  }
+
   public schedulePointGain(
     pointId: string,
     scheduledTime: number,
@@ -1497,11 +1630,52 @@ class PositionedAudioService {
     const point = this.audioPoints.get(pointId);
     if (!point) return;
 
+    // Each overlapping hit owns its timbre as well as its envelope. Reusing
+    // the dot's filter would retune every earlier release tail on the next hit.
+    const voice = point.inverseDotNoiseGenerator
+      ? null
+      : this.allocateVoice(point.voicePool, scheduledTime);
+    let hitPoint = point;
+    if (voice && point.bandpassedNoiseGenerator) {
+      if (!voice.bandpassedNoiseGenerator) {
+        const generator = new BandpassedNoiseGenerator(this.ctx);
+        generator.setLowerEdgeSine(this.lowerEdgeSineEnabled, this.lowerEdgeSineVolumeDb);
+        generator.setBandwidthFilterMode(this.currentBandwidthFilterMode);
+        generator.setGentleEdgeFalloffDbPerOct(this.currentGentleEdgeFalloffDbPerOct);
+        generator.setSnareScoopDepthDb(this.snareScoopDepthDb);
+        generator.setSnareScoopBandwidthOctaves(this.snareScoopBandwidthOctaves);
+        generator.setSnareScoopMode(this.snareScoopMode);
+        generator.setSnareScoopEnabled(this.snareScoopEnabled);
+        if (point.clickTrainGenerator) {
+          generator.setInputSlope(CLICK_TRAIN_INPUT_SLOPE_DB_PER_OCT);
+          point.clickTrainGenerator.getOutputNode().connect(generator.getInputNode());
+        } else if (point.additivePartialGenerator) {
+          generator.setInputSlope(0);
+          point.additivePartialGenerator.getOutputNode().connect(generator.getInputNode());
+        } else {
+          generator.setInputSlope(PINK_NOISE_SLOPE_DB_PER_OCT);
+          generator.setIndependentBandNoiseEnabled(true);
+        }
+        const mainGain = this.ctx.createGain();
+        point.noiseOscillationGain.disconnect(voice.envelopeGain);
+        generator.getOutputNode().connect(mainGain);
+        mainGain.connect(voice.envelopeGain);
+        voice.bandpassedNoiseGenerator = generator;
+        voice.mainGain = mainGain;
+      }
+      hitPoint = {
+        ...point,
+        bandpassedNoiseGenerator: voice.bandpassedNoiseGenerator,
+        mainGain: voice.mainGain!,
+      };
+      peakVolume *= this.calculatePointVolumeLevelGain(point) * this.getNoiseOscillationMultiplier(scheduledTime);
+    }
+
     // Set frequency characteristics based on dot position. Bandwidth-sequenced
     // hits schedule the matching filter edges on the same audio-clock time.
     point.panner.pan.setValueAtTime(2 * point.normalizedXPos - 1, scheduledTime);
     this.setMainGainAndSlope(
-      point,
+      hitPoint,
       bandwidthOctaves,
       scheduledTime,
       slopeOffsetDbPerOct,
@@ -1525,8 +1699,7 @@ class PositionedAudioService {
       return;
     }
 
-    // Find an available voice from the pool (or steal the oldest one)
-    const voice = this.allocateVoice(point.voicePool, scheduledTime);
+    if (!voice) return;
     const gainParam = voice.envelopeGain.gain;
     voice.previousReleaseEndTime = voice.releaseEndTime;
     voice.startTime = scheduledTime;
@@ -1554,6 +1727,33 @@ class PositionedAudioService {
 
     // Mark when this voice will be free
     voice.releaseEndTime = scheduledTime + attackTime + releaseTime;
+  }
+
+  /** Schedule a path position with the same generator and envelope as grid hits. */
+  public schedulePositionedHit(
+    pointId: string, x: number, y: number, time: number,
+    attack: number, release: number, gain = 1
+  ): void {
+    const point = this.audioPoints.get(pointId);
+    if (!point) return;
+    // Change scheduling metadata only. Panning, filters, and gain are scheduled
+    // by schedulePointHit, so preparing future positions cannot retune this hit.
+    point.normalizedXPos = clamp(x, 0, 1);
+    point.normalizedYPos = clamp(y, 0, 1);
+    point.panner.pan.cancelScheduledValues(time);
+    this.schedulePointHit(pointId, time, attack, release, gain);
+  }
+
+  /** Replace only future path hits, preserving the envelope up to the boundary. */
+  public cancelPositionedHitsFrom(pointId: string, time: number): void {
+    const point = this.audioPoints.get(pointId);
+    if (!point) return;
+    point.panner.pan.cancelScheduledValues(time);
+    point.voicePool.forEach(voice => {
+      voice.envelopeGain.gain.cancelAndHoldAtTime(time);
+      voice.envelopeGain.gain.setValueAtTime(0, time);
+      voice.releaseEndTime = Math.min(voice.releaseEndTime, time);
+    });
   }
 
   /**
@@ -1698,6 +1898,7 @@ class PositionedAudioService {
     ) {
       // Use bandpassed noise generator
       bandpassedNoiseGenerator = new BandpassedNoiseGenerator(this.ctx);
+      bandpassedNoiseGenerator.setLowerEdgeSine(this.lowerEdgeSineEnabled, this.lowerEdgeSineVolumeDb);
 
       // Apply current bandwidth and slope settings to the new generator
       bandpassedNoiseGenerator.setBandwidthFilterMode(this.currentBandwidthFilterMode);
@@ -1846,6 +2047,7 @@ class PositionedAudioService {
       this.currentSoundMode === SoundMode.OscillatingNoise
     ) {
       bandpassedNoiseGenerator = new BandpassedNoiseGenerator(this.ctx);
+      bandpassedNoiseGenerator.setLowerEdgeSine(this.lowerEdgeSineEnabled, this.lowerEdgeSineVolumeDb);
       bandpassedNoiseGenerator.setBandwidthFilterMode(this.currentBandwidthFilterMode);
       bandpassedNoiseGenerator.setGentleEdgeFalloffDbPerOct(this.currentGentleEdgeFalloffDbPerOct);
       bandpassedNoiseGenerator.setBandpassBandwidth(this.currentBandwidth);
@@ -2043,7 +2245,27 @@ class PositionedAudioService {
     point.delayedCloneOutputs.clear();
   }
 
+  public releaseAndRemovePoint(id: string, releaseSeconds: number): void {
+    const point = this.audioPoints.get(id);
+    if (!point || releaseSeconds <= 0) {
+      this.removePoint(id);
+      return;
+    }
+    this.scheduleContinuousDotLevel(id, this.ctx.currentTime, 0, releaseSeconds);
+    // Free the original key immediately so a returning corner can start a new
+    // note while this old note finishes its release.
+    const tailId = `__release_tail_${this.releaseTailCounter++}`;
+    this.audioPoints.delete(id);
+    this.audioPoints.set(tailId, point);
+    this.releaseTailTimers.set(tailId, window.setTimeout(() => this.removePoint(tailId), (releaseSeconds + 0.02) * 1000));
+  }
+
   public removePoint(id: string): void {
+    const tailTimer = this.releaseTailTimers.get(id);
+    if (tailTimer !== undefined) {
+      window.clearTimeout(tailTimer);
+      this.releaseTailTimers.delete(id);
+    }
     const point = this.audioPoints.get(id);
     if (!point) return;
 
@@ -2088,10 +2310,13 @@ class PositionedAudioService {
     point.volumeLevelGain.disconnect();
     point.noiseOscillationGain.disconnect();
     point.envelopeGain.disconnect();
+    point.continuousPulseGain?.disconnect();
     this.removeDelayedCloneOutputsForPoint(id);
 
     // Disconnect all voice pool envelopes
     for (const voice of point.voicePool) {
+      voice.bandpassedNoiseGenerator?.dispose();
+      voice.mainGain?.disconnect();
       voice.envelopeGain.disconnect();
     }
 
@@ -2144,11 +2369,9 @@ class PositionedAudioService {
 
     const now = this.ctx.currentTime;
 
-    // Deactivate legacy envelope by ramping down quickly
-    point.envelopeGain.gain.cancelScheduledValues(now);
-    const currentGain = Math.max(0.001, point.envelopeGain.gain.value); // Ensure we're above zero for exponential
-    point.envelopeGain.gain.setValueAtTime(currentGain, now); // Hold current value
-    point.envelopeGain.gain.exponentialRampToValueAtTime(0.001, now + 0.01); // Quick exponential ramp down (10ms)
+    // End at actual silence, not an indefinitely audible low-gain floor.
+    point.envelopeGain.gain.cancelAndHoldAtTime(now);
+    point.envelopeGain.gain.linearRampToValueAtTime(0, now + 0.002);
 
     // Also silence all voices in the voice pool
     for (const voice of point.voicePool) {
@@ -2163,6 +2386,15 @@ class PositionedAudioService {
       if (!includeConstantPoints && id.startsWith(CONSTANT_DOT_ID_PREFIX)) return;
       this.deactivatePoint(id);
     });
+  }
+
+  public clearGridPlayback(): void {
+    // Retired notes have their own keys and can outlive the visible selection.
+    // Dispose their sources and timers along with any remaining grid voices.
+    for (const id of Array.from(this.audioPoints.keys())) {
+      if (this.releaseTailTimers.has(id) || /^\d+,\d+$/.test(id)) this.removePoint(id);
+    }
+    this.disposeSharedBandpassNoise();
   }
 
   /**
@@ -2271,6 +2503,7 @@ class PositionedAudioService {
     source.loop = true;
 
     const generator = new BandpassedNoiseGenerator(this.ctx);
+    generator.setLowerEdgeSine(this.lowerEdgeSineEnabled, this.lowerEdgeSineVolumeDb);
     generator.setBandwidthFilterMode(this.currentBandwidthFilterMode);
     generator.setGentleEdgeFalloffDbPerOct(this.currentGentleEdgeFalloffDbPerOct);
     generator.setBandpassBandwidth(this.currentBandwidth);
@@ -2402,40 +2635,13 @@ class PositionedAudioService {
     // Bandpassed noise uses fixed slope, bandpass position based on Y
     let bandpassCenterFreq = 0; // Used for volume compensation later
     if (point.bandpassedNoiseGenerator) {
-      if (bandpassRangeOverride) {
-        bandpassCenterFreq = bandpassRangeOverride.centerFrequency;
-      } else {
-        const bandwidthOctaves = scheduledBandwidthOctaves ?? baseBandwidthOctaves;
-        const centerBandwidthOctaves = preserveBandpassCenterFrequency ? baseBandwidthOctaves : bandwidthOctaves;
-        bandpassCenterFreq = this.getBandpassCenterFrequency(effectiveNormalizedY, centerBandwidthOctaves);
-      }
+      const range = bandpassRangeOverride ?? this.getBandpassRange(effectiveNormalizedY, baseBandwidthOctaves);
+      bandpassCenterFreq = range.centerFrequency;
       if (scheduledTime !== undefined) {
         point.bandpassedNoiseGenerator.scheduleBandpassSlope(this.currentBandpassSlope + slopeOffset, scheduledTime);
-      }
-      if (bandpassRangeOverride && scheduledTime !== undefined) {
-        point.bandpassedNoiseGenerator.scheduleBandpassRange(
-          bandpassRangeOverride.lowerEdge,
-          bandpassRangeOverride.upperEdge,
-          bandpassRangeOverride.centerFrequency,
-          scheduledTime
-        );
-      } else if (bandpassRangeOverride) {
-        point.bandpassedNoiseGenerator.setBandpassRange(
-          bandpassRangeOverride.lowerEdge,
-          bandpassRangeOverride.upperEdge,
-          bandpassRangeOverride.centerFrequency
-        );
-      } else if (scheduledBandwidthOctaves !== undefined && scheduledBandwidthOctaves !== null && scheduledTime !== undefined) {
-        const bandwidthOctaves = scheduledBandwidthOctaves;
-        point.bandpassedNoiseGenerator.scheduleBandpassFrequencyAndBandwidth(
-          bandpassCenterFreq,
-          bandwidthOctaves,
-          scheduledTime
-        );
+        point.bandpassedNoiseGenerator.scheduleBandpassRange(range.lowerEdge, range.upperEdge, range.centerFrequency, scheduledTime);
       } else {
-        const bandwidthOctaves = scheduledBandwidthOctaves ?? baseBandwidthOctaves;
-        point.bandpassedNoiseGenerator.setBandpassBandwidth(bandwidthOctaves);
-        point.bandpassedNoiseGenerator.setBandpassFrequency(bandpassCenterFreq);
+        point.bandpassedNoiseGenerator.setBandpassRange(range.lowerEdge, range.upperEdge, range.centerFrequency);
       }
       if (scheduledTime !== undefined) {
         if (snareWaveEnabledOverride !== undefined && snareWaveEnabledOverride !== null) {
@@ -2858,13 +3064,26 @@ class DotGridAudioPlayer {
   private patternAccentEvery: PatternAccentEvery = 8;
   private patternVolumeDiffDb: number = 0;
   private fourFourHitModeEnabled: boolean = false;
+  private bandwidthRangeOctaves: number = 0;
+  private bandwidthLevels: number = 1;
+  private depthPerDot: boolean = false;
+  private simultaneousHeightEnabled: boolean = false;
+  private rowDepthEnabled: boolean = false;
+  private rowRepeatEnabled = false;
+  private rowWiseEnabled = false;
+  private columnWiseEnabled = false;
+  private depthAfterPass = false;
+  private passesPerDepth = 4;
+  private simultaneousVisualEvents: Array<{ dotKey: string; time: number; beat: number }> = [];
+  private simultaneousVisualBeat: number = 0;
   // Every 4 cycles, swap which dots are loud and quiet (flips the balance sign).
   private loudnessSwapEnabled: boolean = false;
+  private balanceAlternateHits: number = 4;
   private loudnessSwapCycleIndex: number = 0;
   // Hit index (within the full cycle) the currently scheduled batch started at.
   private loopSequencerCycleStartHitIndex: number = 0;
   private loopSequencerRefreshTimeoutId: number | null = null;
-  private dotBalanceDb: number = 0; // + boosts the first dot / quiets the last (reading order)
+  private dotBalanceDb: number = 0; // + boosts the rightmost dot / quiets the leftmost.
   private fourFourVolumeBlockSize: number = 4;
   private fourFourVolumePerDot: boolean = false;
   private fourFourThreeLevelVolumeEnabled: boolean = false;
@@ -3017,9 +3236,23 @@ class DotGridAudioPlayer {
     // The setGridSize -> updateDots flow (which removes/re-adds points) handles panning updates.
   }
 
-  public getLoopSequencerVisualState(): { playingDotKey: string | null; beatIndex: number } {
+  public getLoopSequencerVisualState(): { playingDotKey: string | null; playingDotKeys?: string[]; beatIndex: number } {
     if (!this.isPlaying || !this.isLoopSequencerMode() || this.loopSequencerVisualDotKeys.length === 0) {
       return { playingDotKey: null, beatIndex: 0 };
+    }
+
+    if (this.simultaneousHeightEnabled || this.rowDepthEnabled) {
+      const now = audioContext.getAudioContext().currentTime;
+      let latest: { dotKey: string; time: number; beat: number } | undefined;
+      for (const event of this.simultaneousVisualEvents) {
+        if (event.time > now) break;
+        latest = event;
+      }
+      if (!latest) return { playingDotKey: null, playingDotKeys: [], beatIndex: 0 };
+      const playingDotKeys = this.simultaneousVisualEvents
+        .filter((event) => event.time === latest.time)
+        .map((event) => event.dotKey);
+      return { playingDotKey: playingDotKeys[0] ?? null, playingDotKeys, beatIndex: latest.beat };
     }
 
     if (this.loopSequencerVisualHitInterval <= 0 || this.loopSequencerVisualCycleHits <= 0) {
@@ -3352,17 +3585,83 @@ class DotGridAudioPlayer {
   // the last gets -balanceDb, dots in between interpolate linearly.
   public setDotBalanceDb(db: number): void {
     this.dotBalanceDb = clamp(db, -60, 60);
+    if (this.isPlaying && this.isTimeBasedContinuousLoudQuietMode()) {
+      this.applyContinuousLoudQuietGain(audioContext.getAudioContext().currentTime, true);
+    }
   }
 
-  private getLoudnessSwapPolarity(): number {
+  public scheduleStaggeredDotPulses(startTime: number, duration: number, append = false, overlap = true, depthLevels = 1, depthRangeDb = 20, depthStepIndex = 0, releaseSeconds = 0): void {
+    if (!append) this.audioService.clearContinuousPulses();
+    if (!this.isPlaying || !this.isTimeBasedContinuousLoudQuietMode() || this.activeDotKeys.size < 1 || (depthLevels <= 1 && this.activeDotKeys.size > 2)) return;
+    const dots = Array.from(this.activeDotKeys).sort((a, b) =>
+      (this.parseDotKey(b)?.y ?? 0) - (this.parseDotKey(a)?.y ?? 0));
+    dots.forEach((dotKey, index) => {
+      this.audioService.scheduleContinuousPulses(dotKey, startTime, duration, index / dots.length, overlap, depthLevels, depthRangeDb, depthStepIndex, releaseSeconds);
+    });
+  }
+
+  public clearStaggeredDotPulses(): void {
+    this.audioService.clearContinuousPulses();
+  }
+
+  public setLowerEdgeSine(enabled: boolean, volumeDb: number): void {
+    this.audioService.setLowerEdgeSine(enabled, volumeDb);
+  }
+
+  public scheduleSelectedDotStep(startTime: number, stepIndex: number, depthLevels: number, depthRangeDb: number, releaseSeconds = 0): void {
+    if (!this.isPlaying || !this.isTimeBasedContinuousLoudQuietMode()) return;
+    const dots = this.sortDotsByReadingOrder();
+    if (dots.length === 0) return;
+    const order = this.rowRepeatEnabled ? this.getRepeatedRowOrder(dots) : dots;
+    const groups = this.columnWiseEnabled ? this.getColumnGroups(dots)
+      : this.rowWiseEnabled ? this.getRowGroups(dots) : order.map(key => [key]);
+    const levels = Math.max(1, Math.min(8, Math.round(depthLevels)));
+    const depthSteps = Array.from({ length: levels }, (_, index) => index);
+    const depthIndex = this.depthAfterPass
+      ? Math.floor(stepIndex / (groups.length * this.passesPerDepth))
+      : stepIndex;
+    const depthStep = depthSteps[depthIndex % depthSteps.length];
+    // Pass mode advances notes first, holding depth for the requested full passes.
+    const groupAtStep = (step: number) => groups[(this.depthAfterPass
+      ? step : Math.floor(step / depthSteps.length)) % groups.length];
+    const activeKeys = new Set(groupAtStep(stepIndex));
+    const previousKeys = new Set(stepIndex === 0 ? [] : groupAtStep(stepIndex - 1));
+    const target = levels <= 1 ? 1 : dbToGain(-clamp(depthRangeDb, 0, 60) * (1 - depthStep / (levels - 1)));
+    dots.forEach(key => {
+      if (activeKeys.has(key)) {
+        this.audioService.scheduleContinuousDotLevel(key, startTime, target);
+      } else if (stepIndex === 0 || previousKeys.has(key)) {
+        this.audioService.scheduleContinuousDotLevel(key, startTime, 0, stepIndex === 0 ? 0 : releaseSeconds);
+      }
+    });
+  }
+
+  private getLoudnessSwapPolarity(hitIndex?: number): number {
     if (!this.loudnessSwapEnabled) return 1;
+    if (hitIndex !== undefined) {
+      return Math.floor(hitIndex / this.balanceAlternateHits) % 2 === 1 ? -1 : 1;
+    }
     return Math.floor(this.loudnessSwapCycleIndex / 4) % 2 === 1 ? -1 : 1;
   }
 
-  private getDotBalanceDb(dotIndex: number, dotTotal: number): number {
-    if (dotTotal <= 1 || this.dotBalanceDb === 0) return 0;
-    const t = clamp(dotIndex / (dotTotal - 1), 0, 1);
-    return this.dotBalanceDb * (1 - 2 * t) * this.getLoudnessSwapPolarity();
+  private getDotBalanceDb(dotKey: string, hitIndex?: number): number {
+    if (this.activeDotKeys.size <= 1 || this.dotBalanceDb === 0 || !this.activeDotKeys.has(dotKey)) return 0;
+    const horizontalPosition = (key: string) => this.dotNormalizedPositions.get(key)?.normalizedX
+      ?? (this.parseDotKey(key)?.x ?? 0) / Math.max(1, this.columnCount - 1);
+    let left = Infinity;
+    let right = -Infinity;
+    this.activeDotKeys.forEach(key => {
+      const x = horizontalPosition(key);
+      left = Math.min(left, x);
+      right = Math.max(right, x);
+    });
+    if (right - left < 1e-6) return 0;
+    const t = clamp((horizontalPosition(dotKey) - left) / (right - left), 0, 1);
+    return this.dotBalanceDb * (2 * t - 1) * this.getLoudnessSwapPolarity(hitIndex);
+  }
+
+  public setBalanceAlternateHits(hits: number): void {
+    this.balanceAlternateHits = Number.isFinite(hits) ? clamp(Math.round(hits), 1, 64) : 4;
   }
 
   public setLoudnessSwapEnabled(enabled: boolean): void {
@@ -3390,6 +3689,12 @@ class DotGridAudioPlayer {
     if (!this.isPlaying || !this.isLoopSequencerMode() || this.activeDotKeys.size === 0) return;
 
     const now = audioContext.getAudioContext().currentTime;
+    if (this.simultaneousHeightEnabled || this.rowDepthEnabled) {
+      const restartTime = now + 0.03;
+      this.audioService.cancelScheduledHitsFrom(restartTime);
+      this.startLoopSequencer(restartTime);
+      return;
+    }
     const interval = this.loopSequencerVisualHitInterval;
     const cycleStart = this.loopSequencerVisualCycleStartTime;
     if (!(interval > 0) || this.loopSequencerVisualCycleHits <= 0) {
@@ -3907,6 +4212,20 @@ class DotGridAudioPlayer {
     return index < 0 ? 0 : index;
   }
 
+  private getDotVolumeOscillationRate(dotKey?: string): number {
+    if (dotKey === undefined) return this.allVolumeOscillationRateHz;
+    // Stable per-dot rates: selecting another dot does not retime existing dots.
+    let hash = 2166136261;
+    for (let index = 0; index < dotKey.length; index++) {
+      hash = Math.imul(hash ^ dotKey.charCodeAt(index), 16777619);
+    }
+    // Mix nearby grid keys across the range instead of clustering their rates.
+    hash = Math.imul(hash ^ (hash >>> 16), 0x45d9f3b);
+    hash = Math.imul(hash ^ (hash >>> 16), 0x45d9f3b);
+    const fraction = ((hash ^ (hash >>> 16)) >>> 0) / 4294967296;
+    return this.allVolumeOscillationRateHz * (0.6 + 0.8 * fraction);
+  }
+
   private getAllVolumeOscillationDb(
     scheduledTime: number = audioContext.getAudioContext().currentTime,
     dotKey?: string
@@ -3915,7 +4234,7 @@ class DotGridAudioPlayer {
     const phaseLagCycles = this.getEnglishReadingOrderWaveIndex(dotKey) * this.allVolumeOscillationWavePhaseShift;
     const normalized = this.getVolumeOscillationNormalized(
       scheduledTime,
-      this.allVolumeOscillationRateHz,
+      this.getDotVolumeOscillationRate(dotKey),
       this.allVolumeOscillationStartTime,
       phaseLagCycles
     );
@@ -3960,6 +4279,11 @@ class DotGridAudioPlayer {
   }
 
   private getContinuousVolumeLevelAtTime(currentTime: number): number {
+    // Plain continuous noise stays at one level. Only explicitly enabled
+    // modulation modes should run a repeating loud/quiet or bandwidth pattern.
+    if (!this.fourFourThreeLevelVolumeEnabled && !this.loudQuietBandwidthModeEnabled) {
+      return 2;
+    }
     const stepSeconds = Math.max(0.01, this.continuousLoudQuietStepSeconds);
     const elapsed = Math.max(0, currentTime - this.continuousLoudQuietStartTime);
 
@@ -3988,7 +4312,9 @@ class DotGridAudioPlayer {
     const selectionDb = includeSelectionOffset && dotKey !== undefined
       ? this.getSelectionVolumeDb(dotKey, currentTime)
       : 0;
-    return 0.8 * dbToGain(-dropDb + oscillationDb + selectionDb);
+    // Continuous notes have no hit count: keep the chosen balance steady.
+    const balanceDb = dotKey === undefined ? 0 : this.getDotBalanceDb(dotKey, 0);
+    return 0.8 * dbToGain(-dropDb + oscillationDb + selectionDb + balanceDb);
   }
 
   private getLoudQuietBandwidthForLevel(volumeLevel: number): number {
@@ -4258,6 +4584,17 @@ class DotGridAudioPlayer {
     this.continuousLoudQuietStartTime = audioContext.getAudioContext().currentTime;
     this.continuousLoudQuietLastStateKey = null;
 
+    if (
+      !this.continuousSequentialEnabled &&
+      !this.continuousTwoDotAlternateEnabled &&
+      !this.fourFourThreeLevelVolumeEnabled &&
+      !this.loudQuietBandwidthModeEnabled &&
+      !this.hasContinuousVolumeMotion()
+    ) {
+      this.applyContinuousLoudQuietGain(this.continuousLoudQuietStartTime, true);
+      return;
+    }
+
     if (this.continuousLeftRightLoudQuietEnabled && !this.continuousSequentialEnabled && !this.hasContinuousVolumeMotion()) {
       this.applyContinuousLoudQuietGain(this.continuousLoudQuietStartTime, true);
       return;
@@ -4294,6 +4631,8 @@ class DotGridAudioPlayer {
   }
 
   private resetLoopSequencerVisualState(): void {
+    this.simultaneousVisualEvents = [];
+    this.simultaneousVisualBeat = 0;
     this.loopSequencerVisualDotKeys = [];
     this.loopSequencerVisualCycleStartTime = 0;
     this.loopSequencerVisualHitInterval = 0;
@@ -4422,7 +4761,7 @@ class DotGridAudioPlayer {
    * @param currentGridSize Optional grid size update
    * @param currentColumns Optional column count update
    */
-  public updateDots(dots: Set<string>, currentGridSize?: number, currentColumns?: number): void {
+  public updateDots(dots: Set<string>, currentGridSize?: number, currentColumns?: number, releaseSeconds = 0): void {
     // Update grid size if provided and changed
     if (currentGridSize && currentGridSize !== this.gridSize) {
       this.setGridSize(currentGridSize, currentColumns); // This will update internal gridSize/columnCount
@@ -4443,7 +4782,7 @@ class DotGridAudioPlayer {
     // Remove dots that are no longer selected
     oldDotKeys.forEach(dotKey => {
       if (!this.activeDotKeys.has(dotKey)) {
-        this.audioService.removePoint(dotKey); // removePoint also handles deactivation
+        this.audioService.releaseAndRemovePoint(dotKey, releaseSeconds);
         // removedKeys.push(dotKey);
       }
     });
@@ -4486,6 +4825,12 @@ class DotGridAudioPlayer {
     this.syncDotVolumeDbOffsets();
 
     this.syncSingleLocationTwoDotPoint();
+
+    if (this.activeDotKeys.size === 0) {
+      this.setPlaying(false);
+      this.audioService.clearGridPlayback();
+      return;
+    }
 
     if (this.isPlaying) {
       if (this.isLoopSequencerMode()) {
@@ -5059,7 +5404,9 @@ class DotGridAudioPlayer {
    * Set the playing state
    */
   public setPlaying(playing: boolean): void {
-    if (playing === this.isPlaying) return;
+    // A pending resume must never restart an empty selection. Stop remains
+    // idempotent but always clears automation, even if already marked stopped.
+    if (playing && (this.activeDotKeys.size === 0 || this.isPlaying)) return;
 
     this.isPlaying = playing;
     console.log('🔊 Set playing state:', playing);
@@ -5117,6 +5464,10 @@ class DotGridAudioPlayer {
         this.startAllRhythms();
       }
     } else {
+      if (this.loopSequencerRefreshTimeoutId !== null) {
+        window.clearTimeout(this.loopSequencerRefreshTimeoutId);
+        this.loopSequencerRefreshTimeoutId = null;
+      }
       this.audioService.stopAlwaysPlayingOscillation();
       this.audioService.stopNoiseOscillation();
       this.stopContinuousLoudQuietCycle(false);
@@ -5133,6 +5484,157 @@ class DotGridAudioPlayer {
    * @param scheduledStartTime If provided, use this as the start time for
    *   scheduling hits (for seamless looping). Otherwise use currentTime.
    */
+  public setSimultaneousHeightEnabled(enabled: boolean): void {
+    if (this.simultaneousHeightEnabled === enabled) return;
+    this.simultaneousHeightEnabled = enabled;
+    this.requestLoopSequencerRefresh();
+  }
+
+  public setRowDepthEnabled(enabled: boolean): void {
+    if (this.rowDepthEnabled === enabled) return;
+    this.rowDepthEnabled = enabled;
+    this.requestLoopSequencerRefresh();
+  }
+
+  public setRowRepeatEnabled(enabled: boolean): void {
+    if (this.rowRepeatEnabled === enabled) return;
+    this.rowRepeatEnabled = enabled;
+    this.requestLoopSequencerRefresh();
+  }
+
+  public setPlaybackGrouping(grouping: "dot" | "row" | "column"): void {
+    const rowWise = grouping === "row";
+    const columnWise = grouping === "column";
+    if (this.rowWiseEnabled === rowWise && this.columnWiseEnabled === columnWise) return;
+    this.rowWiseEnabled = rowWise;
+    this.columnWiseEnabled = columnWise;
+    this.requestLoopSequencerRefresh();
+  }
+
+  public setDepthAfterPass(enabled: boolean, passes: number): void {
+    const repeats = Number.isFinite(passes) ? clamp(Math.round(passes), 1, 32) : 1;
+    if (this.depthAfterPass === enabled && this.passesPerDepth === repeats) return;
+    this.depthAfterPass = enabled;
+    this.passesPerDepth = repeats;
+    this.requestLoopSequencerRefresh();
+  }
+
+  private getRowGroups(dots: string[]): string[][] {
+    const rows = new Map<number, string[]>();
+    dots.forEach(key => {
+      const position = this.parseDotKey(key);
+      if (!position) return;
+      const row = rows.get(position.y) ?? [];
+      row.push(key);
+      rows.set(position.y, row);
+    });
+    return Array.from(rows.entries()).sort(([a], [b]) => b - a)
+      .map(([, row]) => row.sort((a, b) => this.parseDotKey(a)!.x - this.parseDotKey(b)!.x));
+  }
+
+  private getRepeatedRowOrder(dots: string[]): string[] {
+    return this.getRowGroups(dots).flatMap(row => Array.from({ length: 4 }, () => row).flat());
+  }
+
+  private getColumnGroups(dots: string[]): string[][] {
+    const columns = new Map<number, string[]>();
+    dots.forEach(key => {
+      const position = this.parseDotKey(key);
+      if (!position) return;
+      const column = columns.get(position.x) ?? [];
+      column.push(key);
+      columns.set(position.x, column);
+    });
+    return Array.from(columns.entries()).sort(([a], [b]) => a - b)
+      .map(([, column]) => column.sort((a, b) => this.parseDotKey(b)!.y - this.parseDotKey(a)!.y));
+  }
+
+  private scheduleRowOrSimultaneousCycle(scheduledStartTime?: number): void {
+    const selected = this.sortDotsByReadingOrder().filter((key) => this.shouldRedDotPlay(key));
+    const dots = this.rowRepeatEnabled ? this.getRepeatedRowOrder(selected) : selected;
+    const simultaneous = this.simultaneousHeightEnabled && !this.rowRepeatEnabled && !this.rowWiseEnabled && !this.columnWiseEnabled;
+    const groups = this.columnWiseEnabled ? this.getColumnGroups(selected)
+      : this.rowWiseEnabled ? this.getRowGroups(selected) : dots.map(key => [key]);
+    if (dots.length === 0) {
+      this.resetLoopSequencerVisualState();
+      return;
+    }
+    const now = audioContext.getAudioContext().currentTime;
+    const start = Math.max(scheduledStartTime ?? now + 0.03, now);
+    const cycleSeconds = Math.max(0.04, this.audioService.getHitModeStagger() * 4);
+    const depthLevels = this.audioService.getVolumeSteps();
+    const depthSteps = Array.from({ length: Math.max(1, depthLevels) }, (_, index) => index);
+    const repeatsPerDepth = this.depthAfterPass ? this.passesPerDepth
+      : this.rowRepeatEnabled ? 1 : this.audioService.getNumberOfHits();
+    const noteHitSpacing = Math.max(0.01, this.audioService.getHitModeStagger());
+    const noteEvents = () => groups.flatMap((group, groupIndex) =>
+      depthSteps.flatMap((depthStep, depthIndex) =>
+        Array.from({ length: repeatsPerDepth }, (_, repeat) => repeat).flatMap(repeat => {
+          const hitIndex = this.depthAfterPass
+            ? (depthIndex * repeatsPerDepth + repeat) * groups.length + groupIndex
+            : (groupIndex * depthSteps.length + depthIndex) * repeatsPerDepth + repeat;
+          const offset = hitIndex * noteHitSpacing;
+          const gain = depthLevels <= 1 ? 1 : dbToGain(-this.audioService.getHitDecay() * (1 - depthStep / (depthLevels - 1)));
+          return group.map(dotKey => ({
+            dotKey, offset, gain,
+            attack: this.audioService.getHitModeAttack(),
+            release: this.audioService.getHitModeRelease(),
+          }));
+        })
+      )
+    );
+    const simultaneousDepthSteps = depthSteps.flatMap(depthStep =>
+      Array.from({ length: this.depthAfterPass ? this.passesPerDepth : 1 }, () => depthStep));
+    const events = (simultaneous ? simultaneousDepthSteps.flatMap((depthStep, depthIndex) => dots.flatMap((dotKey) => {
+      const height = this.dotNormalizedPositions.get(dotKey)?.normalizedY
+        ?? (this.parseDotKey(dotKey)?.y ?? 0) / Math.max(1, this.gridSize - 1);
+      const repeats = 1 + Math.round(clamp(height, 0, 1) * 3);
+      const interval = cycleSeconds / repeats;
+      return Array.from({ length: repeats }, (_, index) => ({
+        dotKey,
+        offset: depthIndex * cycleSeconds + index * interval,
+        gain: depthLevels <= 1 ? 1 : dbToGain(-this.audioService.getHitDecay() * (1 - depthStep / (depthLevels - 1))),
+        attack: Math.min(this.audioService.getHitModeAttack(), interval * 0.25),
+        release: this.audioService.getHitModeRelease() / repeats,
+      }));
+    })) : noteEvents()).sort((a, b) => a.offset - b.offset);
+    const totalDuration = simultaneous
+      ? cycleSeconds * simultaneousDepthSteps.length
+      : groups.length * depthSteps.length * repeatsPerDepth * noteHitSpacing;
+
+    // Retain the last audible group while the next cycle is scheduled ahead.
+    const past = this.simultaneousVisualEvents.filter((event) => event.time < start);
+    // Discard counts for canceled future hits when live settings reschedule a cycle.
+    this.simultaneousVisualBeat = past[past.length - 1]?.beat ?? 0;
+    const latestPastTime = past.reduce((latest, event) => event.time <= now ? event.time : latest, -Infinity);
+    this.simultaneousVisualEvents = past.filter((event) => event.time >= latestPastTime);
+    let previousOffset = -1;
+    for (const event of events) {
+      if (event.offset !== previousOffset) this.simultaneousVisualBeat++;
+      // A simultaneous group counts as one hit so all voices share the same polarity.
+      const balanceGain = dbToGain(this.getDotBalanceDb(event.dotKey, this.simultaneousVisualBeat - 1));
+      this.audioService.schedulePointHit(event.dotKey, start + event.offset, event.attack, event.release, event.gain * balanceGain);
+      this.simultaneousVisualEvents.push({ dotKey: event.dotKey, time: start + event.offset, beat: this.simultaneousVisualBeat });
+      previousOffset = event.offset;
+    }
+    this.loopSequencerVisualDotKeys = dots;
+    this.loopSequencerVisualCycleStartTime = start;
+    this.loopSequencerVisualHitInterval = simultaneous ? cycleSeconds / 12 : noteHitSpacing;
+    this.loopSequencerVisualTotalHitsPerDot = 1;
+    this.loopSequencerVisualCycleHits = events.length;
+    this.loopSequencerVisualBeatBase = this.loopSequencerVisualNextBeatBase;
+    this.loopSequencerVisualNextBeatBase += events.length;
+    this.loopSequencerVisualHitOffsets = events.map((event) => event.offset);
+    this.loopSequencerVisualHitDotKeys = events.map((event) => event.dotKey);
+    this.loopSequencerVisualPlayTogether = true;
+    this.loopSequencerVisualInterleaved = false;
+    this.advanceCycleCounter();
+    const nextStart = start + totalDuration;
+    this.loopSequencerTimeoutId = window.setTimeout(() => {
+      if (this.isPlaying && this.isLoopSequencerMode()) this.startLoopSequencer(nextStart);
+    }, Math.max(0, (nextStart - now) * 1000 - Math.min(100, cycleSeconds * 250)));
+  }
+
   private startLoopSequencer(scheduledStartTime?: number, startHitIndex: number = 0, advanceSwapCycle: boolean = false): void {
     this.stopLoopSequencerInternalCleanup();
     if (advanceSwapCycle) this.loudnessSwapCycleIndex++;
@@ -5149,6 +5651,11 @@ class DotGridAudioPlayer {
       this.audioService.deactivateAllPoints();
       this.audioService.resetBandwidthOscillationSequence();
       this.reverbQuietOscillationIndex = 0;
+    }
+
+    if (this.simultaneousHeightEnabled || this.rowDepthEnabled) {
+      this.scheduleRowOrSimultaneousCycle(scheduledStartTime);
+      return;
     }
 
     // Sort dots by reading order
@@ -5456,16 +5963,26 @@ class DotGridAudioPlayer {
       );
     };
 
-    const volumeCycleSteps = volumeSteps <= 1
-      ? [0]
-      : [
-          ...Array.from({ length: volumeSteps }, (_, index) => index),
-          ...Array.from({ length: Math.max(0, volumeSteps - 2) }, (_, index) => volumeSteps - 2 - index),
-        ];
+    const volumeCycleSteps = Array.from({ length: Math.max(1, volumeSteps) }, (_, index) => index);
 
-    // Total waves = ping-pong volume cycle × hitsPerVolumeLevel
+    // Bandwidth is the outer cycle; complete the depth cycle at each width.
+    // A zero bandwidth range keeps the original depth-only sequence.
+    const bandwidthCycleSteps = this.bandwidthRangeOctaves > 0 && this.bandwidthLevels > 1
+      ? [
+          ...Array.from({ length: this.bandwidthLevels }, (_, index) => index),
+          ...Array.from({ length: Math.max(0, this.bandwidthLevels - 2) }, (_, index) => this.bandwidthLevels - 2 - index),
+        ]
+      : [0];
+    const depthBandwidthCycle = bandwidthCycleSteps.flatMap((bandwidthStep) =>
+      volumeCycleSteps.map((volumeStep) => ({ volumeStep, bandwidthStep }))
+    );
+    const experimentalBandwidthCycle = bandwidthCycleSteps.flatMap((bandwidthStep) =>
+      (experimentalDepthSequence ?? []).map((volumeStep) => ({ volumeStep, bandwidthStep }))
+    );
+
+    // Total waves = nested bandwidth/depth cycle × hitsPerVolumeLevel
     // Each wave fires all dots (with stagger between them)
-    const totalWaves = volumeCycleSteps.length * hitsPerVolumeLevel;
+    const totalWaves = depthBandwidthCycle.length * hitsPerVolumeLevel;
 
     if (!fourFourHalfBandPatternSequence) {
       this.audioService.stopSharedBandpassNoise(currentTime);
@@ -5512,7 +6029,7 @@ class DotGridAudioPlayer {
       const perDotMultiplier = perDotWaveEnabled
         ? this.audioService.getPerDotVolumeWaveMultiplier(dotIndex, dotTotal)
         : 1.0;
-      const balanceMultiplier = dbToGain(this.getDotBalanceDb(dotIndex, dotTotal));
+      const balanceMultiplier = dbToGain(this.getDotBalanceDb(dotKey));
       return applyReferenceVolumeOffset(dotKey, calculateStepVolume(basePeakVolume * perDotMultiplier * balanceMultiplier, volumeStep, stepCount));
     };
 
@@ -5693,11 +6210,43 @@ class DotGridAudioPlayer {
       return full.length > 0 ? { top, full, bottom } : null;
     };
 
+    // Keep the same hit grid when changing between waves and complete per-dot cycles.
+    const scheduleDepthCycle = () => {
+      const cycleHitCount = depthBandwidthCycle.length * playableDots.length * hitsPerVolumeLevel;
+      plainSkipHits = cycleHitCount > 0 ? startHitIndex % cycleHitCount : 0;
+      let hitIndex = 0;
+      let scheduledHitIndex = 0;
+
+      const scheduleLevel = (dotKey: string, dotIndex: number, volumeStep: number, bandwidthStep: number) => {
+        for (let hit = 0; hit < hitsPerVolumeLevel; hit++) {
+          if (hitIndex >= plainSkipHits) {
+            const hitTime = currentTime + scheduledHitIndex * stagger;
+            const peakVolume = getDotVolume(dotKey, dotIndex, playableDots.length, volumeStep, volumeSteps, hitTime);
+            scheduleSequencerHit(dotKey, hitTime, peakVolume, undefined, undefined, undefined, undefined, this.getDepthBandpassRange(dotKey, bandwidthStep, this.bandwidthLevels));
+            scheduledHitIndex++;
+          }
+          hitIndex++;
+        }
+      };
+
+      if (this.depthPerDot) {
+        playableDots.forEach((dotKey, dotIndex) => {
+          depthBandwidthCycle.forEach(({ volumeStep, bandwidthStep }) => scheduleLevel(dotKey, dotIndex, volumeStep, bandwidthStep));
+        });
+      } else {
+        depthBandwidthCycle.forEach(({ volumeStep, bandwidthStep }) => {
+          playableDots.forEach((dotKey, dotIndex) => scheduleLevel(dotKey, dotIndex, volumeStep, bandwidthStep));
+        });
+      }
+    };
+
     // Schedule hits for all dots in this loop cycle
     // In all modes, each wave fires all playable dots with stagger, and waves are spaced by waveInterval
-    if (this.audioService.getLoopSequencerPlayTogether()) {
+    if (this.depthPerDot) {
+      scheduleDepthCycle();
+    } else if (this.audioService.getLoopSequencerPlayTogether()) {
       // Play all dots together mode: all dots in each wave, staggered
-      volumeCycleSteps.forEach((volumeStep, cycleStepIndex) => {
+      depthBandwidthCycle.forEach(({ volumeStep, bandwidthStep }, cycleStepIndex) => {
         for (let hit = 0; hit < hitsPerVolumeLevel; hit++) {
           const waveIndex = cycleStepIndex * hitsPerVolumeLevel + hit;
           const waveTime = currentTime + waveIndex * waveInterval;
@@ -5706,7 +6255,7 @@ class DotGridAudioPlayer {
             if (!this.shouldRedDotPlay(dotKey)) return;
             const hitTime = waveTime + playableIndex * stagger;
             const peakVolume = getDotVolume(dotKey, playableIndex, playableDots.length, volumeStep, volumeSteps, hitTime);
-            scheduleSequencerHit(dotKey, hitTime, peakVolume);
+            scheduleSequencerHit(dotKey, hitTime, peakVolume, undefined, undefined, undefined, undefined, this.getDepthBandpassRange(dotKey, bandwidthStep, this.bandwidthLevels));
             playableIndex++;
           });
         }
@@ -5716,14 +6265,14 @@ class DotGridAudioPlayer {
       const playableDotCount = playableDots.length;
 
       if (playableDotCount > 0) {
-        volumeCycleSteps.forEach((volumeStep, cycleStepIndex) => {
+        depthBandwidthCycle.forEach(({ volumeStep, bandwidthStep }, cycleStepIndex) => {
           for (let hitCycle = 0; hitCycle < hitsPerVolumeLevel; hitCycle++) {
             const waveIndex = cycleStepIndex * hitsPerVolumeLevel + hitCycle;
             const waveTime = currentTime + waveIndex * waveInterval;
             playableDots.forEach((dotKey, dotIndex) => {
               const hitTime = waveTime + dotIndex * stagger;
               const peakVolume = getDotVolume(dotKey, dotIndex, playableDotCount, volumeStep, volumeSteps, hitTime);
-              scheduleSequencerHit(dotKey, hitTime, peakVolume);
+              scheduleSequencerHit(dotKey, hitTime, peakVolume, undefined, undefined, undefined, undefined, this.getDepthBandpassRange(dotKey, bandwidthStep, this.bandwidthLevels));
             });
           }
         });
@@ -5776,13 +6325,13 @@ class DotGridAudioPlayer {
       // marked reference dot, so the ear always compares against the same place.
       let hitIndex = 0;
 
-      volumeCycleSteps.forEach((volumeStep) => {
+      depthBandwidthCycle.forEach(({ volumeStep, bandwidthStep }) => {
         referenceHitSequence.forEach((dotKey) => {
           const dotIndex = Math.max(0, sequencerDotKeys.indexOf(dotKey));
           for (let hit = 0; hit < hitsPerVolumeLevel; hit++) {
             const hitTime = currentTime + hitIndex * stagger;
             const peakVolume = getDotVolume(dotKey, dotIndex, dotCount, volumeStep, volumeSteps, hitTime);
-            scheduleSequencerHit(dotKey, hitTime, peakVolume);
+            scheduleSequencerHit(dotKey, hitTime, peakVolume, undefined, undefined, undefined, undefined, this.getDepthBandpassRange(dotKey, bandwidthStep, this.bandwidthLevels));
             hitIndex++;
           }
         });
@@ -5816,13 +6365,13 @@ class DotGridAudioPlayer {
       const releaseBoost = Math.min(0.35, Math.max(0.08, stagger * 0.4));
       const experimentalRelease = releaseTime + releaseBoost;
 
-      experimentalDepthSequence?.forEach((volumeStep, waveIndex) => {
+      experimentalBandwidthCycle.forEach(({ volumeStep, bandwidthStep }, waveIndex) => {
         const waveTime = currentTime + waveIndex * stagger;
 
         playableDots.forEach((dotKey, dotIndex) => {
           const hitTime = waveTime + dotIndex * shortStagger;
           const peakVolume = getDotVolume(dotKey, dotIndex, playableDots.length, volumeStep, volumeSteps, hitTime);
-          scheduleSequencerHit(dotKey, hitTime, peakVolume, experimentalRelease);
+          scheduleSequencerHit(dotKey, hitTime, peakVolume, experimentalRelease, undefined, undefined, undefined, this.getDepthBandpassRange(dotKey, bandwidthStep, this.bandwidthLevels));
         });
       });
     } else if (rhythmPatternActive) {
@@ -6183,43 +6732,9 @@ class DotGridAudioPlayer {
         });
       });
     } else if (singleDotMiddleDepthSequence) {
-      // One-dot 3x-depth mode: use the middle volume as the anchor, mirroring
-      // the reference-dot A/B pattern without needing a second spatial dot.
-      const dotKey = playableDots[0];
-      const dotIndex = Math.max(0, sequencerDotKeys.indexOf(dotKey));
-      let hitIndex = 0;
-
-      singleDotMiddleDepthSequence.forEach((volumeStep) => {
-        for (let hit = 0; hit < hitsPerVolumeLevel; hit++) {
-          const hitTime = currentTime + hitIndex * stagger;
-          const peakVolume = getDotVolume(dotKey, dotIndex, dotCount, volumeStep, volumeSteps, hitTime);
-          scheduleSequencerHit(dotKey, hitTime, peakVolume);
-          hitIndex++;
-        }
-      });
+      scheduleDepthCycle();
     } else {
-      // Non-interleaved mode: walk the ping-pong depth layer as a wave:
-      // every selected dot plays at layer 1, then every dot at layer 2, etc.
-      // A live parameter refresh resumes part-way through the cycle: hits
-      // before `startHitIndex` are skipped and the rest keep the hit grid.
-      const cycleHitCount = volumeCycleSteps.length * playableDots.length * hitsPerVolumeLevel;
-      plainSkipHits = cycleHitCount > 0 ? startHitIndex % cycleHitCount : 0;
-      let hitIndex = 0;
-      let scheduledHitIndex = 0;
-
-      volumeCycleSteps.forEach((volumeStep) => {
-        playableDots.forEach((dotKey, dotIndex) => {
-          for (let hit = 0; hit < hitsPerVolumeLevel; hit++) {
-            if (hitIndex >= plainSkipHits) {
-              const hitTime = currentTime + scheduledHitIndex * stagger;
-              const peakVolume = getDotVolume(dotKey, dotIndex, playableDots.length, volumeStep, volumeSteps, hitTime);
-              scheduleSequencerHit(dotKey, hitTime, peakVolume);
-              scheduledHitIndex++;
-            }
-            hitIndex++;
-          }
-        });
-      });
+      scheduleDepthCycle();
     }
 
     // Advance per-cycle volume for the next cycle
@@ -6234,14 +6749,14 @@ class DotGridAudioPlayer {
     // Loop duration depends on mode:
     // - play-together / interleaved: totalWaves * waveInterval
     // - non-interleaved (sequential): packed hits plus the last release tail
-    const isSequentialMode = !this.audioService.getLoopSequencerPlayTogether() && !this.audioService.getInterleavedHits();
-    const hitsPerDot = volumeCycleSteps.length * hitsPerVolumeLevel;
+    const isSequentialMode = this.depthPerDot || (!this.audioService.getLoopSequencerPlayTogether() && !this.audioService.getInterleavedHits());
+    const hitsPerDot = depthBandwidthCycle.length * hitsPerVolumeLevel;
     const playableDotCount = playableDots.length;
     const referenceHiHatHits = referenceHiHatHitSequence
       ? referenceHiHatHitSequence.length
       : 0;
     const referenceSequentialHits = referenceHitSequence
-      ? referenceHitSequence.length * volumeCycleSteps.length * hitsPerVolumeLevel
+      ? referenceHitSequence.length * depthBandwidthCycle.length * hitsPerVolumeLevel
       : 0;
     const referenceMultipliedVolumeHits = referenceMultipliedVolumeSequence
       ? referenceMultipliedVolumeSequence.length * hitsPerVolumeLevel
@@ -6252,7 +6767,7 @@ class DotGridAudioPlayer {
     const rowCompareHits = rowCompareGroups
       ? rowCompareGroups.reduce((total, group) => total + group.dotKeys.length * this.rowCompareRepeats * hitsPerVolumeLevel, 0)
       : 0;
-    const experimentalClusterWaves = experimentalDepthSequence ? experimentalDepthSequence.length : 0;
+    const experimentalClusterWaves = experimentalBandwidthCycle.length;
     const fourFourStraightNoiseHits = fourFourStraightNoiseActive
       ? scheduledVisualHitDotKeys.length
       : 0;
@@ -6278,9 +6793,11 @@ class DotGridAudioPlayer {
       ? reverbDepthSequence.length * playableDotCount * hitsPerVolumeLevel
       : 0;
     const singleDotMiddleDepthHits = singleDotMiddleDepthSequence
-      ? singleDotMiddleDepthSequence.length * hitsPerVolumeLevel
+      ? depthBandwidthCycle.length * hitsPerVolumeLevel
       : 0;
-    const totalSequentialHits = referenceMultipliedVolumeSequence
+    const totalSequentialHits = this.depthPerDot
+      ? playableDotCount * hitsPerDot
+      : referenceMultipliedVolumeSequence
       ? referenceMultipliedVolumeHits
       : referenceBalancedVolumeSequence
       ? referenceBalancedVolumeHits
@@ -6310,12 +6827,14 @@ class DotGridAudioPlayer {
         ? singleDotMiddleDepthHits
         : playableDotCount * hitsPerDot;
     const effectiveSequentialMode = isSequentialMode || rowCompareActive || fourFourHitModeActive || rhythmPatternActive;
-    const effectiveSequentialHitInterval = rhythmPatternActive
+    const effectiveSequentialHitInterval = this.depthPerDot
+      ? stagger
+      : rhythmPatternActive
       ? Math.max(0.01, this.continuousLoudQuietStepSeconds)
       : (this.loudQuietBandwidthModeEnabled && fourFourVolumeLevelSequence) || fourFourHalfBandPatternSequence || fourFourRowAlternationActive
       ? Math.max(0.01, this.continuousLoudQuietStepSeconds)
       : stagger;
-    const inverseClusterTailDuration = inverseClusteredVolumeSequenceActive
+    const inverseClusterTailDuration = !this.depthPerDot && inverseClusteredVolumeSequenceActive
       ? Math.max(0, playableDotCount - 1) * Math.min(
           Math.max(0.001, stagger),
           Math.max(0.001, effectiveSequentialHitInterval * 0.12),
@@ -6358,7 +6877,7 @@ class DotGridAudioPlayer {
       : isSequentialMode && referenceHiHatHitSequence
       ? referenceHiHatHitSequence
       : isSequentialMode && referenceHitSequence
-      ? volumeCycleSteps.flatMap(() =>
+      ? depthBandwidthCycle.flatMap(() =>
           referenceHitSequence.flatMap((dotKey) => Array.from({ length: hitsPerVolumeLevel }, () => dotKey))
         )
       : isSequentialMode && experimentalClusterMode
@@ -6386,7 +6905,7 @@ class DotGridAudioPlayer {
       : isSequentialMode && singleDotMiddleDepthSequence
         ? Array.from({ length: singleDotMiddleDepthHits }, () => playableDots[0])
       : isSequentialMode
-        ? volumeCycleSteps.flatMap(() =>
+        ? depthBandwidthCycle.flatMap(() =>
             playableDots.flatMap((dotKey) => Array.from({ length: hitsPerVolumeLevel }, () => dotKey))
           )
       : null);
@@ -7361,6 +7880,38 @@ class DotGridAudioPlayer {
     return this.audioService.getHitDecay();
   }
 
+  public setBandwidthRangeOctaves(rangeOctaves: number): void {
+    this.bandwidthRangeOctaves = Number.isFinite(rangeOctaves)
+      ? clamp(rangeOctaves, 0, MAX_BANDPASS_BANDWIDTH_OCTAVES - MIN_BANDPASS_BANDWIDTH_OCTAVES)
+      : 0;
+  }
+
+  public setDepthPerDot(enabled: boolean): void {
+    this.depthPerDot = enabled;
+  }
+
+  public setBandwidthLevels(levels: number): void {
+    this.bandwidthLevels = Number.isFinite(levels) ? clamp(Math.round(levels), 1, 8) : 1;
+  }
+
+  private getDepthBandpassRange(dotKey: string, bandwidthStep: number, stepCount: number): BandpassRange | null {
+    if (this.bandwidthRangeOctaves <= 0 || stepCount <= 1) return null;
+    const baseRange = this.audioService.getPointBandpassRange(dotKey);
+    if (!baseRange) return null;
+    const widest = clamp(
+      this.dotBandpassBandwidths.get(dotKey) ?? this.audioService.getBandpassBandwidth(),
+      MIN_BANDPASS_BANDWIDTH_OCTAVES,
+      MAX_BANDPASS_BANDWIDTH_OCTAVES
+    );
+    // Limit the total spread before interpolating so all levels stay evenly spaced.
+    const range = Math.min(this.bandwidthRangeOctaves, widest - MIN_BANDPASS_BANDWIDTH_OCTAVES);
+    const bandwidth = widest - range * (1 - clamp(bandwidthStep / (stepCount - 1), 0, 1));
+    // Every width shares the bottom edge of this dot's full band.
+    const lowerEdge = baseRange.lowerEdge;
+    const upperEdge = lowerEdge * Math.pow(2, bandwidth);
+    return { lowerEdge, upperEdge, centerFrequency: Math.sqrt(lowerEdge * upperEdge) };
+  }
+
   public setVolumeLevelRangeDb(rangeDb: number): void {
     this.audioService.setVolumeLevelRangeDb(rangeDb);
   }
@@ -8048,11 +8599,13 @@ class InverseDotNoiseGenerator {
 }
 
 export class BandpassedNoiseGenerator {
+  private lowerEdgeSine: OscillatorNode | null = null;
+  private lowerEdgeSineGain: GainNode | null = null;
+  private lowerEdgeFrequency = 1000;
   private ctx: AudioContext;
   private inputGainNode: GainNode;
   private outputGainNode: GainNode;
-  private highpassFilter: BiquadFilterNode;
-  private lowpassFilter: BiquadFilterNode;
+  private highpassFilters: BiquadFilterNode[];
   private snareScoopFilters: BiquadFilterNode[] = [];
   private slopingFilter: SlopedPinkNoiseGenerator;
   private currentBandwidthOctaves: number;
@@ -8062,7 +8615,6 @@ export class BandpassedNoiseGenerator {
   private bandwidthFilterMode: BandwidthFilterMode = DEFAULT_BANDWIDTH_FILTER_MODE;
   private gentleEdgeFalloffDbPerOct: number = DEFAULT_GENTLE_EDGE_FALLOFF_DB_PER_OCT;
   private isHighpassActive: boolean = true;
-  private isLowpassActive: boolean = true;
   private snareScoopEnabled: boolean = false;
   private snareScoopDepthDb: number = DEFAULT_SNARE_SCOOP_DEPTH_DB;
   private snareScoopMode: SnareScoopMode = DEFAULT_SNARE_SCOOP_MODE;
@@ -8081,15 +8633,9 @@ export class BandpassedNoiseGenerator {
     this.slopingFilter = new SlopedPinkNoiseGenerator(this.ctx);
     this.slopingFilter.setSlope(BANDPASS_NOISE_SLOPE_DB_PER_OCT);
 
-    // Create sharp highpass filter
-    this.highpassFilter = this.ctx.createBiquadFilter();
-    this.highpassFilter.type = 'highpass';
-    this.highpassFilter.Q.value = BANDPASS_FILTER_Q;
+    // A steep, flat-passband lower edge shared with the cutoff demo.
+    this.highpassFilters = createSharpHighpassFilters(this.ctx);
 
-    // Create sharp lowpass filter
-    this.lowpassFilter = this.ctx.createBiquadFilter();
-    this.lowpassFilter.type = 'lowpass';
-    this.lowpassFilter.Q.value = BANDPASS_FILTER_Q;
 
     for (let index = 0; index < MAX_SNARE_WAVE_FILTERS; index++) {
       const filter = this.ctx.createBiquadFilter();
@@ -8111,8 +8657,8 @@ export class BandpassedNoiseGenerator {
       filter.connect(nextFilter ?? this.outputGainNode);
     });
 
-    // Initial chain setup with both filters (isHighpassActive and isLowpassActive default to true)
-    this.connectFilterChain(true, true);
+    // Only the lower-edge highpass chain is routed.
+    this.connectFilterChain(true);
 
     // Set initial frequency (which will call updateFilterChain if needed)
     this.setBandpassFrequency(this.currentCenterFrequency);
@@ -8128,13 +8674,12 @@ export class BandpassedNoiseGenerator {
 
   private disconnectFilterChain(): void {
     this.slopingFilter.getOutputNode().disconnect();
-    this.highpassFilter.disconnect();
-    this.lowpassFilter.disconnect();
+    this.highpassFilters.forEach((filter) => filter.disconnect());
   }
 
   private reconnectFilterChain(): void {
     this.disconnectFilterChain();
-    this.connectFilterChain(this.isHighpassActive, this.isLowpassActive);
+    this.connectFilterChain(this.isHighpassActive);
   }
 
   private getSnareScoopFrequencies(centerFrequency: number, phaseIndex: number = this.snareScoopPhaseIndex): number[] {
@@ -8213,53 +8758,62 @@ export class BandpassedNoiseGenerator {
     }
   }
 
+  public setLowerEdgeSine(enabled: boolean, volumeDb: number): void {
+    if (enabled && !this.lowerEdgeSine) {
+      this.lowerEdgeSine = this.ctx.createOscillator();
+      this.lowerEdgeSine.type = 'sine';
+      this.lowerEdgeSine.frequency.value = this.lowerEdgeFrequency;
+      this.lowerEdgeSineGain = this.ctx.createGain();
+      this.lowerEdgeSineGain.gain.value = 0;
+      this.lowerEdgeSine.connect(this.lowerEdgeSineGain);
+      // Mix after the band filters, before the shared note envelope/panner.
+      this.lowerEdgeSineGain.connect(this.outputGainNode);
+      this.lowerEdgeSine.start();
+    }
+    if (this.lowerEdgeSineGain) {
+      const now = this.ctx.currentTime;
+      this.lowerEdgeSineGain.gain.cancelAndHoldAtTime(now);
+      this.lowerEdgeSineGain.gain.linearRampToValueAtTime(enabled ? dbToGain(clamp(volumeDb, -60, 0)) : 0, now + 0.01);
+    }
+  }
+
+  private setLowerCutoff(frequency: number, scheduledTime?: number): void {
+    const cutoff = clamp(frequency, 20, Math.min(20000, this.ctx.sampleRate / 2));
+    this.lowerEdgeFrequency = cutoff;
+    if (this.lowerEdgeSine) {
+      if (scheduledTime === undefined) this.lowerEdgeSine.frequency.value = cutoff;
+      else this.lowerEdgeSine.frequency.setValueAtTime(cutoff, scheduledTime);
+    }
+    this.highpassFilters.forEach((filter) => {
+      if (scheduledTime === undefined) filter.frequency.value = cutoff;
+      else filter.frequency.setValueAtTime(cutoff, scheduledTime);
+    });
+  }
+
   private cancelScheduledCutoffValues(scheduledTime: number): void {
-    this.highpassFilter.frequency.cancelScheduledValues(scheduledTime);
-    this.lowpassFilter.frequency.cancelScheduledValues(scheduledTime);
-    this.highpassFilter.Q.cancelScheduledValues(scheduledTime);
-    this.lowpassFilter.Q.cancelScheduledValues(scheduledTime);
+    this.lowerEdgeSine?.frequency.cancelScheduledValues(scheduledTime);
+    this.highpassFilters.forEach((filter) => filter.frequency.cancelScheduledValues(scheduledTime));
     this.snareScoopFilters.forEach((filter) => {
       filter.frequency.cancelScheduledValues(scheduledTime);
     });
   }
 
-  private connectFilterChain(useHighpass: boolean, useLowpass: boolean): void {
-    const slopingOutput = this.slopingFilter.getOutputNode();
-    const filterOutput = this.snareScoopEnabled
-      ? this.snareScoopFilters[0] ?? this.outputGainNode
-      : this.outputGainNode;
-
+  private connectFilterChain(useHighpass: boolean): void {
+    const input = this.slopingFilter.getOutputNode();
+    const output = this.snareScoopEnabled ? this.snareScoopFilters[0] ?? this.outputGainNode : this.outputGainNode;
     if (useHighpass) {
-      slopingOutput.connect(this.highpassFilter);
-      if (useLowpass) {
-        this.highpassFilter.connect(this.lowpassFilter);
-        this.lowpassFilter.connect(filterOutput);
-      } else {
-        this.highpassFilter.connect(filterOutput);
-      }
-    } else if (useLowpass) {
-      slopingOutput.connect(this.lowpassFilter);
-      this.lowpassFilter.connect(filterOutput);
+      input.connect(this.highpassFilters[0]);
+      this.highpassFilters.forEach((filter, index) => filter.connect(this.highpassFilters[index + 1] ?? output));
     } else {
-      slopingOutput.connect(filterOutput);
+      input.connect(output);
     }
     this.isSnareScoopRouted = this.snareScoopEnabled;
   }
 
   private updateFilterChain(lowerEdge: number, upperEdge: number): void {
+    // The highpass chain stays connected at every pitch; no upper cutoff exists.
     void lowerEdge;
     void upperEdge;
-
-    const needHighpass = true;
-    const needLowpass = true;
-
-    // Only rewire if configuration changed
-    if (needHighpass !== this.isHighpassActive || needLowpass !== this.isLowpassActive) {
-      this.disconnectFilterChain();
-      this.connectFilterChain(needHighpass, needLowpass);
-      this.isHighpassActive = needHighpass;
-      this.isLowpassActive = needLowpass;
-    }
   }
 
   private normalizeBandpassRange(lowerEdge: number, upperEdge: number, centerFrequency?: number): BandpassRange {
@@ -8291,13 +8845,10 @@ export class BandpassedNoiseGenerator {
     this.applyEdgeFalloffShape(lowerEdge, upperEdge);
 
     // Set filter frequencies (clamped to safe Web Audio API values)
-    this.highpassFilter.frequency.value = clamp(lowerEdge, 20, 20000);
-    this.lowpassFilter.frequency.value = clamp(upperEdge, 20, 20000);
+    this.setLowerCutoff(lowerEdge);
     this.updateSnareScoopFrequencies(frequency);
 
     this.currentFilterQ = bandpassBandwidthToQ(this.currentBandwidthOctaves, this.bandwidthFilterMode);
-    this.highpassFilter.Q.value = this.currentFilterQ;
-    this.lowpassFilter.Q.value = this.currentFilterQ;
   }
 
   public setBandpassRange(lowerEdge: number, upperEdge: number, centerFrequency?: number): void {
@@ -8307,14 +8858,11 @@ export class BandpassedNoiseGenerator {
     this.updateFilterChain(range.lowerEdge, range.upperEdge);
     this.applyEdgeFalloffShape(range.lowerEdge, range.upperEdge);
 
-    this.highpassFilter.frequency.value = clamp(range.lowerEdge, 20, 20000);
-    this.lowpassFilter.frequency.value = clamp(range.upperEdge, 20, 20000);
+    this.setLowerCutoff(range.lowerEdge);
     this.updateSnareScoopFrequencies(range.centerFrequency);
 
     const bandwidthOctaves = Math.log2(range.upperEdge / range.lowerEdge);
     this.currentFilterQ = bandpassBandwidthToQ(bandwidthOctaves, this.bandwidthFilterMode);
-    this.highpassFilter.Q.value = this.currentFilterQ;
-    this.lowpassFilter.Q.value = this.currentFilterQ;
   }
 
   public setBandpassBandwidth(bandwidthOctaves: number): void {
@@ -8355,14 +8903,10 @@ export class BandpassedNoiseGenerator {
     const halfBandwidth = effectiveBandwidthOctaves / 2;
     const lowerEdge = this.currentCenterFrequency / Math.pow(2, halfBandwidth);
     const upperEdge = this.currentCenterFrequency * Math.pow(2, halfBandwidth);
-    const filterQ = bandpassBandwidthToQ(scheduledBandwidthOctaves, this.bandwidthFilterMode);
 
     this.cancelScheduledCutoffValues(scheduledTime);
     this.applyEdgeFalloffShape(lowerEdge, upperEdge, scheduledTime);
-    this.highpassFilter.frequency.setValueAtTime(clamp(lowerEdge, 20, 20000), scheduledTime);
-    this.lowpassFilter.frequency.setValueAtTime(clamp(upperEdge, 20, 20000), scheduledTime);
-    this.highpassFilter.Q.setValueAtTime(filterQ, scheduledTime);
-    this.lowpassFilter.Q.setValueAtTime(filterQ, scheduledTime);
+    this.setLowerCutoff(lowerEdge, scheduledTime);
     this.scheduleSnareScoopFrequencies(this.currentCenterFrequency, scheduledTime);
   }
 
@@ -8381,14 +8925,10 @@ export class BandpassedNoiseGenerator {
     const halfBandwidth = effectiveBandwidthOctaves / 2;
     const lowerEdge = frequency / Math.pow(2, halfBandwidth);
     const upperEdge = frequency * Math.pow(2, halfBandwidth);
-    const filterQ = bandpassBandwidthToQ(scheduledBandwidthOctaves, this.bandwidthFilterMode);
 
     this.cancelScheduledCutoffValues(scheduledTime);
     this.applyEdgeFalloffShape(lowerEdge, upperEdge, scheduledTime);
-    this.highpassFilter.frequency.setValueAtTime(clamp(lowerEdge, 20, 20000), scheduledTime);
-    this.lowpassFilter.frequency.setValueAtTime(clamp(upperEdge, 20, 20000), scheduledTime);
-    this.highpassFilter.Q.setValueAtTime(filterQ, scheduledTime);
-    this.lowpassFilter.Q.setValueAtTime(filterQ, scheduledTime);
+    this.setLowerCutoff(lowerEdge, scheduledTime);
     this.scheduleSnareScoopFrequencies(frequency, scheduledTime);
   }
 
@@ -8399,15 +8939,10 @@ export class BandpassedNoiseGenerator {
     scheduledTime: number
   ): void {
     const range = this.normalizeBandpassRange(lowerEdge, upperEdge, centerFrequency);
-    const bandwidthOctaves = Math.log2(range.upperEdge / range.lowerEdge);
-    const filterQ = bandpassBandwidthToQ(bandwidthOctaves, this.bandwidthFilterMode);
 
     this.cancelScheduledCutoffValues(scheduledTime);
     this.applyEdgeFalloffShape(range.lowerEdge, range.upperEdge, scheduledTime);
-    this.highpassFilter.frequency.setValueAtTime(clamp(range.lowerEdge, 20, 20000), scheduledTime);
-    this.lowpassFilter.frequency.setValueAtTime(clamp(range.upperEdge, 20, 20000), scheduledTime);
-    this.highpassFilter.Q.setValueAtTime(filterQ, scheduledTime);
-    this.lowpassFilter.Q.setValueAtTime(filterQ, scheduledTime);
+    this.setLowerCutoff(range.lowerEdge, scheduledTime);
     this.scheduleSnareScoopFrequencies(range.centerFrequency, scheduledTime);
   }
 
@@ -8471,15 +9006,17 @@ export class BandpassedNoiseGenerator {
 
   public setBandpassQ(q: number): void {
     this.currentFilterQ = clamp(q, 0.1, 100);
-    this.highpassFilter.Q.value = this.currentFilterQ;
-    this.lowpassFilter.Q.value = this.currentFilterQ;
   }
 
   public dispose(): void {
     this.slopingFilter.dispose();
+    this.lowerEdgeSine?.stop();
+    this.lowerEdgeSine?.disconnect();
+    this.lowerEdgeSineGain?.disconnect();
+    this.lowerEdgeSine = null;
+    this.lowerEdgeSineGain = null;
     this.inputGainNode.disconnect();
-    this.highpassFilter.disconnect();
-    this.lowpassFilter.disconnect();
+    this.highpassFilters.forEach((filter) => filter.disconnect());
     this.snareScoopFilters.forEach((filter) => filter.disconnect());
     this.outputGainNode.disconnect();
   }

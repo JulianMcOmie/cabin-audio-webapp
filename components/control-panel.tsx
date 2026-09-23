@@ -459,7 +459,7 @@ export function ControlPanel({ showEQOverlay, onToggleEQOverlay, onToggleLibrary
 
   return (
     <div className={cn(
-      "absolute bottom-4 left-4 right-32 z-40 flex flex-col items-center transition-opacity duration-200",
+      "relative w-full min-w-0 shrink-0 overflow-hidden flex flex-col items-center transition-opacity duration-200",
       highlightTarget === "grid" && !isPlaying && "opacity-30"
     )}>
       {/* Main control bar */}

@@ -27,11 +27,7 @@ export function EQOverlay({ isOpen, onClose, onActiveBandChange }: EQOverlayProp
 
   return (
     <div
-      className={`fixed left-4 right-32 bottom-44 z-[60] h-[33vh] transition-all duration-200 ease-out ${
-        isOpen
-          ? "opacity-100 scale-100 pointer-events-auto"
-          : "opacity-0 scale-[0.98] pointer-events-none"
-      }`}
+      className={`relative h-[max(18rem,33dvh)] w-full min-w-0 shrink-0 ${isOpen ? "" : "hidden"}`}
     >
       <div className="glass-panel rounded-xl p-3 md:p-4 h-full flex flex-col min-h-0 shadow-xl relative">
         <div
