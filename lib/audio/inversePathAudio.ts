@@ -22,7 +22,7 @@ const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
 
 // Target overall slopes (mutable for tilt range control)
 const LOW_SLOPE_DB_PER_OCT = -10.5; // For low y positions (darker sound)
-const CENTER_SLOPE_DB_PER_OCT = -4.5; // For middle y positions
+const CENTER_SLOPE_DB_PER_OCT = -3.0; // For middle y positions
 const HIGH_SLOPE_DB_PER_OCT = 1.5; // For high y positions (brighter sound)
 const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of SlopedPinkNoiseGenerator (approx -12dB)
 
@@ -45,7 +45,7 @@ const DEFAULT_HOLD_COUNT = 1; // Default: play each dot once before moving to ne
 const DEFAULT_BASE_DB = -48; // Default starting dB level for first hit
 
 // Constants for bandpassed noise generator
-const BANDPASS_NOISE_SLOPE_DB_PER_OCT = -4.5; // Fixed slope for bandpassed noise
+const BANDPASS_NOISE_SLOPE_DB_PER_OCT = -3.0; // Fixed slope for bandpassed noise
 const BANDPASS_BANDWIDTH_OCTAVES = 6.0; // Default bandwidth: 6 octaves
 const BANDPASS_BOTTOM_LOWER_EDGE_HZ = 30; // Lift the lowest dot so the floor does not feel subterranean
 const BANDPASS_NOISE_OUTPUT_GAIN_SCALAR = 0.25; // Much louder output for bandpassed noise

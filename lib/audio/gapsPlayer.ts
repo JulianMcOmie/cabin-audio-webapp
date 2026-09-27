@@ -6,7 +6,7 @@ import { dbToGain, clamp } from "../utils/audioMath"
 const NUM_BANDS = 40 // Number of parallel noise bands across the spectrum
 const MIN_FREQ = 20 // Hz
 const MAX_FREQ = 20000 // Hz
-const SLOPE_DB_PER_OCT = -4.5 // Target spectral slope
+const SLOPE_DB_PER_OCT = -3.0 // Target spectral slope
 const PINK_NOISE_INHERENT_SLOPE = -3.0 // Pink noise already falls at -3dB/oct
 const SLOPE_REF_FREQ = 800 // Hz – reference for slope calculation
 const BAND_Q = 2.5 // Q for each bandpass filter
@@ -125,7 +125,7 @@ export class GapsPlayer {
       filter.frequency.value = centerHz
       filter.Q.value = BAND_Q
 
-      // Slope shaping gain: compensate pink noise to reach -4.5dB/oct
+      // Slope shaping gain: compensate pink noise to reach -3.0dB/oct
       const shapingSlope = SLOPE_DB_PER_OCT - PINK_NOISE_INHERENT_SLOPE
       const gainDb = shapingSlope * Math.log2(centerHz / SLOPE_REF_FREQ)
       const slopeGain = ctx.createGain()

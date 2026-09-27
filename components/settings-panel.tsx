@@ -6,6 +6,8 @@ import { Switch } from "@/components/ui/switch"
 import type { BandwidthFilterMode, VolumeOscillationShape } from "@/lib/audio/dotGridAudio"
 
 interface SettingsPanelProps {
+  maxLowerCutoffHz: number
+  onMaxLowerCutoffChange: (value: number) => void
   rowWiseEnabled: boolean
   onRowWiseChange: (enabled: boolean) => void
   columnWiseEnabled: boolean
@@ -186,7 +188,7 @@ function Control({ label, value, display, min, max, step, onChange }: {
   )
 }
 
-function SpeedControl({ seconds, onChange, minSeconds = 0.05, maxSeconds = 30 }: {
+function SpeedControl({ seconds, onChange, minSeconds = 0.005, maxSeconds = 30 }: {
   seconds: number; onChange: (seconds: number) => void; minSeconds?: number; maxSeconds?: number
 }) {
   const minRate = 1 / maxSeconds
@@ -199,6 +201,7 @@ function SpeedControl({ seconds, onChange, minSeconds = 0.05, maxSeconds = 30 }:
 }
 
 export function SettingsPanel({
+  maxLowerCutoffHz, onMaxLowerCutoffChange,
   rowWiseEnabled, onRowWiseChange,
   columnWiseEnabled, onColumnWiseChange,
   depthAfterPass, onDepthAfterPassChange,
@@ -260,11 +263,12 @@ export function SettingsPanel({
             </p>
           </div>
           )}
+          <Control label="Max lower cutoff" value={maxLowerCutoffHz} display={`${(maxLowerCutoffHz / 1000).toFixed(1)} kHz`} min={100} max={20000} step={100} onChange={onMaxLowerCutoffChange} />
           <Control label="Volume" value={volumeDb} display={volumeDb + " dB"} min={-24} max={24} step={1} onChange={onVolumeChange} />
           {!continuousNoiseEnabled && <>
           <Control label="Attack" value={attackMs} display={Math.round(attackMs) + " ms"} min={1} max={200} step={1} onChange={onAttackMsChange} />
           <SpeedControl seconds={hitSpacingMs * (simultaneous ? 4 : 1) / 1000}
-            minSeconds={simultaneous ? 0.05 : 0.02} maxSeconds={simultaneous ? 8 : 2}
+            minSeconds={0.005} maxSeconds={simultaneous ? 8 : 2}
             onChange={seconds => onHitSpacingMsChange(seconds * 1000 / (simultaneous ? 4 : 1))} />
           </>}
           <Control label="Depth levels" value={depth} display={depth <= 1 ? "Off" : depth + " levels"} min={1} max={8} step={1} onChange={onDepthChange} />

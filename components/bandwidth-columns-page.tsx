@@ -327,7 +327,7 @@ export function BandwidthColumnsPage() {
     player.setLoudQuietBandwidthModeEnabled(false)
     player.setBandwidthFilterMode(DEFAULT_BANDWIDTH_FILTER_MODE)
     player.setGentleEdgeFalloffDbPerOct(dotGridAudio.DEFAULT_GENTLE_EDGE_FALLOFF_DB_PER_OCT)
-    player.setBandpassSlope(-4.5)
+    player.setBandpassSlope(-3.0)
     player.setFourFourHitModeEnabled(true)
     player.setFourFourVolumeBlockSize(LOUD_QUIET_BLOCK_SIZE)
     player.setFourFourVolumePerDot(false)

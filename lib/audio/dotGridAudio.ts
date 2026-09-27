@@ -23,7 +23,7 @@ const PINK_NOISE_SLOPE_DB_PER_OCT = -3.0; // Inherent slope of pink noise
 
 // Target overall slopes (mutable for tilt range control)
 const LOW_SLOPE_DB_PER_OCT = -10.5; // For low y positions (darker sound)
-const CENTER_SLOPE_DB_PER_OCT = -4.5; // For middle y positions
+const CENTER_SLOPE_DB_PER_OCT = -3.0; // For middle y positions
 const HIGH_SLOPE_DB_PER_OCT = 1.5; // For high y positions (brighter sound)
 const SLOPED_NOISE_OUTPUT_GAIN_SCALAR = 0.1; // Scalar to reduce output of SlopedPinkNoiseGenerator (approx -12dB)
 
@@ -46,7 +46,7 @@ const DEFAULT_HOLD_COUNT = 1; // Default: play each dot once before moving to ne
 const DEFAULT_BASE_DB = -48; // Default starting dB level for first hit
 
 // Constants for bandpassed noise generator
-const BANDPASS_NOISE_SLOPE_DB_PER_OCT = -4.5; // Fixed slope for bandpassed noise
+const BANDPASS_NOISE_SLOPE_DB_PER_OCT = -3.0; // Fixed slope for bandpassed noise
 const BANDPASS_BANDWIDTH_OCTAVES = 6.0; // Default bandwidth: 6 octaves
 const BANDPASS_BOTTOM_LOWER_EDGE_HZ = 30; // Lift the lowest dot so the floor does not feel subterranean
 const BANDPASS_NOISE_OUTPUT_GAIN_SCALAR = 0.25; // Much louder output for bandpassed noise
@@ -182,7 +182,8 @@ export function getBandpassRangeForNormalizedY(
   normalizedYPos: number,
   bandwidthOctaves: number,
   filterMode: BandwidthFilterMode = DEFAULT_BANDWIDTH_FILTER_MODE,
-  frequencyExtensionRange = 0
+  frequencyExtensionRange = 0,
+  maxLowerCutoffHz = 14000
 ): BandpassRange {
   void bandwidthOctaves;
   void filterMode;
@@ -191,7 +192,7 @@ export function getBandpassRangeForNormalizedY(
   // Height picks a fixed lower edge on the logarithmic frequency axis.
   // The highest row starts at 14 kHz. The upper edge is display metadata only;
   // noise has no upper cutoff filter.
-  const topLowerEdge = 14000;
+  const topLowerEdge = clamp(maxLowerCutoffHz, bottomLowerEdge, MAX_AUDIBLE_FREQ);
   const lowerEdge = bottomLowerEdge * Math.pow(topLowerEdge / bottomLowerEdge, clamp(normalizedYPos, 0, 1));
   const upperEdge = MAX_AUDIBLE_FREQ;
 
@@ -353,6 +354,12 @@ interface SharedBandpassNoiseNodes {
 }
 
 export class PositionedAudioService {
+  private maxLowerCutoffHz = 14000;
+
+  public setMaxLowerCutoffHz(frequency: number): void {
+    this.maxLowerCutoffHz = clamp(frequency, BANDPASS_BOTTOM_LOWER_EDGE_HZ, MAX_AUDIBLE_FREQ);
+  }
+
   private ctx: AudioContext;
   private audioPoints: Map<string, PointAudioNodes> = new Map();
   private releaseTailCounter = 0;
@@ -1729,6 +1736,19 @@ export class PositionedAudioService {
     voice.releaseEndTime = scheduledTime + attackTime + releaseTime;
   }
 
+  /** Hold one path position until the next audio-clock switch, without an envelope. */
+  public schedulePositionedHold(pointId: string, x: number, y: number, time: number, gain = 1): void {
+    const point = this.audioPoints.get(pointId);
+    if (!point) return;
+    // Reuse the continuous generator: only its scheduled parameters change.
+    // Queueing a future point must never retune or fade the currently held one.
+    point.normalizedXPos = clamp(x, 0, 1);
+    point.normalizedYPos = clamp(y, 0, 1);
+    point.panner.pan.cancelScheduledValues(time);
+    point.mainGain.gain.cancelScheduledValues(time);
+    this.schedulePointGain(pointId, time, gain);
+  }
+
   /** Schedule a path position with the same generator and envelope as grid hits. */
   public schedulePositionedHit(
     pointId: string, x: number, y: number, time: number,
@@ -1857,7 +1877,7 @@ export class PositionedAudioService {
     }
   }
 
-  public addPoint(id: string, x: number, y: number, totalRows: number, totalCols: number, volumeLevel: number = 3): void {
+  public addPoint(id: string, x: number, y: number, totalRows: number, totalCols: number, volumeLevel: number = 3, initiallySilent = false): void {
     if (this.audioPoints.has(id)) {
       console.warn(`Audio point with id ${id} already exists.`);
       return;
@@ -1873,7 +1893,7 @@ export class PositionedAudioService {
     const noiseOscillationGain = this.ctx.createGain();
     noiseOscillationGain.gain.value = 1;
     const envelopeGain = this.ctx.createGain();
-    envelopeGain.gain.value = ENVELOPE_MAX_GAIN * 0.8; // Start at full volume for continuous play
+    envelopeGain.gain.value = initiallySilent ? 0 : ENVELOPE_MAX_GAIN * 0.8;
     const panner = this.ctx.createStereoPanner();
     panner.pan.value = panPosition;
 
@@ -2429,7 +2449,8 @@ export class PositionedAudioService {
       normalizedYPos,
       bandwidthOctaves,
       this.currentBandwidthFilterMode,
-      this.frequencyExtensionRange
+      this.frequencyExtensionRange,
+      this.maxLowerCutoffHz
     );
   }
 
@@ -3811,7 +3832,7 @@ class DotGridAudioPlayer {
   }
 
   public setContinuousLoudQuietStepSeconds(seconds: number): void {
-    const next = Number.isFinite(seconds) ? clamp(seconds, 0.01, 30) : 0.5;
+    const next = Number.isFinite(seconds) ? clamp(seconds, 0.005, 30) : 0.5;
     if (this.continuousLoudQuietStepSeconds === next) return;
     this.continuousLoudQuietStepSeconds = next;
     if (this.isPlaying && this.isTimeBasedContinuousLoudQuietMode()) {
@@ -4284,7 +4305,7 @@ class DotGridAudioPlayer {
     if (!this.fourFourThreeLevelVolumeEnabled && !this.loudQuietBandwidthModeEnabled) {
       return 2;
     }
-    const stepSeconds = Math.max(0.01, this.continuousLoudQuietStepSeconds);
+    const stepSeconds = Math.max(0.005, this.continuousLoudQuietStepSeconds);
     const elapsed = Math.max(0, currentTime - this.continuousLoudQuietStartTime);
 
     if (this.fourFourThreeLevelVolumeEnabled) {
@@ -4392,7 +4413,7 @@ class DotGridAudioPlayer {
     });
     if (dotKeys.length !== 2) return null;
 
-    const stepSeconds = Math.max(0.01, this.continuousLoudQuietStepSeconds);
+    const stepSeconds = Math.max(0.005, this.continuousLoudQuietStepSeconds);
     const blockSeconds = stepSeconds * Math.max(1, this.fourFourVolumeBlockSize);
     const elapsed = Math.max(0, currentTime - this.continuousLoudQuietStartTime);
     const stateIndex = Math.floor(elapsed / blockSeconds) % 4;
@@ -4424,7 +4445,7 @@ class DotGridAudioPlayer {
     });
     if (dotKeys.length < 2) return null;
 
-    const stepSeconds = Math.max(0.01, this.continuousLoudQuietStepSeconds);
+    const stepSeconds = Math.max(0.005, this.continuousLoudQuietStepSeconds);
     const elapsed = Math.max(0, currentTime - this.continuousLoudQuietStartTime);
 
     if (this.continuousSequentialRowsEnabled) {
@@ -5561,12 +5582,12 @@ class DotGridAudioPlayer {
     }
     const now = audioContext.getAudioContext().currentTime;
     const start = Math.max(scheduledStartTime ?? now + 0.03, now);
-    const cycleSeconds = Math.max(0.04, this.audioService.getHitModeStagger() * 4);
+    const cycleSeconds = Math.max(0.005, this.audioService.getHitModeStagger() * 4);
     const depthLevels = this.audioService.getVolumeSteps();
     const depthSteps = Array.from({ length: Math.max(1, depthLevels) }, (_, index) => index);
     const repeatsPerDepth = this.depthAfterPass ? this.passesPerDepth
       : this.rowRepeatEnabled ? 1 : this.audioService.getNumberOfHits();
-    const noteHitSpacing = Math.max(0.01, this.audioService.getHitModeStagger());
+    const noteHitSpacing = Math.max(0.00125, this.audioService.getHitModeStagger());
     const noteEvents = () => groups.flatMap((group, groupIndex) =>
       depthSteps.flatMap((depthStep, depthIndex) =>
         Array.from({ length: repeatsPerDepth }, (_, repeat) => repeat).flatMap(repeat => {
@@ -6377,7 +6398,7 @@ class DotGridAudioPlayer {
     } else if (rhythmPatternActive) {
       // Rhythm pattern: the first three selected dots run concurrent rhythms
       // on one quarter-note clock: half notes, quarter notes, then clave.
-      const beatSeconds = Math.max(0.01, this.continuousLoudQuietStepSeconds);
+      const beatSeconds = Math.max(0.005, this.continuousLoudQuietStepSeconds);
       const loudStep = Math.max(0, volumeSteps - 1);
       const rhythmEvents = rhythmPatternDotKeys.flatMap((dotKey, dotIndex) => (
         (RHYTHM_PATTERN_BEAT_OFFSETS[dotIndex] ?? []).map((beatOffset) => ({
@@ -6402,7 +6423,7 @@ class DotGridAudioPlayer {
 
       straightNoiseLoopDuration = RHYTHM_PATTERN_BEAT_COUNT * beatSeconds;
     } else if (fourFourStraightNoiseActive) {
-      const stepSeconds = Math.max(0.01, this.continuousLoudQuietStepSeconds);
+      const stepSeconds = Math.max(0.005, this.continuousLoudQuietStepSeconds);
       const hitRepeats = Math.max(1, hitsPerVolumeLevel);
       const blockSize = Math.max(1, this.fourFourVolumeBlockSize);
       const cycleSeconds = Math.max(0.02, stepSeconds * blockSize * hitRepeats);
@@ -6457,8 +6478,8 @@ class DotGridAudioPlayer {
       // Row alternation: gate the actual continuous dot sources using the
       // half-band step shape: top row, all rows, bottom row, all rows.
       const rowGroups = getRowAlternationGroups();
-      const stepSeconds = Math.max(0.01, this.continuousLoudQuietStepSeconds);
-      const stepHoldSeconds = Math.max(0.01, stepSeconds * Math.max(1, hitsPerVolumeLevel));
+      const stepSeconds = Math.max(0.005, this.continuousLoudQuietStepSeconds);
+      const stepHoldSeconds = Math.max(0.005, stepSeconds * Math.max(1, hitsPerVolumeLevel));
 
       if (rowGroups) {
         const patternGroups: Record<RowAlternationPatternStep, string[]> = {
@@ -6514,7 +6535,7 @@ class DotGridAudioPlayer {
     } else if (fourFourHalfBandPatternSequence) {
       // Band-split held-noise mode: one shared noise source through one
       // highpass/lowpass pair, stepped on one clock.
-      const fourFourHitInterval = Math.max(0.01, this.continuousLoudQuietStepSeconds);
+      const fourFourHitInterval = Math.max(0.005, this.continuousLoudQuietStepSeconds);
       const halfBandStepCount = fourFourHalfBandPatternSequence.length * hitsPerVolumeLevel;
       const halfBandSequenceSeconds =
         halfBandStepCount * fourFourHitInterval +
@@ -6584,7 +6605,7 @@ class DotGridAudioPlayer {
       // gets the whole loud/quiet block before advancing.
       let hitIndex = 0;
       const fourFourHitInterval = this.loudQuietBandwidthModeEnabled
-        ? Math.max(0.01, this.continuousLoudQuietStepSeconds)
+        ? Math.max(0.005, this.continuousLoudQuietStepSeconds)
         : stagger;
       const inverseClusterStagger = Math.min(
         Math.max(0.001, stagger),
@@ -6830,9 +6851,9 @@ class DotGridAudioPlayer {
     const effectiveSequentialHitInterval = this.depthPerDot
       ? stagger
       : rhythmPatternActive
-      ? Math.max(0.01, this.continuousLoudQuietStepSeconds)
+      ? Math.max(0.005, this.continuousLoudQuietStepSeconds)
       : (this.loudQuietBandwidthModeEnabled && fourFourVolumeLevelSequence) || fourFourHalfBandPatternSequence || fourFourRowAlternationActive
-      ? Math.max(0.01, this.continuousLoudQuietStepSeconds)
+      ? Math.max(0.005, this.continuousLoudQuietStepSeconds)
       : stagger;
     const inverseClusterTailDuration = !this.depthPerDot && inverseClusteredVolumeSequenceActive
       ? Math.max(0, playableDotCount - 1) * Math.min(
@@ -7649,6 +7670,12 @@ class DotGridAudioPlayer {
         this.startAllRhythms();
       }
     }
+  }
+
+  public setMaxLowerCutoffHz(frequency: number): void {
+    this.audioService.setMaxLowerCutoffHz(frequency);
+    this.audioService.setFrequencyExtensionRange(this.audioService.getFrequencyExtensionRange());
+    this.requestLoopSequencerRefresh();
   }
 
   public setFrequencyExtensionRange(octaves: number): void {

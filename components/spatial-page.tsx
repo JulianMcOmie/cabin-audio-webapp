@@ -426,7 +426,7 @@ export function SpatialPage() {
                 <span className="h-1 w-1 rounded-full bg-white/25" />
                 <span>2 octave noise</span>
                 <span className="h-1 w-1 rounded-full bg-white/25" />
-                <span>-4.5 dB/oct</span>
+                <span>-3.0 dB/oct</span>
               </div>
             </div>
           </div>

@@ -27,7 +27,7 @@ export interface SpatialEqBand {
 
 export const SPATIAL_PLACE_COUNT = 7
 export const SPATIAL_BANDPASS_BANDWIDTH_OCTAVES = 2
-export const SPATIAL_NOISE_SLOPE_DB_PER_OCT = -4.5
+export const SPATIAL_NOISE_SLOPE_DB_PER_OCT = -3.0
 export const SPATIAL_GAIN_MIN_DB = -18
 export const SPATIAL_GAIN_MAX_DB = 18
 export const SPATIAL_BANDWIDTH_MIN_OCT = 0.5

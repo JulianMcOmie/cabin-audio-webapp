@@ -38,7 +38,7 @@ const DEFAULT_GRID_SIZE: GridSize = { rows: 2, cols: 1 }
 const CHECKERBOARD_SWAP_S = 5
 
 // Matching the normal dot grid audio's filter approach
-const DEFAULT_BANDPASS_NOISE_SLOPE_DB_PER_OCT = -4.5
+const DEFAULT_BANDPASS_NOISE_SLOPE_DB_PER_OCT = -3.0
 const BANDPASS_NOISE_OUTPUT_GAIN = 0.25
 
 export interface LinePoint {

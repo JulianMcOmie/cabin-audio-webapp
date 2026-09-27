@@ -456,7 +456,6 @@ const DEFAULTS = {
   bandwidthRangeOctaves: 0,
   dotBalanceDb: 0,
   eqABEnabled: false,
-  flatSlope: false,
   additivePartialsEnabled: false,
   clickTrainEnabled: true,
   noiseGeneratorEnabled: false,
@@ -520,6 +519,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   const [inverseConstantNoiseDots, setInverseConstantNoiseDots] = useState<Set<string>>(new Set())
   const [gridRows, setGridRows] = useState<number>(DEFAULTS.gridRows)
   const [gridCols, setGridCols] = useState<number>(DEFAULTS.gridCols)
+  const [maxLowerCutoffHz, setMaxLowerCutoffHz] = useState(14000)
   const [speed, setSpeed] = useState<number>(DEFAULTS.speed)
   const [volumeDb, setVolumeDb] = useState<number>(DEFAULTS.volumeDb)
   const [attackMs, setAttackMs] = useState<number>(DEFAULTS.attackMs)
@@ -566,7 +566,6 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   const [waveWaitSeconds, setWaveWaitSeconds] = useState<number>(DEFAULTS.waveWaitSeconds)
   const [hiHatQuietDropDb, setHiHatQuietDropDb] = useState<number>(DEFAULTS.hiHatQuietDropDb)
   const [eqABEnabled, setEqABEnabled] = useState<boolean>(DEFAULTS.eqABEnabled)
-  const [flatSlope, setFlatSlope] = useState<boolean>(DEFAULTS.flatSlope)
   const [noiseOscillationRateHz, setNoiseOscillationRateHz] = useState<number>(DEFAULTS.noiseOscillationRateHz)
   const [noiseOscillationMinDb, setNoiseOscillationMinDb] = useState<number>(DEFAULTS.noiseOscillationMinDb)
   const [noiseOscillationMaxDb, setNoiseOscillationMaxDb] = useState<number>(DEFAULTS.noiseOscillationMaxDb)
@@ -636,11 +635,12 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     const hydratedCols = Math.max(MIN_COLS, Math.min(MAX_COLS, focusedDefaultsMigrated ? loadSetting("cabin:gridCols", DEFAULTS.gridCols) : DEFAULTS.gridCols))
     setGridRows(hydratedRows)
     setGridCols(hydratedCols)
+    setMaxLowerCutoffHz(Math.max(100, Math.min(20000, loadSetting<number>("cabin:maxLowerCutoffHz", 14000))))
     setSpeed(DEFAULTS.speed)
     setAttackMs(loadSetting("cabin:attackMsV2", DEFAULTS.attackMs))
     setReleaseMs(0)
     const savedHitSpacing = loadSetting<number>("cabin:hitSpacingMs", DEFAULTS.hitSpacingMs)
-    setHitSpacingMs(Math.max(20, !speedDefaultsMigrated && savedHitSpacing === 250 ? 125 : savedHitSpacing))
+    setHitSpacingMs(Math.max(1.25, !speedDefaultsMigrated && savedHitSpacing === 250 ? 125 : savedHitSpacing))
     setLoudnessSwapEnabled(false)
     setBalanceAlternateHits(Math.max(1, Math.min(64, Math.round(loadSetting("cabin:balanceAlternateHits", DEFAULTS.balanceAlternateHits)))))
     const masterVolumeDbMigrated = loadSetting("cabin:masterVolumeDbV1", false)
@@ -664,7 +664,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     setLowerEdgeSineVolumeDb(Number.isFinite(savedSineVolume) ? Math.max(-60, Math.min(0, savedSineVolume)) : -24)
     setContinuousReleaseMs(0)
     setRectangleAlternationSeconds(Number.isFinite(savedRectangleSeconds)
-      ? Math.max(0.05, Math.min(30, !speedDefaultsMigrated && savedRectangleSeconds === 4 ? 2 : savedRectangleSeconds)) : 2)
+      ? Math.max(0.005, Math.min(30, !speedDefaultsMigrated && savedRectangleSeconds === 4 ? 2 : savedRectangleSeconds)) : 2)
     saveSetting("cabin:speedDefaultsV2", true)
     setDepth(Math.max(1, Math.min(8, Math.round(loadSetting("cabin:depth", DEFAULTS.depth)))))
     setDepthPerDot(false)
@@ -703,7 +703,6 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     setWaveWaitSeconds(DEFAULTS.waveWaitSeconds)
     setHiHatQuietDropDb(loadSetting("cabin:hiHatQuietDropDb", DEFAULTS.hiHatQuietDropDb))
     setEqABEnabled(false)
-    setFlatSlope(false)
     setNoiseOscillationRateHz(DEFAULTS.noiseOscillationRateHz)
     setNoiseOscillationMinDb(DEFAULTS.noiseOscillationMinDb)
     setNoiseOscillationMaxDb(DEFAULTS.noiseOscillationMaxDb)
@@ -868,7 +867,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     for (let row = 0; row < gridRows; row++) {
       const normalizedY = gridRows <= 1 ? 0.5 : row / (gridRows - 1)
       // Match the audible portion of the player's bottom-anchored band.
-      const range = dotGridAudio.getBandpassRangeForNormalizedY(normalizedY, bandwidth, bandwidthFilterMode)
+      const range = dotGridAudio.getBandpassRangeForNormalizedY(normalizedY, bandwidth, bandwidthFilterMode, 0, maxLowerCutoffHz)
       const lowerEdge = Math.max(20, Math.min(20000, range.lowerEdge))
       const upperEdge = Math.max(lowerEdge, Math.min(20000, range.upperEdge))
       const centerFreq = Math.sqrt(lowerEdge * upperEdge)
@@ -885,7 +884,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
       }
     }
     return highlights.size > 0 ? highlights : null
-  }, [activeBand, gridRows, gridCols, bandwidth, bandwidthFilterMode])
+  }, [activeBand, gridRows, gridCols, bandwidth, bandwidthFilterMode, maxLowerCutoffHz])
 
   // Persist settings to localStorage
   useEffect(() => { saveSetting("cabin:gridRows", gridRows) }, [gridRows])
@@ -944,7 +943,6 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     dotGridAudio.getDotGridAudioPlayer().setDotBalanceDb(dotBalanceDb)
   }, [dotBalanceDb])
   useEffect(() => { saveSetting("cabin:eqABEnabled", false) }, [])
-  useEffect(() => { saveSetting("cabin:flatSlope", false) }, [])
   useEffect(() => { saveSetting("cabin:additivePartialsEnabled", false) }, [])
   useEffect(() => { saveSetting("cabin:clickTrainEnabled", true) }, [])
   useEffect(() => { saveSetting("cabin:sineBurstEnabled", false) }, [])
@@ -1128,8 +1126,8 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   useEffect(() => { saveSetting("cabin:rectangleAlternationEnabled", rectangleAlternationEnabled) }, [rectangleAlternationEnabled])
   useEffect(() => { saveSetting("cabin:rectangleAlternationSeconds", rectangleAlternationSeconds) }, [rectangleAlternationSeconds])
   useEffect(() => {
-    if (rectangleAlternationSeconds < 0.05) setRectangleAlternationSeconds(0.05)
-    const minimumHitSpacing = simultaneousHeightEnabled && !rowRepeatEnabled && !rowWiseEnabled && !columnWiseEnabled ? 12.5 : 20
+    if (rectangleAlternationSeconds < 0.005) setRectangleAlternationSeconds(0.005)
+    const minimumHitSpacing = simultaneousHeightEnabled && !rowRepeatEnabled && !rowWiseEnabled && !columnWiseEnabled ? 1.25 : 5
     if (hitSpacingMs < minimumHitSpacing) setHitSpacingMs(minimumHitSpacing)
   }, [rectangleAlternationSeconds, hitSpacingMs, simultaneousHeightEnabled, rowRepeatEnabled, rowWiseEnabled, columnWiseEnabled])
   useEffect(() => { saveSetting("cabin:pulseOverlapEnabled", pulseOverlapEnabled) }, [pulseOverlapEnabled])
@@ -1429,7 +1427,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   const dotCount = activeSelectedDots.size
   // Hit spacing directly sets the grid interval between consecutive hits;
   // envelopes longer than the spacing simply overlap (polyphonic voices).
-  const perHitS = useMemo(() => Math.max(0.01, hitSpacingMs / 1000), [hitSpacingMs])
+  const perHitS = useMemo(() => Math.max(0.00125, hitSpacingMs / 1000), [hitSpacingMs])
   const hitStaggerS = useMemo(() => perHitS * (hitStaggerPercent / 100), [perHitS, hitStaggerPercent])
   const effectiveRelease = useMemo(
     () => Math.max(0.001, perHitS - Math.min(attackMs / 1000, perHitS * 0.25)),
@@ -1768,8 +1766,8 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   }, [inverseDotBandBoostDb])
 
   useEffect(() => {
-    dotGridAudio.getDotGridAudioPlayer().setBandpassSlope(flatSlope ? -3.0 : -4.5)
-  }, [flatSlope])
+    dotGridAudio.getDotGridAudioPlayer().setBandpassSlope(-3)
+  }, [])
 
   useEffect(() => {
     dotGridAudio.getDotGridAudioPlayer().setNoiseOscillationRateHz(noiseOscillationRateHz)
@@ -1843,6 +1841,11 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   useEffect(() => {
     dotGridAudio.getDotGridAudioPlayer().setVolumeDb(volumeDb)
   }, [volumeDb])
+
+  useEffect(() => {
+    dotGridAudio.getDotGridAudioPlayer().setMaxLowerCutoffHz(maxLowerCutoffHz)
+    saveSetting("cabin:maxLowerCutoffHz", maxLowerCutoffHz)
+  }, [maxLowerCutoffHz])
 
   // Arrow-key movement of selected dots
   useEffect(() => {
@@ -2444,6 +2447,8 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
       </div>
       <aside aria-label="Grid settings" className="w-full min-w-0 lg:w-auto">
       <SettingsPanel
+        maxLowerCutoffHz={maxLowerCutoffHz}
+        onMaxLowerCutoffChange={setMaxLowerCutoffHz}
         depthAfterPass={depthAfterPass}
         rowWiseEnabled={rowWiseEnabled}
         onRowWiseChange={enabled => {

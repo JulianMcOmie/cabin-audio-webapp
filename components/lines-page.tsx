@@ -133,7 +133,7 @@ export function LinesPage() {
   const [simultaneous, setSimultaneous] = useState(false)
   const [diagonalDiff, setDiagonalDiff] = useState(false)
   const [diagonalDiffDb, setDiagonalDiffDb] = useState(0)
-  const [slopeDbPerOct, setSlopeDbPerOct] = useState<-3.0 | -4.5>(-4.5)
+  const slopeDbPerOct = -3
   const [activeCheckerboardGroups, setActiveCheckerboardGroups] = useState<Map<number, { group: number; groups: [number[], number[]]; offsetsDb: Map<number, number>; diagonalDiff?: boolean }>>(new Map())
 
   const dragTarget = useRef<DragTarget>(null)
@@ -1154,26 +1154,6 @@ export function LinesPage() {
               {isPlaying ? <Pause className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
               {isPlaying ? "Stop" : "Play"}
             </Button>
-
-            <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 p-1">
-              {([-3.0, -4.5] as const).map(slope => {
-                const selected = slopeDbPerOct === slope
-                return (
-                  <button
-                    key={slope}
-                    type="button"
-                    onClick={() => setSlopeDbPerOct(slope)}
-                    className={`h-9 rounded-full px-4 text-xs font-medium transition ${
-                      selected
-                        ? "bg-white text-black"
-                        : "text-white/55 hover:bg-white/10 hover:text-white/80"
-                    }`}
-                  >
-                    {slope.toFixed(1)} dB/oct
-                  </button>
-                )
-              })}
-            </div>
 
             {activeGridGroup && (
               <>

@@ -6,7 +6,7 @@ import { dbToGain, clamp } from "../utils/audioMath"
 const NUM_BANDS = 40
 const MIN_FREQ = 20
 const MAX_FREQ = 20000
-const SLOPE_DB_PER_OCT = -4.5
+const SLOPE_DB_PER_OCT = -3.0
 const PINK_NOISE_INHERENT_SLOPE = -3.0
 const SLOPE_REF_FREQ = 800
 const BAND_Q = 2.5

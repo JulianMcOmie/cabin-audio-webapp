@@ -17,7 +17,7 @@ function gainToDb(gain: number): number {
  * Calculate the auto-gain compensation (in dB) for a set of EQ bands.
  *
  * Samples the combined EQ response at 128 log-spaced frequencies (20 Hz – 20 kHz),
- * weights each sample by a -4.5 dB/oct assumed spectral slope (0 dB at 20 Hz,
+ * weights each sample by a -3.0 dB/oct assumed spectral slope (0 dB at 20 Hz,
  * ~-45 dB at 20 kHz), and returns the negative of the maximum weighted gain,
  * clamped to ≤ 0. This ensures just enough gain reduction to prevent clipping
  * from EQ boosts, accounting for where in the spectrum the boost occurs.
@@ -31,7 +31,7 @@ export function calculateAutoGainDb(
   const NUM_POINTS = 128;
   const F_MIN = 20;
   const F_MAX = 20000;
-  const DB_PER_OCT = -4.5;
+  const DB_PER_OCT = -3.0;
 
   // Generate 128 log-spaced frequencies
   const frequencies = new Float32Array(NUM_POINTS);

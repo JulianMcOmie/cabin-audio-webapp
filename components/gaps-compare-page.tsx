@@ -392,7 +392,7 @@ export function GapsComparePage() {
         </div>
 
         <p className="mt-4 text-xs text-white/30">
-          Plays −4.5 dB/oct shaped noise bursts, alternating between two −12 dB bell cuts at the chosen
+          Plays −3.0 dB/oct shaped noise bursts, alternating between two −12 dB bell cuts at the chosen
           frequencies. Drag the curves or use the sliders to set each cut frequency.
         </p>
       </div>

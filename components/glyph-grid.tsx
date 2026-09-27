@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEven
 import { ArrowLeft, ArrowLeftRight, Pause, Play, RotateCw, Trash2 } from "lucide-react"
 import {
   GLYPHS, GLYPH_WIDTH, GLYPH_HEIGHT, GlyphSequenceAudio, makeGlyphSequence, glyphBounds, editableVertexIndices, linkedVertexIndices, glyphRotationAngle, glyphZPhase, projectGlyph,
-  type CanvasGlyph, type GlyphId, type Vertex,
+  type CanvasGlyph, type GlyphId, type GlyphPoint, type Vertex,
 } from "@/lib/audio/glyphSequence"
 
 const WIDTH = 1000
@@ -41,7 +41,7 @@ export function GlyphGrid() {
   const [playing, setPlaying] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [activeIndex, setActiveIndex] = useState(-1)
+  const [audiblePoint, setAudiblePoint] = useState<GlyphPoint | null>(null)
   const [rotationTime, setRotationTime] = useState(0)
   const svg = useRef<SVGSVGElement | null>(null)
   const drag = useRef<Drag | null>(null)
@@ -62,7 +62,7 @@ export function GlyphGrid() {
     })
     return result
   }, [points])
-  const activePoint = playing ? points[activeIndex] : null
+  const activePoint = playing ? audiblePoint : null
   const selectedItem = displayedItems.find(item => item.id === selected)
   const selectedBounds = selectedItem ? glyphBounds(selectedItem) : null
 
@@ -85,7 +85,7 @@ export function GlyphGrid() {
     if (!playing && !animating) return
     let frame = 0
     const draw = (time: number) => {
-      if (playing) setActiveIndex(engine.current?.currentIndex ?? -1)
+      if (playing) setAudiblePoint(engine.current?.currentPoint ?? null)
       if (animating) setRotationTime(time)
       frame = requestAnimationFrame(draw)
     }
@@ -101,6 +101,7 @@ export function GlyphGrid() {
       return
     }
     setBusy(true)
+    setAudiblePoint(null)
     setError(null)
     try {
       const audio = engine.current ?? new GlyphSequenceAudio()

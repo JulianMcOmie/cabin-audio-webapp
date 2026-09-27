@@ -505,7 +505,7 @@ export function GapsPage() {
         {/* Instructions */}
         <p className="mt-4 text-xs text-white/30">
           Click and drag on the editor to create a frequency gap. Hover over a gap to resize (drag edges),
-          move (drag body), or delete (× button). The noise is shaped at −4.5 dB/oct and built from {bands.length || 40} parallel bandpassed noise bands.
+          move (drag body), or delete (× button). The noise is shaped at −3.0 dB/oct and built from {bands.length || 40} parallel bandpassed noise bands.
         </p>
 
         {/* Gap list */}

@@ -1,7 +1,7 @@
 import { PositionedAudioService } from "./dotGridAudio"
+import { POINTS_PER_SECOND } from "../playback/point-timing"
 
-export const GLYPH_RATE = 200
-export const GLYPH_ATTACK = 0.003
+export const GLYPH_RATE = POINTS_PER_SECOND
 export type Vertex = readonly [number, number, number?]
 // A connected edge walk keeps playback on the wireframe. Some edges are
 // retraced where the solid cannot be drawn in one stroke without doing so.
@@ -66,7 +66,7 @@ const ROTATION_PERIOD_MS = 6000
 const Z_MOTION_PERIOD_MS = 4000
 export const GLYPH_WIDTH = 0.18
 export const GLYPH_HEIGHT = 0.24
-export interface GlyphPoint { x: number; y: number; glyphId: string; vertex: boolean; gain: number }
+export interface GlyphPoint { x: number; y: number; glyphId: string; vertex: boolean; gain: number; depth?: number }
 
 export function isClosedGlyph(id: GlyphId): boolean {
   const vertices = GLYPHS.find(g => g.id === id)!.vertices
@@ -194,14 +194,72 @@ export class GlyphSequenceAudio {
   private disposed = false
   private revision = 0
   private pausedStep = 0
+  private pausedElapsedSeconds = 0
+  private playbackOrigin = 0
+  private scheduledPoints: { time: number; step: number; elapsedSeconds: number; point: GlyphPoint; points: GlyphPoint[] }[] = []
+  private voiceIds: string[] = []
+  private mixInput: GainNode | null = null
+  private eqFilters: BiquadFilterNode[] = []
+  private musicSource: MediaElementAudioSourceNode | null = null
 
-  constructor() {
+  setMaxLowerCutoffHz(frequency: number): void {
+    this.service.setMaxLowerCutoffHz(frequency)
+    if (this.points.length) this.updatePoints(this.points, this.voiceIds.length)
+  }
+
+  setMixEQ(gains: readonly number[]): void {
+    if (!this.mixInput) {
+      this.mixInput = this.context.createGain()
+      this.service.getOutputNode().disconnect(this.context.destination)
+      this.service.getOutputNode().connect(this.mixInput)
+      let tail: AudioNode = this.mixInput
+      this.eqFilters = [150, 1000, 6000].map((frequency, index) => {
+        const filter = this.context.createBiquadFilter()
+        filter.type = index === 0 ? "lowshelf" : index === 2 ? "highshelf" : "peaking"
+        filter.frequency.value = frequency
+        filter.Q.value = 0.7
+        tail.connect(filter)
+        tail = filter
+        return filter
+      })
+      tail.connect(this.context.destination)
+    }
+    this.eqFilters.forEach((filter, index) => {
+      filter.gain.setTargetAtTime(gains[index] ?? 0, this.context.currentTime, 0.015)
+    })
+  }
+
+  async playMusic(element: HTMLAudioElement): Promise<void> {
+    if (!this.mixInput) this.setMixEQ([0, 0, 0])
+    if (!this.musicSource) {
+      this.musicSource = this.context.createMediaElementSource(element)
+      this.musicSource.connect(this.mixInput!)
+    }
+    await this.context.resume()
+  }
+
+  constructor(
+    private rate = GLYPH_RATE,
+    private readonly transformPoint?: (point: GlyphPoint, elapsedSeconds: number, step: number) => GlyphPoint | GlyphPoint[],
+    voiceCount = 1,
+  ) {
+    if (!Number.isFinite(rate) || rate <= 0) throw new Error("Playback rate must be positive")
     this.service.getOutputNode().gain.value = 0
     this.service.setBaseVolumeDb(0)
-    this.service.setBandpassSlope(-4.5)
-    this.service.addPoint("glyph", 0.5, 0.5, 2, 2, 3)
-    this.service.deactivatePoint("glyph")
+    this.service.setBandpassSlope(-3.0)
+    this.ensureVoices(Math.max(1, Math.floor(voiceCount)))
     this.service.getOutputNode().connect(this.context.destination)
+  }
+
+  private ensureVoices(count: number): void {
+    while (this.voiceIds.length < count) {
+      const index = this.voiceIds.length
+      const id = index === 0 ? "glyph" : `glyph-${index}`
+      // New grids can join a running transport. Allocate their independent
+      // generators silently; their first gain change uses the shared clock.
+      this.service.addPoint(id, 0.5, 0.5, 2, 2, 3, true)
+      this.voiceIds.push(id)
+    }
   }
 
   async play(points: readonly GlyphPoint[]): Promise<boolean> {
@@ -213,7 +271,8 @@ export class GlyphSequenceAudio {
     if (this.disposed || revision !== this.revision || !this.points.length) return false
     this.running = true
     const resumeTime = this.context.currentTime + 0.03
-    this.startTime = resumeTime - this.pausedStep / GLYPH_RATE
+    this.startTime = resumeTime - this.pausedStep / this.rate
+    this.playbackOrigin = resumeTime - this.pausedElapsedSeconds
     this.nextStep = this.pausedStep
     this.service.getOutputNode().gain.setValueAtTime(1, resumeTime)
     this.schedule()
@@ -221,14 +280,33 @@ export class GlyphSequenceAudio {
     return true
   }
 
-  updatePoints(points: readonly GlyphPoint[]): void {
+  setRate(rate: number): void {
+    if (!Number.isFinite(rate) || rate <= 0) throw new Error("Playback rate must be positive")
+    if (rate === this.rate) return
+    if (!this.running) { this.rate = rate; return }
+    // Replace the lookahead queue at one audio-clock boundary. Continue with
+    // the next dot; the separate elapsed clock keeps depth swaps in seconds.
+    const boundary = Math.max(this.context.currentTime + 0.003, this.scheduledPoints[0]?.time ?? 0)
+    this.scheduledPoints = this.scheduledPoints.filter(event => event.time < boundary)
+    const last = this.scheduledPoints[this.scheduledPoints.length - 1]
+    this.nextStep = last ? last.step + 1 : this.pausedStep
+    this.rate = rate
+    this.startTime = boundary - this.nextStep / rate
+    // schedulePositionedHold cancels the previous future pan/filter/gain
+    // automation before replacing it, so old-speed notes cannot leak through.
+    this.schedule()
+  }
+
+  updatePoints(points: readonly GlyphPoint[], voiceCount = 1): void {
     this.points = points
     if (!points.length) { this.stop(); return }
+    this.ensureVoices(voiceCount)
     if (!this.running) return
-    // Keep the original clock and sequence index. Replace queued hits starting
-    // at the next 5 ms boundary; the currently sounding hit finishes untouched.
-    const step = Math.max(0, Math.ceil((this.context.currentTime + 0.0005 - this.startTime) * GLYPH_RATE))
-    this.service.cancelPositionedHitsFrom("glyph", this.startTime + step / GLYPH_RATE)
+    // Preserve both the clock and the held point. Edits replace only the next
+    // boundary onward, including any position already in the lookahead queue.
+    const step = Math.max(0, Math.ceil((this.context.currentTime + 0.0005 - this.startTime) * this.rate))
+    const boundary = this.startTime + step / this.rate
+    this.scheduledPoints = this.scheduledPoints.filter(event => event.time < boundary)
     this.nextStep = step
     this.schedule()
   }
@@ -236,38 +314,89 @@ export class GlyphSequenceAudio {
   private schedule(): void {
     if (!this.running || !this.points.length) return
     const now = this.context.currentTime
-    // Skip stale hits after a suspended/background tab instead of bursting them.
-    if (this.startTime + this.nextStep / GLYPH_RATE < now) {
-      this.nextStep = Math.max(0, Math.ceil((now + 0.001 - this.startTime) * GLYPH_RATE))
+    // Keep holding the last point after a delayed timer; resume on the original
+    // clock's next boundary instead of inserting a gap or bursting stale steps.
+    if (this.startTime + this.nextStep / this.rate < now) {
+      this.nextStep = Math.max(0, Math.ceil((now + 0.001 - this.startTime) * this.rate))
     }
-    while (this.startTime + this.nextStep / GLYPH_RATE < now + 0.1) {
-      const point = this.points[this.nextStep % this.points.length]
-      this.service.schedulePositionedHit("glyph", point.x, 1 - point.y,
-        this.startTime + this.nextStep / GLYPH_RATE, GLYPH_ATTACK, 1 / GLYPH_RATE - GLYPH_ATTACK, point.gain)
+    while (this.startTime + this.nextStep / this.rate < now + 0.1) {
+      const original = this.points[this.nextStep % this.points.length]
+      const time = this.startTime + this.nextStep / this.rate
+      const elapsedSeconds = Math.max(0, time - this.playbackOrigin)
+      const transformed = this.transformPoint?.(original, elapsedSeconds, this.nextStep) ?? original
+      const points = (Array.isArray(transformed) ? transformed : [transformed]).map(point => ({ ...point }))
+      this.ensureVoices(points.length)
+      this.voiceIds.forEach((id, index) => {
+        const point = points[index]
+        if (point) this.service.schedulePositionedHold(id, point.x, 1 - point.y, time, point.gain)
+        else this.service.schedulePointGainOnly(id, time, 0)
+      })
+      this.scheduledPoints.push({ time, step: this.nextStep, elapsedSeconds, point: points[0], points })
       this.nextStep++
+    }
+    // Retain the last audible snapshot plus anything still queued for output.
+    const audibleTime = this.audibleTime
+    while (this.scheduledPoints.length > 1 && this.scheduledPoints[1].time <= audibleTime) {
+      this.scheduledPoints.shift()
     }
   }
 
-  get currentIndex(): number {
-    if (!this.running || this.context.currentTime < this.startTime) return -1
-    return Math.floor((this.context.currentTime - this.startTime) * GLYPH_RATE) % this.points.length
+  private get audibleTime(): number {
+    // currentTime is the render clock, ahead of the sound reaching the output.
+    // Use the device's timestamp when available so the marker follows hearing.
+    const stamp = this.context.getOutputTimestamp?.()
+    const outputPerformanceTime = stamp?.performanceTime ?? 0
+    const outputContextTime = stamp?.contextTime ?? 0
+    if (outputPerformanceTime > 0 && outputContextTime > 0) {
+      return Math.min(this.context.currentTime,
+        outputContextTime + Math.max(0, performance.now() - outputPerformanceTime) / 1000)
+    }
+    return this.context.currentTime - (this.context.baseLatency || 0) - (this.context.outputLatency || 0)
+  }
+
+  private get currentEvent() {
+    if (!this.running) return null
+    const time = this.audibleTime
+    for (let index = this.scheduledPoints.length - 1; index >= 0; index--) {
+      if (this.scheduledPoints[index].time <= time) return this.scheduledPoints[index]
+    }
+    return null
+  }
+
+  get currentPoint(): GlyphPoint | null {
+    // Show the exact position/gain that was scheduled, not freshly edited data
+    // at an inferred index (which could move ahead of the sound).
+    return this.currentEvent?.point ?? null
+  }
+
+  get currentPlayback(): { point: GlyphPoint; points: GlyphPoint[]; elapsedSeconds: number; step: number } | null {
+    const event = this.currentEvent
+    return event ? { point: event.point, points: event.points, elapsedSeconds: event.elapsedSeconds, step: event.step } : null
   }
 
   pause(): void {
-    if (this.running) this.pausedStep = Math.max(0, Math.floor((this.context.currentTime - this.startTime) * GLYPH_RATE))
+    if (this.running) {
+      const event = this.currentEvent
+      this.pausedStep = event?.step ?? this.pausedStep
+      this.pausedElapsedSeconds = event?.elapsedSeconds ?? this.pausedElapsedSeconds
+    }
     this.stop(false)
   }
 
   stop(resetPosition = true): void {
-    if (resetPosition) this.pausedStep = 0
+    if (resetPosition) {
+      this.pausedStep = 0
+      this.pausedElapsedSeconds = 0
+    }
     this.revision++
     this.running = false
+    this.scheduledPoints = []
     if (this.timer !== null) window.clearInterval(this.timer)
     this.timer = null
     const gain = this.service.getOutputNode().gain
     gain.cancelScheduledValues(this.context.currentTime)
     gain.setValueAtTime(0, this.context.currentTime)
-    this.service.deactivatePoint("glyph")
+    this.voiceIds.forEach(id => this.service.deactivatePoint(id))
   }
 
   dispose(): void {
@@ -275,6 +404,9 @@ export class GlyphSequenceAudio {
     this.stop()
     this.disposed = true
     this.service.dispose()
+    this.musicSource?.disconnect()
+    this.mixInput?.disconnect()
+    this.eqFilters.forEach(filter => filter.disconnect())
     void this.context.close()
   }
 }
