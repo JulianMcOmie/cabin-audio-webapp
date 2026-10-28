@@ -1,6 +1,6 @@
 import * as audioContext from './audioContext';
 import * as eqProcessor from './eqProcessor';
-import { createSharpHighpassFilters } from './sharpHighpass';
+import { createSharpHighpassFilters, createSharpLowpassFilters } from './sharpHighpass';
 // import { getAudioPlayer } from './audioPlayer';
 import { useEQProfileStore } from '../stores';
 import { dbToGain, clamp } from '../utils/audioMath';
@@ -49,6 +49,8 @@ const DEFAULT_BASE_DB = -48; // Default starting dB level for first hit
 const BANDPASS_NOISE_SLOPE_DB_PER_OCT = -3.0; // Fixed slope for bandpassed noise
 const BANDPASS_BANDWIDTH_OCTAVES = 6.0; // Default bandwidth: 6 octaves
 const BANDPASS_BOTTOM_LOWER_EDGE_HZ = 30; // Lift the lowest dot so the floor does not feel subterranean
+const SLIDING_BAND_BOTTOM_UPPER_EDGE_HZ = 100; // Bottom row: only 20-100 Hz of the band is audible
+export const DEFAULT_SLIDING_BAND_TOP_LOWER_EDGE_HZ = 8000; // Top row: only 8k-20k of the band is audible
 const BANDPASS_NOISE_OUTPUT_GAIN_SCALAR = 0.25; // Much louder output for bandpassed noise
 const INVERSE_DOT_NOISE_OUTPUT_GAIN_SCALAR = 0.16;
 const INVERSE_DOT_MIN_ATTACK_S = 0.05;
@@ -183,19 +185,30 @@ export function getBandpassRangeForNormalizedY(
   bandwidthOctaves: number,
   filterMode: BandwidthFilterMode = DEFAULT_BANDWIDTH_FILTER_MODE,
   frequencyExtensionRange = 0,
-  maxLowerCutoffHz = 14000
+  maxLowerCutoffHz = DEFAULT_SLIDING_BAND_TOP_LOWER_EDGE_HZ
 ): BandpassRange {
-  void bandwidthOctaves;
-  void filterMode;
-  const extensionMultiplier = Math.pow(2, clamp(frequencyExtensionRange, 0, 5));
-  const bottomLowerEdge = BANDPASS_BOTTOM_LOWER_EDGE_HZ / extensionMultiplier;
-  // Height picks a fixed lower edge on the logarithmic frequency axis.
-  // The highest row starts at 14 kHz. The upper edge is display metadata only;
-  // noise has no upper cutoff filter.
-  const topLowerEdge = clamp(maxLowerCutoffHz, bottomLowerEdge, MAX_AUDIBLE_FREQ);
+  void frequencyExtensionRange;
+  // A fixed-width band slides evenly on the log axis. At the bottom its upper
+  // edge sits at 100 Hz, so most of it is subsonic; at the top its lower edge
+  // sits at maxLowerCutoffHz, so most of it is ultrasonic.
+  const widthOctaves = getEffectiveBandpassBandwidth(bandwidthOctaves, filterMode);
+  const bandWidthRatio = Math.pow(2, widthOctaves);
+  const bottomLowerEdge = SLIDING_BAND_BOTTOM_UPPER_EDGE_HZ / bandWidthRatio;
+  const topLowerEdge = Math.max(bottomLowerEdge, clamp(maxLowerCutoffHz, MIN_AUDIBLE_FREQ, MAX_AUDIBLE_FREQ));
   const lowerEdge = bottomLowerEdge * Math.pow(topLowerEdge / bottomLowerEdge, clamp(normalizedYPos, 0, 1));
-  const upperEdge = MAX_AUDIBLE_FREQ;
+  const upperEdge = lowerEdge * bandWidthRatio;
 
+  return {
+    lowerEdge,
+    upperEdge,
+    centerFrequency: Math.sqrt(lowerEdge * upperEdge),
+  };
+}
+
+function getHighpassOnlyRangeForNormalizedY(normalizedYPos: number, maxLowerCutoffHz = 14000): BandpassRange {
+  const topLowerEdge = clamp(maxLowerCutoffHz, BANDPASS_BOTTOM_LOWER_EDGE_HZ, MAX_AUDIBLE_FREQ);
+  const lowerEdge = BANDPASS_BOTTOM_LOWER_EDGE_HZ * Math.pow(topLowerEdge / BANDPASS_BOTTOM_LOWER_EDGE_HZ, clamp(normalizedYPos, 0, 1));
+  const upperEdge = MAX_AUDIBLE_FREQ;
   return {
     lowerEdge,
     upperEdge,
@@ -218,7 +231,7 @@ export function getBandpassRangeForNormalizedBand(
   const upper = clamp(lower + effectiveHeight, lower + minHeight, 1);
   const normalizedYDenominator = Math.max(0.000001, 1 - minHeight);
   const audioNormalizedY = clamp(lower / normalizedYDenominator, 0, 1);
-  const range = getBandpassRangeForNormalizedY(audioNormalizedY, bandwidthOctaves, filterMode);
+  const range = getHighpassOnlyRangeForNormalizedY(audioNormalizedY);
 
   return {
     ...range,
@@ -354,10 +367,10 @@ interface SharedBandpassNoiseNodes {
 }
 
 export class PositionedAudioService {
-  private maxLowerCutoffHz = 14000;
+  private maxLowerCutoffHz = DEFAULT_SLIDING_BAND_TOP_LOWER_EDGE_HZ;
 
   public setMaxLowerCutoffHz(frequency: number): void {
-    this.maxLowerCutoffHz = clamp(frequency, BANDPASS_BOTTOM_LOWER_EDGE_HZ, MAX_AUDIBLE_FREQ);
+    this.maxLowerCutoffHz = clamp(frequency, MIN_AUDIBLE_FREQ, MAX_AUDIBLE_FREQ);
   }
 
   private ctx: AudioContext;
@@ -8633,6 +8646,7 @@ export class BandpassedNoiseGenerator {
   private inputGainNode: GainNode;
   private outputGainNode: GainNode;
   private highpassFilters: BiquadFilterNode[];
+  private lowpassFilters: BiquadFilterNode[];
   private snareScoopFilters: BiquadFilterNode[] = [];
   private slopingFilter: SlopedPinkNoiseGenerator;
   private currentBandwidthOctaves: number;
@@ -8662,6 +8676,7 @@ export class BandpassedNoiseGenerator {
 
     // A steep, flat-passband lower edge shared with the cutoff demo.
     this.highpassFilters = createSharpHighpassFilters(this.ctx);
+    this.lowpassFilters = createSharpLowpassFilters(this.ctx);
 
 
     for (let index = 0; index < MAX_SNARE_WAVE_FILTERS; index++) {
@@ -8702,6 +8717,7 @@ export class BandpassedNoiseGenerator {
   private disconnectFilterChain(): void {
     this.slopingFilter.getOutputNode().disconnect();
     this.highpassFilters.forEach((filter) => filter.disconnect());
+    this.lowpassFilters.forEach((filter) => filter.disconnect());
   }
 
   private reconnectFilterChain(): void {
@@ -8804,8 +8820,19 @@ export class BandpassedNoiseGenerator {
     }
   }
 
+  private setUpperCutoff(frequency: number, scheduledTime?: number): void {
+    // Upper edges at or beyond the audible ceiling open the lowpass fully.
+    const nyquist = this.ctx.sampleRate / 2;
+    const cutoff = frequency >= MAX_AUDIBLE_FREQ ? nyquist : clamp(frequency, 1, nyquist);
+    this.lowpassFilters.forEach((filter) => {
+      if (scheduledTime === undefined) filter.frequency.value = cutoff;
+      else filter.frequency.setValueAtTime(cutoff, scheduledTime);
+    });
+  }
+
   private setLowerCutoff(frequency: number, scheduledTime?: number): void {
-    const cutoff = clamp(frequency, 20, Math.min(20000, this.ctx.sampleRate / 2));
+    // Lower edges may sit well below 20 Hz so most of a low band is subsonic.
+    const cutoff = clamp(frequency, 1, Math.min(20000, this.ctx.sampleRate / 2));
     this.lowerEdgeFrequency = cutoff;
     if (this.lowerEdgeSine) {
       if (scheduledTime === undefined) this.lowerEdgeSine.frequency.value = cutoff;
@@ -8820,6 +8847,7 @@ export class BandpassedNoiseGenerator {
   private cancelScheduledCutoffValues(scheduledTime: number): void {
     this.lowerEdgeSine?.frequency.cancelScheduledValues(scheduledTime);
     this.highpassFilters.forEach((filter) => filter.frequency.cancelScheduledValues(scheduledTime));
+    this.lowpassFilters.forEach((filter) => filter.frequency.cancelScheduledValues(scheduledTime));
     this.snareScoopFilters.forEach((filter) => {
       filter.frequency.cancelScheduledValues(scheduledTime);
     });
@@ -8829,8 +8857,9 @@ export class BandpassedNoiseGenerator {
     const input = this.slopingFilter.getOutputNode();
     const output = this.snareScoopEnabled ? this.snareScoopFilters[0] ?? this.outputGainNode : this.outputGainNode;
     if (useHighpass) {
-      input.connect(this.highpassFilters[0]);
-      this.highpassFilters.forEach((filter, index) => filter.connect(this.highpassFilters[index + 1] ?? output));
+      const chain = [...this.highpassFilters, ...this.lowpassFilters];
+      input.connect(chain[0]);
+      chain.forEach((filter, index) => filter.connect(chain[index + 1] ?? output));
     } else {
       input.connect(output);
     }
@@ -8873,6 +8902,7 @@ export class BandpassedNoiseGenerator {
 
     // Set filter frequencies (clamped to safe Web Audio API values)
     this.setLowerCutoff(lowerEdge);
+    this.setUpperCutoff(upperEdge);
     this.updateSnareScoopFrequencies(frequency);
 
     this.currentFilterQ = bandpassBandwidthToQ(this.currentBandwidthOctaves, this.bandwidthFilterMode);
@@ -8886,6 +8916,7 @@ export class BandpassedNoiseGenerator {
     this.applyEdgeFalloffShape(range.lowerEdge, range.upperEdge);
 
     this.setLowerCutoff(range.lowerEdge);
+    this.setUpperCutoff(range.upperEdge);
     this.updateSnareScoopFrequencies(range.centerFrequency);
 
     const bandwidthOctaves = Math.log2(range.upperEdge / range.lowerEdge);
@@ -8934,6 +8965,7 @@ export class BandpassedNoiseGenerator {
     this.cancelScheduledCutoffValues(scheduledTime);
     this.applyEdgeFalloffShape(lowerEdge, upperEdge, scheduledTime);
     this.setLowerCutoff(lowerEdge, scheduledTime);
+    this.setUpperCutoff(upperEdge, scheduledTime);
     this.scheduleSnareScoopFrequencies(this.currentCenterFrequency, scheduledTime);
   }
 
@@ -8956,6 +8988,7 @@ export class BandpassedNoiseGenerator {
     this.cancelScheduledCutoffValues(scheduledTime);
     this.applyEdgeFalloffShape(lowerEdge, upperEdge, scheduledTime);
     this.setLowerCutoff(lowerEdge, scheduledTime);
+    this.setUpperCutoff(upperEdge, scheduledTime);
     this.scheduleSnareScoopFrequencies(frequency, scheduledTime);
   }
 
@@ -8970,6 +9003,7 @@ export class BandpassedNoiseGenerator {
     this.cancelScheduledCutoffValues(scheduledTime);
     this.applyEdgeFalloffShape(range.lowerEdge, range.upperEdge, scheduledTime);
     this.setLowerCutoff(range.lowerEdge, scheduledTime);
+    this.setUpperCutoff(range.upperEdge, scheduledTime);
     this.scheduleSnareScoopFrequencies(range.centerFrequency, scheduledTime);
   }
 
@@ -9044,6 +9078,7 @@ export class BandpassedNoiseGenerator {
     this.lowerEdgeSineGain = null;
     this.inputGainNode.disconnect();
     this.highpassFilters.forEach((filter) => filter.disconnect());
+    this.lowpassFilters.forEach((filter) => filter.disconnect());
     this.snareScoopFilters.forEach((filter) => filter.disconnect());
     this.outputGainNode.disconnect();
   }

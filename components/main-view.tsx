@@ -519,7 +519,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
   const [inverseConstantNoiseDots, setInverseConstantNoiseDots] = useState<Set<string>>(new Set())
   const [gridRows, setGridRows] = useState<number>(DEFAULTS.gridRows)
   const [gridCols, setGridCols] = useState<number>(DEFAULTS.gridCols)
-  const [maxLowerCutoffHz, setMaxLowerCutoffHz] = useState(14000)
+  const [maxLowerCutoffHz, setMaxLowerCutoffHz] = useState(dotGridAudio.DEFAULT_SLIDING_BAND_TOP_LOWER_EDGE_HZ)
   const [speed, setSpeed] = useState<number>(DEFAULTS.speed)
   const [volumeDb, setVolumeDb] = useState<number>(DEFAULTS.volumeDb)
   const [attackMs, setAttackMs] = useState<number>(DEFAULTS.attackMs)
@@ -635,7 +635,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     const hydratedCols = Math.max(MIN_COLS, Math.min(MAX_COLS, focusedDefaultsMigrated ? loadSetting("cabin:gridCols", DEFAULTS.gridCols) : DEFAULTS.gridCols))
     setGridRows(hydratedRows)
     setGridCols(hydratedCols)
-    setMaxLowerCutoffHz(Math.max(100, Math.min(20000, loadSetting<number>("cabin:maxLowerCutoffHz", 14000))))
+    setMaxLowerCutoffHz(Math.max(100, Math.min(20000, loadSetting<number>("cabin:maxLowerCutoffHzV2", dotGridAudio.DEFAULT_SLIDING_BAND_TOP_LOWER_EDGE_HZ))))
     setSpeed(DEFAULTS.speed)
     setAttackMs(loadSetting("cabin:attackMsV2", DEFAULTS.attackMs))
     setReleaseMs(0)
@@ -866,7 +866,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
     const band = activeBand
     for (let row = 0; row < gridRows; row++) {
       const normalizedY = gridRows <= 1 ? 0.5 : row / (gridRows - 1)
-      // Match the audible portion of the player's bottom-anchored band.
+      // Match the audible portion of the player's sliding band.
       const range = dotGridAudio.getBandpassRangeForNormalizedY(normalizedY, bandwidth, bandwidthFilterMode, 0, maxLowerCutoffHz)
       const lowerEdge = Math.max(20, Math.min(20000, range.lowerEdge))
       const upperEdge = Math.max(lowerEdge, Math.min(20000, range.upperEdge))
@@ -1844,7 +1844,7 @@ export function MainView({ quality, highlightTarget, isPlaying, onDragStateChang
 
   useEffect(() => {
     dotGridAudio.getDotGridAudioPlayer().setMaxLowerCutoffHz(maxLowerCutoffHz)
-    saveSetting("cabin:maxLowerCutoffHz", maxLowerCutoffHz)
+    saveSetting("cabin:maxLowerCutoffHzV2", maxLowerCutoffHz)
   }, [maxLowerCutoffHz])
 
   // Arrow-key movement of selected dots
